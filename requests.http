@@ -1,0 +1,85 @@
+### TalkBack API - Phase 1 Test Requests
+### Use with REST Client extension in VS Code/Cursor
+
+@baseUrl = http://localhost:8080
+@artifactId = <replace-with-actual-artifact-id>
+
+### Health Check
+GET {{baseUrl}}/health
+
+### Database Ping
+GET {{baseUrl}}/db/ping
+
+### Create Artifact
+POST {{baseUrl}}/artifacts
+Content-Type: application/json
+
+{
+  "title": "My First Artifact",
+  "description": "This is a test artifact for Phase 1"
+}
+
+### Get Artifact (replace {id} with actual artifact ID from create response)
+GET {{baseUrl}}/artifacts/{{artifactId}}
+
+### Upload Material (multipart/form-data)
+### Replace {id} with actual artifact ID
+POST {{baseUrl}}/artifacts/{{artifactId}}/materials
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="test.txt"
+Content-Type: text/plain
+
+This is a test file content.
+It will be extracted as text since it's text/plain.
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="kind"
+
+document
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Upload Material with slides kind
+POST {{baseUrl}}/artifacts/{{artifactId}}/materials
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="file"; filename="presentation.pdf"
+Content-Type: application/pdf
+
+< ./path/to/your/file.pdf
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="kind"
+
+slides
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### Attach Video URL
+POST {{baseUrl}}/artifacts/{{artifactId}}/video
+Content-Type: application/json
+
+{
+  "provider": "loom",
+  "video_url": "https://www.loom.com/share/example-video-id"
+}
+
+### Attach Video URL with zoom provider
+POST {{baseUrl}}/artifacts/{{artifactId}}/video
+Content-Type: application/json
+
+{
+  "provider": "zoom",
+  "video_url": "https://zoom.us/rec/share/example"
+}
+
+### Upload Transcript (replace {video_id} with actual video source ID from video response)
+POST {{baseUrl}}/artifacts/{{artifactId}}/video/<video-id>/transcript
+Content-Type: application/json
+
+{
+  "transcript_text": "This is a sample transcript. It contains the full text of the video. In Phase 1, we store this directly without embeddings."
+}
+
+### Get Artifact with all materials and video sources
+GET {{baseUrl}}/artifacts/{{artifactId}}
+
