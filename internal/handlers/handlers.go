@@ -120,6 +120,17 @@ func (h *Handlers) GetArtifact(w http.ResponseWriter, r *http.Request) {
 		response["video_sources"] = []interface{}{videoSource}
 	}
 
+	// Optionally include questions if ?include_questions=true
+	if r.URL.Query().Get("include_questions") == "true" {
+		questions, answers, err := h.DB.GetQuestionsByArtifactID(r.Context(), artifactID, 20)
+		if err != nil {
+			log.Printf("Warning: Failed to get questions: %v", err)
+		} else {
+			response["questions"] = questions
+			response["answers"] = answers
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
@@ -357,6 +368,190 @@ func (h *Handlers) UploadTranscript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(updatedVideoSource)
+}
+
+// Phase 2: Q&A Handlers
+
+type AskQuestionRequest struct {
+	QuestionText string `json:"question_text"`
+}
+
+type AskQuestionResponse struct {
+	Question *models.Question `json:"question"`
+	Answer   *models.Answer   `json:"answer"`
+}
+
+func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract artifact ID from URL path (e.g., /artifacts/{id}/questions)
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 || pathParts[0] != "artifacts" || pathParts[2] != "questions" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+
+	artifactID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid artifact ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify artifact exists
+	artifact, err := h.DB.GetArtifact(r.Context(), artifactID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Parse request body
+	var req AskQuestionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.QuestionText == "" {
+		http.Error(w, "question_text is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check for existing question with same text (repeat-question caching)
+	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), artifactID, req.QuestionText)
+	if err != nil {
+		log.Printf("Error checking for existing question: %v", err)
+		// Continue with new question creation on error
+	} else if existingQuestion != nil && existingAnswer != nil {
+		// Return cached answer
+		log.Printf("Returning cached answer for duplicate question: %s", req.QuestionText)
+		response := AskQuestionResponse{
+			Question: existingQuestion,
+			Answer:   existingAnswer,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK) // 200 OK for cached response
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Create new question
+	question := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifactID,
+		QuestionText:   req.QuestionText,
+		QuestionSource: models.QuestionSourceText,
+	}
+
+	if err := h.DB.CreateQuestion(r.Context(), question); err != nil {
+		log.Printf("Error creating question: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to create question: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Retrieve materials and video source for RAG
+	materials, err := h.DB.GetMaterialsByArtifactID(r.Context(), artifactID)
+	if err != nil {
+		log.Printf("Warning: Failed to get materials: %v", err)
+		materials = []*models.Material{}
+	}
+
+	videoSource, err := h.DB.GetVideoSourceByArtifactID(r.Context(), artifactID)
+	if err != nil {
+		log.Printf("Warning: Failed to get video source: %v", err)
+		videoSource = nil
+	}
+
+	// Perform retrieval
+	chunks := utils.RetrieveChunks(req.QuestionText, materials, videoSource, 5)
+
+	// Generate answer using LLM
+	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title)
+	if err != nil {
+		log.Printf("Error generating answer: %v", err)
+		// Still create an error answer
+		qaResponse = &utils.QAResponse{
+			AnswerStatus: "error",
+			AnswerText:   fmt.Sprintf("Failed to generate answer: %v", err),
+			Confidence:   0,
+			Citations:    []models.Citation{},
+		}
+	}
+
+	// Convert to Answer model
+	answer, err := utils.ConvertQAResponseToAnswer(question.ID, qaResponse, "gpt-4o-mini")
+	if err != nil {
+		log.Printf("Error converting answer: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to process answer: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Save answer
+	if err := h.DB.CreateAnswer(r.Context(), answer); err != nil {
+		log.Printf("Error creating answer: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to save answer: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := AskQuestionResponse{
+		Question: question,
+		Answer:   answer,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+type GetQuestionsResponse struct {
+	Questions []*models.Question `json:"questions"`
+	Answers   []*models.Answer   `json:"answers"`
+}
+
+func (h *Handlers) GetQuestions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract artifact ID from URL path (e.g., /artifacts/{id}/questions)
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 || pathParts[0] != "artifacts" || pathParts[2] != "questions" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+
+	artifactID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid artifact ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify artifact exists
+	_, err = h.DB.GetArtifact(r.Context(), artifactID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Get questions with answers
+	questions, answers, err := h.DB.GetQuestionsByArtifactID(r.Context(), artifactID, 20)
+	if err != nil {
+		log.Printf("Error getting questions: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to get questions: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := GetQuestionsResponse{
+		Questions: questions,
+		Answers:   answers,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 // Ingestion functionality removed for Phase 1

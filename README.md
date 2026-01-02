@@ -33,6 +33,12 @@
    The `.env` file should contain:
    ```
    DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+   OPENAI_API_KEY=your_openai_api_key_here  # Required for Phase 2 Q&A
+   RUN_MIGRATIONS=true  # Set to false to skip migrations
+   
+   # Dev-only: Enable reset endpoint (⚠️ WARNING: Allows deletion of all data)
+   ALLOW_DEV_RESET=false  # Set to true to enable /admin/reset endpoint
+   DEV_RESET_DELETE_FILES=false  # Set to true to also delete uploaded files on reset
    ```
 
    The `.env` file is automatically loaded by the application using `godotenv`. If the file is missing, the application will log a warning and continue using environment variables.
@@ -54,9 +60,31 @@
    - Run database migrations on startup (if `RUN_MIGRATIONS=true`)
    - Start on port `8080` by default (or the port specified in the `PORT` environment variable)
 
+### Web UI (Phase 2)
+
+A minimal React SPA is available in the `web/` directory.
+
+**Quick Start:**
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+The web UI will open at `http://localhost:3000` and allows you to:
+- Create artifacts
+- Upload materials
+- Attach video URLs
+- Submit transcripts
+- Ask questions and view answers with citations
+- View question history
+
+See `web/README.md` for detailed instructions.
+
 ### Testing the API
 
-Use the `requests.http` file in the repository root to test endpoints. This file contains example requests for all Phase 1 endpoints.
+Use the `requests.http` file in the repository root to test endpoints. This file contains example requests for all Phase 1 and Phase 2 endpoints.
 
 **Sample curl commands:**
 
@@ -132,6 +160,34 @@ curl -X POST http://localhost:8080/artifacts/{id}/video/{video_id}/transcript \
   ```
   Sets `transcript_status=ready` and stores the transcript text.
   Returns: `200 OK` with updated video_source JSON
+
+#### Phase 2: Q&A (RAG)
+- `POST /artifacts/{id}/questions` - Ask a question about the artifact
+  ```json
+  {
+    "question_text": "What is the main topic discussed?"
+  }
+  ```
+  Returns: `201 Created` with question and answer JSON
+  - Uses RAG (Retrieval-Augmented Generation) over `materials.extracted_text` and `video_sources.transcript_text`
+  - Returns `answer_status`: "answered", "not_covered", or "error"
+  - Includes citations with `chunk_id`, `source_type`, `source_id`, `locator`, and `snippet`
+  - If no relevant chunks are found, returns `not_covered` without calling OpenAI
+
+- `GET /artifacts/{id}/questions` - Get recent questions with their latest answers
+  Returns: `200 OK` with JSON containing:
+  ```json
+  {
+    "questions": [...],
+    "answers": [...]
+  }
+  ```
+  Returns up to 20 most recent questions for the artifact, each with its latest answer.
+
+### Environment Variables
+
+**RAG Debug Mode:**
+- `RAG_DEBUG=true` - Enables detailed logging of retrieved chunks and scores for debugging RAG retrieval
 
 ### Database Schema
 

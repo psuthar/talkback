@@ -31,7 +31,15 @@ type dbPingResponse struct {
 func main() {
 	// Load .env file (autoload handles it, but log if missing)
 	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: .env file not found, using environment variables")
+		log.Printf("Warning: .env file not found: %v, using environment variables", err)
+	} else {
+		log.Println("Successfully loaded .env file")
+		// Verify OPENAI_API_KEY is loaded (don't log the actual key)
+		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+			log.Printf("OPENAI_API_KEY is set (length: %d)", len(apiKey))
+		} else {
+			log.Println("Warning: OPENAI_API_KEY not found in environment after loading .env")
+		}
 	}
 
 	// Run migrations on startup if RUN_MIGRATIONS is set (or default to true in dev)
@@ -56,19 +64,38 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(db)
 
-	// Register routes
-	http.HandleFunc("/health", healthHandler)
-	http.HandleFunc("/db/ping", dbPingHandler)
+	// CORS middleware
+	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-	// Artifact endpoints
-	http.HandleFunc("/artifacts", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next(w, r)
+		}
+	}
+
+	// Register routes with CORS
+	http.HandleFunc("/health", corsMiddleware(healthHandler))
+	http.HandleFunc("/db/ping", corsMiddleware(dbPingHandler))
+
+	// Artifact endpoints with CORS
+	http.HandleFunc("/artifacts", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/artifacts" && r.Method == http.MethodPost {
 			h.CreateArtifact(w, r)
 		} else {
 			h.ArtifactsRouter(w, r)
 		}
-	})
-	http.HandleFunc("/artifacts/", h.ArtifactsRouter)
+	}))
+	http.HandleFunc("/artifacts/", corsMiddleware(h.ArtifactsRouter))
+
+	// Admin endpoints with CORS
+	http.HandleFunc("/admin/reset", corsMiddleware(h.ResetAllData))
 
 	port := os.Getenv("PORT")
 	if port == "" {

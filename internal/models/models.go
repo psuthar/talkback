@@ -77,3 +77,47 @@ type VideoSource struct {
 	TranscriptText   *string               `json:"transcript_text,omitempty"`
 	CreatedAt        time.Time             `json:"created_at"`
 }
+
+// Phase 2: Q&A Models
+
+type QuestionSource string
+
+const (
+	QuestionSourceText QuestionSource = "text"
+)
+
+type Question struct {
+	ID            uuid.UUID     `json:"id"`
+	ArtifactID    uuid.UUID     `json:"artifact_id"`
+	AskedBy       *string       `json:"asked_by,omitempty"`
+	QuestionText  string        `json:"question_text"`
+	QuestionSource QuestionSource `json:"question_source"`
+	CreatedAt     time.Time     `json:"created_at"`
+}
+
+type AnswerStatus string
+
+const (
+	AnswerStatusAnswered   AnswerStatus = "answered"
+	AnswerStatusNotCovered AnswerStatus = "not_covered"
+	AnswerStatusError      AnswerStatus = "error"
+)
+
+type Citation struct {
+	ChunkID    string `json:"chunk_id"`    // unique identifier for the chunk
+	SourceType string `json:"source_type"`  // "material" or "transcript"
+	SourceID   string `json:"source_id"`   // material_id or video_id
+	Locator    string `json:"locator"`      // timestamp or other locator
+	Snippet    string `json:"snippet"`      // ~200-300 chars
+}
+
+type Answer struct {
+	ID           uuid.UUID   `json:"id"`
+	QuestionID   uuid.UUID   `json:"question_id"`
+	AnswerText   string      `json:"answer_text"`
+	AnswerStatus AnswerStatus `json:"answer_status"`
+	Confidence   float32     `json:"confidence"` // 0.0-1.0
+	Citations    []Citation  `json:"citations"`
+	Model        *string     `json:"model,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+}

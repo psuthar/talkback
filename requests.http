@@ -83,3 +83,24 @@ Content-Type: application/json
 ### Get Artifact with all materials and video sources
 GET {{baseUrl}}/artifacts/{{artifactId}}
 
+### Get Artifact with questions included
+GET {{baseUrl}}/artifacts/{{artifactId}}?include_questions=true
+
+### Phase 2: Ask a Question
+POST {{baseUrl}}/artifacts/{{artifactId}}/questions
+Content-Type: application/json
+
+{
+  "question_text": "What is the main topic discussed in this artifact?"
+}
+
+### Phase 2: Get Questions for an Artifact (returns recent questions with their latest answers)
+GET {{baseUrl}}/artifacts/{{artifactId}}/questions
+
+### Phase 2: Ask a Question (should return not_covered if content doesn't exist)
+POST {{baseUrl}}/artifacts/{{artifactId}}/questions
+Content-Type: application/json
+
+{
+  "question_text": "What is the weather like today?"
+}

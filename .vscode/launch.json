@@ -10,8 +10,7 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "PORT": "8081",
-                "DATABASE_URL": "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable",
-                "OPENAI_API_KEY": "${env:OPENAI_API_KEY}"
+                "DATABASE_URL": "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable"
             },
             "args": [],
             "showLog": true,
@@ -32,8 +31,7 @@
             "args": [],
             "showLog": true,
             "trace": "log",
-            "console": "integratedTerminal",
-            "preLaunchTask": "load-env"
+            "console": "integratedTerminal"
         },
         {
             "name": "Attach to Process",

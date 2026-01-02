@@ -324,6 +324,124 @@ Or plain text error messages for some endpoints.
 
 ---
 
+## Phase 2: Q&A Endpoints
+
+### Ask Question
+**POST** `/artifacts/{id}/questions`
+
+Ask a question about an artifact. The system will use RAG (Retrieval Augmented Generation) to find relevant content from materials and transcripts, then generate a grounded answer.
+
+**Path Parameters:**
+- `id` (UUID) - The artifact ID
+
+**Request Body:**
+```json
+{
+  "question_text": "What is the main topic discussed in this artifact?"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "question": {
+    "id": "uuid-string",
+    "artifact_id": "uuid-string",
+    "question_text": "What is the main topic discussed in this artifact?",
+    "question_source": "text",
+    "created_at": "2025-12-30T13:00:00Z"
+  },
+  "answer": {
+    "id": "uuid-string",
+    "question_id": "uuid-string",
+    "answer_text": "The main topic is...",
+    "answer_status": "answered",
+    "confidence": 0.85,
+    "citations": [
+      {
+        "source_type": "material",
+        "source_id": "uuid-string",
+        "locator": "",
+        "snippet": "Relevant text snippet from the material..."
+      }
+    ],
+    "model": "gpt-4o-mini",
+    "created_at": "2025-12-30T13:00:00Z"
+  }
+}
+```
+
+**Answer Status Values:**
+- `answered` - Answer was successfully generated from context
+- `not_covered` - Question cannot be answered from available content (confidence < 0.55 or explicitly not covered)
+- `error` - Error occurred during answer generation
+
+**Status Codes:**
+- `201 Created` - Question asked and answer generated
+- `400 Bad Request` - Invalid request body or missing question_text
+- `404 Not Found` - Artifact not found
+- `500 Internal Server Error` - Failed to process question or generate answer
+
+**Note:** If `OPENAI_API_KEY` is not set, the answer will have `answer_status="error"` with an appropriate error message.
+
+---
+
+### Get Questions
+**GET** `/artifacts/{id}/questions`
+
+Retrieve all questions and their latest answers for an artifact (up to 20 most recent).
+
+**Path Parameters:**
+- `id` (UUID) - The artifact ID
+
+**Response:** `200 OK`
+```json
+{
+  "questions": [
+    {
+      "id": "uuid-string",
+      "artifact_id": "uuid-string",
+      "question_text": "What is the main topic?",
+      "question_source": "text",
+      "created_at": "2025-12-30T13:00:00Z"
+    }
+  ],
+  "answers": [
+    {
+      "id": "uuid-string",
+      "question_id": "uuid-string",
+      "answer_text": "The main topic is...",
+      "answer_status": "answered",
+      "confidence": 0.85,
+      "citations": [...],
+      "model": "gpt-4o-mini",
+      "created_at": "2025-12-30T13:00:00Z"
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200 OK` - Questions retrieved successfully
+- `400 Bad Request` - Invalid artifact ID
+- `404 Not Found` - Artifact not found
+- `500 Internal Server Error` - Failed to retrieve questions
+
+---
+
+### Get Artifact (with Questions)
+
+**GET** `/artifacts/{id}?include_questions=true`
+
+Retrieve an artifact with optional questions and answers included.
+
+**Query Parameters:**
+- `include_questions` (optional) - Set to `true` to include recent questions and answers
+
+**Response:** `200 OK` (same as regular Get Artifact, with optional `questions` and `answers` fields)
+
+---
+
 ## Notes
 
 - All UUIDs are in standard UUID format (e.g., `550e8400-e29b-41d4-a716-446655440000`)
@@ -332,3 +450,5 @@ Or plain text error messages for some endpoints.
 - Text extraction is currently supported for `text/plain` files only
 - PDF text extraction is planned for future phases
 - All endpoints return JSON unless otherwise specified
+- **Phase 2:** Q&A uses lexical retrieval (keyword matching) for RAG. Embeddings-based retrieval will be added in Phase 3.
+- **Phase 2:** Answers are generated using OpenAI GPT-4o-mini. Requires `OPENAI_API_KEY` environment variable.

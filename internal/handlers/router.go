@@ -38,6 +38,15 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 				h.AttachVideoURL(w, r)
 				return
 			}
+		case "questions":
+			if r.Method == http.MethodPost {
+				h.AskQuestion(w, r)
+				return
+			}
+			if r.Method == http.MethodGet {
+				h.GetQuestions(w, r)
+				return
+			}
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
