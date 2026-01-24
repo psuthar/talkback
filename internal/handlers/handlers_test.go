@@ -3,24 +3,77 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/migrations"
+	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// runTestMigrations runs migrations for tests using embedded migrations
+func runTestMigrations(databaseURL string) error {
+	// Get migrations from embedded filesystem
+	migrationsSubFS, err := fs.Sub(migrations.MigrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+
+	// Create iofs driver from embedded filesystem
+	sourceDriver, err := iofs.New(migrationsSubFS, ".")
+	if err != nil {
+		return err
+	}
+
+	// Open database connection using database/sql (required by golang-migrate)
+	db, err := sql.Open("postgres", databaseURL)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Create postgres driver
+	postgresDriver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
+
+	// Create migrate instance with embedded source
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "postgres", postgresDriver)
+	if err != nil {
+		return err
+	}
+
+	// Run migrations
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+
+	return nil
+}
 
 func setupTestHandlers(t *testing.T) (*Handlers, func()) {
 	t.Helper()
 
 	// Setup test database
 	databaseURL, cleanupDB := test.SetupTestDB(t)
+
+	// Run migrations on the test database
+	err := runTestMigrations(databaseURL)
+	require.NoError(t, err, "Failed to run test migrations")
 
 	originalURL := os.Getenv("DATABASE_URL")
 	os.Setenv("DATABASE_URL", databaseURL)
@@ -38,16 +91,36 @@ func setupTestHandlers(t *testing.T) (*Handlers, func()) {
 			os.Unsetenv("DATABASE_URL")
 		}
 	}
-	return NewHandlers(db), cleanup
+	return NewHandlers(db, nil), cleanup // Job processor not needed for these tests
+}
+
+// createTestSessionForHandlers is a helper to create a test session for handler tests
+func createTestSessionForHandlers(t *testing.T, db *database.DB, title string) *models.Session {
+	t.Helper()
+	ctx := context.Background()
+	
+	session := &models.Session{
+		ID:     uuid.New(),
+		Title:  title,
+		Status: models.SessionStatusOpen,
+	}
+	
+	err := db.CreateSession(ctx, session)
+	require.NoError(t, err)
+	return session
 }
 
 func TestCreateArtifact(t *testing.T) {
 	h, cleanup := setupTestHandlers(t)
 	defer cleanup()
 
+	// Create a session first
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+
 	t.Run("creates artifact with title only", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"title": "Test Artifact",
+			"session_id": session.ID.String(),
+			"title":      "Test Artifact",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(body))
@@ -67,6 +140,7 @@ func TestCreateArtifact(t *testing.T) {
 
 	t.Run("creates artifact with title and description", func(t *testing.T) {
 		reqBody := map[string]interface{}{
+			"session_id":  session.ID.String(),
 			"title":       "Test Artifact",
 			"description": "Test description",
 		}
@@ -86,8 +160,24 @@ func TestCreateArtifact(t *testing.T) {
 		assert.Equal(t, "Test description", *response.Description)
 	})
 
+	t.Run("returns 400 when session_id is missing", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"title": "Test Artifact",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.CreateArtifact(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
 	t.Run("returns 400 when title is missing", func(t *testing.T) {
-		reqBody := map[string]interface{}{}
+		reqBody := map[string]interface{}{
+			"session_id": session.ID.String(),
+		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -112,8 +202,9 @@ func TestGetArtifact(t *testing.T) {
 	h, cleanup := setupTestHandlers(t)
 	defer cleanup()
 
-	// Create an artifact for testing
-	artifact, err := h.DB.CreateArtifact(context.Background(), "Get Test Artifact", nil)
+	// Create a session and artifact for testing
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := h.DB.CreateArtifact(context.Background(), session.ID, "Get Test Artifact", nil)
 	require.NoError(t, err)
 
 	t.Run("returns artifact by id", func(t *testing.T) {
@@ -162,8 +253,9 @@ func TestAttachVideoURL(t *testing.T) {
 	h, cleanup := setupTestHandlers(t)
 	defer cleanup()
 
-	// Create an artifact for testing
-	artifact, err := h.DB.CreateArtifact(context.Background(), "Video Test Artifact", nil)
+	// Create a session and artifact for testing
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := h.DB.CreateArtifact(context.Background(), session.ID, "Video Test Artifact", nil)
 	require.NoError(t, err)
 
 	t.Run("attaches video URL with loom provider", func(t *testing.T) {
@@ -184,9 +276,105 @@ func TestAttachVideoURL(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "loom", videoSource["provider"])
 		assert.Equal(t, "https://www.loom.com/share/example", videoSource["video_url"])
+		// Should default to embed mode
+		assert.Equal(t, "embed", videoSource["playback_mode"])
 	})
 
-	t.Run("returns 400 when video_url is missing", func(t *testing.T) {
+	t.Run("attaches video URL with embed mode (new format)", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"provider":     "loom",
+			"playback_mode": "embed",
+			"embed_url":    "https://www.loom.com/share/embed-example",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var videoSource map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
+		require.NoError(t, err)
+		assert.Equal(t, "loom", videoSource["provider"])
+		assert.Equal(t, "embed", videoSource["playback_mode"])
+		assert.NotNil(t, videoSource["embed_url"])
+	})
+
+	t.Run("attaches video URL with direct mode", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"provider":      "other",
+			"playback_mode": "direct",
+			"media_url":     "https://example.com/video.mp4",
+			"poster_url":    "https://example.com/poster.jpg",
+			"duration_seconds": 1234,
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var videoSource map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
+		require.NoError(t, err)
+		assert.Equal(t, "other", videoSource["provider"])
+		assert.Equal(t, "direct", videoSource["playback_mode"])
+		assert.NotNil(t, videoSource["media_url"])
+		assert.NotNil(t, videoSource["poster_url"])
+		assert.Equal(t, float64(1234), videoSource["duration_seconds"])
+	})
+
+	t.Run("returns 400 when embed_url is missing for embed mode", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"provider":     "loom",
+			"playback_mode": "embed",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 400 when media_url is missing for direct mode", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"provider":     "other",
+			"playback_mode": "direct",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 400 when playback_mode is invalid", func(t *testing.T) {
+		reqBody := map[string]interface{}{
+			"provider":     "other",
+			"playback_mode": "invalid",
+			"media_url":     "https://example.com/video.mp4",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 400 when video_url is missing (backward compatibility)", func(t *testing.T) {
 		reqBody := map[string]interface{}{
 			"provider": "loom",
 		}
@@ -198,5 +386,32 @@ func TestAttachVideoURL(t *testing.T) {
 		h.AttachVideoURL(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("attaches Loom video with password", func(t *testing.T) {
+		password := "test-password-123"
+		reqBody := map[string]interface{}{
+			"provider":      "loom",
+			"playback_mode": "embed",
+			"embed_url":     "https://www.loom.com/share/password-test",
+			"loom_password": password,
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AttachVideoURL(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var videoSource map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
+		require.NoError(t, err)
+		assert.Equal(t, "loom", videoSource["provider"])
+		assert.Equal(t, "embed", videoSource["playback_mode"])
+
+		// Verify password is stored in job (if job processor is available)
+		// Note: In test setup, JobProcessor is nil, so job won't be created
+		// But the request should still succeed
 	})
 }

@@ -73,6 +73,7 @@ A minimal single-page React application for interacting with the TalkBack API.
 - **CORS Support**: The Go API includes CORS middleware to allow cross-origin requests
 - **Real-time Feedback**: Success/error messages and loading states
 - **Citation Display**: Answers show citations with source type, ID, and snippets
+- **Voice Questions (Mic-to-Question)**: Record a short voice question, transcribe it, review/edit, then submit as a normal session question
 
 ## Building for Production
 
@@ -98,6 +99,31 @@ The built files will be in the `dist/` directory.
 **OpenAI API Errors:**
 - Ensure `OPENAI_API_KEY` is set in your `.env` file for the Go API
 - Questions will return `answer_status="error"` if the API key is missing
+
+## Voice Questions – Local Whisper Setup (Backend)
+
+Voice questions use a local Whisper transcription step via the Python `whisper` CLI (no audio is stored long-term).
+
+### Prerequisites
+
+- Python 3.10+
+- `ffmpeg` available on PATH
+- Python package `openai-whisper`
+
+Example install:
+
+- `pip install -U openai-whisper`
+- Install `ffmpeg` (Windows: via Chocolatey/winget or manual install)
+
+### Backend configuration
+
+Set these environment variables for the Go API:
+
+- `WHISPER_CLI` (default: `whisper`)
+- `WHISPER_MODEL` (default: `base`)
+- `WHISPER_LANGUAGE` (optional)
+- `WHISPER_EXTRA_ARGS` (optional)
+- `VOICE_MAX_UPLOAD_MB` (default: `25`)
 
 ## Reset All Data (Dev Only)
 

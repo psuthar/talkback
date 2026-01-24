@@ -10,13 +10,14 @@ import (
 
 func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) error {
 	query := `
-		INSERT INTO materials (id, artifact_id, kind, filename, content_type, storage_url, text_status, extracted_text)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO materials (id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`
 
 	_, err := db.Pool.Exec(ctx, query,
 		material.ID,
 		material.ArtifactID,
+		material.SessionID,
 		material.Kind,
 		material.Filename,
 		material.ContentType,
@@ -33,7 +34,7 @@ func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) err
 
 func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID) ([]*models.Material, error) {
 	query := `
-		SELECT id, artifact_id, kind, filename, content_type, storage_url, text_status, extracted_text, created_at
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, created_at
 		FROM materials
 		WHERE artifact_id = $1
 		ORDER BY created_at
@@ -51,6 +52,55 @@ func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID
 		err := rows.Scan(
 			&m.ID,
 			&m.ArtifactID,
+			&m.SessionID,
+			&m.Kind,
+			&m.Filename,
+			&m.ContentType,
+			&m.StorageURL,
+			&m.TextStatus,
+			&m.ExtractedText,
+			&m.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan material: %w", err)
+		}
+		materials = append(materials, m)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating materials: %w", err)
+	}
+
+	// Always return a non-nil slice, even if empty
+	if materials == nil {
+		materials = []*models.Material{}
+	}
+
+	return materials, nil
+}
+
+// GetMaterialsBySessionID retrieves all materials for a session
+func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.Material, error) {
+	query := `
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, created_at
+		FROM materials
+		WHERE session_id = $1
+		ORDER BY created_at
+	`
+
+	rows, err := db.Pool.Query(ctx, query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query materials: %w", err)
+	}
+	defer rows.Close()
+
+	var materials []*models.Material
+	for rows.Next() {
+		m := &models.Material{}
+		err := rows.Scan(
+			&m.ID,
+			&m.ArtifactID,
+			&m.SessionID,
 			&m.Kind,
 			&m.Filename,
 			&m.ContentType,

@@ -18,14 +18,16 @@ func TestCreateMaterial(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create an artifact first
-	artifact, err := db.CreateArtifact(ctx, "Material Test Artifact", nil)
+	// Create a session and artifact first
+	session := createTestSession(t, db, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Material Test Artifact", nil)
 	require.NoError(t, err)
 
 	t.Run("creates material with all fields", func(t *testing.T) {
 		material := &models.Material{
 			ID:            uuid.New(),
 			ArtifactID:    artifact.ID,
+			SessionID:     session.ID,
 			Kind:          "document",
 			Filename:      "test.txt",
 			ContentType:   "text/plain",
@@ -42,6 +44,7 @@ func TestCreateMaterial(t *testing.T) {
 		material := &models.Material{
 			ID:          uuid.New(),
 			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
 			Kind:        "slides",
 			Filename:    "presentation.pdf",
 			ContentType: "application/pdf",
@@ -52,6 +55,64 @@ func TestCreateMaterial(t *testing.T) {
 		err := db.CreateMaterial(ctx, material)
 		require.NoError(t, err)
 	})
+
+	t.Run("returns error for non-existent artifact_id", func(t *testing.T) {
+		nonExistentArtifactID := uuid.New()
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  nonExistentArtifactID,
+			SessionID:   session.ID,
+			Kind:        "document",
+			Filename:    "test.txt",
+			ContentType: "text/plain",
+			StorageURL:  "data/uploads/test.txt",
+			TextStatus:  models.MaterialTextStatusReady,
+		}
+
+		err := db.CreateMaterial(ctx, material)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create material")
+		// Should be a foreign key constraint violation
+		errMsg := err.Error()
+		assert.True(t, containsString(errMsg, "foreign key") || containsString(errMsg, "violates foreign key"), 
+			"Expected foreign key error, got: %s", errMsg)
+	})
+
+	t.Run("returns error for invalid text_status enum value", func(t *testing.T) {
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
+			Kind:        "document",
+			Filename:    "test.txt",
+			ContentType: "text/plain",
+			StorageURL:  "data/uploads/test.txt",
+			TextStatus:  "invalid_status", // Invalid enum value
+		}
+
+		err := db.CreateMaterial(ctx, material)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create material")
+	})
+
+	t.Run("allows any kind value (no enum constraint)", func(t *testing.T) {
+		// Note: The database schema doesn't enforce a CHECK constraint on kind,
+		// so any string value is allowed. This test verifies that behavior.
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
+			Kind:        "custom_kind", // Any value is allowed
+			Filename:    "test.txt",
+			ContentType: "text/plain",
+			StorageURL:  "data/uploads/test.txt",
+			TextStatus:  models.MaterialTextStatusReady,
+		}
+
+		err := db.CreateMaterial(ctx, material)
+		// Should succeed since there's no enum constraint on kind
+		assert.NoError(t, err)
+	})
 }
 
 func TestGetMaterialsByArtifactID(t *testing.T) {
@@ -61,8 +122,9 @@ func TestGetMaterialsByArtifactID(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create an artifact
-	artifact, err := db.CreateArtifact(ctx, "Materials List Test", nil)
+	// Create a session and artifact
+	session := createTestSession(t, db, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Materials List Test", nil)
 	require.NoError(t, err)
 
 	t.Run("returns empty list for artifact with no materials", func(t *testing.T) {
@@ -77,6 +139,7 @@ func TestGetMaterialsByArtifactID(t *testing.T) {
 		material1 := &models.Material{
 			ID:          uuid.New(),
 			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
 			Kind:        "document",
 			Filename:    "doc1.txt",
 			ContentType: "text/plain",
@@ -86,6 +149,7 @@ func TestGetMaterialsByArtifactID(t *testing.T) {
 		material2 := &models.Material{
 			ID:          uuid.New(),
 			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
 			Kind:        "slides",
 			Filename:    "slides.pdf",
 			ContentType: "application/pdf",
@@ -106,14 +170,16 @@ func TestGetMaterialsByArtifactID(t *testing.T) {
 	})
 
 	t.Run("does not return materials for other artifacts", func(t *testing.T) {
-		// Create another artifact
-		otherArtifact, err := db.CreateArtifact(ctx, "Other Artifact", nil)
+		// Create another session and artifact
+		otherSession := createTestSession(t, db, "Other Session")
+		otherArtifact, err := db.CreateArtifact(ctx, otherSession.ID, "Other Artifact", nil)
 		require.NoError(t, err)
 
 		// Create material for other artifact
 		material := &models.Material{
 			ID:          uuid.New(),
 			ArtifactID:  otherArtifact.ID,
+			SessionID:   otherSession.ID,
 			Kind:        "document",
 			Filename:    "other.txt",
 			ContentType: "text/plain",
@@ -134,4 +200,10 @@ func TestGetMaterialsByArtifactID(t *testing.T) {
 // Helper function
 func stringPtr(s string) *string {
 	return &s
+}
+
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || 
+		(len(s) > 0 && len(substr) > 0 && 
+		(s[:len(substr)] == substr || containsString(s[1:], substr))))
 }

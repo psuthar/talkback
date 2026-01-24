@@ -54,7 +54,7 @@ Content-Disposition: form-data; name="kind"
 slides
 ------WebKitFormBoundary7MA4YWxkTrZu0gW--
 
-### Attach Video URL
+### Attach Video URL (Embed Mode - Backward Compatible)
 POST {{baseUrl}}/artifacts/{{artifactId}}/video
 Content-Type: application/json
 
@@ -63,13 +63,26 @@ Content-Type: application/json
   "video_url": "https://www.loom.com/share/example-video-id"
 }
 
-### Attach Video URL with zoom provider
+### Attach Video URL (Embed Mode - New Format)
 POST {{baseUrl}}/artifacts/{{artifactId}}/video
 Content-Type: application/json
 
 {
-  "provider": "zoom",
-  "video_url": "https://zoom.us/rec/share/example"
+  "provider": "loom",
+  "playback_mode": "embed",
+  "embed_url": "https://www.loom.com/share/example-video-id"
+}
+
+### Attach Video URL (Direct MP4 Mode)
+POST {{baseUrl}}/artifacts/{{artifactId}}/video
+Content-Type: application/json
+
+{
+  "provider": "other",
+  "playback_mode": "direct",
+  "media_url": "https://example.com/video.mp4",
+  "poster_url": "https://example.com/poster.jpg",
+  "duration_seconds": 1234
 }
 
 ### Upload Transcript (replace {video_id} with actual video source ID from video response)
@@ -104,3 +117,94 @@ Content-Type: application/json
 {
   "question_text": "What is the weather like today?"
 }
+
+### Phase 3: Sessions
+
+### Create Session (independent - no artifact required)
+POST {{baseUrl}}/sessions
+Content-Type: application/json
+
+{
+  "title": "Weekly review - Jan 2026",
+  "created_by": "Paresh"
+}
+
+### Get Session Details
+@sessionId = <replace-with-actual-session-id>
+GET {{baseUrl}}/sessions/{{sessionId}}
+
+### List Artifacts in Session
+GET {{baseUrl}}/sessions/{{sessionId}}/artifacts
+
+### Update Session Status (Close Session)
+PATCH {{baseUrl}}/sessions/{{sessionId}}
+Content-Type: application/json
+
+{
+  "status": "closed"
+}
+
+### Join Session as Participant
+POST {{baseUrl}}/sessions/{{sessionId}}/participants
+Content-Type: application/json
+
+{
+  "participant_ref": "anonymous"
+}
+
+### Create Session Event (play)
+POST {{baseUrl}}/sessions/{{sessionId}}/events
+Content-Type: application/json
+
+{
+  "participant_ref": "anonymous",
+  "event_type": "play",
+  "video_time_seconds": 120,
+  "payload": {}
+}
+
+### Create Session Event (seek)
+POST {{baseUrl}}/sessions/{{sessionId}}/events
+Content-Type: application/json
+
+{
+  "participant_ref": "anonymous",
+  "event_type": "seek",
+  "video_time_seconds": 300,
+  "payload": {}
+}
+
+### Ask Question in Session
+POST {{baseUrl}}/sessions/{{sessionId}}/questions
+Content-Type: application/json
+
+{
+  "question_text": "What was discussed at the 5-minute mark?"
+}
+
+### Ask Question in Session with Video Timestamp
+POST {{baseUrl}}/sessions/{{sessionId}}/questions
+Content-Type: application/json
+
+{
+  "question_text": "What was discussed at the 5-minute mark?",
+  "video_time_seconds": 300
+}
+
+### Ask Question with Video Timestamp (Artifact-scoped)
+POST {{baseUrl}}/artifacts/{{artifactId}}/questions
+Content-Type: application/json
+
+{
+  "question_text": "What is the main topic?",
+  "video_time_seconds": 120
+}
+
+### Get Session Questions (recent, reverse chronological)
+GET {{baseUrl}}/sessions/{{sessionId}}/questions
+
+### Get Session Timeline (chronological order for replay)
+GET {{baseUrl}}/sessions/{{sessionId}}/timeline
+
+### Get Session Timeline with Limit
+GET {{baseUrl}}/sessions/{{sessionId}}/timeline?limit=50

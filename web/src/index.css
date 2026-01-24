@@ -102,6 +102,22 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.18);
+  border-top-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .error {
   background-color: #fee;
   color: #c33;
@@ -236,4 +252,22 @@ button:disabled {
 
 .health-status.unknown {
   color: #856404;
+}
+
+/* Voice transcription processing indicator */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: rgba(0, 0, 0, 0.65);
+  border-radius: 50%;
+  animation: spinner-rotate 0.9s linear infinite;
+  vertical-align: middle;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }

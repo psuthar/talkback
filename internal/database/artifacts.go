@@ -8,21 +8,22 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-func (db *DB) CreateArtifact(ctx context.Context, title string, description *string) (*models.Artifact, error) {
+func (db *DB) CreateArtifact(ctx context.Context, sessionID uuid.UUID, title string, description *string) (*models.Artifact, error) {
 	artifact := &models.Artifact{
 		ID:          uuid.New(),
+		SessionID:   sessionID,
 		Title:       title,
 		Description: description,
 		Status:      models.StatusDraft,
 	}
 
 	query := `
-		INSERT INTO artifacts (id, title, description, status)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO artifacts (id, session_id, title, description, status)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING created_at, updated_at
 	`
 
-	err := db.Pool.QueryRow(ctx, query, artifact.ID, artifact.Title, artifact.Description, artifact.Status).
+	err := db.Pool.QueryRow(ctx, query, artifact.ID, artifact.SessionID, artifact.Title, artifact.Description, artifact.Status).
 		Scan(&artifact.CreatedAt, &artifact.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create artifact: %w", err)
@@ -34,13 +35,14 @@ func (db *DB) CreateArtifact(ctx context.Context, title string, description *str
 func (db *DB) GetArtifact(ctx context.Context, id uuid.UUID) (*models.Artifact, error) {
 	artifact := &models.Artifact{}
 	query := `
-		SELECT id, title, description, status, created_at, updated_at
+		SELECT id, session_id, title, description, status, created_at, updated_at
 		FROM artifacts
 		WHERE id = $1
 	`
 
 	err := db.Pool.QueryRow(ctx, query, id).Scan(
 		&artifact.ID,
+		&artifact.SessionID,
 		&artifact.Title,
 		&artifact.Description,
 		&artifact.Status,

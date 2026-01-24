@@ -22,9 +22,16 @@ type QAResponse struct {
 	Citations    []models.Citation `json:"citations"`
 }
 
+// PriorQAPair represents a previous question-answer pair from the session
+type PriorQAPair struct {
+	Question string
+	Answer   string
+}
+
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
+// priorQA is an optional list of previous question-answer pairs from the same session for context accumulation
 // Returns the QAResponse and the chunks that were used (for debugging)
-func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifactTitle string) (*QAResponse, []Chunk, error) {
+func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifactTitle string, priorQA []PriorQAPair) (*QAResponse, []Chunk, error) {
 	// Short-circuit: if no chunks retrieved, return not_covered without calling OpenAI
 	if len(chunks) == 0 {
 		return &QAResponse{
@@ -48,7 +55,7 @@ func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifa
 	// Build context from chunks with chunk_id
 	var contextBuilder strings.Builder
 	contextBuilder.WriteString("Context from artifact content:\n\n")
-	
+
 	for i, chunk := range chunks {
 		contextBuilder.WriteString(fmt.Sprintf("[Chunk %d: chunk_id=%s, source_type=%s]\n", i+1, chunk.ChunkID, chunk.SourceType))
 		if chunk.Locator != "" {
@@ -59,8 +66,25 @@ func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifa
 		contextBuilder.WriteString("\n\n")
 	}
 
+	// Build prior Q&A context if available (for session-aware responses)
+	var priorQASection strings.Builder
+	if len(priorQA) > 0 {
+		priorQASection.WriteString("\n\nPREVIOUS QUESTIONS AND ANSWERS IN THIS SESSION:\n")
+		priorQASection.WriteString("The following questions were asked earlier in this session. Use this context to:\n")
+		priorQASection.WriteString("- Understand follow-up questions (questions that reference or build upon earlier questions)\n")
+		priorQASection.WriteString("- Maintain conversational continuity\n")
+		priorQASection.WriteString("- Provide more coherent answers that reference earlier discussion\n\n")
+
+		for i, qa := range priorQA {
+			priorQASection.WriteString(fmt.Sprintf("Previous Question %d: %s\n", i+1, qa.Question))
+			priorQASection.WriteString(fmt.Sprintf("Previous Answer %d: %s\n\n", i+1, qa.Answer))
+		}
+
+		priorQASection.WriteString("If the current question is a follow-up or clarification related to earlier questions, incorporate the prior context while still grounding your answer in the provided context chunks.\n")
+	}
+
 	// Build system prompt with strict context-only instructions
-	systemPrompt := `You are a strict context-only assistant. You MUST answer questions using ONLY the provided context chunks. 
+	basePrompt := `You are a strict context-only assistant. You MUST answer questions using ONLY the provided context chunks.
 
 CRITICAL RULES:
 1. Answer STRICTLY from the provided context chunks. DO NOT use any external knowledge, general knowledge, or information not explicitly in the context.
@@ -69,8 +93,9 @@ CRITICAL RULES:
 4. Provide citations from the context (2-5 citations max). Each citation MUST reference a chunk_id from the provided context.
 5. Each citation must include: chunk_id (REQUIRED), source_type ("material" or "transcript"), source_id, locator (if available), and a short snippet (~200-300 chars) extracted from the chunk text.
 6. Set confidence between 0.0 and 1.0 based on how well the context answers the question. If confidence < 0.55, set answer_status="not_covered".
-7. If the answer is not fully supported by the context, set answer_status="not_covered".
+7. If the answer is not fully supported by the context, set answer_status="not_covered".`
 
+	jsonFormatSection := `
 You MUST respond in valid JSON format matching this exact structure:
 {
   "answer_status": "answered" | "not_covered" | "error",
@@ -89,17 +114,19 @@ You MUST respond in valid JSON format matching this exact structure:
 
 IMPORTANT: Do not include any text outside the JSON structure. Do not use markdown code blocks. Return ONLY the JSON object.`
 
+	systemPrompt := basePrompt + priorQASection.String() + jsonFormatSection
+
 	// Build user prompt with chunk IDs clearly listed
 	var chunkIDs []string
 	for _, chunk := range chunks {
 		chunkIDs = append(chunkIDs, chunk.ChunkID)
 	}
-	userPrompt := fmt.Sprintf("Artifact: %s\n\nQuestion: %s\n\nAvailable Context Chunks (chunk_id list: %s):\n%s\n\nAnswer the question using ONLY the context chunks above. If the answer is not in the context, respond with answer_status=\"not_covered\".", 
+	userPrompt := fmt.Sprintf("Artifact: %s\n\nQuestion: %s\n\nAvailable Context Chunks (chunk_id list: %s):\n%s\n\nAnswer the question using ONLY the context chunks above. If the answer is not in the context, respond with answer_status=\"not_covered\".",
 		artifactTitle, question, strings.Join(chunkIDs, ", "), contextBuilder.String())
 
 	// Create OpenAI client with API key
 	client := openai.NewClient(option.WithAPIKey(apiKey))
-	
+
 	params := openai.ChatCompletionNewParams{
 		Model: openai.ChatModelGPT4oMini,
 		Messages: []openai.ChatCompletionMessageParamUnion{
@@ -129,7 +156,7 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 
 	// Parse JSON response - handle potential markdown code blocks
 	content := strings.TrimSpace(response.Choices[0].Message.Content)
-	
+
 	// Remove markdown code blocks if present
 	if strings.HasPrefix(content, "```json") {
 		content = strings.TrimPrefix(content, "```json")
@@ -140,7 +167,7 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 		content = strings.TrimSuffix(content, "```")
 		content = strings.TrimSpace(content)
 	}
-	
+
 	var qaResponse QAResponse
 	if err := json.Unmarshal([]byte(content), &qaResponse); err != nil {
 		return &QAResponse{
@@ -150,20 +177,20 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 			Citations:    []models.Citation{},
 		}, chunks, fmt.Errorf("failed to parse JSON response: %w", err)
 	}
-	
+
 	// Validate answer_status
 	if qaResponse.AnswerStatus != "answered" && qaResponse.AnswerStatus != "not_covered" && qaResponse.AnswerStatus != "error" {
 		qaResponse.AnswerStatus = "error"
 		qaResponse.AnswerText = fmt.Sprintf("Invalid answer_status: %s", qaResponse.AnswerStatus)
 	}
-	
+
 	// Validate confidence range
 	if qaResponse.Confidence < 0.0 {
 		qaResponse.Confidence = 0.0
 	} else if qaResponse.Confidence > 1.0 {
 		qaResponse.Confidence = 1.0
 	}
-	
+
 	// Ensure all citations have chunk_id
 	for i := range qaResponse.Citations {
 		if qaResponse.Citations[i].ChunkID == "" {
@@ -224,9 +251,10 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 func ConvertQAResponseToAnswer(questionID uuid.UUID, qaResponse *QAResponse, model string) (*models.Answer, error) {
 
 	answerStatus := models.AnswerStatusAnswered
-	if qaResponse.AnswerStatus == "not_covered" {
+	switch qaResponse.AnswerStatus {
+	case "not_covered":
 		answerStatus = models.AnswerStatusNotCovered
-	} else if qaResponse.AnswerStatus == "error" {
+	case "error":
 		answerStatus = models.AnswerStatusError
 	}
 

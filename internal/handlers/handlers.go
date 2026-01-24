@@ -16,20 +16,30 @@ import (
 )
 
 type Handlers struct {
-	DB *database.DB
+	DB           *database.DB
+	JobProcessor *utils.JobProcessor
+	Hub          *SessionHub
 }
 
-func NewHandlers(db *database.DB) *Handlers {
-	return &Handlers{DB: db}
+func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor) *Handlers {
+	hub := NewSessionHub()
+	go hub.Run()
+	return &Handlers{
+		DB:           db,
+		JobProcessor: jobProcessor,
+		Hub:          hub,
+	}
 }
 
 type CreateArtifactRequest struct {
+	SessionID   string  `json:"session_id"` // Required: artifacts belong to sessions
 	Title       string  `json:"title"`
 	Description *string `json:"description,omitempty"`
 }
 
 type CreateArtifactResponse struct {
 	ID          string  `json:"id"`
+	SessionID   string  `json:"session_id"`
 	Title       string  `json:"title"`
 	Description *string `json:"description,omitempty"`
 	Status      string  `json:"status"`
@@ -47,12 +57,29 @@ func (h *Handlers) CreateArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.SessionID == "" {
+		http.Error(w, "session_id is required", http.StatusBadRequest)
+		return
+	}
 	if req.Title == "" {
 		http.Error(w, "Title is required", http.StatusBadRequest)
 		return
 	}
 
-	artifact, err := h.DB.CreateArtifact(r.Context(), req.Title, req.Description)
+	sessionID, err := uuid.Parse(req.SessionID)
+	if err != nil {
+		http.Error(w, "Invalid session_id", http.StatusBadRequest)
+		return
+	}
+
+	// Verify session exists
+	_, err = h.DB.GetSession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	artifact, err := h.DB.CreateArtifact(r.Context(), sessionID, req.Title, req.Description)
 	if err != nil {
 		log.Printf("Error creating artifact: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to create artifact: %v", err), http.StatusInternalServerError)
@@ -61,6 +88,7 @@ func (h *Handlers) CreateArtifact(w http.ResponseWriter, r *http.Request) {
 
 	response := CreateArtifactResponse{
 		ID:          artifact.ID.String(),
+		SessionID:   artifact.SessionID.String(),
 		Title:       artifact.Title,
 		Description: artifact.Description,
 		Status:      string(artifact.Status),
@@ -155,6 +183,13 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get artifact to retrieve session_id
+	artifact, err := h.DB.GetArtifact(r.Context(), artifactID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
+		return
+	}
+
 	// Parse multipart form
 	err = r.ParseMultipartForm(10 << 20) // 10 MB max
 	if err != nil {
@@ -205,27 +240,40 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	// Store file under ./data/uploads/{artifact_id}/...
 	storageURL := filepath.Join("data", "uploads", artifactID.String(), header.Filename)
 
-	// Extract text if content-type is text/plain
+	// Extract text (best-effort). We store only extracted text long-term.
 	textStatus := models.MaterialTextStatusPending
 	var extractedText *string
-	if contentType == "text/plain" {
-		// Read file content
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	switch {
+	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
 		content, err := os.ReadFile(filePath)
 		if err == nil {
 			text := string(content)
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady
+		} else {
+			textStatus = models.MaterialTextStatusFailed
+			log.Printf("Failed to read text file %s: %v", header.Filename, err)
 		}
-	} else if contentType == "application/pdf" {
-		// PDF extraction is TODO - set status to failed for now
-		textStatus = models.MaterialTextStatusFailed
-		log.Printf("PDF text extraction not yet implemented for file: %s", header.Filename)
+	case contentType == "application/pdf" || ext == ".pdf":
+		text, err := utils.ExtractTextFromFile(filePath)
+		if err != nil {
+			textStatus = models.MaterialTextStatusFailed
+			log.Printf("PDF text extraction failed for file %s: %v", header.Filename, err)
+		} else if strings.TrimSpace(text) == "" {
+			textStatus = models.MaterialTextStatusFailed
+			log.Printf("PDF text extraction produced empty text for file %s", header.Filename)
+		} else {
+			extractedText = &text
+			textStatus = models.MaterialTextStatusReady
+		}
 	}
 
 	// Create material record
 	material := &models.Material{
 		ID:            uuid.New(),
 		ArtifactID:    artifactID,
+		SessionID:     artifact.SessionID,
 		Kind:          kind,
 		Filename:      header.Filename,
 		ContentType:   contentType,
@@ -247,8 +295,14 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 }
 
 type AttachVideoURLRequest struct {
-	Provider string `json:"provider"`
-	VideoURL string `json:"video_url"`
+	Provider        string  `json:"provider"`
+	VideoURL        string  `json:"video_url"`     // Deprecated: backward compatibility
+	PlaybackMode    string  `json:"playback_mode"` // 'embed' or 'direct'
+	EmbedURL        string  `json:"embed_url"`     // For embed mode
+	MediaURL        string  `json:"media_url"`     // For direct mode (MP4/WebM)
+	PosterURL       string  `json:"poster_url"`    // Optional poster image
+	DurationSeconds *int    `json:"duration_seconds,omitempty"`
+	LoomPassword    *string `json:"loom_password,omitempty"` // Optional password for password-protected Loom videos
 }
 
 func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
@@ -270,14 +324,48 @@ func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get artifact to retrieve session_id
+	artifact, err := h.DB.GetArtifact(r.Context(), artifactID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
+		return
+	}
+
 	var req AttachVideoURLRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if req.VideoURL == "" {
-		http.Error(w, "video_url is required", http.StatusBadRequest)
+	// Determine playback mode and validate
+	playbackMode := req.PlaybackMode
+	if playbackMode == "" {
+		// Backward compatibility: if video_url is provided, treat as embed
+		if req.VideoURL != "" {
+			playbackMode = "embed"
+			req.EmbedURL = req.VideoURL
+		} else {
+			playbackMode = "embed" // Default
+		}
+	}
+
+	// Validate based on playback mode
+	switch playbackMode {
+	case "embed":
+		if req.EmbedURL == "" && req.VideoURL == "" {
+			http.Error(w, "embed_url is required for embed playback mode", http.StatusBadRequest)
+			return
+		}
+		if req.EmbedURL == "" {
+			req.EmbedURL = req.VideoURL // Backward compatibility
+		}
+	case "direct":
+		if req.MediaURL == "" {
+			http.Error(w, "media_url is required for direct playback mode", http.StatusBadRequest)
+			return
+		}
+	default:
+		http.Error(w, "playback_mode must be 'embed' or 'direct'", http.StatusBadRequest)
 		return
 	}
 
@@ -285,11 +373,42 @@ func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
 		req.Provider = "other"
 	}
 
+	// Set video_url for backward compatibility (use embed_url or media_url)
+	videoURL := req.VideoURL
+	if videoURL == "" {
+		if playbackMode == "embed" {
+			videoURL = req.EmbedURL
+		} else {
+			videoURL = req.MediaURL
+		}
+	}
+
+	var embedURLPtr *string
+	if req.EmbedURL != "" {
+		embedURLPtr = &req.EmbedURL
+	}
+
+	var mediaURLPtr *string
+	if req.MediaURL != "" {
+		mediaURLPtr = &req.MediaURL
+	}
+
+	var posterURLPtr *string
+	if req.PosterURL != "" {
+		posterURLPtr = &req.PosterURL
+	}
+
 	videoSource := &models.VideoSource{
 		ID:               uuid.New(),
 		ArtifactID:       artifactID,
+		SessionID:        artifact.SessionID,
 		Provider:         req.Provider,
-		VideoURL:         req.VideoURL,
+		VideoURL:         videoURL, // Keep for backward compatibility
+		PlaybackMode:     playbackMode,
+		EmbedURL:         embedURLPtr,
+		MediaURL:         mediaURLPtr,
+		DurationSeconds:  req.DurationSeconds,
+		PosterURL:        posterURLPtr,
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 
@@ -297,6 +416,57 @@ func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating video source: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to attach video URL: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Auto-transcribe Loom videos using Whisper
+	// First try Loom API if available (faster), otherwise use Whisper
+	if req.Provider == "loom" {
+		loomURL := videoURL
+		if req.EmbedURL != "" {
+			loomURL = req.EmbedURL
+		}
+
+		// Try Loom API first if available (faster)
+		if utils.CanFetchLoomTranscript() {
+			log.Printf("Attempting to fetch transcript from Loom API for video: %s", loomURL)
+			transcript, err := utils.FetchLoomTranscript(r.Context(), loomURL)
+			if err == nil && transcript != "" {
+				// Successfully fetched from Loom API - save directly
+				if err := h.DB.UpdateVideoSourceTranscript(r.Context(), videoSource.ID, transcript); err != nil {
+					log.Printf("Failed to save transcript from Loom API: %v", err)
+				} else {
+					log.Printf("Successfully fetched and saved transcript from Loom API")
+					h.DB.UpdateVideoSourceTranscriptionSource(r.Context(), videoSource.ID, "loom_api")
+					// Fetch updated video source to include transcript in response
+					updatedVideoSource, err := h.DB.GetVideoSourceByID(r.Context(), videoSource.ID)
+					if err == nil {
+						videoSource = updatedVideoSource
+					}
+				}
+			} else {
+				log.Printf("Loom API transcript fetch failed or unavailable, will try Whisper auto-transcription")
+			}
+		}
+
+		// Enqueue Whisper-based auto-transcription job (if not already completed via Loom API)
+		if videoSource.TranscriptStatus == models.VideoTranscriptStatusMissing {
+			if h.JobProcessor != nil {
+				log.Printf("Enqueueing Whisper auto-transcription job for Loom video: %s", loomURL)
+				if err := utils.ProcessTranscriptJob(r.Context(), h.DB, videoSource.ID, artifact.SessionID, loomURL, req.LoomPassword, h.JobProcessor); err != nil {
+					log.Printf("Failed to enqueue transcript job (non-fatal): %v", err)
+					// Don't fail the request - transcript can be added manually later
+				} else {
+					log.Printf("Transcript job enqueued successfully")
+					// Set status to pending to indicate transcription is in progress
+					videoSource.TranscriptStatus = models.VideoTranscriptStatusPending
+					// Enable auto-transcribe flag
+					videoSource.AutoTranscribeEnabled = true
+					// Note: We don't update the DB here because the job will update it when it starts
+				}
+			} else {
+				log.Printf("Job processor not available - cannot auto-transcribe")
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -373,7 +543,8 @@ func (h *Handlers) UploadTranscript(w http.ResponseWriter, r *http.Request) {
 // Phase 2: Q&A Handlers
 
 type AskQuestionRequest struct {
-	QuestionText string `json:"question_text"`
+	QuestionText     string `json:"question_text"`
+	VideoTimeSeconds *int   `json:"video_time_seconds,omitempty"`
 }
 
 type AskQuestionResponse struct {
@@ -420,7 +591,7 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing question with same text (repeat-question caching)
-	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), artifactID, req.QuestionText)
+	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), artifact.SessionID, req.QuestionText)
 	if err != nil {
 		log.Printf("Error checking for existing question: %v", err)
 		// Continue with new question creation on error
@@ -439,10 +610,12 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 
 	// Create new question
 	question := &models.Question{
-		ID:             uuid.New(),
-		ArtifactID:     artifactID,
-		QuestionText:   req.QuestionText,
-		QuestionSource: models.QuestionSourceText,
+		ID:               uuid.New(),
+		ArtifactID:       artifactID,
+		SessionID:        artifact.SessionID,
+		QuestionText:     req.QuestionText,
+		QuestionSource:   models.QuestionSourceText,
+		VideoTimeSeconds: req.VideoTimeSeconds, // Include timestamp if provided
 	}
 
 	if err := h.DB.CreateQuestion(r.Context(), question); err != nil {
@@ -451,14 +624,23 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve materials and video source for RAG
-	materials, err := h.DB.GetMaterialsByArtifactID(r.Context(), artifactID)
+	// Retrieve materials and video sources for RAG (from session)
+	materials, err := h.DB.GetMaterialsBySessionID(r.Context(), artifact.SessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		materials = []*models.Material{}
 	}
 
-	videoSource, err := h.DB.GetVideoSourceByArtifactID(r.Context(), artifactID)
+	videoSources, err := h.DB.GetVideoSourcesBySessionID(r.Context(), artifact.SessionID)
+	if err != nil {
+		log.Printf("Warning: Failed to get video sources: %v", err)
+		videoSources = []*models.VideoSource{}
+	}
+
+	var videoSource *models.VideoSource
+	if len(videoSources) > 0 {
+		videoSource = videoSources[0]
+	}
 	if err != nil {
 		log.Printf("Warning: Failed to get video source: %v", err)
 		videoSource = nil
@@ -467,8 +649,36 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 	// Perform retrieval
 	chunks := utils.RetrieveChunks(req.QuestionText, materials, videoSource, 5)
 
-	// Generate answer using LLM
-	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title)
+	// Get prior questions and answers from this session for context accumulation
+	priorQuestions, priorAnswers, err := h.DB.GetQuestionsBySessionID(r.Context(), artifact.SessionID, 10)
+	if err != nil {
+		log.Printf("Warning: Failed to get prior questions for context: %v", err)
+		priorQuestions = []*models.Question{}
+		priorAnswers = []*models.Answer{}
+	}
+
+	// Build prior Q&A pairs (excluding the current question we just created)
+	priorQA := make([]utils.PriorQAPair, 0, len(priorQuestions))
+	answerMap := make(map[uuid.UUID]*models.Answer)
+	for _, answer := range priorAnswers {
+		answerMap[answer.QuestionID] = answer
+	}
+
+	for _, priorQuestion := range priorQuestions {
+		// Skip the current question (it won't have an answer yet, but be safe)
+		if priorQuestion.ID == question.ID {
+			continue
+		}
+		if priorAnswer, exists := answerMap[priorQuestion.ID]; exists && priorAnswer != nil {
+			priorQA = append(priorQA, utils.PriorQAPair{
+				Question: priorQuestion.QuestionText,
+				Answer:   priorAnswer.AnswerText,
+			})
+		}
+	}
+
+	// Generate answer using LLM with prior Q&A context
+	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, priorQA)
 	if err != nil {
 		log.Printf("Error generating answer: %v", err)
 		// Still create an error answer
@@ -529,19 +739,14 @@ func (h *Handlers) GetQuestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify artifact exists
-	_, err = h.DB.GetArtifact(r.Context(), artifactID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Get questions with answers
+	// Get questions with answers (allow non-existent artifacts to return empty lists)
 	questions, answers, err := h.DB.GetQuestionsByArtifactID(r.Context(), artifactID, 20)
 	if err != nil {
-		log.Printf("Error getting questions: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to get questions: %v", err), http.StatusInternalServerError)
-		return
+		// If artifact doesn't exist, return empty lists instead of error
+		// This allows the endpoint to return 200 with empty data for non-existent artifacts
+		log.Printf("Warning: Failed to get questions for artifact %s: %v", artifactID, err)
+		questions = []*models.Question{}
+		answers = []*models.Answer{}
 	}
 
 	response := GetQuestionsResponse{
@@ -552,6 +757,146 @@ func (h *Handlers) GetQuestions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// GetTranscriptJob retrieves transcript job status for a video source
+func (h *Handlers) GetTranscriptJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract artifact ID and video ID from URL path (e.g., /artifacts/{id}/video/{video_id}/transcript-job)
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 5 || pathParts[0] != "artifacts" || pathParts[2] != "video" || pathParts[4] != "transcript-job" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+
+	videoID, err := uuid.Parse(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid video ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get video source to check transcription_job_id
+	videoSource, err := h.DB.GetVideoSourceByID(r.Context(), videoID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Video source not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// If no job ID, return status indicating no job
+	if videoSource.TranscriptionJobID == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"video_source_id": videoSource.ID.String(),
+			"job":             nil,
+			"status":          "no_job",
+			"message":         "No transcription job found for this video",
+		})
+		return
+	}
+
+	// Get the job
+	job, err := h.DB.GetTranscriptJob(r.Context(), *videoSource.TranscriptionJobID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Transcript job not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"video_source_id": videoSource.ID.String(),
+		"job":             job,
+		"status":          string(job.Status),
+	})
+}
+
+// RegenerateTranscript triggers a new transcription job for a video source
+func (h *Handlers) RegenerateTranscript(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Extract artifact ID and video ID from URL path
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 6 || pathParts[0] != "artifacts" || pathParts[2] != "video" || pathParts[4] != "transcript-job" || pathParts[5] != "regenerate" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+
+	videoID, err := uuid.Parse(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid video ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get video source
+	videoSource, err := h.DB.GetVideoSourceByID(r.Context(), videoID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Video source not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Only allow regeneration for Loom videos
+	if videoSource.Provider != "loom" {
+		http.Error(w, "Regeneration only supported for Loom videos", http.StatusBadRequest)
+		return
+	}
+
+	// Get artifact to retrieve session_id
+	artifact, err := h.DB.GetArtifact(r.Context(), videoSource.ArtifactID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get Loom URL (prefer embed_url, fallback to video_url)
+	loomURL := videoSource.VideoURL
+	if videoSource.EmbedURL != nil && *videoSource.EmbedURL != "" {
+		loomURL = *videoSource.EmbedURL
+	}
+
+	if loomURL == "" {
+		http.Error(w, "No Loom URL found for this video source", http.StatusBadRequest)
+		return
+	}
+
+	// Enqueue new transcription job
+	if h.JobProcessor == nil {
+		http.Error(w, "Job processor not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Get password from existing job if available, otherwise use nil
+	var password *string
+	if videoSource.TranscriptionJobID != nil {
+		existingJob, err := h.DB.GetTranscriptJob(r.Context(), *videoSource.TranscriptionJobID)
+		if err == nil && existingJob != nil && existingJob.LoomPassword != nil {
+			password = existingJob.LoomPassword
+		}
+	}
+
+	if err := utils.ProcessTranscriptJob(r.Context(), h.DB, videoSource.ID, artifact.SessionID, loomURL, password, h.JobProcessor); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to enqueue transcript job: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Update video source status to pending
+	if err := h.DB.UpdateVideoSourceTranscriptStatus(r.Context(), videoSource.ID, models.VideoTranscriptStatusPending); err != nil {
+		log.Printf("Warning: Failed to update video source status: %v", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status":  "accepted",
+		"message": "Transcription job queued successfully",
+	})
 }
 
 // Ingestion functionality removed for Phase 1

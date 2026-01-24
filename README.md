@@ -144,12 +144,38 @@ curl -X POST http://localhost:8080/artifacts/{id}/video/{video_id}/transcript \
 
 #### Video Sources
 - `POST /artifacts/{id}/video` - Attach a video URL
+
+  **Embed Mode (Loom/Zoom):**
   ```json
   {
     "provider": "loom|zoom|other",
-    "video_url": "https://..."
+    "playback_mode": "embed",
+    "embed_url": "https://www.loom.com/share/..."
   }
   ```
+  Or use backward-compatible format:
+  ```json
+  {
+    "provider": "loom",
+    "video_url": "https://www.loom.com/share/..."
+  }
+  ```
+
+  **Direct Mode (MP4/WebM):**
+  ```json
+  {
+    "provider": "other",
+    "playback_mode": "direct",
+    "media_url": "https://example.com/video.mp4",
+    "poster_url": "https://example.com/poster.jpg",
+    "duration_seconds": 1234
+  }
+  ```
+
+  **Playback Modes:**
+  - `embed`: Uses iframe for Loom/Zoom embeds (limited control, convenience)
+  - `direct`: Uses HTML5 `<video>` for MP4/WebM (full control, play/pause/seek events)
+
   Returns: `201 Created` with video_source record JSON
 
 - `POST /artifacts/{id}/video/{video_id}/transcript` - Upload transcript text
@@ -165,9 +191,11 @@ curl -X POST http://localhost:8080/artifacts/{id}/video/{video_id}/transcript \
 - `POST /artifacts/{id}/questions` - Ask a question about the artifact
   ```json
   {
-    "question_text": "What is the main topic discussed?"
+    "question_text": "What is the main topic discussed?",
+    "video_time_seconds": 120
   }
   ```
+  Optional `video_time_seconds` field stores the playback timestamp when the question was asked (useful for direct playback mode).
   Returns: `201 Created` with question and answer JSON
   - Uses RAG (Retrieval-Augmented Generation) over `materials.extracted_text` and `video_sources.transcript_text`
   - Returns `answer_status`: "answered", "not_covered", or "error"
@@ -184,10 +212,98 @@ curl -X POST http://localhost:8080/artifacts/{id}/video/{video_id}/transcript \
   ```
   Returns up to 20 most recent questions for the artifact, each with its latest answer.
 
+#### Phase 3: Sessions
+
+Sessions provide a virtual meeting context around an artifact, allowing multiple participants to collaborate, track playback progress, and ask session-scoped questions.
+
+**Key Concepts:**
+- **Artifact**: The base content (video + materials + transcript)
+- **Session**: A virtual meeting context around an artifact. One artifact can have multiple sessions.
+- **Participant**: A user in a session (identified by `participant_ref`, e.g., "anonymous" for now)
+- **Events**: Playback and interaction events (play, pause, seek, join, leave, question)
+
+**Session Endpoints:**
+
+- `POST /artifacts/{artifact_id}/sessions` - Create a new session
+  ```json
+  {
+    "title": "Weekly review - Jan 2026",
+    "created_by": "Paresh"
+  }
+  ```
+  Returns: `201 Created` with session JSON
+
+- `GET /artifacts/{artifact_id}/sessions` - List all sessions for an artifact
+  Returns: `200 OK` with array of sessions
+
+- `GET /sessions/{session_id}` - Get session details with artifact context
+  Returns: `200 OK` with session, artifact, materials, video sources, and recent questions
+
+- `POST /sessions/{session_id}/participants` - Join a session (or update heartbeat)
+  ```json
+  {
+    "participant_ref": "anonymous"
+  }
+  ```
+  Returns: `200 OK` with participant record (upserts if already exists)
+
+- `POST /sessions/{session_id}/events` - Record a session event
+  ```json
+  {
+    "participant_ref": "anonymous",
+    "event_type": "play|pause|seek|join|leave|question",
+    "video_time_seconds": 120,
+    "payload": {}
+  }
+  ```
+  Returns: `201 Created` with event JSON
+
+- `POST /sessions/{session_id}/questions` - Ask a question in session context
+  ```json
+  {
+    "question_text": "What was discussed at the 5-minute mark?"
+  }
+  ```
+  Returns: `201 Created` with question and answer (uses same RAG pipeline as artifact-level Q&A)
+  - Questions are scoped to the session (stored with `session_id`)
+  - Uses the same RAG/LLM pipeline as artifact-level questions
+
+- `GET /sessions/{session_id}/questions` - Get questions for a session
+  Returns: `200 OK` with questions and answers array (up to 20 most recent)
+
+**Session vs Artifact Q&A:**
+- Artifact-level questions (`POST /artifacts/{id}/questions`) are global to the artifact
+- Session-level questions (`POST /sessions/{id}/questions`) are scoped to a specific session
+- Both use the same RAG pipeline and retrieval logic
+- Session questions include `session_id` for filtering and context
+
 ### Environment Variables
 
 **RAG Debug Mode:**
 - `RAG_DEBUG=true` - Enables detailed logging of retrieved chunks and scores for debugging RAG retrieval
+
+**Loom Transcript Auto-Fetch:**
+- `LOOM_API_KEY=your_loom_api_key_here` - (Optional) If set, attempts to fetch transcripts from Loom API when attaching Loom videos
+  - When a Loom video is attached and `LOOM_API_KEY` is set, the system will attempt to fetch the transcript automatically
+  - If fetching succeeds, the transcript is saved and `transcript_status` is set to `ready`
+  - If fetching fails (API error, transcript not available, etc.), `transcript_status` remains `missing` or `pending`, and the transcript can be added manually later
+  - **Note:** The Loom API endpoint structure may need to be adjusted based on Loom's actual API documentation. See `internal/utils/loom_transcript.go` for implementation details.
+
+### Auto-Transcription Limitations
+
+**Loom Video Auto-Transcription:**
+- Auto-transcription of Loom videos requires a downloadable media URL
+- Many Loom videos (especially private videos) use streaming protocols (HLS/DASH) and don't expose direct downloadable URLs
+- For videos that can't be auto-transcribed, you can manually upload transcripts via the API or UI
+- If you encounter "unable to resolve downloadable media URL" errors, the video likely requires:
+  1. Loom API authentication (set `LOOM_API_KEY` if available)
+  2. Manual transcript upload
+  3. Or the video may use streaming protocols that aren't directly downloadable
+
+**Workarounds:**
+- For videos that fail auto-transcription, use the manual transcript upload feature
+- Check if Loom provides an official API for downloading video files or transcripts
+- Consider using video download tools (like `yt-dlp`) if you need to extract audio for transcription
 
 ### Database Schema
 
@@ -218,6 +334,38 @@ curl -X POST http://localhost:8080/artifacts/{id}/video/{video_id}/transcript \
 - `transcript_status` TEXT NOT NULL DEFAULT 'missing' (missing, pending, ready, failed)
 - `transcript_text` TEXT
 - `created_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+
+**sessions (Phase 3):**
+- `id` UUID (primary key)
+- `title` TEXT NOT NULL
+- `created_by` TEXT
+- `status` TEXT NOT NULL DEFAULT 'open' (open, closed)
+- `created_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+- `updated_at` TIMESTAMPTZ NOT NULL DEFAULT now() (auto-updated via trigger)
+- Note: **Artifacts belong to sessions** (artifacts.session_id → sessions.id), not the other way around
+
+**session_participants (Phase 3):**
+- `id` UUID (primary key)
+- `session_id` UUID NOT NULL (foreign key → sessions)
+- `participant_ref` TEXT NOT NULL
+- `joined_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+- `last_seen_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+- `watch_progress` REAL NOT NULL DEFAULT 0 (0.0-1.0)
+- UNIQUE(session_id, participant_ref)
+
+**session_events (Phase 3):**
+- `id` UUID (primary key)
+- `session_id` UUID NOT NULL (foreign key → sessions)
+- `participant_ref` TEXT
+- `event_type` TEXT NOT NULL (join, leave, play, pause, seek, question)
+- `video_time_seconds` INT
+- `payload` JSONB NOT NULL DEFAULT '{}'::jsonb
+- `created_at` TIMESTAMPTZ NOT NULL DEFAULT now()
+
+**questions (updated in Phase 3):**
+- `session_id` UUID NOT NULL (foreign key → sessions, required in Phase 3)
+- `video_time_seconds` INT NULL (timestamp when question was asked during playback, added in Phase 3)
+- All other fields remain the same
 
 ### Stopping Services
 
@@ -256,6 +404,10 @@ go test ./...
 **Troubleshooting:**
 - **Connection errors**: Ensure Postgres is running and `DATABASE_URL` is set
 - **Port 8080 in use**: Use `.\scripts\kill-port.ps1` or change port in launch.json to 8081
+- **Docker API version mismatch (500 Internal Server Error)**: 
+  - Restart Docker Desktop: Right-click system tray icon → "Restart" or "Quit" then start again
+  - Or run: `.\scripts\fix-docker-api.ps1`
+  - This syncs the Docker CLI and Docker Desktop API versions
 
 **Test Structure:**
 - Database tests: `internal/database/*_test.go`

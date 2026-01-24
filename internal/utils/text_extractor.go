@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	pdf "github.com/ledongthuc/pdf"
 )
 
 func ExtractTextFromFile(filePath string) (string, error) {
@@ -31,9 +33,28 @@ func extractTextFile(filePath string) (string, error) {
 }
 
 func extractPDF(filePath string) (string, error) {
-	// For now, return a placeholder. In production, use a PDF library like gofpdf or pdfcpu
-	// For minimal implementation, we'll just read as text and hope it works
-	return extractTextFile(filePath)
+	f, r, err := pdf.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open pdf: %w", err)
+	}
+	defer f.Close()
+
+	reader, err := r.GetPlainText()
+	if err != nil {
+		return "", fmt.Errorf("failed to extract pdf text: %w", err)
+	}
+
+	b, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to read extracted pdf text: %w", err)
+	}
+
+	text := strings.TrimSpace(string(b))
+	if text == "" {
+		return "", fmt.Errorf("pdf text extraction produced empty text")
+	}
+
+	return text, nil
 }
 
 func ChunkText(text string, chunkSize int, overlap int) []string {

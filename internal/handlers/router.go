@@ -14,6 +14,16 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 1 {
+		// /artifacts - POST (create artifact, requires session_id in body)
+		if r.Method == http.MethodPost {
+			h.CreateArtifact(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	if len(parts) == 2 {
 		// /artifacts/{id} - GET
 		if r.Method == http.MethodGet {
@@ -60,8 +70,160 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// /artifacts/{id}/video/{video_id}/transcript-job
+		if parts[2] == "video" && parts[4] == "transcript-job" {
+			if r.Method == http.MethodGet {
+				h.GetTranscriptJob(w, r)
+				return
+			}
+		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+
+	if len(parts) == 6 {
+		// /artifacts/{id}/video/{video_id}/transcript-job/regenerate
+		if parts[2] == "video" && parts[4] == "transcript-job" && parts[5] == "regenerate" {
+			if r.Method == http.MethodPost {
+				h.RegenerateTranscript(w, r)
+				return
+			}
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	http.Error(w, "Invalid path", http.StatusNotFound)
+}
+
+// SessionsRouter handles session-related routes
+func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+
+	// Check if path starts with "sessions"
+	if len(parts) == 0 || parts[0] != "sessions" {
+		http.Error(w, "Invalid path", http.StatusNotFound)
+		return
+	}
+
+	if len(parts) == 1 {
+		// /sessions - POST (create session)
+		if r.Method == http.MethodPost {
+			h.CreateSession(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if len(parts) == 2 {
+		// /sessions/{id} - GET
+		if r.Method == http.MethodGet {
+			h.GetSession(w, r)
+			return
+		}
+		// /sessions/{id} - PATCH/PUT for updating status (close session)
+		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			h.UpdateSessionStatus(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if len(parts) == 3 {
+		action := parts[2]
+
+		switch action {
+		case "artifacts":
+			// /sessions/{id}/artifacts - GET (list artifacts in session)
+			if r.Method == http.MethodGet {
+				h.GetArtifactsBySession(w, r)
+				return
+			}
+		case "participants":
+			if r.Method == http.MethodPost {
+				h.JoinSessionParticipant(w, r)
+				return
+			}
+		case "events":
+			if r.Method == http.MethodPost {
+				h.CreateSessionEvent(w, r)
+				return
+			}
+		case "questions":
+			if r.Method == http.MethodPost {
+				h.AskSessionQuestion(w, r)
+				return
+			}
+			if r.Method == http.MethodGet {
+				h.GetSessionQuestions(w, r)
+				return
+			}
+		case "timeline":
+			// /sessions/{id}/timeline - GET (session timeline)
+			if r.Method == http.MethodGet {
+				h.GetSessionTimeline(w, r)
+				return
+			}
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if len(parts) == 4 {
+		// /sessions/{id}/questions/voice - POST (transcribe voice to text)
+		if parts[2] == "questions" && parts[3] == "voice" {
+			if r.Method == http.MethodPost {
+				h.TranscribeSessionQuestionVoice(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/questions/mock - POST (create mock question for testing)
+		if parts[2] == "questions" && parts[3] == "mock" {
+			if r.Method == http.MethodPost {
+				h.CreateMockQuestion(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
+	if len(parts) == 5 {
+		// /sessions/{id}/questions/{question_id}/answers - POST (create answer)
+		if parts[2] == "questions" && parts[4] == "answers" {
+			if r.Method == http.MethodPost {
+				h.CreateSessionAnswer(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/answers/{answer_id}/confirm - PATCH/PUT (update answer confirmation)
+		if parts[2] == "answers" && parts[4] == "confirm" {
+			if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+				h.UpdateAnswerConfirmed(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
+	if len(parts) == 6 {
+		// /sessions/{id}/questions/{question_id}/answers/voice - POST (transcribe answer voice)
+		if parts[2] == "questions" && parts[4] == "answers" && parts[5] == "voice" {
+			if r.Method == http.MethodPost {
+				h.TranscribeSessionAnswerVoice(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
 	http.Error(w, "Invalid path", http.StatusNotFound)

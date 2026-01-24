@@ -57,11 +57,16 @@ func RetrieveChunks(question string, materials []*models.Material, videoSource *
 			chunks := chunkText(text, 1000, 200)
 			for i, chunk := range chunks {
 				chunkID := fmt.Sprintf("vid_%s_%d", videoSource.ID.String(), i)
+				
+				// Extract timestamp from chunk if available
+				// Common formats: [00:12:34], [12:34], (00:12:34), (12:34), 00:12:34, 12:34
+				locator := extractTimestampFromChunk(chunk)
+				
 				allChunks = append(allChunks, Chunk{
 					ChunkID:    chunkID,
 					SourceType: "transcript",
 					SourceID:   videoSource.ID.String(),
-					Locator:    "", // Could add timestamp parsing later
+					Locator:    locator,
 					Text:       chunk,
 				})
 			}
@@ -231,3 +236,89 @@ func tokenize(text string) []string {
 	return result
 }
 
+// extractTimestampFromChunk attempts to extract a timestamp from a transcript chunk
+// Supports common formats: [00:12:34], [12:34], (00:12:34), (12:34), 00:12:34, 12:34
+// Returns the first timestamp found, or empty string if none found
+func extractTimestampFromChunk(chunk string) string {
+	// Try to find timestamp patterns at the beginning of the chunk
+	// Pattern 1: [HH:MM:SS] or [MM:SS]
+	// Pattern 2: (HH:MM:SS) or (MM:SS)
+	// Pattern 3: HH:MM:SS or MM:SS at start of line
+	
+	// Look for [timestamp] format
+	startIdx := strings.Index(chunk, "[")
+	if startIdx >= 0 && startIdx < 100 { // Only check first 100 chars
+		endIdx := strings.Index(chunk[startIdx:], "]")
+		if endIdx > 0 {
+			timestamp := chunk[startIdx+1 : startIdx+endIdx]
+			if isValidTimestamp(timestamp) {
+				return "[" + timestamp + "]"
+			}
+		}
+	}
+	
+	// Look for (timestamp) format
+	startIdx = strings.Index(chunk, "(")
+	if startIdx >= 0 && startIdx < 100 {
+		endIdx := strings.Index(chunk[startIdx:], ")")
+		if endIdx > 0 {
+			timestamp := chunk[startIdx+1 : startIdx+endIdx]
+			if isValidTimestamp(timestamp) {
+				return "(" + timestamp + ")"
+			}
+		}
+	}
+	
+	// Look for bare timestamp at start of line (HH:MM:SS or MM:SS)
+	lines := strings.SplitN(chunk, "\n", 2)
+	if len(lines) > 0 {
+		firstLine := strings.TrimSpace(lines[0])
+		// Check if it starts with a timestamp pattern
+		parts := strings.Split(firstLine, " ")
+		if len(parts) > 0 {
+			timestamp := strings.TrimSpace(parts[0])
+			if isValidTimestamp(timestamp) {
+				return timestamp
+			}
+		}
+	}
+	
+	return ""
+}
+
+// isValidTimestamp checks if a string matches common timestamp formats
+// Supports: HH:MM:SS, MM:SS, H:MM:SS, M:SS
+func isValidTimestamp(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return false
+	}
+	
+	// All parts should be numeric
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > 2 {
+			return false
+		}
+		for _, r := range part {
+			if !unicode.IsDigit(r) {
+				return false
+			}
+		}
+	}
+	
+	// Basic validation: seconds should be 0-59, minutes 0-59, hours reasonable
+	if len(parts) >= 2 {
+		var minutes int
+		_, err := fmt.Sscanf(parts[len(parts)-2], "%d", &minutes)
+		if err != nil || minutes < 0 || minutes > 59 {
+			return false
+		}
+	}
+	
+	return true
+}

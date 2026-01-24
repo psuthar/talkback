@@ -18,8 +18,9 @@ func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	// Create an artifact
-	artifact, err := db.CreateArtifact(ctx, "Test Artifact", nil)
+	// Create a session and artifact
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
 	if err != nil {
 		t.Fatalf("Failed to create artifact: %v", err)
 	}
@@ -30,6 +31,7 @@ func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
 	material := &models.Material{
 		ID:            materialID,
 		ArtifactID:    artifactID,
+		SessionID:     session.ID,
 		Kind:          string(models.MaterialKindDocument),
 		Filename:      "test.txt",
 		ContentType:   "text/plain",
@@ -44,7 +46,10 @@ func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
 	questionText := "What is this about?"
 
 	// First question - should call LLM
-	req1 := AskQuestionRequest{QuestionText: questionText}
+	req1 := AskQuestionRequest{
+		QuestionText: questionText,
+		VideoTimeSeconds: nil, // No timestamp
+	}
 	body1, _ := json.Marshal(req1)
 	req1_http := httptest.NewRequest("POST", "/artifacts/"+artifactID.String()+"/questions", bytes.NewReader(body1))
 	req1_http.Header.Set("Content-Type", "application/json")
@@ -69,7 +74,10 @@ func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
 	firstAnswerID := response1.Answer.ID
 
 	// Second question with same text - should return cached answer
-	req2 := AskQuestionRequest{QuestionText: questionText}
+	req2 := AskQuestionRequest{
+		QuestionText: questionText,
+		VideoTimeSeconds: nil,
+	}
 	body2, _ := json.Marshal(req2)
 	req2_http := httptest.NewRequest("POST", "/artifacts/"+artifactID.String()+"/questions", bytes.NewReader(body2))
 	req2_http.Header.Set("Content-Type", "application/json")
@@ -101,8 +109,9 @@ func TestAskQuestion_NotCovered_NoContent(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	// Create an artifact with no materials or transcripts
-	artifact, err := db.CreateArtifact(ctx, "Empty Artifact", nil)
+	// Create a session and artifact with no materials or transcripts
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Empty Artifact", nil)
 	if err != nil {
 		t.Fatalf("Failed to create artifact: %v", err)
 	}
@@ -145,8 +154,9 @@ func TestAskQuestion_NotCovered_UnrelatedQuestion(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	// Create an artifact with content
-	artifact, err := db.CreateArtifact(ctx, "Test Artifact", nil)
+	// Create a session and artifact with content
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
 	if err != nil {
 		t.Fatalf("Failed to create artifact: %v", err)
 	}
@@ -157,6 +167,7 @@ func TestAskQuestion_NotCovered_UnrelatedQuestion(t *testing.T) {
 	material := &models.Material{
 		ID:            materialID,
 		ArtifactID:    artifactID,
+		SessionID:     session.ID,
 		Kind:          string(models.MaterialKindDocument),
 		Filename:      "test.txt",
 		ContentType:   "text/plain",
@@ -169,7 +180,10 @@ func TestAskQuestion_NotCovered_UnrelatedQuestion(t *testing.T) {
 	}
 
 	// Ask a question that's not in the content
-	req := AskQuestionRequest{QuestionText: "What is the weather like today?"}
+	req := AskQuestionRequest{
+		QuestionText: "What is the weather like today?",
+		VideoTimeSeconds: nil,
+	}
 	body, _ := json.Marshal(req)
 	req_http := httptest.NewRequest("POST", "/artifacts/"+artifactID.String()+"/questions", bytes.NewReader(body))
 	req_http.Header.Set("Content-Type", "application/json")
@@ -208,8 +222,9 @@ func TestAskQuestion_Citations_Valid(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	// Create an artifact with content
-	artifact, err := db.CreateArtifact(ctx, "Test Artifact", nil)
+	// Create a session and artifact with content
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
 	if err != nil {
 		t.Fatalf("Failed to create artifact: %v", err)
 	}
@@ -220,6 +235,7 @@ func TestAskQuestion_Citations_Valid(t *testing.T) {
 	material := &models.Material{
 		ID:            materialID,
 		ArtifactID:    artifactID,
+		SessionID:     session.ID,
 		Kind:          string(models.MaterialKindDocument),
 		Filename:      "test.txt",
 		ContentType:   "text/plain",
@@ -231,7 +247,10 @@ func TestAskQuestion_Citations_Valid(t *testing.T) {
 		t.Fatalf("Failed to create material: %v", err)
 	}
 
-	req := AskQuestionRequest{QuestionText: "What does this document discuss?"}
+	req := AskQuestionRequest{
+		QuestionText: "What does this document discuss?",
+		VideoTimeSeconds: nil,
+	}
 	body, _ := json.Marshal(req)
 	req_http := httptest.NewRequest("POST", "/artifacts/"+artifactID.String()+"/questions", bytes.NewReader(body))
 	req_http.Header.Set("Content-Type", "application/json")
@@ -285,8 +304,9 @@ func TestGetQuestions_ReturnsRecentQuestionsWithAnswers(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	// Create an artifact
-	artifact, err := db.CreateArtifact(ctx, "Test Artifact", nil)
+	// Create a session and artifact
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
 	if err != nil {
 		t.Fatalf("Failed to create artifact: %v", err)
 	}
@@ -295,10 +315,12 @@ func TestGetQuestions_ReturnsRecentQuestionsWithAnswers(t *testing.T) {
 	// Create a question and answer manually
 	questionID := uuid.New()
 	question := &models.Question{
-		ID:             questionID,
-		ArtifactID:     artifactID,
-		QuestionText:   "Test question?",
-		QuestionSource: models.QuestionSourceText,
+		ID:              questionID,
+		ArtifactID:      artifactID,
+		SessionID:       session.ID, // SessionID is required
+		QuestionText:    "Test question?",
+		QuestionSource:  models.QuestionSourceText,
+		VideoTimeSeconds: nil,
 	}
 	if err := db.CreateQuestion(ctx, question); err != nil {
 		t.Fatalf("Failed to create question: %v", err)
@@ -359,6 +381,137 @@ func TestGetQuestions_ReturnsRecentQuestionsWithAnswers(t *testing.T) {
 	}
 }
 
-func stringPtr(s string) *string {
-	return &s
+func TestGetQuestions_Negative(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+
+	t.Run("returns 400 for invalid artifact ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/artifacts/invalid-id/questions", nil)
+		w := httptest.NewRecorder()
+
+		h.GetQuestions(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("returns empty list for non-existent artifact", func(t *testing.T) {
+		nonExistentID := uuid.New()
+		req := httptest.NewRequest("GET", "/artifacts/"+nonExistentID.String()+"/questions", nil)
+		w := httptest.NewRecorder()
+
+		h.GetQuestions(w, req)
+
+		// Should return 200 with empty lists (not an error)
+		if w.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var response GetQuestionsResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("Failed to parse response: %v", err)
+		}
+
+		// Should return empty lists
+		if len(response.Questions) != 0 {
+			t.Errorf("Expected empty questions list, got %d", len(response.Questions))
+		}
+		if len(response.Answers) != 0 {
+			t.Errorf("Expected empty answers list, got %d", len(response.Answers))
+		}
+	})
+}
+
+func TestAskQuestion_Negative(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+
+	t.Run("returns 400 for invalid artifact ID", func(t *testing.T) {
+		reqBody := AskQuestionRequest{
+			QuestionText: "What is this about?",
+			VideoTimeSeconds: nil,
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/artifacts/invalid-id/questions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AskQuestion(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("returns 404 for non-existent artifact", func(t *testing.T) {
+		nonExistentID := uuid.New()
+		reqBody := AskQuestionRequest{
+			QuestionText: "What is this about?",
+			VideoTimeSeconds: nil,
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/artifacts/"+nonExistentID.String()+"/questions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AskQuestion(w, req)
+
+		// Should return 500 (internal server error) when trying to get non-existent artifact
+		if w.Code != http.StatusInternalServerError && w.Code != http.StatusNotFound {
+			t.Errorf("Expected status 500 or 404, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("returns 400 when question_text is missing", func(t *testing.T) {
+		// Create an artifact first
+		session := createTestSessionForHandlers(t, h.DB, "Test Session")
+		artifact, err := h.DB.CreateArtifact(context.Background(), session.ID, "Test Artifact", nil)
+		if err != nil {
+			t.Fatalf("Failed to create artifact: %v", err)
+		}
+
+		reqBody := map[string]interface{}{} // Empty body
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("POST", "/artifacts/"+artifact.ID.String()+"/questions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AskQuestion(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+		if !containsSimple(w.Body.String(), "question_text is required") {
+			t.Errorf("Expected error message about question_text, got: %s", w.Body.String())
+		}
+	})
+
+	t.Run("returns 400 for malformed request body", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, h.DB, "Test Session")
+		artifact, err := h.DB.CreateArtifact(context.Background(), session.ID, "Test Artifact", nil)
+		if err != nil {
+			t.Fatalf("Failed to create artifact: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/artifacts/"+artifact.ID.String()+"/questions", bytes.NewReader([]byte("invalid json")))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		h.AskQuestion(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}
+
+// Simple contains check
+func containsSimple(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

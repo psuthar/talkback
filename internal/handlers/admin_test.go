@@ -21,6 +21,10 @@ func TestResetAllData(t *testing.T) {
 	databaseURL, cleanupDB := test.SetupTestDB(t)
 	defer cleanupDB()
 
+	// Run migrations on the test database
+	err := runTestMigrations(databaseURL)
+	require.NoError(t, err, "Failed to run test migrations")
+
 	originalURL := os.Getenv("DATABASE_URL")
 	os.Setenv("DATABASE_URL", databaseURL)
 	defer func() {
@@ -35,7 +39,7 @@ func TestResetAllData(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	h := NewHandlers(db)
+	h := NewHandlers(db, nil) // Job processor not needed for these tests
 
 	t.Run("returns 403 when ALLOW_DEV_RESET is not set", func(t *testing.T) {
 		// Ensure flag is not set
@@ -93,12 +97,20 @@ func TestResetAllData(t *testing.T) {
 
 		// Create some test data
 		ctx := context.Background()
-		artifact, err := db.CreateArtifact(ctx, "Test Artifact", nil)
+		session := &models.Session{
+			ID:     uuid.New(),
+			Title:  "Test Session",
+			Status: models.SessionStatusOpen,
+		}
+		err := db.CreateSession(ctx, session)
+		require.NoError(t, err)
+		artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
 		require.NoError(t, err)
 
 		material := &models.Material{
 			ID:          uuid.New(),
 			ArtifactID:  artifact.ID,
+			SessionID:   session.ID,
 			Kind:        "document",
 			Filename:    "test.txt",
 			ContentType: "text/plain",
@@ -110,6 +122,7 @@ func TestResetAllData(t *testing.T) {
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
+			SessionID:        session.ID,
 			Provider:         "loom",
 			VideoURL:         "https://example.com/video",
 			TranscriptStatus: models.VideoTranscriptStatusReady,
@@ -117,10 +130,12 @@ func TestResetAllData(t *testing.T) {
 		require.NoError(t, db.CreateVideoSource(ctx, videoSource))
 
 		question := &models.Question{
-			ID:            uuid.New(),
-			ArtifactID:    artifact.ID,
-			QuestionText:  "Test question",
-			QuestionSource: models.QuestionSourceText,
+			ID:              uuid.New(),
+			ArtifactID:      artifact.ID,
+			SessionID:       session.ID,
+			QuestionText:    "Test question",
+			QuestionSource:  models.QuestionSourceText,
+			VideoTimeSeconds: nil,
 		}
 		require.NoError(t, db.CreateQuestion(ctx, question))
 

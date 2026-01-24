@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/migrations"
+	"github.com/psuthar/talkback/internal/utils"
 )
 
 type healthResponse struct {
@@ -61,14 +63,30 @@ func main() {
 	defer db.Close()
 	log.Println("Database connection established")
 
+	// Initialize job processor for auto-transcription
+	workers := 2 // Default to 2 workers
+	if workersEnv := os.Getenv("TRANSCRIPT_WORKERS"); workersEnv != "" {
+		if parsed, err := fmt.Sscanf(workersEnv, "%d", &workers); err != nil || parsed != 1 || workers <= 0 {
+			log.Printf("Warning: Invalid TRANSCRIPT_WORKERS value, using default: 2")
+			workers = 2
+		}
+	}
+	jobProcessor := utils.NewJobProcessor(db, workers)
+
+	// Start job processor in background
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobProcessor.Start(ctx)
+	log.Printf("Job processor started with %d workers", workers)
+
 	// Initialize handlers
-	h := handlers.NewHandlers(db)
+	h := handlers.NewHandlers(db, jobProcessor)
 
 	// CORS middleware
 	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 			if r.Method == http.MethodOptions {
@@ -94,6 +112,19 @@ func main() {
 	}))
 	http.HandleFunc("/artifacts/", corsMiddleware(h.ArtifactsRouter))
 
+	// Session endpoints with CORS (Phase 3)
+	http.HandleFunc("/sessions", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/sessions" && r.Method == http.MethodPost {
+			h.CreateSession(w, r)
+		} else {
+			h.SessionsRouter(w, r)
+		}
+	}))
+	http.HandleFunc("/sessions/", corsMiddleware(h.SessionsRouter))
+
+	// WebSocket endpoint for session updates
+	http.HandleFunc("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub)))
+
 	// Admin endpoints with CORS
 	http.HandleFunc("/admin/reset", corsMiddleware(h.ResetAllData))
 
@@ -102,8 +133,14 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Server starting on port %s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
+	bindAddress := os.Getenv("BIND_ADDRESS")
+	addr := ":" + port
+	if bindAddress != "" {
+		addr = bindAddress + ":" + port
+	}
+
+	log.Printf("Server starting on %s", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
 		log.Fatal(err)
 	}
 }
