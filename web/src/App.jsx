@@ -14,7 +14,8 @@ function App() {
   // Form states
   const [artifactTitle, setArtifactTitle] = useState('')
   const [artifactDescription, setArtifactDescription] = useState('')
-  const [materialFile, setMaterialFile] = useState(null)
+  const [materialFiles, setMaterialFiles] = useState([]) // Array of File objects for multiple uploads
+  const [uploadedMaterials, setUploadedMaterials] = useState([]) // Array of successfully uploaded materials
   const [materialKind, setMaterialKind] = useState('document')
   const [videoProvider, setVideoProvider] = useState('loom')
   const [videoUrl, setVideoUrl] = useState('')
@@ -67,8 +68,14 @@ function App() {
   const [mockQuestions, setMockQuestions] = useState([]) // In-memory mock questions (not persisted)
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
+  const [videoFile, setVideoFile] = useState(null) // MP4 file for upload
+  const [videoFileUploading, setVideoFileUploading] = useState(false)
+  const [loomVideoSource, setLoomVideoSource] = useState(null) // Video source that requires upload (Loom)
+  const [transcriptFile, setTranscriptFile] = useState(null) // MP4 file for transcript upload
+  const [transcriptFileUploading, setTranscriptFileUploading] = useState(false)
   const [apiHealth, setApiHealth] = useState(null) // null = unknown, true = healthy, false = unhealthy
   const [healthChecking, setHealthChecking] = useState(false)
+  const [debugMode, setDebugMode] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   
@@ -319,7 +326,7 @@ function App() {
     }
   }
 
-  const uploadMaterial = async () => {
+  const uploadMaterial = async (file) => {
     if (!currentSession) {
       setUploadMaterialFeedback({ type: 'error', message: 'Please select or create a session first' })
       return
@@ -328,7 +335,7 @@ function App() {
       setUploadMaterialFeedback({ type: 'error', message: 'Please create an artifact first' })
       return
     }
-    if (!materialFile) {
+    if (!file) {
       setUploadMaterialFeedback({ type: 'error', message: 'Please select a file' })
       return
     }
@@ -338,7 +345,7 @@ function App() {
 
     try {
       const formData = new FormData()
-      formData.append('file', materialFile)
+      formData.append('file', file)
       formData.append('kind', materialKind)
 
       const response = await fetch(`${apiBaseUrl}/artifacts/${artifactId}/materials`, {
@@ -358,10 +365,84 @@ function App() {
       }
 
       const data = await response.json()
+      // Add to uploaded materials list
+      setUploadedMaterials(prev => [...prev, { ...data, uploadedAt: new Date().toISOString() }])
+      // Remove file from materialFiles array
+      setMaterialFiles(prev => prev.filter(f => f !== file))
       setUploadMaterialFeedback({ type: 'success', message: `Material uploaded! Filename: ${data.filename}, Text Status: ${data.text_status}` })
-      setMaterialFile(null)
     } catch (err) {
       setUploadMaterialFeedback({ type: 'error', message: `Failed to upload material: ${err.message}` })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const removeMaterialFile = (index) => {
+    setMaterialFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Helper function to detect Loom share URLs
+  const isLoomShareURL = (url) => {
+    if (!url) return false
+    const urlLower = url.toLowerCase()
+    return urlLower.includes('loom.com/share/') || urlLower.includes('www.loom.com/share/')
+  }
+
+  // Helper function to detect direct MP4 URLs
+  const isDirectMediaURL = (url) => {
+    if (!url) return false
+    const urlLower = url.toLowerCase()
+    return urlLower.endsWith('.mp4') || urlLower.endsWith('.webm') || urlLower.endsWith('.m4v')
+  }
+
+  const ingestVideoFromURL = async (url) => {
+    if (!currentSession) {
+      setAttachVideoFeedback({ type: 'error', message: 'Please select or create a session first' })
+      return
+    }
+
+    clearFeedback(setAttachVideoFeedback)
+    setLoading(true)
+
+    try {
+      const sessionId = currentSession.session ? currentSession.session.id : currentSession.id
+      
+      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}/video/from-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        try {
+          const json = JSON.parse(text)
+          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
+        } catch {
+          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
+        }
+        return
+      }
+
+      const data = await response.json()
+      
+      if (data.requires_upload) {
+        // Loom URL - store video source and show guidance
+        setLoomVideoSource(data.video_source)
+        setAttachVideoFeedback({ type: 'info', message: data.message || 'Loom share URLs require manual upload. Please download the MP4 from Loom and upload it using the file input above.' })
+      } else {
+        // Direct URL - success
+        setLoomVideoSource(null) // Clear any previous Loom source
+        setAttachVideoFeedback({ type: 'success', message: data.message || 'Video ingested successfully. Transcription will begin shortly.' })
+        setVideoUrl('') // Clear URL field
+      }
+      
+      // Refresh session to get updated video sources
+      if (currentSession) {
+        await openSession(sessionId)
+      }
+    } catch (err) {
+      setAttachVideoFeedback({ type: 'error', message: `Failed to ingest video from URL: ${err.message}` })
     } finally {
       setLoading(false)
     }
@@ -377,6 +458,26 @@ function App() {
       return
     }
 
+    const urlToCheck = embedUrl || videoUrl || mediaUrl
+    if (!urlToCheck) {
+      setAttachVideoFeedback({ type: 'error', message: 'Please enter a video URL' })
+      return
+    }
+
+    // Smart URL detection
+    if (isLoomShareURL(urlToCheck)) {
+      // Loom share URL - use smart ingestion endpoint
+      await ingestVideoFromURL(urlToCheck)
+      return
+    }
+
+    if (isDirectMediaURL(urlToCheck)) {
+      // Direct media URL - use smart ingestion endpoint
+      await ingestVideoFromURL(urlToCheck)
+      return
+    }
+
+    // Otherwise, use existing embed flow
     // Validate based on playback mode
     if (playbackMode === 'embed' && !embedUrl && !videoUrl) {
       setAttachVideoFeedback({ type: 'error', message: 'Please enter an embed URL' })
@@ -450,6 +551,102 @@ function App() {
     }
   }
 
+  const uploadTranscriptFile = async () => {
+    if (!currentSession) {
+      setSubmitTranscriptFeedback({ type: 'error', message: 'Please select or create a session first' })
+      return
+    }
+    if (!transcriptFile) {
+      setSubmitTranscriptFeedback({ type: 'error', message: 'Please select an MP4 file' })
+      return
+    }
+
+    // Validate file type
+    if (!transcriptFile.name.toLowerCase().endsWith('.mp4') && transcriptFile.type !== 'video/mp4') {
+      setSubmitTranscriptFeedback({ type: 'error', message: 'File must be MP4 format' })
+      return
+    }
+
+    clearFeedback(setSubmitTranscriptFeedback)
+    setTranscriptFileUploading(true)
+    setLoading(true)
+
+    try {
+      const sessionId = currentSession.session ? currentSession.session.id : currentSession.id
+      
+      const formData = new FormData()
+      formData.append('file', transcriptFile)
+
+      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}/video/transcript/upload`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        try {
+          const json = JSON.parse(text)
+          setSubmitTranscriptFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
+        } catch {
+          setSubmitTranscriptFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
+        }
+        return
+      }
+
+      const data = await response.json()
+      const jobId = data.job_id
+      
+      setSubmitTranscriptFeedback({ type: 'info', message: 'Transcription started. Waiting for completion...' })
+
+      // Poll for transcription completion
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`${apiBaseUrl}/sessions/${sessionId}/transcript-jobs/${jobId}`)
+          if (!statusResponse.ok) {
+            clearInterval(pollInterval)
+            setSubmitTranscriptFeedback({ type: 'error', message: `Failed to check transcription status: ${statusResponse.status}` })
+            return
+          }
+
+          const statusData = await statusResponse.json()
+          
+          if (statusData.status === 'completed') {
+            clearInterval(pollInterval)
+            if (statusData.transcript_text) {
+              setTranscriptText(statusData.transcript_text)
+              setSubmitTranscriptFeedback({ type: 'success', message: 'Transcription completed! Transcript text has been populated.' })
+              setTranscriptFile(null)
+            } else {
+              setSubmitTranscriptFeedback({ type: 'error', message: 'Transcription completed but no transcript text was returned' })
+            }
+          } else if (statusData.status === 'failed') {
+            clearInterval(pollInterval)
+            const errorMsg = statusData.error_message || 'Transcription failed'
+            setSubmitTranscriptFeedback({ type: 'error', message: `Transcription failed: ${errorMsg}` })
+          }
+          // If still processing (queued, downloading, transcribing, saving), continue polling
+        } catch (err) {
+          clearInterval(pollInterval)
+          setSubmitTranscriptFeedback({ type: 'error', message: `Failed to check transcription status: ${err.message}` })
+        }
+      }, 3000) // Poll every 3 seconds
+
+      // Stop polling after 10 minutes (timeout)
+      setTimeout(() => {
+        clearInterval(pollInterval)
+        if (transcriptFileUploading) {
+          setSubmitTranscriptFeedback({ type: 'error', message: 'Transcription timeout - please check status manually' })
+        }
+      }, 600000) // 10 minutes
+
+    } catch (err) {
+      setSubmitTranscriptFeedback({ type: 'error', message: `Failed to upload transcript file: ${err.message}` })
+    } finally {
+      setTranscriptFileUploading(false)
+      setLoading(false)
+    }
+  }
+
   const submitTranscript = async () => {
     if (!artifactId || !videoId) {
       setSubmitTranscriptFeedback({ type: 'error', message: 'Please attach a video first' })
@@ -513,6 +710,65 @@ function App() {
     } catch (err) {
       console.error('Failed to fetch transcript job:', err)
       return null
+    }
+  }
+
+  const uploadVideoFile = async () => {
+    if (!currentSession) {
+      setAttachVideoFeedback({ type: 'error', message: 'Please select or create a session first' })
+      return
+    }
+    if (!videoFile) {
+      setAttachVideoFeedback({ type: 'error', message: 'Please select an MP4 file' })
+      return
+    }
+
+    // Validate file type
+    if (!videoFile.name.toLowerCase().endsWith('.mp4') && videoFile.type !== 'video/mp4') {
+      setAttachVideoFeedback({ type: 'error', message: 'File must be MP4 format' })
+      return
+    }
+
+    clearFeedback(setAttachVideoFeedback)
+    setVideoFileUploading(true)
+    setLoading(true)
+
+    try {
+      const sessionId = currentSession.session ? currentSession.session.id : currentSession.id
+      
+      const formData = new FormData()
+      formData.append('file', videoFile)
+
+      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}/video/upload`, {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!response.ok) {
+        const text = await response.text()
+        try {
+          const json = JSON.parse(text)
+          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
+        } catch {
+          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
+        }
+        return
+      }
+
+      const data = await response.json()
+      setAttachVideoFeedback({ type: 'success', message: data.message || 'Video uploaded successfully. Transcription will begin shortly.' })
+      setVideoFile(null)
+      setLoomVideoSource(null) // Clear Loom source if video was uploaded
+      
+      // Refresh session to get updated video sources
+      if (currentSession) {
+        await openSession(sessionId)
+      }
+    } catch (err) {
+      setAttachVideoFeedback({ type: 'error', message: `Failed to upload video: ${err.message}` })
+    } finally {
+      setVideoFileUploading(false)
+      setLoading(false)
     }
   }
 
@@ -1292,94 +1548,109 @@ function App() {
     <div className="container">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ margin: 0 }}>TalkBack Phase 3 - Web UI</h1>
-        {/* Participant View Link - Upper Right Corner */}
-        {hasValidSession && participantUrl && sessionUserMode === 'creator' && (
-          <a
-            href={participantUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#4CAF50',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '4px',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s',
-              whiteSpace: 'nowrap',
-              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#45a049'
-              e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.15)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = '#4CAF50'
-              e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
-            }}
-          >
-            <span style={{ fontSize: '16px' }}>👁️</span>
-            <span>View as Participant</span>
-            <span style={{ fontSize: '12px', opacity: 0.9 }}>↗</span>
-          </a>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Debug mode toggle - Upper right */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer', userSelect: 'none' }}>
+            <input
+              type="checkbox"
+              checked={debugMode}
+              onChange={(e) => setDebugMode(e.target.checked)}
+              style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              aria-label="Show debug panel"
+            />
+            <span>Debug</span>
+          </label>
+          {/* Participant View Link */}
+          {hasValidSession && participantUrl && sessionUserMode === 'creator' && (
+            <a
+              href={participantUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#4CAF50',
+                color: 'white',
+                textDecoration: 'none',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontWeight: '600',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#45a049'
+                e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.15)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#4CAF50'
+                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
+              }}
+            >
+              <span style={{ fontSize: '16px' }}>👁️</span>
+              <span>View as Participant</span>
+              <span style={{ fontSize: '12px', opacity: 0.9 }}>↗</span>
+            </a>
+          )}
+        </div>
       </div>
       
-      <div className="section">
-        <div className="form-group">
-          <label>API Base URL:</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <input
-              type="text"
-              value={apiBaseUrl}
-              onChange={(e) => setApiBaseUrl(e.target.value)}
-              placeholder="http://localhost:8081"
-              style={{ flex: 1 }}
-            />
-            <button 
-              onClick={() => checkApiHealth(new AbortController().signal)} 
-              disabled={healthChecking}
-              style={{ marginTop: 0 }}
-            >
-              {healthChecking ? 'Checking...' : 'Check Health'}
-            </button>
+      {debugMode && (
+        <div className="section">
+          <div className="form-group">
+            <label>API Base URL:</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <input
+                type="text"
+                value={apiBaseUrl}
+                onChange={(e) => setApiBaseUrl(e.target.value)}
+                placeholder="http://localhost:8081"
+                style={{ flex: 1 }}
+              />
+              <button 
+                onClick={() => checkApiHealth(new AbortController().signal)} 
+                disabled={healthChecking}
+                style={{ marginTop: 0 }}
+              >
+                {healthChecking ? 'Checking...' : 'Check Health'}
+              </button>
+            </div>
           </div>
-        </div>
-        <div style={{ marginTop: '10px' }}>
-          {apiHealth === null && !healthChecking && (
-            <div className="info">API status: Unknown - Click "Check Health" to verify</div>
-          )}
-          {apiHealth === true && (
-            <div className="success" style={{ marginTop: 0 }}>
-              ✓ API is healthy and reachable
+          <div style={{ marginTop: '10px' }}>
+            {apiHealth === null && !healthChecking && (
+              <div className="info">API status: Unknown - Click "Check Health" to verify</div>
+            )}
+            {apiHealth === true && (
+              <div className="success" style={{ marginTop: 0 }}>
+                ✓ API is healthy and reachable
+              </div>
+            )}
+            {apiHealth === false && (
+              <div className="error" style={{ marginTop: 0 }}>
+                ✗ API is not reachable - Check if the server is running on {apiBaseUrl}
+              </div>
+            )}
+          </div>
+          {artifactId && (
+            <div className="info" style={{ marginTop: '10px' }}>
+              Current Artifact ID: <span className="artifact-id">{artifactId}</span>
             </div>
           )}
-          {apiHealth === false && (
-            <div className="error" style={{ marginTop: 0 }}>
-              ✗ API is not reachable - Check if the server is running on {apiBaseUrl}
+          {videoId && (
+            <div className="info" style={{ marginTop: '10px' }}>
+              Current Video ID: <span className="artifact-id">{videoId}</span>
+            </div>
+          )}
+          {currentSession && (
+            <div className="success" style={{ marginTop: '10px' }}>
+              ✓ Active Session: <span className="artifact-id">{currentSession.session.title}</span> (ID: {currentSession.session.id})
             </div>
           )}
         </div>
-        {artifactId && (
-          <div className="info" style={{ marginTop: '10px' }}>
-            Current Artifact ID: <span className="artifact-id">{artifactId}</span>
-          </div>
-        )}
-        {videoId && (
-          <div className="info" style={{ marginTop: '10px' }}>
-            Current Video ID: <span className="artifact-id">{videoId}</span>
-          </div>
-        )}
-        {currentSession && (
-          <div className="success" style={{ marginTop: '10px' }}>
-            ✓ Active Session: <span className="artifact-id">{currentSession.session.title}</span> (ID: {currentSession.session.id})
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Session Selector - Only shown in creator mode, not in participant mode */}
       {!isParticipantMode && (
@@ -1716,8 +1987,11 @@ function App() {
               apiBaseUrl={apiBaseUrl}
               viewMode={viewMode}
               setViewMode={setViewMode}
-              materialFile={materialFile}
-              setMaterialFile={setMaterialFile}
+              materialFiles={materialFiles}
+              setMaterialFiles={setMaterialFiles}
+              uploadedMaterials={uploadedMaterials}
+              setUploadedMaterials={setUploadedMaterials}
+              removeMaterialFile={removeMaterialFile}
               materialKind={materialKind}
               setMaterialKind={setMaterialKind}
               uploadMaterial={uploadMaterial}
@@ -1738,44 +2012,57 @@ function App() {
               setDurationSeconds={setDurationSeconds}
               attachVideo={attachVideo}
               attachVideoFeedback={attachVideoFeedback}
+              videoFile={videoFile}
+              setVideoFile={setVideoFile}
+              videoFileUploading={videoFileUploading}
+              uploadVideoFile={uploadVideoFile}
+              loomVideoSource={loomVideoSource}
+              setLoomVideoSource={setLoomVideoSource}
               transcriptText={transcriptText}
               setTranscriptText={setTranscriptText}
               submitTranscript={submitTranscript}
               submitTranscriptFeedback={submitTranscriptFeedback}
+              transcriptFile={transcriptFile}
+              setTranscriptFile={setTranscriptFile}
+              transcriptFileUploading={transcriptFileUploading}
+              uploadTranscriptFile={uploadTranscriptFile}
             />
           ) : (
-            <ParticipantMode
-              currentSession={currentSession}
-              selectedVideo={selectedVideo}
-              setSelectedVideo={setSelectedVideo}
-              setVideoId={setVideoId}
-              videoPlayerKey={videoPlayerKey}
-              setVideoPlayerKey={setVideoPlayerKey}
-              currentVideoTime={currentVideoTime}
-              setCurrentVideoTime={setCurrentVideoTime}
-              isVideoPlaying={isVideoPlaying}
-              setIsVideoPlaying={setIsVideoPlaying}
-              handleVideoPlayerEvent={handleVideoPlayerEvent}
-              handleVideoTimeUpdate={handleVideoTimeUpdate}
-              getVideoEmbedUrl={getVideoEmbedUrl}
-              transcriptJobs={transcriptJobs}
-              questions={[...questions, ...mockQuestions]}
-              fetchSessionQuestions={fetchSessionQuestions}
-              loading={loading}
-              questionText={questionText}
-              setQuestionText={setQuestionText}
-              askSessionQuestion={askSessionQuestion}
-              askQuestionFeedback={askQuestionFeedback}
-              currentAnswer={currentAnswer}
-              voiceRecording={voiceRecording}
-              voiceUploading={voiceUploading}
-              toggleVoiceRecording={toggleVoiceRecording}
-              voiceFeedback={voiceFeedback}
-              showVoiceConfirm={showVoiceConfirm}
+            <div className="participant-layout-root">
+              <ParticipantMode
+                currentSession={currentSession}
+                selectedVideo={selectedVideo}
+                setSelectedVideo={setSelectedVideo}
+                setVideoId={setVideoId}
+                videoPlayerKey={videoPlayerKey}
+                setVideoPlayerKey={setVideoPlayerKey}
+                currentVideoTime={currentVideoTime}
+                setCurrentVideoTime={setCurrentVideoTime}
+                isVideoPlaying={isVideoPlaying}
+                setIsVideoPlaying={setIsVideoPlaying}
+                handleVideoPlayerEvent={handleVideoPlayerEvent}
+                handleVideoTimeUpdate={handleVideoTimeUpdate}
+                getVideoEmbedUrl={getVideoEmbedUrl}
+                transcriptJobs={transcriptJobs}
+                questions={[...questions, ...mockQuestions]}
+                fetchSessionQuestions={fetchSessionQuestions}
+                loading={loading}
+                questionText={questionText}
+                setQuestionText={setQuestionText}
+                askSessionQuestion={askSessionQuestion}
+                askQuestionFeedback={askQuestionFeedback}
+                currentAnswer={currentAnswer}
+                voiceRecording={voiceRecording}
+                voiceUploading={voiceUploading}
+                toggleVoiceRecording={toggleVoiceRecording}
+                voiceFeedback={voiceFeedback}
+                showVoiceConfirm={showVoiceConfirm}
+              setShowVoiceConfirm={setShowVoiceConfirm}
               voiceTranscribedText={voiceTranscribedText}
               setVoiceTranscribedText={setVoiceTranscribedText}
               confirmVoiceQuestion={confirmVoiceQuestion}
-            />
+              />
+            </div>
           )}
         </>
       )}
@@ -2026,7 +2313,11 @@ function App() {
           <label>File:</label>
           <input
             type="file"
-            onChange={(e) => setMaterialFile(e.target.files[0])}
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files || [])
+              setMaterialFiles(prev => [...prev, ...files])
+            }}
           />
         </div>
         <div className="form-group">
@@ -2038,7 +2329,7 @@ function App() {
             <option value="other">Other</option>
           </select>
         </div>
-        <button onClick={uploadMaterial} disabled={!artifactId || !materialFile || loading}>
+        <button onClick={() => materialFiles.length > 0 && uploadMaterial(materialFiles[0])} disabled={!artifactId || materialFiles.length === 0 || loading}>
           Upload Material
         </button>
         {uploadMaterialFeedback.message && (

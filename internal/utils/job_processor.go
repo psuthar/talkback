@@ -14,6 +14,11 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
+// stringPtr returns a pointer to a string
+func stringPtr(s string) *string {
+	return &s
+}
+
 // JobProcessor handles background processing of transcription jobs
 type JobProcessor struct {
 	db         *database.DB
@@ -118,51 +123,88 @@ func (jp *JobProcessor) worker(ctx context.Context, workerID int) {
 func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJob, workerID int) {
 	log.Printf("Worker %d processing job %s for video %s", workerID, job.ID, job.VideoSourceID)
 
-	// Update status to downloading
+	// Update status to downloading/started
 	if err := jp.db.UpdateTranscriptJobStarted(ctx, job.ID); err != nil {
 		log.Printf("Failed to update job status: %v", err)
 		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to start job: %v", err))
 		return
 	}
 
-	// Resolve Loom URL to media URL using GraphQL
-	resolver := NewLoomResolver()
-	info, err := resolver.ResolveMedia(ctx, job.SourceURL, job.LoomPassword)
-	if err != nil {
-		log.Printf("Failed to resolve Loom URL: %v", err)
-		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to resolve Loom URL: %v", err))
-		return
+	// Update video source status to processing
+	if err := jp.db.UpdateVideoSourceTranscriptStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusProcessing); err != nil {
+		log.Printf("Warning: Failed to update video source status to processing: %v", err)
 	}
 
-	if info.MediaURL == "" {
-		errMsg := "Unable to resolve downloadable media URL - video may be private"
-		log.Printf("%s", errMsg)
-		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-		return
-	}
+	var tempFile string
+	var cleanup func()
 
-	// Check if the resolved URL is an HLS playlist - Whisper doesn't support these
-	if strings.Contains(info.MediaURL, ".m3u8") || strings.Contains(info.MediaURL, "playlist") {
-		errMsg := "Loom returned an HLS playlist (.m3u8) URL which Whisper API cannot process. This video may only be available in streaming format. Please upload the transcript manually, or contact Loom to request direct MP4 access for this video."
-		log.Printf("%s (URL: %s)", errMsg, info.MediaURL)
-		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-		return
-	}
+	// Check if source URL is a local file path (uploaded or downloaded MP4)
+	if strings.HasPrefix(job.SourceURL, "data/uploads/") || strings.HasPrefix(job.SourceURL, "./data/uploads/") {
+		// Local file - use it directly, no download needed
+		filePath := job.SourceURL
+		if strings.HasPrefix(filePath, "./") {
+			filePath = filePath[2:] // Remove "./" prefix
+		}
+		
+		// Verify file exists
+		if _, err := os.Stat(filePath); err != nil {
+			log.Printf("Local file not found: %v", err)
+			jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Local file not found: %v", err))
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, stringPtr(fmt.Sprintf("Local file not found: %v", err)))
+			return
+		}
 
-	// Update job with resolved URL
-	if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusDownloading, &info.MediaURL); err != nil {
-		log.Printf("Failed to update job progress: %v", err)
-	}
+		tempFile = filePath
+		cleanup = func() {} // No cleanup needed for stored files
+		log.Printf("Using local file: %s", tempFile)
+	} else {
+		// Remote URL - resolve and download (existing Loom logic)
+		// Resolve Loom URL to media URL using GraphQL
+		resolver := NewLoomResolver()
+		info, resolveErr := resolver.ResolveMedia(ctx, job.SourceURL, job.LoomPassword)
+		if resolveErr != nil {
+			log.Printf("Failed to resolve Loom URL: %v", resolveErr)
+			errMsg := fmt.Sprintf("Failed to resolve Loom URL: %v", resolveErr)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
 
-	// Download media
-	jobIDStr := job.ID.String()
-	tempFile, cleanup, err := jp.service.DownloadMedia(ctx, info.MediaURL, jobIDStr)
-	if err != nil {
-		log.Printf("Failed to download media: %v", err)
-		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to download media: %v", err))
-		return
+		if info.MediaURL == "" {
+			errMsg := "Unable to resolve downloadable media URL - video may be private"
+			log.Printf("%s", errMsg)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
+
+		// Check if the resolved URL is an HLS playlist - Whisper doesn't support these
+		if strings.Contains(info.MediaURL, ".m3u8") || strings.Contains(info.MediaURL, "playlist") {
+			errMsg := "Loom returned an HLS playlist (.m3u8) URL which Whisper API cannot process. This video may only be available in streaming format. Please upload the transcript manually, or contact Loom to request direct MP4 access for this video."
+			log.Printf("%s (URL: %s)", errMsg, info.MediaURL)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
+
+		// Update job with resolved URL
+		if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusDownloading, &info.MediaURL); err != nil {
+			log.Printf("Failed to update job progress: %v", err)
+		}
+
+		// Download media
+		jobIDStr := job.ID.String()
+		var downloadErr error
+		tempFile, cleanup, downloadErr = jp.service.DownloadMedia(ctx, info.MediaURL, jobIDStr)
+		if downloadErr != nil {
+			log.Printf("Failed to download media: %v", downloadErr)
+			errMsg := fmt.Sprintf("Failed to download media: %v", downloadErr)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
+		defer cleanup()
 	}
-	defer cleanup()
 
 	// Update status to transcribing
 	if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusTranscribing, nil); err != nil {
@@ -181,7 +223,9 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	result, err := transcriber.TranscribeFile(ctx, tempFile, "", "verbose_json", []string{"segment"})
 	if err != nil {
 		log.Printf("Failed to transcribe: %v", err)
-		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to transcribe: %v", err))
+		errMsg := fmt.Sprintf("Failed to transcribe: %v", err)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
 		return
 	}
 
@@ -199,7 +243,9 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	
 	if err := jp.db.UpdateVideoSourceTranscript(ctx, job.VideoSourceID, result.Text); err != nil {
 		log.Printf("Failed to save transcript: %v", err)
-		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to save transcript: %v", err))
+		errMsg := fmt.Sprintf("Failed to save transcript: %v", err)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
 		return
 	}
 

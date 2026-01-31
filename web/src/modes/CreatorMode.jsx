@@ -30,8 +30,11 @@ export function CreatorMode({
   viewMode,
   setViewMode,
   // Upload props
-  materialFile,
-  setMaterialFile,
+  materialFiles,
+  setMaterialFiles,
+  uploadedMaterials,
+  setUploadedMaterials,
+  removeMaterialFile,
   materialKind,
   setMaterialKind,
   uploadMaterial,
@@ -52,10 +55,20 @@ export function CreatorMode({
   setDurationSeconds,
   attachVideo,
   attachVideoFeedback,
+  videoFile,
+  setVideoFile,
+  videoFileUploading,
+  uploadVideoFile,
+  loomVideoSource,
+  setLoomVideoSource,
   transcriptText,
   setTranscriptText,
   submitTranscript,
-  submitTranscriptFeedback
+  submitTranscriptFeedback,
+  transcriptFile,
+  setTranscriptFile,
+  transcriptFileUploading,
+  uploadTranscriptFile
 }) {
   const [answeringQuestionId, setAnsweringQuestionId] = useState(null)
   const [answerText, setAnswerText] = useState('')
@@ -482,10 +495,17 @@ export function CreatorMode({
               >
                 {currentSession.video_sources.map((video, idx) => {
                   const statusLabel = video.transcript_status === 'missing' ? 'No transcript' :
-                                      video.transcript_status === 'pending' ? 'Processing...' :
+                                      video.transcript_status === 'pending' ? 'Pending...' :
+                                      video.transcript_status === 'processing' ? 'Processing...' :
                                       video.transcript_status === 'ready' ? 'Ready' :
                                       video.transcript_status === 'failed' ? 'Failed' :
                                       video.transcript_status || 'Unknown'
+                  
+                  // Determine source type label
+                  const sourceTypeLabel = video.source_type === 'upload' ? 'Uploaded' :
+                                         video.source_type === 'direct_url' ? 'Direct URL' :
+                                         video.source_type === 'embed_url' ? 'Embed URL' :
+                                         'Unknown'
                   return (
                     <option key={video.id} value={video.id}>
                       Video {idx + 1} - {video.provider} ({statusLabel})
@@ -515,7 +535,17 @@ export function CreatorMode({
                          video.transcript_status === 'failed' ? '#f44336' : '#999',
                   fontWeight: 'bold'
                 }}>
-                  {video.transcript_status}
+                  {statusLabel}
+                  {video.source_type && (
+                    <span style={{ marginLeft: '8px', fontSize: '11px', color: '#666' }}>
+                      ({sourceTypeLabel})
+                    </span>
+                  )}
+                  {video.transcript_status === 'failed' && video.failure_reason && (
+                    <div style={{ marginTop: '5px', fontSize: '11px', color: '#f44336', fontStyle: 'italic' }}>
+                      Error: {video.failure_reason}
+                    </div>
+                  )}
                 </span>
                 {transcriptJobs[video.id] && (
                   <>
@@ -577,10 +607,14 @@ export function CreatorMode({
       <h2>Upload Material</h2>
       <div className="section">
         <div className="form-group">
-          <label>File:</label>
+          <label>Select Files (multiple):</label>
           <input
             type="file"
-            onChange={(e) => setMaterialFile(e.target.files[0])}
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files || [])
+              setMaterialFiles(prev => [...prev, ...files])
+            }}
           />
         </div>
         <div className="form-group">
@@ -592,9 +626,67 @@ export function CreatorMode({
             <option value="other">Other</option>
           </select>
         </div>
-        <button onClick={uploadMaterial} disabled={!artifactId || !materialFile || loading}>
-          Upload Material
-        </button>
+        
+        {/* List of selected files waiting to upload */}
+        {materialFiles.length > 0 && (
+          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Files to Upload ({materialFiles.length}):</div>
+            {materialFiles.map((file, index) => (
+              <div key={index} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                padding: '8px', 
+                marginBottom: '5px', 
+                backgroundColor: 'white', 
+                borderRadius: '4px',
+                border: '1px solid #ddd'
+              }}>
+                <span style={{ flex: 1 }}>
+                  {file.name} ({(file.size / 1024).toFixed(2)} KB)
+                </span>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  <button
+                    onClick={() => uploadMaterial(file)}
+                    disabled={!artifactId || loading}
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    Upload
+                  </button>
+                  <button
+                    onClick={() => removeMaterialFile(index)}
+                    disabled={loading}
+                    style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* List of uploaded materials */}
+        {uploadedMaterials.length > 0 && (
+          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px' }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#2e7d32' }}>Uploaded Materials ({uploadedMaterials.length}):</div>
+            {uploadedMaterials.map((material, index) => (
+              <div key={material.id || index} style={{ 
+                padding: '8px', 
+                marginBottom: '5px', 
+                backgroundColor: 'white', 
+                borderRadius: '4px',
+                border: '1px solid #4CAF50'
+              }}>
+                <div style={{ fontWeight: 'bold' }}>{material.filename}</div>
+                <div style={{ fontSize: '12px', color: '#666' }}>
+                  Kind: {material.kind} | Status: {material.text_status}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {uploadMaterialFeedback.message && (
           <div className={uploadMaterialFeedback.type} style={{ marginTop: '10px' }}>
             {uploadMaterialFeedback.message}
@@ -602,8 +694,153 @@ export function CreatorMode({
         )}
       </div>
 
-      <h2>Attach Video URL</h2>
+      <h2>Attach Video</h2>
       <div className="section">
+        {/* Transcript file upload option */}
+        <div className="form-group" style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '5px', border: '1px solid #2196F3' }}>
+          <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Upload Transcript (MP4):</label>
+          <input
+            type="file"
+            accept="video/mp4"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) {
+                setTranscriptFile(file)
+              }
+            }}
+            style={{ marginBottom: '10px', width: '100%' }}
+            id="transcript-file-input-video-section"
+          />
+          {transcriptFile && (
+            <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #2196F3' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <span>
+                  <strong>Selected:</strong> {transcriptFile.name} ({(transcriptFile.size / 1024 / 1024).toFixed(2)} MB)
+                </span>
+                <button
+                  onClick={uploadTranscriptFile}
+                  disabled={!currentSession?.session?.id || transcriptFileUploading || loading}
+                  style={{ 
+                    padding: '6px 12px',
+                    backgroundColor: (transcriptFileUploading || loading) ? '#ccc' : '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: (transcriptFileUploading || loading) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {transcriptFileUploading ? 'Transcribing...' : 'Upload and Transcribe'}
+                </button>
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
+            Upload an MP4 file to automatically transcribe it. The transcript will be populated in the "Submit Transcript" section below.
+          </div>
+        </div>
+
+        {/* Loom guidance callout */}
+        {loomVideoSource && loomVideoSource.source_type === 'embed_url' && (
+          <div style={{ 
+            marginBottom: '20px', 
+            padding: '15px', 
+            backgroundColor: '#fff3cd', 
+            borderRadius: '5px', 
+            border: '2px solid #ffc107' 
+          }}>
+            <div style={{ marginBottom: '10px', fontWeight: 'bold', color: '#856404' }}>
+              Loom Share URL Detected
+            </div>
+            <div style={{ marginBottom: '15px', color: '#856404' }}>
+              We can't transcribe a Loom share page directly. Please download the MP4 from Loom and upload it here — once uploaded, we'll transcribe it automatically.
+            </div>
+            <div>
+              <input
+                type="file"
+                accept="video/mp4"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) {
+                    setVideoFile(file)
+                  }
+                }}
+                style={{ marginBottom: '10px', width: '100%' }}
+                id="loom-video-file-input"
+              />
+              {videoFile && (
+                <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #4CAF50' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <span>
+                      <strong>Selected:</strong> {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
+                    <button
+                      onClick={uploadVideoFile}
+                      disabled={!currentSession?.session?.id || videoFileUploading || loading}
+                      style={{ 
+                        padding: '6px 12px',
+                        backgroundColor: (videoFileUploading || loading) ? '#ccc' : '#4CAF50',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: (videoFileUploading || loading) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      {videoFileUploading ? 'Uploading...' : 'Upload MP4'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="form-group">
+          <label>Upload MP4 File:</label>
+          <input
+            type="file"
+            accept="video/mp4"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) {
+                setVideoFile(file)
+              }
+            }}
+            style={{ marginBottom: '10px', width: '100%' }}
+            id="video-file-input"
+          />
+          {videoFile && !loomVideoSource && (
+            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #4CAF50' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <span>
+                  <strong>Selected:</strong> {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
+                </span>
+                <button
+                  onClick={uploadVideoFile}
+                  disabled={!currentSession?.session?.id || videoFileUploading || loading}
+                  style={{ 
+                    padding: '6px 12px',
+                    backgroundColor: (videoFileUploading || loading) ? '#ccc' : '#4CAF50',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: (videoFileUploading || loading) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {videoFileUploading ? 'Uploading...' : 'Upload MP4'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="form-group">
+          <label>Or Paste Video URL:</label>
+          <input
+            type="url"
+            value={videoUrl}
+            onChange={(e) => setVideoUrl(e.target.value)}
+            placeholder="https://www.loom.com/share/... or https://example.com/video.mp4"
+            style={{ width: '100%' }}
+          />
+        </div>
         <div className="form-group">
           <label>Provider:</label>
           <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)}>
@@ -612,17 +849,8 @@ export function CreatorMode({
             <option value="other">Other</option>
           </select>
         </div>
-        <div className="form-group">
-          <label>Video URL:</label>
-          <input
-            type="url"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
-            placeholder="https://www.loom.com/share/..."
-          />
-        </div>
         <button onClick={attachVideo} disabled={!artifactId || !videoUrl || loading}>
-          Attach Video
+          Attach Video URL
         </button>
         {attachVideoFeedback.message && (
           <div className={attachVideoFeedback.type} style={{ marginTop: '10px' }}>
@@ -634,11 +862,50 @@ export function CreatorMode({
       <h2>Submit Transcript</h2>
       <div className="section">
         <div className="form-group">
-          <label>Transcript Text:</label>
+          <label>Upload Transcript File (MP4):</label>
+          <input
+            type="file"
+            accept="video/mp4"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) {
+                setTranscriptFile(file)
+              }
+            }}
+            style={{ marginBottom: '10px', width: '100%' }}
+            id="transcript-file-input"
+          />
+          {transcriptFile && (
+            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '4px', border: '1px solid #2196F3' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                <span>
+                  <strong>Selected:</strong> {transcriptFile.name} ({(transcriptFile.size / 1024 / 1024).toFixed(2)} MB)
+                </span>
+                <button
+                  onClick={uploadTranscriptFile}
+                  disabled={!currentSession?.session?.id || transcriptFileUploading || loading}
+                  style={{ 
+                    padding: '6px 12px',
+                    backgroundColor: (transcriptFileUploading || loading) ? '#ccc' : '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: (transcriptFileUploading || loading) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {transcriptFileUploading ? 'Transcribing...' : 'Upload and Transcribe'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="form-group">
+          <label>Or Paste Transcript Text:</label>
           <textarea
             value={transcriptText}
             onChange={(e) => setTranscriptText(e.target.value)}
-            placeholder="Paste transcript text here..."
+            placeholder="Paste transcript text here or upload an MP4 file above to transcribe..."
+            rows={10}
           />
         </div>
         <button onClick={submitTranscript} disabled={!artifactId || !videoId || !transcriptText || loading}>

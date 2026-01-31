@@ -64,10 +64,19 @@ const (
 type VideoTranscriptStatus string
 
 const (
-	VideoTranscriptStatusMissing VideoTranscriptStatus = "missing"
-	VideoTranscriptStatusPending VideoTranscriptStatus = "pending"
-	VideoTranscriptStatusReady   VideoTranscriptStatus = "ready"
-	VideoTranscriptStatusFailed  VideoTranscriptStatus = "failed"
+	VideoTranscriptStatusMissing    VideoTranscriptStatus = "missing"
+	VideoTranscriptStatusPending    VideoTranscriptStatus = "pending"
+	VideoTranscriptStatusProcessing VideoTranscriptStatus = "processing"
+	VideoTranscriptStatusReady      VideoTranscriptStatus = "ready"
+	VideoTranscriptStatusFailed     VideoTranscriptStatus = "failed"
+)
+
+type VideoSourceType string
+
+const (
+	VideoSourceTypeUpload    VideoSourceType = "upload"
+	VideoSourceTypeDirectURL VideoSourceType = "direct_url"
+	VideoSourceTypeEmbedURL  VideoSourceType = "embed_url"
 )
 
 type VideoSource struct {
@@ -81,6 +90,10 @@ type VideoSource struct {
 	MediaURL              *string               `json:"media_url,omitempty"`
 	DurationSeconds       *int                  `json:"duration_seconds,omitempty"`
 	PosterURL             *string               `json:"poster_url,omitempty"`
+	SourceType            VideoSourceType       `json:"source_type"` // 'upload', 'direct_url', 'embed_url'
+	StoredVideoObjectKey  *string               `json:"stored_video_object_key,omitempty"` // Path to uploaded/downloaded MP4
+	OriginalURL           *string               `json:"original_url,omitempty"` // Original user-provided URL
+	FailureReason         *string               `json:"failure_reason,omitempty"` // Error message on failure
 	TranscriptStatus      VideoTranscriptStatus `json:"transcript_status"`
 	TranscriptText        *string               `json:"transcript_text,omitempty"`
 	AutoTranscribeEnabled bool                  `json:"auto_transcribe_enabled,omitempty"`

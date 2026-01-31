@@ -191,6 +191,45 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/video/upload - POST (upload MP4 file)
+		if parts[2] == "video" && parts[3] == "upload" {
+			if r.Method == http.MethodPost {
+				h.UploadVideoFile(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/video/from-url - POST (smart URL ingestion)
+		if parts[2] == "video" && parts[3] == "from-url" {
+			if r.Method == http.MethodPost {
+				h.IngestVideoFromURL(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+
+	if len(parts) == 5 {
+		// /sessions/{id}/video/transcript/upload - POST (transcript file upload)
+		if parts[2] == "video" && parts[3] == "transcript" && parts[4] == "upload" {
+			if r.Method == http.MethodPost {
+				h.UploadTranscriptFile(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/transcript-jobs/{job_id} - GET (transcript job status)
+		if parts[2] == "transcript-jobs" {
+			if r.Method == http.MethodGet {
+				h.GetTranscriptJobStatus(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
 	if len(parts) == 5 {
