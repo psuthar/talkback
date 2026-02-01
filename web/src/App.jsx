@@ -88,6 +88,34 @@ function App() {
   // Transcript job states
   const [transcriptJobs, setTranscriptJobs] = useState({}) // Map of videoId -> job
 
+  // Zoom: creator identity (localStorage) and connection status
+  const [creatorIdentity, setCreatorIdentityState] = useState(() => {
+    try {
+      return localStorage.getItem('talkback.creator_identity') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [zoomConnection, setZoomConnection] = useState(null) // { zoom_user_email, zoom_user_id } or null
+  const [zoomUrl, setZoomUrl] = useState('')
+  const [zoomTitle, setZoomTitle] = useState('')
+  const [zoomImporting, setZoomImporting] = useState(false)
+  const [zoomImportError, setZoomImportError] = useState('')
+  const [zoomTranscriptStatus, setZoomTranscriptStatus] = useState(null) // 'ready' | 'processing' | 'not_available' | 'recording_not_found' | 'error'
+  const [zoomTranscriptMessage, setZoomTranscriptMessage] = useState('')
+  const [zoomTranscriptTopic, setZoomTranscriptTopic] = useState(null)
+  const [zoomCheckingTranscript, setZoomCheckingTranscript] = useState(false)
+
+  const setCreatorIdentity = (id) => {
+    setCreatorIdentityState(id)
+    try {
+      if (id) localStorage.setItem('talkback.creator_identity', id)
+      else localStorage.removeItem('talkback.creator_identity')
+    } catch {
+      // ignore
+    }
+  }
+
   const clearFeedback = (setter) => {
     setter({ type: '', message: '' })
   }
@@ -971,11 +999,153 @@ function App() {
     }
   }
 
+  const checkZoomTranscript = async () => {
+    const url = zoomUrl?.trim()
+    if (!url) {
+      setZoomImportError('Paste a Zoom recording URL first')
+      return
+    }
+    setZoomCheckingTranscript(true)
+    setZoomTranscriptStatus(null)
+    setZoomTranscriptMessage('')
+    setZoomTranscriptTopic(null)
+    setZoomImportError('')
+    try {
+      const params = new URLSearchParams({ zoom_url: url })
+      const response = await fetch(`${apiBaseUrl}/zoom/transcript-status?${params}`, {
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        setZoomTranscriptStatus(data.code ?? 'error')
+        setZoomTranscriptMessage(data.message ?? '')
+      } else {
+        setZoomTranscriptStatus(data.status ?? 'error')
+        setZoomTranscriptMessage(data.message ?? '')
+        setZoomTranscriptTopic(data.topic ?? null)
+      }
+    } catch (err) {
+      setZoomTranscriptStatus('error')
+      setZoomTranscriptMessage(err.message || 'Could not check transcript status')
+    } finally {
+      setZoomCheckingTranscript(false)
+    }
+  }
+
+  const createSessionFromZoom = async () => {
+    const url = zoomUrl?.trim()
+    if (!url) {
+      setZoomImportError('Paste a Zoom recording URL')
+      return
+    }
+    setZoomImporting(true)
+    setZoomImportError('')
+    try {
+      const headers = { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity }
+      const body = JSON.stringify({ zoom_url: url, title: zoomTitle?.trim() || undefined })
+      const response = await fetch(`${apiBaseUrl}/sessions/from-zoom`, { method: 'POST', headers, body })
+      const text = await response.text()
+      let data = {}
+      try {
+        data = JSON.parse(text)
+      } catch {
+        // Server may return plain text (e.g. http.Error)
+        data = { message: text || response.statusText }
+      }
+      if (!response.ok) {
+        const msg = data.message || data.error || response.statusText
+        setZoomImportError(msg)
+        if (data.code === 'transcript_processing') {
+          setZoomTranscriptStatus('processing')
+          setZoomTranscriptMessage(msg)
+        } else if (data.code === 'transcript_not_available') {
+          setZoomTranscriptStatus('not_available')
+          setZoomTranscriptMessage(msg)
+        } else if (data.code === 'zoom_share_link') {
+          setZoomTranscriptStatus('zoom_share_link')
+          setZoomTranscriptMessage(msg)
+        }
+        return
+      }
+      setZoomUrl('')
+      setZoomTitle('')
+      setZoomImportError('')
+      setZoomTranscriptStatus(null)
+      setZoomTranscriptMessage('')
+      setZoomTranscriptTopic(null)
+      await openSession(data.id, 'creator', true)
+    } catch (err) {
+      setZoomImportError(err.message || 'Failed to import from Zoom')
+    } finally {
+      setZoomImporting(false)
+    }
+  }
+
+  const disconnectZoom = async () => {
+    try {
+      await fetch(`${apiBaseUrl}/auth/zoom/disconnect`, {
+        method: 'POST',
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      setZoomConnection(null)
+    } catch {
+      // ignore
+    }
+  }
+
   const fetchSessions = async () => {
     // Note: Sessions are now independent, so we don't fetch by artifact
     // If needed in the future, we can add a GET /sessions endpoint
     // For now, sessions are created and opened individually
   }
+
+  // Ensure creator identity exists (for Zoom OAuth)
+  useEffect(() => {
+    if (!creatorIdentity) {
+      const uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0
+        const v = c === 'x' ? r : (r & 0x3) | 0x8
+        return v.toString(16)
+      })
+      setCreatorIdentity(uuid)
+    }
+  }, [])
+
+  // Handle Zoom OAuth callback: ?zoom=connected&creator_identity= or ?zoom=error&message=
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const zoom = urlParams.get('zoom')
+    const ci = urlParams.get('creator_identity')
+    const message = urlParams.get('message')
+    if (zoom === 'connected' && ci) {
+      setCreatorIdentity(ci)
+      setZoomConnection({ zoom_user_email: null, zoom_user_id: null }) // will be filled by /me
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    } else if (zoom === 'error') {
+      setZoomImportError(message === 'missing_code_or_state' ? 'Zoom sign-in was cancelled or incomplete.' : message === 'server_not_configured' ? 'Zoom is not configured on the server.' : message === 'exchange_failed' ? 'Could not complete Zoom sign-in.' : message === 'save_failed' ? 'Could not save Zoom connection.' : message || 'Zoom sign-in failed.')
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    }
+  }, [])
+
+  // Fetch Zoom connection status when creator identity is set
+  useEffect(() => {
+    if (!creatorIdentity || !apiBaseUrl) return
+    const ac = new AbortController()
+    fetch(`${apiBaseUrl}/auth/zoom/me?creator_identity=${encodeURIComponent(creatorIdentity)}`, { signal: ac.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.connected) {
+          setZoomConnection({
+            zoom_user_email: data.zoom_user_email || null,
+            zoom_user_id: data.zoom_user_id || null
+          })
+        } else {
+          setZoomConnection(null)
+        }
+      })
+      .catch(() => setZoomConnection(null))
+    return () => ac.abort()
+  }, [creatorIdentity, apiBaseUrl])
 
   // Check URL for session and mode on mount
   useEffect(() => {
@@ -1007,7 +1177,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const openSession = async (sessionId, forceMode = null) => {
+  const openSession = async (sessionId, forceMode = null, stayInSessionView = false) => {
     setLoading(true)
     clearFeedback(setSessionSelectFeedback)
     
@@ -1082,12 +1252,11 @@ function App() {
         if (data.video_sources && data.video_sources.length > 0) {
           setVideoId(data.video_sources[0].id)
         }
-        // Only switch to artifact view mode in creator mode
-        // Participant mode should always stay in session view mode
-        if (forceMode !== 'participant' && sessionUserMode !== 'participant') {
-          setViewMode('artifact')
-        } else {
+        // Stay in session view when opening after Zoom import so user sees session + video; otherwise switch to artifact view
+        if (stayInSessionView || (forceMode === 'participant') || sessionUserMode === 'participant') {
           setViewMode('session')
+        } else {
+          setViewMode('artifact')
         }
       } else {
         // No artifacts yet, stay in session view mode
@@ -1644,7 +1813,7 @@ function App() {
               Current Video ID: <span className="artifact-id">{videoId}</span>
             </div>
           )}
-          {currentSession && (
+          {currentSession?.session && (
             <div className="success" style={{ marginTop: '10px' }}>
               ✓ Active Session: <span className="artifact-id">{currentSession.session.title}</span> (ID: {currentSession.session.id})
             </div>
@@ -1659,6 +1828,101 @@ function App() {
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
+            {/* Zoom: Connect / Disconnect and Create session from Zoom */}
+            <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
+              {zoomConnection ? (
+                <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{ color: '#2e7d32', fontSize: '14px' }}>
+                    Connected as {zoomConnection.zoom_user_email || zoomConnection.zoom_user_id || 'Zoom user'}
+                  </span>
+                  <button type="button" onClick={disconnectZoom} style={{ padding: '4px 10px', fontSize: '13px' }}>
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <div style={{ marginBottom: '10px' }}>
+                  <a
+                    href={`${apiBaseUrl}/auth/zoom/start?creator_identity=${encodeURIComponent(creatorIdentity)}`}
+                    style={{ padding: '6px 12px', backgroundColor: '#2D8CFF', color: 'white', textDecoration: 'none', borderRadius: '4px', fontSize: '14px', display: 'inline-block' }}
+                  >
+                    Connect Zoom
+                  </a>
+                </div>
+              )}
+              {zoomConnection && (
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px' }}>Zoom recording URL (paste link):</label>
+                  <input
+                    type="text"
+                    value={zoomUrl}
+                    onChange={(e) => {
+                      setZoomUrl(e.target.value)
+                      setZoomImportError('')
+                      setZoomTranscriptStatus(null)
+                      setZoomTranscriptMessage('')
+                      setZoomTranscriptTopic(null)
+                    }}
+                    placeholder="https://zoom.us/rec/play/... or zoom.us/recording/detail?meeting_id=..."
+                    style={{ width: '100%', marginBottom: '6px', padding: '8px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                    <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript || !zoomUrl?.trim()}>
+                      {zoomCheckingTranscript ? 'Checking…' : 'Check transcript'}
+                    </button>
+                    <button type="button" onClick={createSessionFromZoom} disabled={zoomImporting}>
+                      {zoomImporting ? 'Importing…' : 'Create session / Import transcript'}
+                    </button>
+                  </div>
+                  {zoomTranscriptStatus === 'ready' && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '13px', color: '#2e7d32' }}>
+                      ✓ {zoomTranscriptMessage}
+                      {zoomTranscriptTopic && <span style={{ display: 'block', marginTop: '4px', opacity: 0.9 }}>Recording: {zoomTranscriptTopic}</span>}
+                    </div>
+                  )}
+                  {zoomTranscriptStatus === 'processing' && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
+                      ⏳ {zoomTranscriptMessage}
+                      <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>
+                        Try again
+                      </button>
+                    </div>
+                  )}
+                  {zoomTranscriptStatus === 'not_available' && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                      Transcript not available: {zoomTranscriptMessage}
+                    </div>
+                  )}
+                  {zoomTranscriptStatus === 'recording_not_found' && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                      {zoomTranscriptMessage}
+                    </div>
+                  )}
+                  {zoomTranscriptStatus === 'zoom_share_link' && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
+                      {zoomTranscriptMessage}
+                    </div>
+                  )}
+                  {(zoomTranscriptStatus === 'error' || zoomTranscriptStatus === 'api_error') && zoomTranscriptMessage && (
+                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                      {zoomTranscriptMessage}
+                    </div>
+                  )}
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', marginTop: '8px' }}>Session title (optional):</label>
+                  <input
+                    type="text"
+                    value={zoomTitle}
+                    onChange={(e) => setZoomTitle(e.target.value)}
+                    placeholder="e.g., Weekly review"
+                    style={{ width: '100%', marginBottom: '8px', padding: '8px' }}
+                  />
+                  {zoomImportError && (
+                    <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{zoomImportError}</div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div style={{ marginBottom: '15px' }}>
               <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
                 Select Mode:
@@ -1814,19 +2078,19 @@ function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
-                  Active Session: {currentSession.session.title}
+                  Active Session: {currentSession?.session?.title ?? 'Loading...'}
                 </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>
-                  ID: <code style={{ fontSize: '11px' }}>{currentSession.session.id}</code> | 
-                  {currentSession.artifacts && currentSession.artifacts.length > 0 ? (
+                  ID: <code style={{ fontSize: '11px' }}>{currentSession?.session?.id ?? '—'}</code> | 
+                  {currentSession?.artifacts && currentSession.artifacts.length > 0 ? (
                     <>Artifacts: {currentSession.artifacts.map(a => a.title).join(', ')} |</>
                   ) : (
                     <>No artifacts |</>
                   )} 
                   Status: <span style={{ 
-                    color: currentSession.session.status === 'open' ? '#4CAF50' : '#999',
+                    color: currentSession?.session?.status === 'open' ? '#4CAF50' : '#999',
                     fontWeight: 'bold'
-                  }}>{currentSession.session.status}</span>
+                  }}>{currentSession?.session?.status ?? '—'}</span>
                 </div>
               </div>
               <button 
@@ -1985,6 +2249,7 @@ function App() {
               fetchSessionQuestions={fetchSessionQuestions}
               loading={loading}
               apiBaseUrl={apiBaseUrl}
+              creatorIdentity={creatorIdentity}
               viewMode={viewMode}
               setViewMode={setViewMode}
               materialFiles={materialFiles}
@@ -2047,6 +2312,8 @@ function App() {
                 questions={[...questions, ...mockQuestions]}
                 fetchSessionQuestions={fetchSessionQuestions}
                 loading={loading}
+                apiBaseUrl={apiBaseUrl}
+                creatorIdentity={creatorIdentity}
                 questionText={questionText}
                 setQuestionText={setQuestionText}
                 askSessionQuestion={askSessionQuestion}
@@ -2276,6 +2543,9 @@ function App() {
                       onTimeUpdate={handleVideoTimeUpdate}
                       currentTime={currentVideoTime}
                       playing={isVideoPlaying}
+                      sessionId={currentSession?.session?.id || currentSession?.id}
+                      apiBaseUrl={apiBaseUrl}
+                      creatorIdentity={creatorIdentity}
                     />
 
                     {/* Transcript Display */}

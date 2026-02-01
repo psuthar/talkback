@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -1173,4 +1174,119 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// ZoomVideoStream proxies the Zoom recording MP4 so it can be played in-app (Zoom blocks iframe embed).
+// GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream
+func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "video-sources" || pathParts[4] != "stream" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	videoSourceID, err := uuid.Parse(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid video source ID", http.StatusBadRequest)
+		return
+	}
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	// Use session creator, or fallback to creator_identity query param (for sessions created before we set CreatedBy)
+	creatorIdentity := ""
+	if session.CreatedBy != nil && *session.CreatedBy != "" {
+		creatorIdentity = *session.CreatedBy
+	}
+	if creatorIdentity == "" {
+		creatorIdentity = r.URL.Query().Get("creator_identity")
+	}
+	if creatorIdentity == "" {
+		http.Error(w, "Session has no creator. Reconnect Zoom and create a new session from Zoom, or append ?creator_identity=your_id to the stream URL.", http.StatusForbidden)
+		return
+	}
+	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
+	if err != nil || vs == nil {
+		http.Error(w, "Video source not found", http.StatusNotFound)
+		return
+	}
+	if vs.SessionID != sessionID {
+		http.Error(w, "Video source does not belong to this session", http.StatusBadRequest)
+		return
+	}
+	if vs.Provider != "zoom" {
+		http.Error(w, "Not a Zoom video source", http.StatusBadRequest)
+		return
+	}
+	zoomURL := vs.VideoURL
+	if vs.OriginalURL != nil && *vs.OriginalURL != "" {
+		zoomURL = *vs.OriginalURL
+	}
+	meetingID, err := utils.ParseZoomRecordingURL(zoomURL)
+	if err != nil {
+		log.Printf("Zoom video stream: parse URL %q: %v", zoomURL, err)
+		http.Error(w, "Invalid Zoom recording URL", http.StatusBadRequest)
+		return
+	}
+	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
+	if err != nil {
+		log.Printf("Zoom video stream: get token for creator %q: %v", creatorIdentity, err)
+		http.Error(w, "Zoom not connected for this session's creator. Reconnect Zoom and try again.", http.StatusForbidden)
+		return
+	}
+	rec, err := utils.GetMeetingRecordings(accessToken, meetingID)
+	if err != nil {
+		log.Printf("Zoom video stream: get recordings: %v", err)
+		http.Error(w, "Failed to load Zoom recording", http.StatusInternalServerError)
+		return
+	}
+	mp4 := utils.FindMP4RecordingFile(rec.RecordingFiles)
+	if mp4 == nil || mp4.DownloadURL == "" {
+		http.Error(w, "No MP4 recording available for this meeting", http.StatusNotFound)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), "GET", mp4.DownloadURL, nil)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	// Forward Range so browser video element can request byte ranges (required for play/seek)
+	if rangeH := r.Header.Get("Range"); rangeH != "" {
+		req.Header.Set("Range", rangeH)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("Zoom video stream: download %s: %v", mp4.DownloadURL, err)
+		http.Error(w, "Failed to stream video from Zoom", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Zoom video stream: Zoom returned %d: %s", resp.StatusCode, string(body))
+		http.Error(w, "Zoom returned error", resp.StatusCode)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Accept-Ranges", "bytes")
+	if resp.ContentLength >= 0 {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	}
+	if resp.Header.Get("Content-Range") != "" {
+		w.Header().Set("Content-Range", resp.Header.Get("Content-Range"))
+	}
+	// Pass through 206 Partial Content so video element can play and seek
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

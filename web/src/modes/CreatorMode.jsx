@@ -27,6 +27,7 @@ export function CreatorMode({
   fetchSessionQuestions,
   loading,
   apiBaseUrl,
+  creatorIdentity,
   viewMode,
   setViewMode,
   // Upload props
@@ -326,7 +327,7 @@ export function CreatorMode({
     setAnswerVoiceTranscribedText('')
   }
 
-  const video = selectedVideo || (currentSession.video_sources && currentSession.video_sources[0])
+  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0])
 
   // Fetch questions on mount/change (WebSocket handles real-time updates)
   useEffect(() => {
@@ -350,10 +351,18 @@ export function CreatorMode({
     ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view`
     : null
 
+  if (!currentSession) {
+    return (
+      <div style={{ padding: '20px', color: '#666', textAlign: 'center' }}>
+        {loading ? 'Loading session...' : 'No session loaded. Select or create a session to continue.'}
+      </div>
+    )
+  }
+
   return (
     <>
       {/* Session Header for Creator Mode */}
-      {currentSession?.session && (
+      {currentSession.session && (
         <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e8f4f8', borderRadius: '5px', border: '2px solid #2196F3' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ flex: 1 }}>
@@ -417,7 +426,7 @@ export function CreatorMode({
       </div>
 
       {/* Session Sharing */}
-      {currentSession.session && (
+      {currentSession?.session && (
         <SessionSharing 
           sessionId={currentSession.session.id} 
           sessionTitle={currentSession.session.title} 
@@ -425,7 +434,7 @@ export function CreatorMode({
       )}
 
       {/* Existing Artifacts */}
-      {currentSession.artifacts && currentSession.artifacts.length > 0 && (
+      {currentSession?.artifacts && currentSession.artifacts.length > 0 && (
         <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f0f8ff', border: '1px solid #2196F3' }}>
           <h2>Existing Artifacts ({currentSession.artifacts.length})</h2>
           {currentSession.artifacts.map((artifact, idx) => (
@@ -470,12 +479,12 @@ export function CreatorMode({
       )}
 
       {/* Existing Materials */}
-      {currentSession.materials && currentSession.materials.length > 0 && (
+      {currentSession?.materials && currentSession.materials.length > 0 && (
         <MaterialsList materials={currentSession.materials} />
       )}
 
       {/* Video Player */}
-      {currentSession.video_sources && currentSession.video_sources.length > 0 && (
+      {currentSession?.video_sources && currentSession.video_sources.length > 0 && (
         <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fff3e0', border: '1px solid #ff9800' }}>
           <h2>Video Player</h2>
           
@@ -593,6 +602,9 @@ export function CreatorMode({
                 onTimeUpdate={handleVideoTimeUpdate}
                 currentTime={currentVideoTime}
                 playing={isVideoPlaying}
+                sessionId={currentSession?.session?.id || currentSession?.id}
+                apiBaseUrl={apiBaseUrl}
+                creatorIdentity={creatorIdentity}
               />
 
               {video.transcript_text && (

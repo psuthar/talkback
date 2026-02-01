@@ -87,7 +87,7 @@ func main() {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
@@ -120,6 +120,7 @@ func main() {
 			h.SessionsRouter(w, r)
 		}
 	}))
+	http.HandleFunc("/sessions/from-zoom", corsMiddleware(h.CreateSessionFromZoom))
 	http.HandleFunc("/sessions/", corsMiddleware(h.SessionsRouter))
 
 	// WebSocket endpoint for session updates
@@ -127,6 +128,14 @@ func main() {
 
 	// Admin endpoints with CORS
 	http.HandleFunc("/admin/reset", corsMiddleware(h.ResetAllData))
+
+	// Zoom OAuth endpoints
+	http.HandleFunc("/auth/zoom/start", corsMiddleware(h.ZoomAuthStart))
+	http.HandleFunc("/auth/zoom/callback", corsMiddleware(h.ZoomAuthCallback))
+	http.HandleFunc("/auth/zoom/disconnect", corsMiddleware(h.ZoomAuthDisconnect))
+	http.HandleFunc("/auth/zoom/me", corsMiddleware(h.ZoomAuthMe))
+	// Zoom transcript status (explicit check before creating session)
+	http.HandleFunc("/zoom/transcript-status", corsMiddleware(h.ZoomTranscriptStatus))
 
 	port := os.Getenv("PORT")
 	if port == "" {

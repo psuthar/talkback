@@ -97,9 +97,32 @@ type VideoSource struct {
 	TranscriptStatus      VideoTranscriptStatus `json:"transcript_status"`
 	TranscriptText        *string               `json:"transcript_text,omitempty"`
 	AutoTranscribeEnabled bool                  `json:"auto_transcribe_enabled,omitempty"`
-	TranscriptionSource   *string               `json:"transcription_source,omitempty"` // 'manual', 'loom_api', 'whisper'
+	TranscriptionSource   *string               `json:"transcription_source,omitempty"` // 'manual', 'loom_api', 'whisper', 'zoom_api'
 	TranscriptionJobID    *uuid.UUID            `json:"transcription_job_id,omitempty"`
+	RawVTT                *string               `json:"raw_vtt,omitempty"`              // Original VTT from Zoom (optional)
+	TranscriptSegments    []TranscriptSegment   `json:"transcript_segments,omitempty"`  // Normalized start/end/text (optional)
 	CreatedAt             time.Time             `json:"created_at"`
+}
+
+// TranscriptSegment is a normalized VTT cue for jump-to-moment and citations
+type TranscriptSegment struct {
+	StartTime float64 `json:"start_time"` // seconds
+	EndTime   float64 `json:"end_time"`   // seconds
+	Text      string  `json:"text"`
+}
+
+// ZoomConnection stores OAuth tokens for a creator's Zoom account (keyed by creator_identity_id)
+type ZoomConnection struct {
+	ID                    uuid.UUID  `json:"id"`
+	CreatorIdentityID     string     `json:"creator_identity_id"`
+	ZoomUserID            string     `json:"zoom_user_id"`
+	ZoomAccountID         *string    `json:"zoom_account_id,omitempty"`
+	ZoomUserEmail         *string    `json:"zoom_user_email,omitempty"`
+	AccessTokenEncrypted  []byte     `json:"-"` // never expose in JSON
+	RefreshTokenEncrypted []byte     `json:"-"`
+	ExpiresAt             time.Time  `json:"expires_at"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 // Phase 2: Q&A Models
@@ -158,13 +181,23 @@ const (
 	SessionStatusClosed SessionStatus = "closed"
 )
 
+// SessionSourceProvider indicates how the session was created (zoom vs upload/other)
+type SessionSourceProvider string
+
+const (
+	SessionSourceZoom   SessionSourceProvider = "zoom"
+	SessionSourceUpload SessionSourceProvider = "upload"
+)
+
 type Session struct {
-	ID         uuid.UUID     `json:"id"`
-	Title      string        `json:"title"`
-	CreatedBy  *string       `json:"created_by,omitempty"`
-	Status     SessionStatus `json:"status"`
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
+	ID                 uuid.UUID              `json:"id"`
+	Title              string                 `json:"title"`
+	CreatedBy          *string                `json:"created_by,omitempty"`
+	Status             SessionStatus          `json:"status"`
+	SourceProvider     SessionSourceProvider  `json:"source_provider,omitempty"`
+	SourceReferenceURL *string                `json:"source_reference_url,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	UpdatedAt          time.Time              `json:"updated_at"`
 }
 
 type SessionParticipant struct {

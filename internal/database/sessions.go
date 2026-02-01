@@ -13,9 +13,13 @@ import (
 
 // CreateSession creates a new session
 func (db *DB) CreateSession(ctx context.Context, session *models.Session) error {
+	sourceProvider := string(session.SourceProvider)
+	if sourceProvider == "" {
+		sourceProvider = string(models.SessionSourceUpload)
+	}
 	query := `
-		INSERT INTO sessions (id, title, created_by, status)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO sessions (id, title, created_by, status, source_provider, source_reference_url)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at
 	`
 
@@ -24,6 +28,8 @@ func (db *DB) CreateSession(ctx context.Context, session *models.Session) error 
 		session.Title,
 		session.CreatedBy,
 		session.Status,
+		sourceProvider,
+		session.SourceReferenceURL,
 	).Scan(&session.CreatedAt, &session.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
@@ -35,8 +41,9 @@ func (db *DB) CreateSession(ctx context.Context, session *models.Session) error 
 // GetSession retrieves a session by ID
 func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Session, error) {
 	session := &models.Session{}
+	var sourceProviderStr, sourceRefURL *string
 	query := `
-		SELECT id, title, created_by, status, created_at, updated_at
+		SELECT id, title, created_by, status, source_provider, source_reference_url, created_at, updated_at
 		FROM sessions
 		WHERE id = $1
 	`
@@ -46,6 +53,8 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		&session.Title,
 		&session.CreatedBy,
 		&session.Status,
+		&sourceProviderStr,
+		&sourceRefURL,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)
@@ -55,6 +64,10 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
+	if sourceProviderStr != nil {
+		session.SourceProvider = models.SessionSourceProvider(*sourceProviderStr)
+	}
+	session.SourceReferenceURL = sourceRefURL
 
 	return session, nil
 }

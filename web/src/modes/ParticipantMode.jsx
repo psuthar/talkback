@@ -25,6 +25,8 @@ export function ParticipantMode({
   questions,
   fetchSessionQuestions,
   loading,
+  apiBaseUrl,
+  creatorIdentity,
   questionText,
   setQuestionText,
   askSessionQuestion,
@@ -182,6 +184,9 @@ export function ParticipantMode({
                       onTimeUpdate={handleVideoTimeUpdate}
                       currentTime={currentVideoTime}
                       playing={isVideoPlaying}
+                      sessionId={currentSession?.session?.id}
+                      apiBaseUrl={apiBaseUrl}
+                      creatorIdentity={creatorIdentity}
                     />
                   </div>
                 )}

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -73,6 +74,31 @@ func (db *DB) UpdateVideoSourceTranscript(ctx context.Context, videoID uuid.UUID
 	return nil
 }
 
+// UpdateVideoSourceZoomTranscript sets transcript text, raw VTT, and segments for a Zoom-sourced video
+func (db *DB) UpdateVideoSourceZoomTranscript(ctx context.Context, videoID uuid.UUID, transcriptText string, rawVTT *string, segments []models.TranscriptSegment) error {
+	var segmentsJSON []byte
+	if len(segments) > 0 {
+		var err error
+		segmentsJSON, err = json.Marshal(segments)
+		if err != nil {
+			return fmt.Errorf("failed to marshal transcript segments: %w", err)
+		}
+	}
+	query := `
+		UPDATE video_sources
+		SET transcript_status = 'ready', transcript_text = $1, raw_vtt = $2, transcript_segments = $3
+		WHERE id = $4
+	`
+	result, err := db.Pool.Exec(ctx, query, transcriptText, rawVTT, segmentsJSON, videoID)
+	if err != nil {
+		return fmt.Errorf("failed to update video source zoom transcript: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("video source not found")
+	}
+	return nil
+}
+
 func (db *DB) UpdateVideoSourceTranscriptStatus(ctx context.Context, videoID uuid.UUID, status models.VideoTranscriptStatus) error {
 	query := `
 		UPDATE video_sources
@@ -96,8 +122,9 @@ func (db *DB) UpdateVideoSourceTranscriptStatus(ctx context.Context, videoID uui
 func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UUID) (*models.VideoSource, error) {
 	videoSource := &models.VideoSource{}
 	var sourceTypeStr string
+	var segmentsRaw []byte
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
 		FROM video_sources
 		WHERE artifact_id = $1
 	`
@@ -122,21 +149,24 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 		&videoSource.AutoTranscribeEnabled,
 		&videoSource.TranscriptionSource,
 		&videoSource.TranscriptionJobID,
+		&videoSource.RawVTT,
+		&segmentsRaw,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video source: %w", err)
 	}
-	
 	videoSource.SourceType = models.VideoSourceType(sourceTypeStr)
-
+	if len(segmentsRaw) > 0 {
+		_ = json.Unmarshal(segmentsRaw, &videoSource.TranscriptSegments)
+	}
 	return videoSource, nil
 }
 
 // GetVideoSourcesBySessionID retrieves all video sources for a session
 func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.VideoSource, error) {
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
 		FROM video_sources
 		WHERE session_id = $1
 		ORDER BY created_at
@@ -152,6 +182,7 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 	for rows.Next() {
 		vs := &models.VideoSource{}
 		var sourceTypeStr string
+		var segmentsRaw []byte
 		err := rows.Scan(
 			&vs.ID,
 			&vs.ArtifactID,
@@ -172,12 +203,17 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 			&vs.AutoTranscribeEnabled,
 			&vs.TranscriptionSource,
 			&vs.TranscriptionJobID,
+			&vs.RawVTT,
+			&segmentsRaw,
 			&vs.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan video source: %w", err)
 		}
 		vs.SourceType = models.VideoSourceType(sourceTypeStr)
+		if len(segmentsRaw) > 0 {
+			_ = json.Unmarshal(segmentsRaw, &vs.TranscriptSegments)
+		}
 		videoSources = append(videoSources, vs)
 	}
 
@@ -195,8 +231,9 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*models.VideoSource, error) {
 	videoSource := &models.VideoSource{}
 	var sourceTypeStr string
+	var segmentsRaw []byte
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
 		FROM video_sources
 		WHERE id = $1
 	`
@@ -221,14 +258,17 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 		&videoSource.AutoTranscribeEnabled,
 		&videoSource.TranscriptionSource,
 		&videoSource.TranscriptionJobID,
+		&videoSource.RawVTT,
+		&segmentsRaw,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video source: %w", err)
 	}
-	
 	videoSource.SourceType = models.VideoSourceType(sourceTypeStr)
-
+	if len(segmentsRaw) > 0 {
+		_ = json.Unmarshal(segmentsRaw, &videoSource.TranscriptSegments)
+	}
 	return videoSource, nil
 }
 

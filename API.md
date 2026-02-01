@@ -442,6 +442,140 @@ Retrieve an artifact with optional questions and answers included.
 
 ---
 
+## Zoom OAuth and Create from Zoom
+
+Identity is keyed by **creator identity** (a UUID stored in the browser, e.g. `localStorage`). Send it as the `X-Creator-Identity` header on Zoom-related requests, or as query param `creator_identity` where a redirect/GET is used.
+
+### Start Zoom OAuth
+**GET** `/auth/zoom/start?creator_identity={uuid}`
+
+Redirects the user to Zoom OAuth. If `creator_identity` is omitted, the server generates one and passes it back after callback via `?zoom=connected&creator_identity=...`.
+
+**Query Parameters:**
+- `creator_identity` (optional) - UUID to bind the Zoom connection to
+
+**Response:** `302 Found` — redirect to Zoom authorize URL
+
+---
+
+### Zoom OAuth Callback
+**GET** `/auth/zoom/callback?code=...&state=...`
+
+Handled by the server after Zoom redirects. Exchanges `code` for tokens, stores the Zoom connection for the creator identity (from `state`), then redirects to the app with `?zoom=connected&creator_identity=...` (or `?zoom=error&message=...` on failure).
+
+---
+
+### Disconnect Zoom
+**POST** `/auth/zoom/disconnect`
+
+**Headers:**
+- `X-Creator-Identity` (required) - Creator identity UUID
+
+**Response:** `200 OK`
+```json
+{ "status": "disconnected" }
+```
+
+**Status Codes:**
+- `200 OK` - Disconnected
+- `400 Bad Request` - Missing creator identity
+
+---
+
+### Zoom Connection Status
+**GET** `/auth/zoom/me`
+
+**Headers or query:** `X-Creator-Identity` or `creator_identity` (required)
+
+**Response:** `200 OK`
+```json
+{
+  "connected": true,
+  "zoom_user_id": "string",
+  "zoom_user_email": "user@example.com"
+}
+```
+When not connected: `{ "connected": false }` (optional `message`).
+
+---
+
+### Zoom transcript status
+**GET** `/zoom/transcript-status?zoom_url=...`
+
+Check whether a Zoom recording has a transcript ready, still processing, or not available. Use this to show meaningful UI before creating a session.
+
+**Headers:** `X-Creator-Identity` (required)
+
+**Query Parameters:**
+- `zoom_url` (required) - Zoom recording/share URL
+
+**Response:** `200 OK`
+```json
+{
+  "status": "ready",
+  "message": "Transcript is ready. You can create a session.",
+  "topic": "Optional meeting topic from Zoom"
+}
+```
+
+**Status values:**
+- `ready` - Transcript file exists and is completed; user can create a session.
+- `processing` - Transcript is being generated; user should try again in a few minutes.
+- `not_available` - No transcript file (transcript not enabled for this recording).
+- `recording_not_found` - Recording not found.
+- `error` - Unable to determine status.
+
+**Status Codes:**
+- `200 OK` - Status returned
+- `400 Bad Request` - Missing or invalid zoom_url
+- `401 Unauthorized` - Creator identity missing or Zoom not connected
+
+---
+
+### Create Session from Zoom
+**POST** `/sessions/from-zoom`
+
+Creates a session and ingests the Zoom recording transcript (VTT/CC) in one call. Requires Zoom to be connected for the creator identity.
+
+**Headers:**
+- `Content-Type: application/json`
+- `X-Creator-Identity` (required) - Creator identity UUID
+
+**Request Body:**
+```json
+{
+  "zoom_url": "https://zoom.us/rec/play/...",
+  "title": "Optional session title"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "id": "session-uuid",
+  "title": "Session title",
+  "status": "open",
+  "created_at": "2025-01-24T12:00:00Z",
+  "video_source_id": "uuid",
+  "message": "Session created from Zoom transcript"
+}
+```
+
+**Error Response:** `4xx/5xx` with JSON body `{ "message": "..." }` or `{ "code": "...", "message": "..." }` for transcript-specific errors.
+
+**Error codes (422):**
+- `transcript_processing` - Transcript is still being generated; try again in a few minutes.
+- `transcript_not_available` - Transcript is not enabled for this recording; enable "Create audio transcript" in Zoom.
+
+**Status Codes:**
+- `201 Created` - Session and transcript created
+- `400 Bad Request` - Invalid body or Zoom URL
+- `401 Unauthorized` - Creator identity missing or Zoom not connected
+- `404 Not Found` - Recording not found
+- `422 Unprocessable Entity` - Transcript not ready (`transcript_processing`), not enabled (`transcript_not_available`), or download/parse failed
+
+---
+
 ## Notes
 
 - All UUIDs are in standard UUID format (e.g., `550e8400-e29b-41d4-a716-446655440000`)
