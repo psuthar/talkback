@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -164,6 +165,31 @@ func (h *Handlers) GetArtifact(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// deriveMaterialKind returns material kind from file extension and content-type for grouping in UI.
+func deriveMaterialKind(ext, contentType string, isImage bool) string {
+	if isImage {
+		return "slides"
+	}
+	ct := strings.ToLower(contentType)
+	switch ext {
+	case ".pdf":
+		return "document"
+	case ".txt", ".md":
+		return "document"
+	case ".pptx", ".ppt":
+		return "slides"
+	case ".xlsx", ".xls", ".csv":
+		return "document"
+	}
+	if ct == "text/plain" || strings.HasPrefix(ct, "text/") {
+		return "document"
+	}
+	if strings.HasPrefix(ct, "application/pdf") {
+		return "document"
+	}
+	return "other"
+}
+
 func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -217,12 +243,6 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
-	// Get kind from form (default to "document")
-	kind := r.FormValue("kind")
-	if kind == "" {
-		kind = "document"
-	}
-
 	// Create uploads directory structure
 	uploadsDir := filepath.Join("data", "uploads", artifactID.String())
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
@@ -240,11 +260,21 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	// Store file under ./data/uploads/{artifact_id}/...
 	storageURL := filepath.Join("data", "uploads", artifactID.String(), header.Filename)
 
-	// Extract text (best-effort). We store only extracted text long-term.
+	// Skip text extraction for known image formats; mark as ready for viewing only.
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	isImage := strings.HasPrefix(contentType, "image/") ||
+		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
+
+	// Derive kind from file extension and content-type (auto-detect; ignore form value).
+	kind := deriveMaterialKind(ext, contentType, isImage)
+
+	// Extract text (best-effort) only for non-image types. We store only extracted text long-term.
 	textStatus := models.MaterialTextStatusPending
 	var extractedText *string
-	ext := strings.ToLower(filepath.Ext(header.Filename))
 	switch {
+	case isImage:
+		textStatus = models.MaterialTextStatusReady
+		// extractedText stays nil; no extraction attempted
 	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
 		content, err := os.ReadFile(filePath)
 		if err == nil {
@@ -289,9 +319,65 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if material.ExtractedText != nil && *material.ExtractedText != "" {
+		rag.IndexSessionAsync(material.SessionID, h.DB)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(material)
+}
+
+// ServeMaterialFile serves a material file by ID (GET /artifacts/:artifactId/materials/:materialId/file).
+func (h *Handlers) ServeMaterialFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) != 5 || pathParts[0] != "artifacts" || pathParts[2] != "materials" || pathParts[4] != "file" {
+		http.Error(w, "Invalid path", http.StatusNotFound)
+		return
+	}
+	artifactID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid artifact ID", http.StatusBadRequest)
+		return
+	}
+	materialID, err := uuid.Parse(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid material ID", http.StatusBadRequest)
+		return
+	}
+	mat, err := h.DB.GetMaterialByID(r.Context(), materialID)
+	if err != nil || mat == nil {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.ArtifactID != artifactID {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	// StorageURL is relative path e.g. data/uploads/artifact_id/filename
+	path := filepath.FromSlash(mat.StorageURL)
+	f, err := os.Open(path)
+	if err != nil {
+		log.Printf("ServeMaterialFile: open %s: %v", path, err)
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	ct := mat.ContentType
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	http.ServeContent(w, r, mat.Filename, info.ModTime(), f)
 }
 
 type AttachVideoURLRequest struct {
@@ -531,6 +617,8 @@ func (h *Handlers) UploadTranscript(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to upload transcript: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	rag.IndexSessionAsync(videoSource.SessionID, h.DB)
 
 	// Get updated video source
 	updatedVideoSource, _ := h.DB.GetVideoSourceByID(r.Context(), videoID)

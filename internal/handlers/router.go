@@ -43,6 +43,8 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 				h.UploadMaterial(w, r)
 				return
 			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		case "video":
 			if r.Method == http.MethodPost {
 				h.AttachVideoURL(w, r)
@@ -63,6 +65,15 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 5 {
+		// /artifacts/{id}/materials/{material_id}/file - GET (serve material file for viewing)
+		if parts[2] == "materials" && parts[4] == "file" {
+			if r.Method == http.MethodGet {
+				h.ServeMaterialFile(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// /artifacts/{id}/video/{video_id}/transcript
 		if parts[2] == "video" && parts[4] == "transcript" {
 			if r.Method == http.MethodPost {
@@ -93,6 +104,57 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	http.Error(w, "Invalid path", http.StatusNotFound)
+}
+
+// APISessionsRouter handles /api/sessions/:id/import/zoom and /api/sessions/:id/ingestion
+func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 || parts[0] != "api" || parts[1] != "sessions" {
+		http.Error(w, "Invalid path", http.StatusNotFound)
+		return
+	}
+	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "zoom" {
+		if r.Method == http.MethodPost {
+			h.SessionImportZoom(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "ingestion" {
+		if r.Method == http.MethodGet {
+			h.SessionIngestionStatus(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "transcript" {
+		if r.Method == http.MethodGet {
+			h.SessionTranscript(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "ask" {
+		if r.Method == http.MethodPost {
+			h.SessionAsk(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "reindex" {
+		if r.Method == http.MethodPost {
+			h.SessionReindex(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
@@ -204,6 +266,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		if parts[2] == "video" && parts[3] == "from-url" {
 			if r.Method == http.MethodPost {
 				h.IngestVideoFromURL(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/materials/seen - POST (mark materials as read by participant)
+		if parts[2] == "materials" && parts[3] == "seen" {
+			if r.Method == http.MethodPost {
+				h.MarkSessionMaterialsSeen(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

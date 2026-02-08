@@ -3,11 +3,19 @@ import { VideoPlayer, PlayerEvent } from './VideoPlayer'
 import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
+import { MaterialsList } from './components/MaterialsList'
 
 const API_BASE_URL_DEFAULT = 'http://localhost:8081'
+const API_BASE_URL_STORAGE_KEY = 'talkback.api_base_url'
 
 function App() {
-  const [apiBaseUrl, setApiBaseUrl] = useState(API_BASE_URL_DEFAULT)
+  const [apiBaseUrl, setApiBaseUrl] = useState(() => {
+    try {
+      const stored = localStorage.getItem(API_BASE_URL_STORAGE_KEY)
+      if (stored) return stored
+    } catch (_) { /* ignore */ }
+    return API_BASE_URL_DEFAULT
+  })
   const [artifactId, setArtifactId] = useState('')
   const [videoId, setVideoId] = useState('')
   
@@ -16,7 +24,6 @@ function App() {
   const [artifactDescription, setArtifactDescription] = useState('')
   const [materialFiles, setMaterialFiles] = useState([]) // Array of File objects for multiple uploads
   const [uploadedMaterials, setUploadedMaterials] = useState([]) // Array of successfully uploaded materials
-  const [materialKind, setMaterialKind] = useState('document')
   const [videoProvider, setVideoProvider] = useState('loom')
   const [videoUrl, setVideoUrl] = useState('')
   const [playbackMode, setPlaybackMode] = useState('embed') // 'embed' or 'direct'
@@ -105,6 +112,13 @@ function App() {
   const [zoomTranscriptMessage, setZoomTranscriptMessage] = useState('')
   const [zoomTranscriptTopic, setZoomTranscriptTopic] = useState(null)
   const [zoomCheckingTranscript, setZoomCheckingTranscript] = useState(false)
+  // Zoom recordings list (mission: Import from Zoom panel)
+  const [zoomRecordings, setZoomRecordings] = useState([])
+  const [zoomRecordingsLoading, setZoomRecordingsLoading] = useState(false)
+  const [zoomRecordingsError, setZoomRecordingsError] = useState('')
+  const [zoomRecordingsDays, setZoomRecordingsDays] = useState(14) // 7 | 14 | 30
+  const [zoomRecordingsHasTranscript, setZoomRecordingsHasTranscript] = useState(true)
+  const [zoomImportToast, setZoomImportToast] = useState(null) // { message } or null
 
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
@@ -374,7 +388,6 @@ function App() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('kind', materialKind)
 
       const response = await fetch(`${apiBaseUrl}/artifacts/${artifactId}/materials`, {
         method: 'POST',
@@ -1083,13 +1096,76 @@ function App() {
 
   const disconnectZoom = async () => {
     try {
-      await fetch(`${apiBaseUrl}/auth/zoom/disconnect`, {
+      await fetch(`${apiBaseUrl}/api/zoom/disconnect`, {
         method: 'POST',
         headers: { 'X-Creator-Identity': creatorIdentity }
       })
       setZoomConnection(null)
+      setZoomRecordings([])
     } catch {
       // ignore
+    }
+  }
+
+  const fetchZoomRecordings = async () => {
+    setZoomRecordingsLoading(true)
+    setZoomRecordingsError('')
+    try {
+      const now = new Date()
+      const to = now.toISOString().slice(0, 10)
+      const from = new Date(now.getTime() - zoomRecordingsDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const params = new URLSearchParams({ from, to })
+      if (zoomRecordingsHasTranscript) params.set('has_transcript', 'true')
+      const res = await fetch(`${apiBaseUrl}/api/zoom/recordings?${params}`, {
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setZoomRecordingsError(data.message || 'Failed to fetch recordings')
+        setZoomRecordings([])
+        return
+      }
+      setZoomRecordings(data.items || [])
+    } catch (err) {
+      setZoomRecordingsError(err.message || 'Failed to fetch recordings')
+      setZoomRecordings([])
+    } finally {
+      setZoomRecordingsLoading(false)
+    }
+  }
+
+  const importFromZoomRecording = async (rec) => {
+    setZoomImporting(true)
+    setZoomImportError('')
+    try {
+      const createRes = await fetch(`${apiBaseUrl}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        body: JSON.stringify({ title: rec.meeting_topic || 'Zoom Recording' })
+      })
+      const createData = await createRes.json()
+      if (!createRes.ok) {
+        setZoomImportError(createData.message || 'Failed to create session')
+        return
+      }
+      const sessionId = createData.id
+      const importRes = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/import/zoom`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        body: JSON.stringify({ meeting_uuid: rec.meeting_uuid, instance_uuid: rec.instance_uuid || rec.meeting_uuid })
+      })
+      if (!importRes.ok) {
+        const errData = await importRes.json().catch(() => ({}))
+        setZoomImportError(errData.message || 'Failed to start import')
+        return
+      }
+      setZoomImportToast({ message: 'Import started' })
+      setTimeout(() => setZoomImportToast(null), 3000)
+      await openSession(sessionId, 'creator', true)
+    } catch (err) {
+      setZoomImportError(err.message || 'Failed to import')
+    } finally {
+      setZoomImporting(false)
     }
   }
 
@@ -1127,16 +1203,19 @@ function App() {
     }
   }, [])
 
-  // Fetch Zoom connection status when creator identity is set
+  // Fetch Zoom connection status when creator identity is set (uses /api/zoom/status)
   useEffect(() => {
     if (!creatorIdentity || !apiBaseUrl) return
     const ac = new AbortController()
-    fetch(`${apiBaseUrl}/auth/zoom/me?creator_identity=${encodeURIComponent(creatorIdentity)}`, { signal: ac.signal })
+    fetch(`${apiBaseUrl}/api/zoom/status`, {
+      signal: ac.signal,
+      headers: { 'X-Creator-Identity': creatorIdentity }
+    })
       .then((res) => res.json())
       .then((data) => {
         if (data.connected) {
           setZoomConnection({
-            zoom_user_email: data.zoom_user_email || null,
+            zoom_user_email: data.zoom_email || data.zoom_user_email || null,
             zoom_user_id: data.zoom_user_id || null
           })
         } else {
@@ -1146,6 +1225,25 @@ function App() {
       .catch(() => setZoomConnection(null))
     return () => ac.abort()
   }, [creatorIdentity, apiBaseUrl])
+
+  // Persist API base URL so it survives refresh and works after Zoom OAuth redirect
+  useEffect(() => {
+    try {
+      if (apiBaseUrl) localStorage.setItem(API_BASE_URL_STORAGE_KEY, apiBaseUrl)
+    } catch (_) { /* ignore */ }
+  }, [apiBaseUrl])
+
+  // Allow API base URL from query param (e.g. participant link: ?session=xxx&mode=view&api=http://localhost:8080)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
+    if (apiFromUrl) {
+      try {
+        const u = new URL(apiFromUrl)
+        setApiBaseUrl(u.origin)
+      } catch (_) { /* ignore invalid */ }
+    }
+  }, [])
 
   // Check URL for session and mode on mount
   useEffect(() => {
@@ -1190,8 +1288,13 @@ function App() {
     }
     
     try {
-      // First, fetch session without user header to get session data
-      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}`)
+      // When in participant mode, send participant_ref so backend can return unread_material_ids for "new document" marker
+      const isParticipant = forceMode === 'participant' || (typeof sessionUserMode !== 'undefined' && sessionUserMode === 'participant')
+      const headers = {}
+      if (isParticipant && participantRef) {
+        headers['X-Participant-Ref'] = participantRef
+      }
+      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}`, { headers })
       if (!response.ok) {
         setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${response.status}` })
         // Mode is already set above, so UI will still hide/show correct sections
@@ -1203,6 +1306,31 @@ function App() {
 
       const data = await response.json()
       setCurrentSession(data)
+      
+      // If session has no video_sources yet (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears
+      if (data.session && (!data.video_sources || data.video_sources.length === 0)) {
+        const loadedId = data.session.id || sessionId
+        setTimeout(() => {
+          fetch(`${apiBaseUrl}/sessions/${sessionId}`, { headers })
+            .then((r) => r.ok ? r.json() : null)
+            .then((retryData) => {
+              const currentId = loadedId
+              setCurrentSession((prev) => {
+                const prevId = prev?.session?.id || prev?.id
+                if (prevId !== currentId) return prev
+                if (retryData?.video_sources?.length > 0) {
+                  queueMicrotask(() => {
+                    setVideoId(retryData.video_sources[0].id)
+                    setSelectedVideo(retryData.video_sources[0])
+                  })
+                  return retryData
+                }
+                return prev
+              })
+            })
+            .catch(() => {})
+        }, 2500)
+      }
       
       // Automatically set currentUser based on mode:
       // - Creator mode: use session.created_by (if available) to match backend logic
@@ -1222,8 +1350,8 @@ function App() {
         // Set currentUser to something that won't match created_by
         setCurrentUser('participant')
         setSessionUserMode('participant')
-        // Update URL to reflect participant mode
-        window.history.replaceState({}, '', `?session=${sessionId}&mode=view`)
+        // Update URL to reflect participant mode (include api so refresh/new window works)
+        window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`)
       } else {
         // No explicit mode, determine from URL or default to creator
         const urlParams = new URLSearchParams(window.location.search)
@@ -1232,7 +1360,7 @@ function App() {
         if (urlMode === 'view') {
           setCurrentUser('participant')
           setSessionUserMode('participant')
-          window.history.replaceState({}, '', `?session=${sessionId}&mode=view`)
+          window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`)
         } else {
           // Default to creator mode
           if (data.session && data.session.created_by) {
@@ -1248,11 +1376,17 @@ function App() {
       // Set artifact ID if there are artifacts in the session
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifactId(data.artifacts[0].id)
-        // Pre-populate video ID if there are video sources
-        if (data.video_sources && data.video_sources.length > 0) {
-          setVideoId(data.video_sources[0].id)
-        }
-        // Stay in session view when opening after Zoom import so user sees session + video; otherwise switch to artifact view
+      }
+      // Pre-populate video selection when session has video sources (so participant view shows the player)
+      if (data.video_sources && data.video_sources.length > 0) {
+        setVideoId(data.video_sources[0].id)
+        setSelectedVideo(data.video_sources[0])
+      } else {
+        setVideoId(null)
+        setSelectedVideo(null)
+      }
+      // Stay in session view when opening after Zoom import or in participant mode; otherwise switch to artifact view
+      if (data.artifacts && data.artifacts.length > 0) {
         if (stayInSessionView || (forceMode === 'participant') || sessionUserMode === 'participant') {
           setViewMode('session')
         } else {
@@ -1273,6 +1407,25 @@ function App() {
       setLoading(false)
     }
   }
+
+  const refetchSession = useCallback(async () => {
+    const id = currentSession?.session?.id || currentSession?.id
+    if (!id) return
+    await openSession(id, sessionUserMode)
+  }, [currentSession?.session?.id, currentSession?.id, sessionUserMode])
+
+  const markMaterialsSeen = useCallback(async (materialIds) => {
+    const sessionId = currentSession?.session?.id || currentSession?.id
+    if (!sessionId || !participantRef || !materialIds?.length) return
+    try {
+      await fetch(`${apiBaseUrl}/sessions/${sessionId}/materials/seen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participant_ref: participantRef, material_ids: materialIds })
+      })
+      await refetchSession()
+    } catch (_) { /* ignore */ }
+  }, [currentSession?.session?.id, currentSession?.id, participantRef, apiBaseUrl, refetchSession])
 
   const loadSessionById = async (mode = null) => {
     if (!sessionIdInput.trim()) {
@@ -1316,6 +1469,7 @@ function App() {
       }
 
       setJoinSessionFeedback({ type: 'success', message: `Joined session as ${participantRef}` })
+      await refetchSession()
     } catch (err) {
       setJoinSessionFeedback({ type: 'error', message: `Failed to join session: ${err.message}` })
     } finally {
@@ -1341,45 +1495,61 @@ function App() {
     setLoading(true)
 
     try {
-      const requestBody = {
-        question_text: text
-      }
-      if (currentVideoTime > 0) {
-        requestBody.video_time_seconds = Math.floor(currentVideoTime)
-      }
-
-      const response = await fetch(`${apiBaseUrl}/sessions/${currentSession.session.id}/questions`, {
+      // Session-scoped RAG: POST /api/sessions/:id/ask (Mission #3)
+      const response = await fetch(`${apiBaseUrl}/api/sessions/${currentSession.session.id}/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({ question_text: text, asked_via: 'text' })
       })
 
       if (!response.ok) {
-        const text = await response.text()
+        const respText = await response.text()
+        let msg = `Error ${response.status}: ${respText}`
         try {
-          const json = JSON.parse(text)
-          setAskQuestionFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
-        } catch {
-          setAskQuestionFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
-        }
+          const json = JSON.parse(respText)
+          msg = json.message || msg
+        } catch { /* ignore */ }
+        setAskQuestionFeedback({ type: 'error', message: msg })
         return
       }
 
       const data = await response.json()
-      setCurrentAnswer(data)
       const isCached = response.status === 200
-      const statusMsg = isCached 
-        ? `Question answered (cached)! Status: ${data.answer.answer_status}`
-        : `Question answered! Status: ${data.answer.answer_status}`
-      setAskQuestionFeedback({ type: 'success', message: statusMsg })
+      setCurrentAnswer({
+        question: { question_text: data.question.question_text, created_at: data.question.created_at },
+        answer: {
+          answer_text: data.answer.answer_text,
+          answer_status: 'answered',
+          confidence: 1,
+          citations: (data.answer.citations || []).map(c => ({
+            citation_id: c.citation_id,
+            chunk_id: c.chunk_id,
+            source_type: c.source_type,
+            source_id: c.source_id,
+            anchor: c.anchor,
+            label: c.label || (c.source_type + ' ' + (c.anchor?.start_ms != null ? formatCitationAnchor(c.anchor) : c.anchor?.block != null ? `block ${c.anchor.block}` : c.chunk_id)),
+            excerpt: (c.excerpt || c.snippet || '').slice(0, 300),
+            navigation: c.navigation
+          }))
+        }
+      })
+      setAskQuestionFeedback({ type: 'success', message: isCached ? 'Question answered (cached)!' : 'Question answered!' })
       setQuestionText('')
-      // Immediately refresh questions to show the new question
       await fetchSessionQuestions(currentSession.session.id)
     } catch (err) {
       setAskQuestionFeedback({ type: 'error', message: `Failed to ask question: ${err.message}` })
     } finally {
       setLoading(false)
     }
+  }
+
+  const formatCitationAnchor = (anchor) => {
+    if (anchor.start_ms == null || anchor.end_ms == null) return ''
+    const m1 = Math.floor(anchor.start_ms / 60000)
+    const s1 = Math.floor((anchor.start_ms % 60000) / 1000)
+    const m2 = Math.floor(anchor.end_ms / 60000)
+    const s2 = Math.floor((anchor.end_ms % 60000) / 1000)
+    return `${m1}:${String(s1).padStart(2, '0')}–${m2}:${String(s2).padStart(2, '0')}`
   }
 
   const toggleVoiceRecording = async () => {
@@ -1546,43 +1716,10 @@ function App() {
           answer: answer
         }
       })
-      // Only update if questions actually changed to avoid unnecessary re-renders
-      setQuestions(prevQuestions => {
-        // Simple comparison: if count or IDs changed, update
-        if (prevQuestions.length !== questionsWithAnswers.length) {
-          return questionsWithAnswers
-        }
-        // Check if any question IDs changed (new questions added)
-        const prevQuestionIds = new Set(prevQuestions.map(q => q.id))
-        const newQuestionIds = new Set(questionsWithAnswers.map(q => q.id))
-        if (prevQuestionIds.size !== newQuestionIds.size || [...prevQuestionIds].some(id => !newQuestionIds.has(id))) {
-          return questionsWithAnswers
-        }
-        // Check if any question IDs or answer IDs changed
-        const prevIds = new Set(prevQuestions.map(q => `${q.id}-${q.answer?.id || 'no-answer'}`))
-        const newIds = new Set(questionsWithAnswers.map(q => `${q.id}-${q.answer?.id || 'no-answer'}`))
-        if (prevIds.size !== newIds.size || [...prevIds].some(id => !newIds.has(id))) {
-          return questionsWithAnswers
-        }
-        // Check if any answer text changed
-        for (let i = 0; i < prevQuestions.length; i++) {
-          const prevQ = prevQuestions[i]
-          const newQ = questionsWithAnswers[i]
-          if (prevQ.answer?.answer_text !== newQ.answer?.answer_text ||
-              prevQ.answer?.answer_status !== newQ.answer?.answer_status) {
-            return questionsWithAnswers
-          }
-        }
-        // Check if any question text changed (in case questions are edited)
-        for (let i = 0; i < prevQuestions.length; i++) {
-          const prevQ = prevQuestions[i]
-          const newQ = questionsWithAnswers[i]
-          if (prevQ.question_text !== newQ.question_text) {
-            return questionsWithAnswers
-          }
-        }
-        return prevQuestions // No changes, keep previous state
-      })
+      // Always use server response so enriched citations (e.g. source_id for document open) are applied
+      if (questionsWithAnswers.length > 0 || data.questions?.length === 0) {
+        setQuestions(questionsWithAnswers)
+      }
     } catch (err) {
       // Silently fail
     }
@@ -1596,10 +1733,10 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [artifactId])
 
-  // Build participant URL for upper right corner link
+  // Build participant URL for upper right corner link (include api so it works in new window/refresh)
   const sessionId = currentSession?.session?.id || currentSession?.id
   const participantUrl = sessionId 
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view`
+    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`
     : null
   const hasValidSession = currentSession && sessionId
 
@@ -1607,9 +1744,12 @@ function App() {
   const urlParams = new URLSearchParams(window.location.search)
   const urlMode = urlParams.get('mode')
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view'
+  // Use session from URL so participant tab can connect to WebSocket before openSession() completes
+  const urlSessionId = urlParams.get('session')
+  const effectiveSessionId = sessionId || (urlMode === 'view' && urlSessionId ? urlSessionId : null)
 
   // WebSocket connection for real-time updates
-  const wsUrl = sessionId 
+  const wsUrl = effectiveSessionId
     ? (() => {
         // Convert http:// to ws:// or https:// to wss://
         let wsBaseUrl = apiBaseUrl
@@ -1618,7 +1758,7 @@ function App() {
         } else if (apiBaseUrl.startsWith('https://')) {
           wsBaseUrl = apiBaseUrl.replace('https://', 'wss://')
         }
-        return `${wsBaseUrl}/ws/session?session=${sessionId}`
+        return `${wsBaseUrl}/ws/session?session=${effectiveSessionId}`
       })()
     : null
 
@@ -1628,14 +1768,19 @@ function App() {
       console.log('WebSocket: Received message without type:', message)
       return
     }
+    const data = message.data ?? message.Data
+    if (!data && (message.type === 'question_created' || message.type === 'answer_created' || message.type === 'answer_updated')) {
+      console.warn('WebSocket: Message missing data', message)
+      return
+    }
 
-    console.log('WebSocket: Received message:', message.type, 'for session:', sessionId)
+    console.log('WebSocket: Received message:', message.type, 'for session:', effectiveSessionId)
 
-    if (message.type === 'question_created' && message.data) {
+    if (message.type === 'question_created' && data) {
       console.log('WebSocket: Question created, refreshing questions...')
       
       // Check if this is a mock question (has model: "mock" in answer or question text contains "Mock question")
-      const question = message.data
+      const question = data
       const isMockQuestion = question.question_text && question.question_text.includes('Mock question asked on')
       
       if (isMockQuestion) {
@@ -1653,14 +1798,14 @@ function App() {
         })
       } else {
         // For real questions, refresh from database
-        if (sessionId) {
-          fetchSessionQuestions(sessionId)
+        if (effectiveSessionId) {
+          fetchSessionQuestions(effectiveSessionId)
         }
       }
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
       console.log('WebSocket: Answer created/updated, refreshing questions...')
       
-      const answer = message.data
+      const answer = data
       // Check if this is for a mock question
       const isMockAnswer = answer.model === 'mock' || (answer.answer_text && answer.answer_text.includes('mock answer for testing'))
       
@@ -1687,17 +1832,26 @@ function App() {
         })
       } else {
         // For real answers, refresh from database
-        if (sessionId) {
-          fetchSessionQuestions(sessionId)
+        if (effectiveSessionId) {
+          fetchSessionQuestions(effectiveSessionId)
         }
       }
     }
-  }, [sessionId, fetchSessionQuestions])
+  }, [effectiveSessionId, fetchSessionQuestions])
 
   // Clear mock questions when session changes
   useEffect(() => {
     setMockQuestions([])
-  }, [sessionId])
+  }, [effectiveSessionId])
+
+  // Keep selectedVideo/videoId in sync with currentSession.video_sources so the media player
+  // shows in both edit and participant mode (fixes launch from edit, refresh, and view mode)
+  useEffect(() => {
+    if (!currentSession?.video_sources?.length) return
+    const first = currentSession.video_sources[0]
+    setSelectedVideo(prev => (prev?.id === first?.id ? prev : first))
+    setVideoId(prev => (prev === first?.id ? prev : (first?.id ?? null)))
+  }, [currentSession])
 
   const { connected: wsConnected } = useWebSocket(wsUrl, handleWebSocketMessage, (error) => {
     console.error('WebSocket error:', error)
@@ -1705,16 +1859,34 @@ function App() {
 
   // Log WebSocket connection status
   useEffect(() => {
-    if (sessionId) {
-      console.log(`WebSocket: Connection status for session ${sessionId}:`, wsConnected ? 'CONNECTED' : 'DISCONNECTED')
+    if (effectiveSessionId) {
+      console.log(`WebSocket: Connection status for session ${effectiveSessionId}:`, wsConnected ? 'CONNECTED' : 'DISCONNECTED')
       if (wsUrl) {
         console.log('WebSocket: URL:', wsUrl)
       }
     }
-  }, [wsConnected, sessionId, wsUrl])
+  }, [wsConnected, effectiveSessionId, wsUrl])
 
   return (
     <div className="container">
+      {zoomImportToast && (
+        <div style={{
+          position: 'fixed',
+          top: 20,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          padding: '12px 24px',
+          backgroundColor: '#4CAF50',
+          color: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          zIndex: 9999,
+          fontWeight: '600',
+          fontSize: '14px'
+        }}>
+          {zoomImportToast.message}
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ margin: 0 }}>TalkBack Phase 3 - Web UI</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1919,6 +2091,77 @@ function App() {
                   {zoomImportError && (
                     <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{zoomImportError}</div>
                   )}
+                  {/* Import from Zoom: Recordings list (mission) */}
+                  <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Import from Zoom recordings</div>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px' }}>Date range:</span>
+                      {[7, 14, 30].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => { setZoomRecordingsDays(d); fetchZoomRecordings(); }}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: '13px',
+                            backgroundColor: zoomRecordingsDays === d ? '#2196F3' : '#e0e0e0',
+                            color: zoomRecordingsDays === d ? 'white' : 'black',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Last {d} days
+                        </button>
+                      ))}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', marginLeft: '10px' }}>
+                        <input
+                          type="checkbox"
+                          checked={zoomRecordingsHasTranscript}
+                          onChange={(e) => { setZoomRecordingsHasTranscript(e.target.checked); fetchZoomRecordings(); }}
+                        />
+                        Only with transcript
+                      </label>
+                      <button
+                        type="button"
+                        onClick={fetchZoomRecordings}
+                        disabled={zoomRecordingsLoading}
+                        style={{ padding: '4px 12px', fontSize: '13px' }}
+                      >
+                        {zoomRecordingsLoading ? 'Loading…' : 'Load recordings'}
+                      </button>
+                    </div>
+                    {zoomRecordingsError && (
+                      <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{zoomRecordingsError}</div>
+                    )}
+                    {zoomRecordings.length > 0 && (
+                      <div style={{ maxHeight: '280px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '8px', backgroundColor: '#fafafa' }}>
+                        {zoomRecordings.map((rec, idx) => (
+                          <div key={idx} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.meeting_topic || 'Untitled'}</div>
+                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
+                              {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
+                            </div>
+                            <div style={{ marginBottom: '8px' }}>
+                              {rec.has_video && <span style={{ marginRight: '8px', padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
+                              {rec.has_transcript && <span style={{ marginRight: '8px', padding: '2px 6px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '11px' }}>Transcript</span>}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => importFromZoomRecording(rec)}
+                              disabled={zoomImporting || !rec.has_transcript}
+                              style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
+                            >
+                              {zoomImporting ? 'Importing…' : 'Import'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {!zoomRecordingsLoading && zoomRecordings.length === 0 && zoomRecordingsError === '' && (
+                      <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click "Load recordings" to fetch Zoom cloud recordings</div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2114,10 +2357,13 @@ function App() {
         </>
       )}
 
-      {/* Artifact Creation - Only visible when NOT in participant mode */}
+      {/* Artifact Creation - Only visible when NOT in participant mode. Optional: sessions already include a default container; Zoom video, documents, and transcripts are the main content. */}
       {!isParticipantMode && (
         <>
-          <h2>1. Create Artifact</h2>
+          <h2>1. Add content container (optional)</h2>
+          <p style={{ fontSize: '12px', color: '#666', marginTop: '-8px', marginBottom: '8px' }}>
+            Sessions already have a default container. Create another only if you want to group extra materials separately.
+          </p>
           <div className="section">
             <div className="form-group">
               <label>Title:</label>
@@ -2228,6 +2474,7 @@ function App() {
           {!isParticipantMode ? (
             <CreatorMode
               currentSession={currentSession}
+              refetchSession={refetchSession}
               artifactId={artifactId}
               setArtifactId={setArtifactId}
               videoId={videoId}
@@ -2257,8 +2504,6 @@ function App() {
               uploadedMaterials={uploadedMaterials}
               setUploadedMaterials={setUploadedMaterials}
               removeMaterialFile={removeMaterialFile}
-              materialKind={materialKind}
-              setMaterialKind={setMaterialKind}
               uploadMaterial={uploadMaterial}
               uploadMaterialFeedback={uploadMaterialFeedback}
               videoProvider={videoProvider}
@@ -2328,6 +2573,19 @@ function App() {
               voiceTranscribedText={voiceTranscribedText}
               setVoiceTranscribedText={setVoiceTranscribedText}
               confirmVoiceQuestion={confirmVoiceQuestion}
+              refetchSession={refetchSession}
+              markMaterialsSeen={markMaterialsSeen}
+              sessionLoadError={sessionSelectFeedback.type === 'error' ? sessionSelectFeedback.message : ''}
+              sessionIdFromUrl={urlSessionId}
+              onRetryLoadSession={urlSessionId ? () => openSession(urlSessionId, 'participant') : null}
+              onCitationClick={(citation) => {
+                const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null
+                  ? citation.navigation.seek_ms
+                  : citation?.anchor?.start_ms
+                if (seekMs != null) {
+                  setCurrentVideoTime(seekMs / 1000)
+                }
+              }}
               />
             </div>
           )}
@@ -2384,55 +2642,7 @@ function App() {
 
           {/* Show existing materials */}
           {currentSession.materials && currentSession.materials.length > 0 && (
-            <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd' }}>
-              <h2>Existing Materials ({currentSession.materials.length})</h2>
-              {currentSession.materials.map((material, idx) => (
-                <div key={material.id || idx} style={{ 
-                  marginBottom: '15px', 
-                  padding: '15px', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '5px',
-                  backgroundColor: '#fff'
-                }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
-                    📄 {material.filename || 'Untitled'}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px' }}>
-                    Kind: <strong>{material.kind}</strong> | 
-                    Type: <strong>{material.content_type}</strong> | 
-                    Status: <span style={{ 
-                      color: material.text_status === 'ready' ? '#4CAF50' : 
-                             material.text_status === 'pending' ? '#ff9800' : '#f44336',
-                      fontWeight: 'bold'
-                    }}>{material.text_status}</span>
-                  </div>
-                  {material.storage_url && (
-                    <div style={{ fontSize: '11px', color: '#999', marginBottom: '5px' }}>
-                      Storage: <code>{material.storage_url}</code>
-                    </div>
-                  )}
-                  {material.extracted_text && (
-                    <div style={{ 
-                      marginTop: '10px', 
-                      padding: '10px', 
-                      backgroundColor: '#f5f5f5', 
-                      borderRadius: '3px',
-                      fontSize: '13px',
-                      maxHeight: '150px',
-                      overflow: 'auto',
-                      border: '1px solid #e0e0e0'
-                    }}>
-                      <strong>Extracted Text Preview:</strong>
-                      <div style={{ marginTop: '5px', fontStyle: 'italic', color: '#555' }}>
-                        {material.extracted_text.length > 500 
-                          ? material.extracted_text.substring(0, 500) + '...' 
-                          : material.extracted_text}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            <MaterialsList materials={currentSession.materials} />
           )}
 
           {/* Video Player Section (Artifact View) */}
@@ -2589,15 +2799,6 @@ function App() {
               setMaterialFiles(prev => [...prev, ...files])
             }}
           />
-        </div>
-        <div className="form-group">
-          <label>Kind:</label>
-          <select value={materialKind} onChange={(e) => setMaterialKind(e.target.value)}>
-            <option value="document">Document</option>
-            <option value="slides">Slides</option>
-            <option value="diagram">Diagram</option>
-            <option value="other">Other</option>
-          </select>
         </div>
         <button onClick={() => materialFiles.length > 0 && uploadMaterial(materialFiles[0])} disabled={!artifactId || materialFiles.length === 0 || loading}>
           Upload Material

@@ -19,15 +19,19 @@ func stringPtr(s string) *string {
 	return &s
 }
 
+// OnTranscriptCompletedFunc is called when a transcript job completes successfully (optional, set by caller to e.g. trigger session reindex).
+type OnTranscriptCompletedFunc func(sessionID uuid.UUID)
+
 // JobProcessor handles background processing of transcription jobs
 type JobProcessor struct {
-	db         *database.DB
-	service    *TranscriptionService
-	queue      chan *models.TranscriptJob
-	workers    int
-	wg         sync.WaitGroup
-	running    bool
-	mu         sync.RWMutex
+	db                   *database.DB
+	service              *TranscriptionService
+	queue                chan *models.TranscriptJob
+	workers              int
+	wg                   sync.WaitGroup
+	running              bool
+	mu                   sync.RWMutex
+	OnTranscriptCompleted OnTranscriptCompletedFunc // Optional: called when a transcript job completes (e.g. trigger session reindex)
 }
 
 // NewJobProcessor creates a new job processor
@@ -258,6 +262,10 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	if err := jp.db.CompleteTranscriptJob(ctx, job.ID, &modelStr, &result.Language, &durationSeconds); err != nil {
 		log.Printf("Failed to complete job: %v", err)
 		return
+	}
+
+	if jp.OnTranscriptCompleted != nil {
+		jp.OnTranscriptCompleted(job.SessionID)
 	}
 
 	log.Printf("Worker %d completed job %s", workerID, job.ID)

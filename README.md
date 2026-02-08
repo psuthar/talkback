@@ -73,12 +73,12 @@ npm run dev
 ```
 
 The web UI will open at `http://localhost:3000` and allows you to:
-- Create artifacts
-- Upload materials
-- Attach video URLs
-- Submit transcripts
+- Create sessions and add content (Zoom video, upload documents, transcripts)
+- Optionally create extra artifacts to group materials
 - Ask questions and view answers with citations
 - View question history
+
+**Data model note:** The main content in a session is Zoom video, uploaded documents, and transcripts. These are all first-class content. "Artifacts" are an optional grouping container; each session gets a default one, and you can create more only if you want to organize materials into separate groups.
 
 See `web/README.md` for detailed instructions.
 

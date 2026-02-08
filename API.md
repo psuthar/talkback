@@ -576,6 +576,149 @@ Creates a session and ingests the Zoom recording transcript (VTT/CC) in one call
 
 ---
 
+## API Zoom Endpoints (Mission: Import from Zoom UX)
+
+These endpoints power the "Import from Zoom" panel and ingest status. Use `X-Creator-Identity` header.
+
+### Zoom Status
+**GET** `/api/zoom/status`
+
+Returns connection status.
+
+**Headers:** `X-Creator-Identity: {creator_identity}`
+
+**Response:** `200 OK`
+```json
+{
+  "connected": true,
+  "zoom_email": "user@example.com",
+  "zoom_user_id": "string",
+  "expires_at": "2026-01-24T12:00:00Z"
+}
+```
+
+### Zoom Connect (get auth URL)
+**POST** `/api/zoom/connect`
+
+Returns the OAuth auth URL. Frontend redirects to it.
+
+**Response:** `200 OK`
+```json
+{
+  "auth_url": "https://zoom.us/oauth/authorize?..."
+}
+```
+
+### Zoom Disconnect
+**POST** `/api/zoom/disconnect`
+
+Marks Zoom disconnected and deletes tokens.
+
+**Headers:** `X-Creator-Identity: {creator_identity}`
+
+**Response:** `204 No Content`
+
+### List Zoom Recordings
+**GET** `/api/zoom/recordings?from=YYYY-MM-DD&to=YYYY-MM-DD&has_transcript=true|false&q=string`
+
+Lists cloud recordings for the connected user. Default from/to: last 14 days.
+
+**Headers:** `X-Creator-Identity: {creator_identity}`
+
+**Response:** `200 OK`
+```json
+{
+  "items": [
+    {
+      "meeting_topic": "Meeting Title",
+      "start_time": "2026-01-24T12:00:00Z",
+      "duration_minutes": 42,
+      "meeting_uuid": "...",
+      "instance_uuid": "...",
+      "has_video": true,
+      "has_transcript": true,
+      "recording_count": 3
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200 OK` - Recordings list
+- `401 Unauthorized` - `{ "code": "zoom_not_connected", "message": "..." }`
+
+### Import Zoom Recording into Session
+**POST** `/api/sessions/{session_id}/import/zoom`
+
+Starts async ingestion of a Zoom recording into an existing session. Returns job ID and queues the import.
+
+**Headers:** `X-Creator-Identity: {creator_identity}`
+
+**Request Body:**
+```json
+{
+  "meeting_uuid": "required",
+  "instance_uuid": "optional"
+}
+```
+
+**Response:** `202 Accepted`
+```json
+{
+  "job_id": "uuid",
+  "state": "queued"
+}
+```
+
+**Status Codes:**
+- `202 Accepted` - Import queued
+- `401 Unauthorized` - Zoom not connected
+- `404 Not Found` - Session not found
+
+### Session Ingestion Status
+**GET** `/api/sessions/{session_id}/ingestion`
+
+Returns ingestion job status. Poll every 2–3 seconds while state is `queued` or `fetching`.
+
+**Headers:** `X-Creator-Identity: {creator_identity}`
+
+**Response:** `200 OK`
+```json
+{
+  "source": "zoom",
+  "state": "queued|fetching|ready|failed",
+  "last_error": "optional error message",
+  "updated_at": "2026-01-24T12:00:00Z",
+  "meeting_uuid": "for retry",
+  "instance_uuid": "for retry"
+}
+```
+
+### Session Transcript
+**GET** `/api/sessions/{session_id}/transcript`
+
+Returns the session-level transcript and normalized segments (Mission #2). Use for chunking/embeddings/RAG later. If no transcript exists for the session, returns `status: "none"` with empty segments. Poll every 2–3 seconds while `status` is `parsing`.
+
+**Response:** `200 OK`
+```json
+{
+  "status": "parsing|ready|failed|none",
+  "source": "zoom",
+  "updated_at": "2026-01-24T12:00:00Z",
+  "error_message": "string or null",
+  "segments": [
+    { "idx": 0, "start_ms": 1200, "end_ms": 4800, "text": "..." }
+  ]
+}
+```
+
+**Status Codes:**
+- `200 OK` - Transcript status and segments (or none)
+- `400 Bad Request` - Invalid session ID
+- `500 Internal Server Error` - Database error
+
+---
+
 ## Notes
 
 - All UUIDs are in standard UUID format (e.g., `550e8400-e29b-41d4-a716-446655440000`)

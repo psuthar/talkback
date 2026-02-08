@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
@@ -18,6 +19,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/migrations"
+	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -72,6 +74,7 @@ func main() {
 		}
 	}
 	jobProcessor := utils.NewJobProcessor(db, workers)
+	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db) }
 
 	// Start job processor in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,7 +90,7 @@ func main() {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
@@ -136,6 +139,15 @@ func main() {
 	http.HandleFunc("/auth/zoom/me", corsMiddleware(h.ZoomAuthMe))
 	// Zoom transcript status (explicit check before creating session)
 	http.HandleFunc("/zoom/transcript-status", corsMiddleware(h.ZoomTranscriptStatus))
+
+	// API Zoom endpoints (mission: /api/zoom/*)
+	http.HandleFunc("/api/zoom/status", corsMiddleware(h.ZoomAPIStatus))
+	http.HandleFunc("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect))
+	http.HandleFunc("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect))
+	http.HandleFunc("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings))
+
+	// API Session import + ingestion status (mission: /api/sessions/:id/import/zoom, /api/sessions/:id/ingestion)
+	http.HandleFunc("/api/sessions/", corsMiddleware(h.APISessionsRouter))
 
 	port := os.Getenv("PORT")
 	if port == "" {

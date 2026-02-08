@@ -22,10 +22,12 @@ type QAResponse struct {
 	Citations    []models.Citation `json:"citations"`
 }
 
-// PriorQAPair represents a previous question-answer pair from the session
+// PriorQAPair represents a previous question-answer pair from the session.
+// CitationLabels (e.g. "C1: Transcript 01:12–04:38") allow follow-ups to reference "the second citation".
 type PriorQAPair struct {
-	Question string
-	Answer   string
+	Question       string
+	Answer         string
+	CitationLabels []string // optional: citation_id and label for each citation in this answer
 }
 
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
@@ -77,7 +79,11 @@ func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifa
 
 		for i, qa := range priorQA {
 			priorQASection.WriteString(fmt.Sprintf("Previous Question %d: %s\n", i+1, qa.Question))
-			priorQASection.WriteString(fmt.Sprintf("Previous Answer %d: %s\n\n", i+1, qa.Answer))
+			priorQASection.WriteString(fmt.Sprintf("Previous Answer %d: %s\n", i+1, qa.Answer))
+			if len(qa.CitationLabels) > 0 {
+				priorQASection.WriteString(fmt.Sprintf("Citations from previous answer %d: %s\n", i+1, strings.Join(qa.CitationLabels, ", ")))
+			}
+			priorQASection.WriteString("\n")
 		}
 
 		priorQASection.WriteString("If the current question is a follow-up or clarification related to earlier questions, incorporate the prior context while still grounding your answer in the provided context chunks.\n")
@@ -90,10 +96,11 @@ CRITICAL RULES:
 1. Answer STRICTLY from the provided context chunks. DO NOT use any external knowledge, general knowledge, or information not explicitly in the context.
 2. If the question cannot be answered from the context, you MUST respond with answer_status="not_covered" and answer_text explaining that the information is not available in the provided context.
 3. If you are unsure or the context is insufficient, set answer_status="not_covered".
-4. Provide citations from the context (2-5 citations max). Each citation MUST reference a chunk_id from the provided context.
-5. Each citation must include: chunk_id (REQUIRED), source_type ("material" or "transcript"), source_id, locator (if available), and a short snippet (~200-300 chars) extracted from the chunk text.
-6. Set confidence between 0.0 and 1.0 based on how well the context answers the question. If confidence < 0.55, set answer_status="not_covered".
-7. If the answer is not fully supported by the context, set answer_status="not_covered".`
+4. When the question asks whether something is mentioned, present, or included (e.g. "Is X mentioned?", "Does the transcript say Y?", "Is 4 in the list?"), and the context explicitly lists or states what is mentioned (e.g. a list of numbers, names, or items), you MUST answer "Yes" or "No" from that context and use answer_status="answered" with citations. For example: if the context says "the first five prime numbers are 2, 3, 5, 7, 11" and the question is "Is the number 4 mentioned?", answer "No. The number 4 is not mentioned. The transcript mentions the first five prime numbers: 2, 3, 5, 7, and 11." with answer_status="answered" and cite the chunk. Do not use "not_covered" when the context clearly implies the answer is no (or yes).
+5. Provide citations from the context (2-5 citations max). Each citation MUST reference a chunk_id from the provided context.
+6. Each citation must include: chunk_id (REQUIRED), source_type ("material" or "transcript"), source_id, locator (if available), and a short snippet (~200-300 chars) extracted from the chunk text.
+7. Set confidence between 0.0 and 1.0 based on how well the context answers the question. If confidence < 0.55, set answer_status="not_covered".
+8. If the answer is not fully supported by the context, set answer_status="not_covered".`
 
 	jsonFormatSection := `
 You MUST respond in valid JSON format matching this exact structure:
@@ -124,8 +131,15 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 	userPrompt := fmt.Sprintf("Artifact: %s\n\nQuestion: %s\n\nAvailable Context Chunks (chunk_id list: %s):\n%s\n\nAnswer the question using ONLY the context chunks above. If the answer is not in the context, respond with answer_status=\"not_covered\".",
 		artifactTitle, question, strings.Join(chunkIDs, ", "), contextBuilder.String())
 
-	// Create OpenAI client with API key
-	client := openai.NewClient(option.WithAPIKey(apiKey))
+	// Create OpenAI client with API key and base URL (required by SDK; default https://api.openai.com/v1/)
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1/"
+	}
+	if len(baseURL) > 0 && baseURL[len(baseURL)-1] != '/' {
+		baseURL += "/"
+	}
+	client := openai.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(baseURL))
 
 	params := openai.ChatCompletionNewParams{
 		Model: openai.ChatModelGPT4oMini,

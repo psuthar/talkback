@@ -1,4 +1,28 @@
-export function QAHistory({ questions, readOnly = false }) {
+function CitationBadge({ citation, onClick }) {
+  const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
+  const canNavigate = citation.anchor?.start_ms != null || (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc'))
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={citation.excerpt || citation.snippet || 'View source'}
+      style={{
+        padding: '4px 10px',
+        fontSize: '12px',
+        backgroundColor: canNavigate ? '#e3f2fd' : '#f5f5f5',
+        color: canNavigate ? '#1976D2' : '#555',
+        border: `1px solid ${canNavigate ? '#90caf9' : '#e0e0e0'}`,
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontWeight: 500
+      }}
+    >
+      {citation.citation_id ? `[${citation.citation_id}]` : ''} {label}
+    </button>
+  )
+}
+
+export function QAHistory({ questions, readOnly = false, onCitationClick }) {
   if (!questions || questions.length === 0) {
     return (
       <div className="info">
@@ -56,25 +80,16 @@ export function QAHistory({ questions, readOnly = false }) {
               </div>
               {q.answer.citations && q.answer.citations.length > 0 && (
                 <div className="citations" style={{ marginTop: '10px' }}>
-                  <strong>Citations ({q.answer.citations.length}):</strong>
-                  {q.answer.citations.map((citation, cidx) => (
-                    <div key={cidx} className="citation" style={{ 
-                      marginTop: '8px', 
-                      padding: '8px', 
-                      backgroundColor: '#fff', 
-                      border: '1px solid #e0e0e0',
-                      borderRadius: '3px'
-                    }}>
-                      <div className="citation-source" style={{ fontSize: '12px', color: '#666', marginBottom: '5px' }}>
-                        <strong>{citation.source_type}</strong> - {citation.source_id}
-                        {citation.chunk_id && ` [chunk: ${citation.chunk_id}]`}
-                        {citation.locator && ` (${citation.locator})`}
-                      </div>
-                      <div className="citation-snippet" style={{ fontSize: '13px', fontStyle: 'italic' }}>
-                        "{citation.snippet}"
-                      </div>
-                    </div>
-                  ))}
+                  <strong>Citations:</strong>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                    {q.answer.citations.map((citation, cidx) => (
+                      <CitationBadge
+                        key={cidx}
+                        citation={citation}
+                        onClick={() => onCitationClick?.(citation)}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

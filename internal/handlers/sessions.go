@@ -37,13 +37,14 @@ type GetSessionsResponse struct {
 }
 
 type GetSessionResponse struct {
-	Session         *models.Session    `json:"session"`
-	Artifacts       []*models.Artifact `json:"artifacts"`
-	Materials       []*models.Material `json:"materials"`
-	VideoSources    []*models.VideoSource `json:"video_sources"`
-	RecentQuestions []*models.Question `json:"recent_questions"`
-	RecentAnswers   []*models.Answer   `json:"recent_answers"`
-	Mode            string             `json:"mode"` // "creator" or "participant"
+	Session            *models.Session       `json:"session"`
+	Artifacts          []*models.Artifact    `json:"artifacts"`
+	Materials          []*models.Material   `json:"materials"`
+	VideoSources       []*models.VideoSource `json:"video_sources"`
+	RecentQuestions    []*models.Question   `json:"recent_questions"`
+	RecentAnswers      []*models.Answer     `json:"recent_answers"`
+	Mode               string               `json:"mode"` // "creator" or "participant"
+	UnreadMaterialIDs  []string             `json:"unread_material_ids,omitempty"` // only when participant_ref provided
 }
 
 type JoinParticipantRequest struct {
@@ -83,16 +84,26 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	// Create session
 	session := &models.Session{
-		ID:         uuid.New(),
-		Title:      req.Title,
-		CreatedBy:  req.CreatedBy,
-		Status:     models.SessionStatusOpen,
+		ID:        uuid.New(),
+		Title:     req.Title,
+		CreatedBy: req.CreatedBy,
+		Status:    models.SessionStatusOpen,
 	}
 
 	if err := h.DB.CreateSession(r.Context(), session); err != nil {
 		log.Printf("Error creating session: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to create session: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Create a first artifact so the session is immediately usable (edit view, Q&A, and "session has no artifacts" is avoided)
+	title := session.Title
+	if title == "" {
+		title = "Session content"
+	}
+	if _, err := h.DB.CreateArtifact(r.Context(), session.ID, title, nil); err != nil {
+		log.Printf("Error creating default artifact for session %s: %v", session.ID, err)
+		// Non-fatal: session is created; user can create an artifact from the UI
 	}
 
 	response := CreateSessionResponse{
@@ -196,7 +207,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		allMaterials = []*models.Material{}
 	}
-	
+
 	allVideoSources, err := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get video sources: %v", err)
@@ -222,19 +233,91 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		mode = "creator"
 	}
 
+	// When participant_ref is provided, return unread material IDs for the "new document" marker
+	var unreadMaterialIDs []string
+	participantRef := r.Header.Get("X-Participant-Ref")
+	if participantRef == "" {
+		participantRef = r.URL.Query().Get("participant_ref")
+	}
+	if participantRef != "" {
+		unread, err := h.DB.GetUnreadMaterialIDsForParticipant(r.Context(), sessionID, participantRef)
+		if err != nil {
+			log.Printf("Warning: Failed to get unread materials for participant: %v", err)
+		} else {
+			for _, id := range unread {
+				unreadMaterialIDs = append(unreadMaterialIDs, id.String())
+			}
+		}
+	}
+
 	response := GetSessionResponse{
-		Session:         session,
-		Artifacts:       artifacts,
-		Materials:       allMaterials,
-		VideoSources:    allVideoSources,
-		RecentQuestions: questions,
-		RecentAnswers:   answers,
-		Mode:            mode,
+		Session:           session,
+		Artifacts:         artifacts,
+		Materials:         allMaterials,
+		VideoSources:      allVideoSources,
+		RecentQuestions:   questions,
+		RecentAnswers:     answers,
+		Mode:              mode,
+		UnreadMaterialIDs: unreadMaterialIDs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// MarkSessionMaterialsSeenRequest body for POST /sessions/:id/materials/seen
+type MarkSessionMaterialsSeenRequest struct {
+	ParticipantRef string   `json:"participant_ref"`
+	MaterialIDs    []string `json:"material_ids"`
+}
+
+// MarkSessionMaterialsSeen records that a participant has viewed the given materials (clears "new" marker).
+func (h *Handlers) MarkSessionMaterialsSeen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 4 || pathParts[0] != "sessions" || pathParts[2] != "materials" || pathParts[3] != "seen" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	var req MarkSessionMaterialsSeenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ParticipantRef == "" {
+		http.Error(w, "participant_ref is required", http.StatusBadRequest)
+		return
+	}
+	var materialUUIDs []uuid.UUID
+	for _, s := range req.MaterialIDs {
+		if s == "" {
+			continue
+		}
+		id, err := uuid.Parse(s)
+		if err != nil {
+			continue
+		}
+		materialUUIDs = append(materialUUIDs, id)
+	}
+	if err := h.DB.MarkMaterialsSeenByParticipant(r.Context(), sessionID, req.ParticipantRef, materialUUIDs); err != nil {
+		log.Printf("MarkSessionMaterialsSeen: %v", err)
+		http.Error(w, "Failed to mark materials as seen", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // JoinSessionParticipant creates or updates a session participant
@@ -347,12 +430,12 @@ func (h *Handlers) CreateSessionEvent(w http.ResponseWriter, r *http.Request) {
 
 	// Create event
 	event := &models.SessionEvent{
-		ID:              uuid.New(),
-		SessionID:       sessionID,
-		ParticipantRef:  req.ParticipantRef,
-		EventType:       eventType,
+		ID:               uuid.New(),
+		SessionID:        sessionID,
+		ParticipantRef:   req.ParticipantRef,
+		EventType:        eventType,
 		VideoTimeSeconds: req.VideoTimeSeconds,
-		Payload:         req.Payload,
+		Payload:          req.Payload,
 	}
 	if event.Payload == nil {
 		event.Payload = make(map[string]interface{})
@@ -402,21 +485,21 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to get artifacts: %v", err), http.StatusInternalServerError)
 		return
 	}
-	
+
 	if len(artifacts) == 0 {
 		http.Error(w, "No artifacts found for this session", http.StatusNotFound)
 		return
 	}
-	
+
 	// Use first artifact for question (or aggregate across all artifacts)
 	artifact := artifacts[0]
 
 	// Parse request body
 	type AskSessionQuestionRequest struct {
-		QuestionText    string `json:"question_text"`
-		VideoTimeSeconds *int  `json:"video_time_seconds,omitempty"`
+		QuestionText     string `json:"question_text"`
+		VideoTimeSeconds *int   `json:"video_time_seconds,omitempty"`
 	}
-	
+
 	var req AskSessionQuestionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
@@ -448,11 +531,11 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 
 	// Create new question with session_id
 	question := &models.Question{
-		ID:              uuid.New(),
-		ArtifactID:      artifact.ID,
-		SessionID:       sessionID, // Questions belong to sessions (required)
-		QuestionText:    req.QuestionText,
-		QuestionSource:  models.QuestionSourceText,
+		ID:               uuid.New(),
+		ArtifactID:       artifact.ID,
+		SessionID:        sessionID, // Questions belong to sessions (required)
+		QuestionText:     req.QuestionText,
+		QuestionSource:   models.QuestionSourceText,
 		VideoTimeSeconds: req.VideoTimeSeconds, // Include timestamp if provided
 	}
 
@@ -468,13 +551,13 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		allMaterials = []*models.Material{}
 	}
-	
+
 	allVideoSources, err := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get video sources: %v", err)
 		allVideoSources = []*models.VideoSource{}
 	}
-	
+
 	// Use first video source for RAG (or aggregate)
 	var videoSource *models.VideoSource
 	if len(allVideoSources) > 0 {
@@ -498,7 +581,7 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 	for _, answer := range priorAnswers {
 		answerMap[answer.QuestionID] = answer
 	}
-	
+
 	for _, priorQuestion := range priorQuestions {
 		// Skip the current question (it won't have an answer yet, but be safe)
 		if priorQuestion.ID == question.ID {
@@ -676,7 +759,7 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 		AnswerText string `json:"answer_text"`
 		Status     string `json:"status,omitempty"` // "answered", "not_covered", "error"
 	}
-	
+
 	var req CreateAnswerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
@@ -693,9 +776,9 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 	if req.Status != "" {
 		answerStatus = models.AnswerStatus(req.Status)
 		// Validate status
-		if answerStatus != models.AnswerStatusAnswered && 
-		   answerStatus != models.AnswerStatusNotCovered && 
-		   answerStatus != models.AnswerStatusError {
+		if answerStatus != models.AnswerStatusAnswered &&
+			answerStatus != models.AnswerStatusNotCovered &&
+			answerStatus != models.AnswerStatusError {
 			answerStatus = models.AnswerStatusAnswered
 		}
 	}
@@ -803,7 +886,7 @@ func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request)
 	type UpdateConfirmedRequest struct {
 		Confirmed bool `json:"confirmed"`
 	}
-	
+
 	var req UpdateConfirmedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
@@ -1012,6 +1095,35 @@ func (h *Handlers) GetSessionQuestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich citations with source_id from chunks so participant view can open documents (e.g. "Slide 1")
+	chunks, _ := h.DB.ListSessionChunksBySessionID(r.Context(), sessionID)
+	chunkSourceByID := make(map[string]struct{ SourceID, SourceType string })
+	for _, c := range chunks {
+		if c.SourceID != nil {
+			chunkSourceByID[c.ID.String()] = struct{ SourceID, SourceType string }{
+				SourceID:   c.SourceID.String(),
+				SourceType: c.SourceType,
+			}
+		}
+	}
+	for _, a := range answers {
+		if a == nil {
+			continue
+		}
+		for i := range a.Citations {
+			c := &a.Citations[i]
+			if c.SourceID != "" {
+				continue
+			}
+			if info, ok := chunkSourceByID[c.ChunkID]; ok {
+				c.SourceID = info.SourceID
+				if c.SourceType == "" {
+					c.SourceType = info.SourceType
+				}
+			}
+		}
+	}
+
 	response := GetQuestionsResponse{
 		Questions: questions,
 		Answers:   answers,
@@ -1141,7 +1253,7 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 
 	// Build timeline entries (questions and answers paired)
 	timeline := make([]TimelineEntry, 0, len(questions))
-	
+
 	// Create a map of question ID to answer for quick lookup
 	answerMap := make(map[uuid.UUID]*models.Answer)
 	for _, answer := range answers {
@@ -1160,9 +1272,9 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type GetTimelineResponse struct {
-		SessionID string         `json:"session_id"`
+		SessionID string          `json:"session_id"`
 		Timeline  []TimelineEntry `json:"timeline"`
-		Count     int            `json:"count"`
+		Count     int             `json:"count"`
 	}
 
 	response := GetTimelineResponse{
@@ -1244,9 +1356,13 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Zoom not connected for this session's creator. Reconnect Zoom and try again.", http.StatusForbidden)
 		return
 	}
-	rec, err := utils.GetMeetingRecordings(accessToken, meetingID)
+	rec, err := utils.GetMeetingRecordingsWithRetry(accessToken, meetingID)
 	if err != nil {
 		log.Printf("Zoom video stream: get recordings: %v", err)
+		if err.Error() == "recording not found" {
+			http.Error(w, "Zoom recording not found. It may have been deleted, expired, or the link may be for a different Zoom account.", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to load Zoom recording", http.StatusInternalServerError)
 		return
 	}

@@ -99,22 +99,6 @@ export function DocumentViewerOverlay({ document: doc, open: isOpen, onClose }) 
               type="button"
               ref={closeButtonRef}
               onClick={onClose}
-              aria-label="Back to video"
-              style={{
-                padding: '6px 12px',
-                fontSize: '13px',
-                backgroundColor: '#4CAF50',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
-            >
-              Back to video
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
               aria-label="Close"
               style={{
                 padding: '6px 10px',

@@ -310,6 +310,7 @@ button:disabled {
   min-width: 260px;
   border-right: 1px solid #e0e0e0;
   background: #fafafa;
+  color: #1a1a1a;
   display: flex;
   flex-direction: column;
   overflow: hidden;

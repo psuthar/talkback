@@ -6,10 +6,10 @@ import (
 
 func TestParseZoomRecordingURL(t *testing.T) {
 	tests := []struct {
-		name     string
-		rawURL   string
-		wantErr  bool
-		wantLen  int    // minimum length of returned UUID (0 = not checked)
+		name      string
+		rawURL    string
+		wantErr   bool
+		wantLen   int    // minimum length of returned UUID (0 = not checked)
 		wantExact string // if set, exact match required
 	}{
 		{
@@ -31,16 +31,22 @@ func TestParseZoomRecordingURL(t *testing.T) {
 			wantLen: 32,
 		},
 		{
-			name:       "recording detail URL with meeting_id",
-			rawURL:     "https://zoom.us/recording/detail?meeting_id=abc123def456ghi789jkl012mno345pq",
-			wantErr:    false,
-			wantExact:  "abc123def456ghi789jkl012mno345pq",
+			name:      "recording detail URL with meeting_id",
+			rawURL:    "https://zoom.us/recording/detail?meeting_id=abc123def456ghi789jkl012mno345pq",
+			wantErr:   false,
+			wantExact: "abc123def456ghi789jkl012mno345pq",
 		},
 		{
-			name:       "recording detail URL with encoded meeting_id",
-			rawURL:     "https://zoom.us/recording/detail?meeting_id=opaque-id-with-hyphens",
-			wantErr:    false,
-			wantExact:  "opaque-id-with-hyphens",
+			name:      "recording detail URL with encoded meeting_id",
+			rawURL:    "https://zoom.us/recording/detail?meeting_id=opaque-id-with-hyphens",
+			wantErr:   false,
+			wantExact: "opaque-id-with-hyphens",
+		},
+		{
+			name:      "recording detail URL with single URL-encoded meeting_id",
+			rawURL:    "https://zoom.us/recording/detail?meeting_id=id%2Bwith%2Bplus",
+			wantErr:   false,
+			wantExact: "id+with+plus", // Query().Get decodes once
 		},
 		{
 			name:    "recording detail URL missing meeting_id",

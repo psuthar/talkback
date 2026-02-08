@@ -9,13 +9,25 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
+const defaultOpenAIBaseURL = "https://api.openai.com/v1/"
+
 func GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
 	}
 
-	embeddingService := openai.NewEmbeddingService(option.WithAPIKey(apiKey))
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	if baseURL == "" {
+		baseURL = defaultOpenAIBaseURL
+	}
+	// Ensure trailing slash so path joining works (openai-go joins paths)
+	if len(baseURL) > 0 && baseURL[len(baseURL)-1] != '/' {
+		baseURL += "/"
+	}
+
+	opts := []option.RequestOption{option.WithAPIKey(apiKey), option.WithBaseURL(baseURL)}
+	embeddingService := openai.NewEmbeddingService(opts...)
 
 	var allEmbeddings [][]float32
 

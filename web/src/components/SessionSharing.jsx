@@ -1,11 +1,12 @@
 import { useState } from 'react'
 
-export function SessionSharing({ sessionId, sessionTitle }) {
+export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
   const [copied, setCopied] = useState(false)
+  const apiParam = apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : ''
   
-  const defaultUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}` // Defaults to creator mode
-  const creatorUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=edit`
-  const participantUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view`
+  const defaultUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}${apiParam}` // Defaults to creator mode
+  const creatorUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=edit${apiParam}`
+  const participantUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view${apiParam}`
   
   const copyToClipboard = async (text) => {
     try {

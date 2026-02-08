@@ -3,9 +3,11 @@ import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
 import { SessionSharing } from '../components/SessionSharing'
+import { getMaterialIcon } from '../utils/materialIcons'
 
 export function CreatorMode({
   currentSession,
+  refetchSession,
   artifactId,
   setArtifactId,
   videoId,
@@ -36,8 +38,6 @@ export function CreatorMode({
   uploadedMaterials,
   setUploadedMaterials,
   removeMaterialFile,
-  materialKind,
-  setMaterialKind,
   uploadMaterial,
   uploadMaterialFeedback,
   videoProvider,
@@ -347,9 +347,132 @@ export function CreatorMode({
   const sessionId = hasValidSession 
     ? (currentSession?.session?.id || currentSession?.id)
     : null
-  const participantUrl = sessionId 
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view`
+  const participantUrl = sessionId && apiBaseUrl
+    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`
     : null
+
+  // Ingestion status (mission: Session page ingest banner with polling)
+  const [ingestionStatus, setIngestionStatus] = useState(null) // { source, state, last_error, updated_at, meeting_uuid, instance_uuid }
+  const [ingestionRetrying, setIngestionRetrying] = useState(false)
+  const ingestionIntervalRef = useRef(null)
+  useEffect(() => {
+    if (!sessionId || !apiBaseUrl) return
+    const fetchIngestion = () => {
+      fetch(`${apiBaseUrl}/api/sessions/${sessionId}/ingestion`, {
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.source && data.state) {
+            setIngestionStatus(data)
+            if ((data.state === 'ready' || data.state === 'failed') && ingestionIntervalRef.current) {
+              clearInterval(ingestionIntervalRef.current)
+              ingestionIntervalRef.current = null
+            }
+          } else {
+            setIngestionStatus(null)
+          }
+        })
+        .catch(() => setIngestionStatus(null))
+    }
+    fetchIngestion()
+    ingestionIntervalRef.current = setInterval(fetchIngestion, 2500)
+    return () => {
+      if (ingestionIntervalRef.current) {
+        clearInterval(ingestionIntervalRef.current)
+        ingestionIntervalRef.current = null
+      }
+    }
+  }, [sessionId, apiBaseUrl, creatorIdentity])
+
+  // When Zoom import completes, refetch session once so video_sources and artifacts appear (video player, etc.)
+  const hasRefetchedForIngestionReady = useRef(false)
+  useEffect(() => {
+    if (ingestionStatus?.state !== 'ready' || !refetchSession) return
+    const hasVideos = currentSession?.video_sources && currentSession.video_sources.length > 0
+    if (hasVideos) return
+    if (hasRefetchedForIngestionReady.current) return
+    hasRefetchedForIngestionReady.current = true
+    refetchSession()
+  }, [ingestionStatus?.state, refetchSession, currentSession?.video_sources])
+  // Reset refs when session id changes so a new session can trigger refetch and poll
+  const prevSessionIdRef = useRef(sessionId)
+  const videoPollAttemptsRef = useRef(0)
+  useEffect(() => {
+    if (prevSessionIdRef.current !== sessionId) {
+      prevSessionIdRef.current = sessionId
+      hasRefetchedForIngestionReady.current = false
+      videoPollAttemptsRef.current = 0
+    }
+  }, [sessionId])
+
+  // Poll session until video_sources appear (Zoom import is async; ingestion status may be delayed)
+  const VIDEO_POLL_MAX_ATTEMPTS = 20
+  const VIDEO_POLL_INTERVAL_MS = 2500
+  useEffect(() => {
+    if (!sessionId || !apiBaseUrl || !refetchSession) return
+    const hasVideos = currentSession?.video_sources && currentSession.video_sources.length > 0
+    if (hasVideos) return
+    if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) return
+    const t = setInterval(() => {
+      videoPollAttemptsRef.current += 1
+      if (videoPollAttemptsRef.current > VIDEO_POLL_MAX_ATTEMPTS) return
+      refetchSession()
+    }, VIDEO_POLL_INTERVAL_MS)
+    return () => clearInterval(t)
+  }, [sessionId, apiBaseUrl, refetchSession, currentSession?.video_sources?.length])
+
+  // Session transcript (Mission #2: GET /api/sessions/:id/transcript)
+  const [transcriptData, setTranscriptData] = useState(null) // { status, source, updated_at, error_message, segments }
+  const transcriptIntervalRef = useRef(null)
+  useEffect(() => {
+    if (!sessionId || !apiBaseUrl) return
+    setTranscriptData(null) // reset so we show Loading when session changes; avoids stale transcript
+    const fetchTranscript = () => {
+      fetch(`${apiBaseUrl}/api/sessions/${sessionId}/transcript`)
+        .then((r) => r.json())
+        .then((data) => {
+          setTranscriptData(data)
+          // Only stop polling when we have a final state; keep polling on 'none' so async Zoom import will show transcript when ready
+          if (data.status === 'ready' || data.status === 'failed') {
+            if (transcriptIntervalRef.current) {
+              clearInterval(transcriptIntervalRef.current)
+              transcriptIntervalRef.current = null
+            }
+          }
+        })
+        .catch(() => setTranscriptData(null))
+    }
+    fetchTranscript()
+    transcriptIntervalRef.current = setInterval(fetchTranscript, 2500)
+    return () => {
+      if (transcriptIntervalRef.current) {
+        clearInterval(transcriptIntervalRef.current)
+        transcriptIntervalRef.current = null
+      }
+    }
+  }, [sessionId, apiBaseUrl, ingestionStatus?.state])
+  // ingestionStatus?.state in deps: when Zoom import completes (state -> 'ready'), effect re-runs and refetches transcript so it shows without refresh
+
+  const retryIngestion = async () => {
+    if (!sessionId || !ingestionStatus?.meeting_uuid || ingestionRetrying) return
+    setIngestionRetrying(true)
+    try {
+      await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/import/zoom`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        body: JSON.stringify({
+          meeting_uuid: ingestionStatus.meeting_uuid,
+          instance_uuid: ingestionStatus.instance_uuid || ingestionStatus.meeting_uuid
+        })
+      })
+      setIngestionStatus((s) => (s ? { ...s, state: 'queued' } : null))
+    } catch {
+      // ignore
+    } finally {
+      setIngestionRetrying(false)
+    }
+  }
 
   if (!currentSession) {
     return (
@@ -399,6 +522,121 @@ export function CreatorMode({
         </div>
       )}
 
+      {/* Ingestion status banner (mission) */}
+      {ingestionStatus?.source === 'zoom' && (
+        <div style={{
+          marginBottom: '20px',
+          padding: '12px 16px',
+          borderRadius: '6px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '10px',
+          backgroundColor: ingestionStatus.state === 'ready' ? '#e8f5e9' : ingestionStatus.state === 'failed' ? '#ffebee' : '#fff8e1',
+          border: ingestionStatus.state === 'ready' ? '1px solid #4CAF50' : ingestionStatus.state === 'failed' ? '1px solid #f44336' : '1px solid #ff9800'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {(ingestionStatus.state === 'queued' || ingestionStatus.state === 'fetching') && (
+              <span style={{ fontSize: '18px' }}>⏳</span>
+            )}
+            <span style={{ fontSize: '14px', fontWeight: 500 }}>
+              {ingestionStatus.state === 'queued' || ingestionStatus.state === 'fetching'
+                ? 'Import in progress…'
+                : ingestionStatus.state === 'ready'
+                  ? 'Zoom import complete'
+                  : ingestionStatus.state === 'failed'
+                    ? (ingestionStatus.last_error || 'Import failed')
+                    : ''}
+            </span>
+            {ingestionStatus.updated_at && (
+              <span style={{ fontSize: '12px', color: '#666' }}>
+                Updated: {new Date(ingestionStatus.updated_at).toLocaleString()}
+              </span>
+            )}
+          </div>
+          {ingestionStatus.state === 'failed' && (
+            <button
+              type="button"
+              onClick={retryIngestion}
+              disabled={ingestionRetrying}
+              style={{
+                padding: '6px 12px',
+                fontSize: '13px',
+                backgroundColor: '#2196F3',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: ingestionRetrying ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {ingestionRetrying ? 'Retrying…' : 'Retry'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Transcript tab (Mission #2: session transcript status + segments) */}
+      {sessionId && (
+        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px' }}>
+          <h2 style={{ marginTop: 0 }}>Transcript</h2>
+          {!transcriptData ? (
+            <div style={{ color: '#666' }}>Loading…</div>
+          ) : transcriptData.status === 'none' ? (
+            <div style={{ color: '#666', fontStyle: 'italic' }}>No transcript yet. Import a Zoom recording to add one.</div>
+          ) : transcriptData.status === 'parsing' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '18px' }}>⏳</span>
+              <span>Parsing transcript…</span>
+            </div>
+          ) : transcriptData.status === 'failed' ? (
+            <div>
+              <div style={{ color: '#c62828', marginBottom: '10px' }}>
+                {transcriptData.error_message || 'Transcript failed.'}
+              </div>
+              {ingestionStatus?.meeting_uuid && (
+                <button
+                  type="button"
+                  onClick={retryIngestion}
+                  disabled={ingestionRetrying}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: ingestionRetrying ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {ingestionRetrying ? 'Retrying…' : 'Retry import'}
+                </button>
+              )}
+            </div>
+          ) : transcriptData.status === 'ready' && transcriptData.segments?.length > 0 ? (
+            <div style={{ maxHeight: '400px', overflow: 'auto' }}>
+              {transcriptData.segments.map((seg) => {
+                const mmSs = (ms) => {
+                  const m = Math.floor(ms / 60000)
+                  const s = Math.floor((ms % 60000) / 1000)
+                  return `${m}:${s.toString().padStart(2, '0')}`
+                }
+                return (
+                  <div key={seg.idx} style={{ marginBottom: '12px', padding: '8px 0', borderBottom: '1px solid #eee' }}>
+                    <span style={{ fontSize: '12px', color: '#666', marginRight: '8px' }}>
+                      {mmSs(seg.start_ms)}–{mmSs(seg.end_ms)}
+                    </span>
+                    <span style={{ fontSize: '14px' }}>{seg.text}</span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : transcriptData.status === 'ready' ? (
+            <div style={{ color: '#666', fontStyle: 'italic' }}>Transcript ready (no segments).</div>
+          ) : null}
+        </div>
+      )}
+
       {/* Mode Indicator */}
       <div style={{ 
         marginBottom: '20px', 
@@ -429,7 +667,8 @@ export function CreatorMode({
       {currentSession?.session && (
         <SessionSharing 
           sessionId={currentSession.session.id} 
-          sessionTitle={currentSession.session.title} 
+          sessionTitle={currentSession.session.title}
+          apiBaseUrl={apiBaseUrl}
         />
       )}
 
@@ -544,10 +783,18 @@ export function CreatorMode({
                          video.transcript_status === 'failed' ? '#f44336' : '#999',
                   fontWeight: 'bold'
                 }}>
-                  {statusLabel}
+                  {video.transcript_status === 'missing' ? 'No transcript' :
+                   video.transcript_status === 'pending' ? 'Pending...' :
+                   video.transcript_status === 'processing' ? 'Processing...' :
+                   video.transcript_status === 'ready' ? 'Ready' :
+                   video.transcript_status === 'failed' ? 'Failed' :
+                   video.transcript_status || 'Unknown'}
                   {video.source_type && (
                     <span style={{ marginLeft: '8px', fontSize: '11px', color: '#666' }}>
-                      ({sourceTypeLabel})
+                      ({video.source_type === 'upload' ? 'Uploaded' :
+                        video.source_type === 'direct_url' ? 'Direct URL' :
+                        video.source_type === 'embed_url' ? 'Embed URL' :
+                        'Unknown'})
                     </span>
                   )}
                   {video.transcript_status === 'failed' && video.failure_reason && (
@@ -629,16 +876,6 @@ export function CreatorMode({
             }}
           />
         </div>
-        <div className="form-group">
-          <label>Kind:</label>
-          <select value={materialKind} onChange={(e) => setMaterialKind(e.target.value)}>
-            <option value="document">Document</option>
-            <option value="slides">Slides</option>
-            <option value="diagram">Diagram</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        
         {/* List of selected files waiting to upload */}
         {materialFiles.length > 0 && (
           <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
@@ -690,9 +927,14 @@ export function CreatorMode({
                 borderRadius: '4px',
                 border: '1px solid #4CAF50'
               }}>
-                <div style={{ fontWeight: 'bold' }}>{material.filename}</div>
+                <div style={{ fontWeight: 'bold' }}>{getMaterialIcon(material)} {material.filename}</div>
                 <div style={{ fontSize: '12px', color: '#666' }}>
-                  Kind: {material.kind} | Status: {material.text_status}
+                  Kind: {material.kind} | Status: {(() => {
+                    const ct = (material.content_type || '').toLowerCase()
+                    const fn = (material.filename || '').toLowerCase()
+                    const isImg = ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(e => fn.endsWith(e))
+                    return isImg ? 'N/A' : material.text_status
+                  })()}
                 </div>
               </div>
             ))}

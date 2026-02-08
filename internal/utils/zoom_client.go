@@ -12,36 +12,45 @@ import (
 
 // ZoomRecordingFile represents a file in a Zoom cloud recording
 type ZoomRecordingFile struct {
-	ID            string `json:"id"`
-	MeetingID     string `json:"meeting_id"`
+	ID             string `json:"id"`
+	MeetingID      string `json:"meeting_id"`
 	RecordingStart string `json:"recording_start"`
 	RecordingEnd   string `json:"recording_end"`
-	FileType      string `json:"file_type"`      // e.g. "VTT", "CC", "MP4", "TRANSCRIPT"
-	FileExtension string `json:"file_extension"` // e.g. "VTT", "MP4" (Zoom uses TRANSCRIPT + VTT for transcripts)
-	FileSize      int64  `json:"file_size"`
-	DownloadURL   string `json:"download_url"`
-	Status        string `json:"status"`
+	FileType       string `json:"file_type"`      // e.g. "VTT", "CC", "MP4", "TRANSCRIPT"
+	FileExtension  string `json:"file_extension"` // e.g. "VTT", "MP4" (Zoom uses TRANSCRIPT + VTT for transcripts)
+	FileSize       int64  `json:"file_size"`
+	DownloadURL    string `json:"download_url"`
+	Status         string `json:"status"`
+}
+
+// ZoomMeetingsListResponse from GET /users/{userId}/recordings (list recordings)
+type ZoomMeetingsListResponse struct {
+	Meetings      []ZoomRecordingResponse `json:"meetings"`
+	PageCount     int                     `json:"page_count"`
+	PageSize      int                     `json:"page_size"`
+	TotalRecords  int                     `json:"total_records"`
+	NextPageToken string                  `json:"next_page_token,omitempty"`
 }
 
 // ZoomRecordingResponse from GET /meetings/{id}/recordings
 type ZoomRecordingResponse struct {
-	UUID       string               `json:"uuid"`
-	ID         int64                `json:"id"`
-	AccountID  string               `json:"account_id"`
-	HostID     string               `json:"host_id"`
-	Topic      string               `json:"topic"`
-	StartTime  string               `json:"start_time"`
-	Duration   int                  `json:"duration"`
-	TotalSize  int64                `json:"total_size"`
-	RecordingCount int              `json:"recording_count"`
+	UUID           string              `json:"uuid"`
+	ID             int64               `json:"id"`
+	AccountID      string              `json:"account_id"`
+	HostID         string              `json:"host_id"`
+	Topic          string              `json:"topic"`
+	StartTime      string              `json:"start_time"`
+	Duration       int                 `json:"duration"`
+	TotalSize      int64               `json:"total_size"`
+	RecordingCount int                 `json:"recording_count"`
 	RecordingFiles []ZoomRecordingFile `json:"recording_files"`
 }
 
 // ZoomPastMeetingInstance from past_meetings/instances
 type ZoomPastMeetingInstance struct {
-	UUID       string `json:"uuid"`
-	StartTime  string `json:"start_time"`
-	Status     string `json:"status"`
+	UUID      string `json:"uuid"`
+	StartTime string `json:"start_time"`
+	Status    string `json:"status"`
 }
 
 // ZoomPastMeetingsResponse from GET /past_meetings/{id}/instances
@@ -119,17 +128,46 @@ func pathEncodeMeetingID(meetingID string, doubleEncode bool) string {
 }
 
 // GetMeetingRecordings returns cloud recording for a meeting (by UUID or numeric ID).
-// Uses double-encoded meeting ID first (Zoom requires double encoding for IDs with + or =);
-// on 404 retries with single-encoded path.
+// Uses path-encoded meeting ID (url.PathEscape). Callers may retry on 404 with
+// url.QueryUnescape(meetingID) when the ID came from a recording/detail URL that
+// might be double-encoded.
 func GetMeetingRecordings(accessToken, meetingID string) (*ZoomRecordingResponse, error) {
-	out, err := getMeetingRecordingsWithEncoding(accessToken, meetingID, true)
-	if err != nil && strings.Contains(err.Error(), "not found") {
-		out2, err2 := getMeetingRecordingsWithEncoding(accessToken, meetingID, false)
-		if err2 == nil {
-			return out2, nil
+	return getMeetingRecordingsWithEncoding(accessToken, meetingID, false)
+}
+
+// GetMeetingRecordingsWithRetry calls GetMeetingRecordings and on 404 retries with
+// double-encoded ID, QueryUnescaped ID, and past_meetings/instances (for recurring meetings).
+func GetMeetingRecordingsWithRetry(accessToken, meetingID string) (*ZoomRecordingResponse, error) {
+	rec, err := getMeetingRecordingsWithEncoding(accessToken, meetingID, false)
+	if err == nil {
+		return rec, nil
+	}
+	if err.Error() != "recording not found" {
+		return nil, err
+	}
+	// Retry with double encoding (e.g. + in UUID)
+	rec, err = getMeetingRecordingsWithEncoding(accessToken, meetingID, true)
+	if err == nil {
+		return rec, nil
+	}
+	// Retry with unescaped ID in case the stored ID was encoded
+	if unescaped, uErr := url.QueryUnescape(meetingID); uErr == nil && unescaped != meetingID {
+		rec, err = getMeetingRecordingsWithEncoding(accessToken, unescaped, false)
+		if err == nil {
+			return rec, nil
 		}
 	}
-	return out, err
+	// Fallback: ID might be recurring meeting UUID; get instance UUIDs and try each
+	instances, iErr := GetPastMeetingInstances(accessToken, meetingID)
+	if iErr == nil && len(instances.Meetings) > 0 {
+		for _, inst := range instances.Meetings {
+			rec, err = getMeetingRecordingsWithEncoding(accessToken, inst.UUID, false)
+			if err == nil {
+				return rec, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("recording not found")
 }
 
 func getMeetingRecordingsWithEncoding(accessToken, meetingID string, doubleEncode bool) (*ZoomRecordingResponse, error) {
@@ -160,6 +198,85 @@ func getMeetingRecordingsWithEncoding(accessToken, meetingID string, doubleEncod
 		return nil, err
 	}
 	return &out, nil
+}
+
+// RecordingListItem is a simplified recording item for UI listing.
+type RecordingListItem struct {
+	MeetingTopic    string `json:"meeting_topic"`
+	StartTime       string `json:"start_time"`
+	DurationMinutes int    `json:"duration_minutes"`
+	MeetingUUID     string `json:"meeting_uuid"`
+	InstanceUUID    string `json:"instance_uuid,omitempty"`
+	HasVideo        bool   `json:"has_video"`
+	HasTranscript   bool   `json:"has_transcript"`
+	RecordingCount  int    `json:"recording_count"`
+}
+
+// ListUserRecordings fetches cloud recordings for a user (GET /users/{userId}/recordings).
+// from, to: YYYY-MM-DD; default last 14 days if omitted.
+func ListUserRecordings(accessToken, zoomUserID, from, to string) ([]RecordingListItem, error) {
+	if from == "" || to == "" {
+		// default last 14 days
+		// handled in caller or we can set here
+	}
+	encoded := pathEncodeMeetingID(zoomUserID, false) // zoom user id typically no special chars
+	apiURL := "https://api.zoom.us/v2/users/" + encoded + "/recordings?page_size=100"
+	if from != "" {
+		apiURL += "&from=" + from
+	}
+	if to != "" {
+		apiURL += "&to=" + to
+	}
+	var all []RecordingListItem
+	for {
+		req, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("zoom api error (%d): %s", resp.StatusCode, string(body))
+		}
+		var list ZoomMeetingsListResponse
+		if err := json.Unmarshal(body, &list); err != nil {
+			return nil, err
+		}
+		for _, m := range list.Meetings {
+			_, transcriptStatus := FindTranscriptFileWithStatus(m.RecordingFiles)
+			hasTranscript := transcriptStatus != TranscriptStatusNotAvailable
+			hasVideo := FindMP4RecordingFile(m.RecordingFiles) != nil
+			all = append(all, RecordingListItem{
+				MeetingTopic:    m.Topic,
+				StartTime:       m.StartTime,
+				DurationMinutes: m.Duration,
+				MeetingUUID:     m.UUID,
+				InstanceUUID:    m.UUID, // same as meeting for single instance; recurring uses instance UUID
+				HasVideo:        hasVideo,
+				HasTranscript:   hasTranscript,
+				RecordingCount:  m.RecordingCount,
+			})
+		}
+		if list.NextPageToken == "" {
+			break
+		}
+		apiURL = "https://api.zoom.us/v2/users/" + encoded + "/recordings?page_size=100&next_page_token=" + url.QueryEscape(list.NextPageToken)
+		if from != "" {
+			apiURL += "&from=" + from
+		}
+		if to != "" {
+			apiURL += "&to=" + to
+		}
+	}
+	return all, nil
 }
 
 // GetPastMeetingInstances returns past meeting instances for a meeting UUID.
@@ -204,8 +321,8 @@ func getPastMeetingInstancesWithEncoding(accessToken, meetingUUID string, double
 
 // TranscriptStatus is the availability of a Zoom transcript for a recording.
 const (
-	TranscriptStatusReady        = "ready"        // transcript file exists and is completed
-	TranscriptStatusProcessing  = "processing"   // transcript file exists but still processing
+	TranscriptStatusReady        = "ready"         // transcript file exists and is completed
+	TranscriptStatusProcessing   = "processing"    // transcript file exists but still processing
 	TranscriptStatusNotAvailable = "not_available" // no transcript file (not enabled for recording)
 )
 

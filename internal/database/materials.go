@@ -32,6 +32,31 @@ func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) err
 	return nil
 }
 
+func (db *DB) GetMaterialByID(ctx context.Context, materialID uuid.UUID) (*models.Material, error) {
+	query := `
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, created_at
+		FROM materials
+		WHERE id = $1
+	`
+	m := &models.Material{}
+	err := db.Pool.QueryRow(ctx, query, materialID).Scan(
+		&m.ID,
+		&m.ArtifactID,
+		&m.SessionID,
+		&m.Kind,
+		&m.Filename,
+		&m.ContentType,
+		&m.StorageURL,
+		&m.TextStatus,
+		&m.ExtractedText,
+		&m.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get material: %w", err)
+	}
+	return m, nil
+}
+
 func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID) ([]*models.Material, error) {
 	query := `
 		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, created_at

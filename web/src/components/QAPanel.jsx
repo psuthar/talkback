@@ -10,6 +10,7 @@ export function QAPanel({
   askSessionQuestion,
   askQuestionFeedback,
   currentAnswer,
+  onCitationClick,
   voiceRecording,
   voiceUploading,
   toggleVoiceRecording,
@@ -52,7 +53,7 @@ export function QAPanel({
             <span>Thinking…</span>
           </div>
         )}
-        <QAHistory questions={questions} readOnly={false} />
+        <QAHistory questions={questions} readOnly={false} onCitationClick={onCitationClick} />
       </div>
       <footer className="participant-qa-footer">
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>

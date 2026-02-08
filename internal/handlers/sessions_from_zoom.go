@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/transcript"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -21,13 +23,13 @@ type CreateSessionFromZoomRequest struct {
 
 // CreateSessionFromZoomResponse matches create-session shape plus optional video_source_id
 type CreateSessionFromZoomResponse struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	CreatedBy   *string `json:"created_by,omitempty"`
-	Status      string  `json:"status"`
-	CreatedAt   string  `json:"created_at"`
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	CreatedBy     *string `json:"created_by,omitempty"`
+	Status        string  `json:"status"`
+	CreatedAt     string  `json:"created_at"`
 	VideoSourceID *string `json:"video_source_id,omitempty"`
-	Message     string  `json:"message,omitempty"`
+	Message       string  `json:"message,omitempty"`
 }
 
 // writeJSONError writes a JSON body {"message": msg} and sets status code
@@ -211,17 +213,34 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	vttContent := string(content)
-	segments, err := utils.ParseVTT(vttContent)
+	segmentInputs, err := transcript.ParseVTT(strings.NewReader(vttContent))
 	if err != nil {
 		log.Printf("Zoom parse VTT error: %v", err)
 		writeJSONError(w, "Failed to parse transcript", http.StatusUnprocessableEntity)
 		return
 	}
-	if len(segments) == 0 {
+	if len(segmentInputs) == 0 {
 		writeJSONError(w, "Transcript is empty or not ready yet - try again later", http.StatusUnprocessableEntity)
 		return
 	}
-	fullText := utils.FullTextFromSegments(segments)
+	// Build full text and video_sources segments (seconds) from normalized VTT segments
+	var fullTextParts []string
+	videoSegments := make([]models.TranscriptSegment, 0, len(segmentInputs))
+	for _, s := range segmentInputs {
+		if s.Text != "" {
+			fullTextParts = append(fullTextParts, s.Text)
+			videoSegments = append(videoSegments, models.TranscriptSegment{
+				StartTime: float64(s.StartMs) / 1000,
+				EndTime:   float64(s.EndMs) / 1000,
+				Text:      s.Text,
+			})
+		}
+	}
+	fullText := strings.Join(fullTextParts, "\n")
+	if fullText == "" {
+		writeJSONError(w, "Transcript is empty or not ready yet - try again later", http.StatusUnprocessableEntity)
+		return
+	}
 
 	title := "Zoom Recording"
 	if req.Title != nil && strings.TrimSpace(*req.Title) != "" {
@@ -273,10 +292,54 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.DB.UpdateVideoSourceZoomTranscript(r.Context(), videoID, fullText, &vttContent, segments); err != nil {
+	if err := h.DB.UpdateVideoSourceZoomTranscript(r.Context(), videoID, fullText, &vttContent, videoSegments); err != nil {
 		log.Printf("Update video source transcript from Zoom error: %v", err)
 		// non-fatal: transcript_text might already be set or we can retry
 	}
+
+	// Mission #2: session-level transcript + segments (idempotent)
+	trans := &models.Transcript{
+		SessionID: sessionID,
+		Source:    "zoom",
+		Status:    models.TranscriptStatusParsing,
+	}
+	if err := h.DB.CreateTranscript(r.Context(), trans); err != nil {
+		log.Printf("Create transcript from Zoom error: %v", err)
+		// non-fatal: session and video are already created
+	} else {
+		if err := h.DB.DeleteSegmentsByTranscriptID(r.Context(), trans.ID); err != nil {
+			log.Printf("Delete transcript segments error: %v", err)
+		}
+		rows := make([]models.TranscriptSegmentRow, 0, len(segmentInputs))
+		for _, s := range segmentInputs {
+			if s.Text == "" {
+				continue
+			}
+			rows = append(rows, models.TranscriptSegmentRow{
+				TranscriptID: trans.ID,
+				SessionID:    sessionID,
+				Idx:          len(rows),
+				StartMs:      s.StartMs,
+				EndMs:        s.EndMs,
+				Text:         s.Text,
+				SpeakerLabel: s.SpeakerLabel,
+				SourceRef:    s.SourceRef,
+			})
+		}
+		if len(rows) > 0 {
+			if err := h.DB.InsertTranscriptSegments(r.Context(), trans.ID, sessionID, rows); err != nil {
+				log.Printf("Insert transcript segments error: %v", err)
+				errMsg := err.Error()
+				_ = h.DB.UpdateTranscriptStatus(r.Context(), trans.ID, models.TranscriptStatusFailed, nil, &errMsg)
+			} else {
+				_ = h.DB.UpdateTranscriptStatus(r.Context(), trans.ID, models.TranscriptStatusReady, &fullText, nil)
+			}
+		} else {
+			_ = h.DB.UpdateTranscriptStatus(r.Context(), trans.ID, models.TranscriptStatusReady, &fullText, nil)
+		}
+	}
+
+	rag.IndexSessionAsync(sessionID, h.DB)
 
 	vsIDStr := videoID.String()
 	response := CreateSessionFromZoomResponse{

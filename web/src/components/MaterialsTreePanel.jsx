@@ -1,9 +1,8 @@
 import { useRef } from 'react'
+import { getMaterialIcon } from '../utils/materialIcons'
 
 const ICON_VIDEO = '▶'
 const ICON_TRANSCRIPT = '📝'
-const ICON_DOCUMENT = '📄'
-const ICON_SLIDES = '🖼'
 const ICON_LINK = '🔗'
 
 function TreeSection({ title, children }) {
@@ -13,7 +12,7 @@ function TreeSection({ title, children }) {
         fontSize: '11px',
         fontWeight: 'bold',
         textTransform: 'uppercase',
-        color: '#666',
+        color: '#444',
         padding: '4px 0',
         borderBottom: '1px solid #eee'
       }}>
@@ -41,7 +40,8 @@ function TreeItem({ icon, title, meta, selected, onClick }) {
         fontSize: '13px',
         display: 'flex',
         alignItems: 'center',
-        gap: '8px'
+        gap: '8px',
+        color: '#1a1a1a'
       }}
       onMouseEnter={(e) => {
         if (!selected) e.currentTarget.style.background = '#f0f0f0'
@@ -51,11 +51,11 @@ function TreeItem({ icon, title, meta, selected, onClick }) {
       }}
     >
       <span style={{ flexShrink: 0 }}>{icon}</span>
-      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
         {title}
       </span>
       {meta && (
-        <span style={{ fontSize: '11px', color: '#999', flexShrink: 0 }}>{meta}</span>
+        <span style={{ fontSize: '11px', color: '#555', flexShrink: 0 }}>{meta}</span>
       )}
     </button>
   )
@@ -68,20 +68,31 @@ export function MaterialsTreePanel({
   setVideoId,
   setVideoPlayerKey,
   onSelectDocument,
+  onSelectVideo,
   selectedDocumentId,
   collapsed,
-  onCollapsedChange
+  onCollapsedChange,
+  hideTranscriptSection = false
 }) {
   const scrollRef = useRef(null)
 
   if (!session) return null
 
-  const { video_sources = [], materials = [] } = session
+  const { video_sources = [], materials = [], unread_material_ids = [] } = session
+  const unreadSet = new Set(unread_material_ids || [])
   const documents = materials.filter(m => (m.kind || '').toLowerCase() === 'document')
   const slidesImages = materials.filter(m => {
     const k = (m.kind || '').toLowerCase()
     return k === 'slides' || k === 'diagram'
   })
+
+  const isMaterialImage = (m) => {
+    const ct = (m.content_type || '').toLowerCase()
+    const fn = (m.filename || '').toLowerCase()
+    return ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(e => fn.endsWith(e))
+  }
+  const materialStatusMeta = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : (m.content_type || '')))
+  const materialStatusMetaSlides = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : ''))
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
@@ -97,7 +108,21 @@ export function MaterialsTreePanel({
           gap: '8px'
         }}
       >
-        <span style={{ fontWeight: 'bold', fontSize: '14px' }}>Materials</span>
+        <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          Materials
+          {unreadSet.size > 0 && (
+            <span style={{
+              background: '#e65100',
+              color: '#fff',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              padding: '2px 6px',
+              borderRadius: '10px'
+            }} title="New documents added by creator">
+              New {unreadSet.size}
+            </span>
+          )}
+        </span>
         <button
           type="button"
           onClick={() => onCollapsedChange(!collapsed)}
@@ -130,40 +155,43 @@ export function MaterialsTreePanel({
                   setSelectedVideo(v)
                   setVideoId(v.id)
                   setVideoPlayerKey(prev => prev + 1)
+                  onSelectVideo?.()
                 }}
               />
             ))
           )}
         </TreeSection>
 
-        <TreeSection title="Transcript">
-          {video_sources.filter(v => v.transcript_text).length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
-          ) : (
-            video_sources.map((v, idx) => {
-              if (!v.transcript_text) return null
-              const transcriptId = `transcript-${v.id}`
-              const isSelected = selectedDocumentId === transcriptId
-              return (
-                <TreeItem
-                  key={transcriptId}
-                  icon={ICON_TRANSCRIPT}
-                  title={video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript'}
-                  meta=""
-                  selected={isSelected}
-                  onClick={(e) => {
-                    onSelectDocument({
-                      type: 'transcript',
-                      text: v.transcript_text,
-                      title: video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript',
-                      transcriptId
-                    }, e)
-                  }}
-                />
-              )
-            })
-          )}
-        </TreeSection>
+        {!hideTranscriptSection && (
+          <TreeSection title="Transcript">
+            {video_sources.filter(v => v.transcript_text).length === 0 ? (
+              <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+            ) : (
+              video_sources.map((v, idx) => {
+                if (!v.transcript_text) return null
+                const transcriptId = `transcript-${v.id}`
+                const isSelected = selectedDocumentId === transcriptId
+                return (
+                  <TreeItem
+                    key={transcriptId}
+                    icon={ICON_TRANSCRIPT}
+                    title={video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript'}
+                    meta=""
+                    selected={isSelected}
+                    onClick={(e) => {
+                      onSelectDocument({
+                        type: 'transcript',
+                        text: v.transcript_text,
+                        title: video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript',
+                        transcriptId
+                      }, e)
+                    }}
+                  />
+                )
+              })
+            )}
+          </TreeSection>
+        )}
 
         <TreeSection title="Documents">
           {documents.length === 0 ? (
@@ -172,9 +200,9 @@ export function MaterialsTreePanel({
             documents.map(m => (
               <TreeItem
                 key={m.id}
-                icon={ICON_DOCUMENT}
+                icon={getMaterialIcon(m)}
                 title={m.filename || 'Untitled'}
-                meta={m.text_status === 'ready' ? 'Ready' : (m.content_type || '')}
+                meta={[materialStatusMeta(m), unreadSet.has(m.id) ? 'New' : null].filter(Boolean).join(' • ')}
                 selected={selectedDocumentId === m.id}
                 onClick={(e) => onSelectDocument(m, e)}
               />
@@ -189,9 +217,9 @@ export function MaterialsTreePanel({
             slidesImages.map(m => (
               <TreeItem
                 key={m.id}
-                icon={ICON_SLIDES}
+                icon={getMaterialIcon(m)}
                 title={m.filename || 'Untitled'}
-                meta={m.text_status === 'ready' ? 'Ready' : ''}
+                meta={[materialStatusMetaSlides(m), unreadSet.has(m.id) ? 'New' : null].filter(Boolean).join(' • ')}
                 selected={selectedDocumentId === m.id}
                 onClick={(e) => onSelectDocument(m, e)}
               />
