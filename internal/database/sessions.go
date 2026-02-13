@@ -41,9 +41,12 @@ func (db *DB) CreateSession(ctx context.Context, session *models.Session) error 
 // GetSession retrieves a session by ID
 func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Session, error) {
 	session := &models.Session{}
-	var sourceProviderStr, sourceRefURL *string
+	var sourceProviderStr, sourceRefURL, processingState *string
+	var indexUpdatedAt, processingUpdatedAt *time.Time
 	query := `
-		SELECT id, title, created_by, status, source_provider, source_reference_url, created_at, updated_at
+		SELECT id, title, created_by, status, source_provider, source_reference_url,
+			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			created_at, updated_at
 		FROM sessions
 		WHERE id = $1
 	`
@@ -55,6 +58,10 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		&session.Status,
 		&sourceProviderStr,
 		&sourceRefURL,
+		&session.IndexStatus,
+		&indexUpdatedAt,
+		&processingState,
+		&processingUpdatedAt,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)
@@ -68,6 +75,11 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		session.SourceProvider = models.SessionSourceProvider(*sourceProviderStr)
 	}
 	session.SourceReferenceURL = sourceRefURL
+	session.IndexUpdatedAt = indexUpdatedAt
+	if processingState != nil {
+		session.ProcessingState = *processingState
+	}
+	session.ProcessingUpdatedAt = processingUpdatedAt
 
 	return session, nil
 }

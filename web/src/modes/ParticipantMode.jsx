@@ -266,7 +266,10 @@ export function ParticipantMode({
       </div>
 
       <div className={gridClassName}>
-        <aside className="participant-materials-panel">
+        <aside
+          className={`participant-materials-panel ${materialsCollapsed ? 'materials-panel-collapsed' : 'materials-panel-expanded'}`}
+          aria-expanded={!materialsCollapsed}
+        >
           <MaterialsTreePanel
             session={currentSession}
             selectedVideo={selectedVideo}

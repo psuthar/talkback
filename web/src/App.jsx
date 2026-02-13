@@ -1138,30 +1138,24 @@ function App() {
     setZoomImporting(true)
     setZoomImportError('')
     try {
-      const createRes = await fetch(`${apiBaseUrl}/sessions`, {
+      // Single endpoint: create session and start Zoom import (avoids "Session not found" from two-step flow)
+      const res = await fetch(`${apiBaseUrl}/api/zoom/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
-        body: JSON.stringify({ title: rec.meeting_topic || 'Zoom Recording' })
+        body: JSON.stringify({
+          title: rec.meeting_topic || 'Zoom Recording',
+          meeting_uuid: rec.meeting_uuid,
+          instance_uuid: rec.instance_uuid || rec.meeting_uuid
+        })
       })
-      const createData = await createRes.json()
-      if (!createRes.ok) {
-        setZoomImportError(createData.message || 'Failed to create session')
-        return
-      }
-      const sessionId = createData.id
-      const importRes = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/import/zoom`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
-        body: JSON.stringify({ meeting_uuid: rec.meeting_uuid, instance_uuid: rec.instance_uuid || rec.meeting_uuid })
-      })
-      if (!importRes.ok) {
-        const errData = await importRes.json().catch(() => ({}))
-        setZoomImportError(errData.message || 'Failed to start import')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setZoomImportError(data.message || 'Failed to start import')
         return
       }
       setZoomImportToast({ message: 'Import started' })
       setTimeout(() => setZoomImportToast(null), 3000)
-      await openSession(sessionId, 'creator', true)
+      await openSession(data.id, 'creator', true)
     } catch (err) {
       setZoomImportError(err.message || 'Failed to import')
     } finally {
@@ -2499,43 +2493,10 @@ function App() {
               creatorIdentity={creatorIdentity}
               viewMode={viewMode}
               setViewMode={setViewMode}
-              materialFiles={materialFiles}
-              setMaterialFiles={setMaterialFiles}
-              uploadedMaterials={uploadedMaterials}
-              setUploadedMaterials={setUploadedMaterials}
-              removeMaterialFile={removeMaterialFile}
-              uploadMaterial={uploadMaterial}
-              uploadMaterialFeedback={uploadMaterialFeedback}
-              videoProvider={videoProvider}
-              setVideoProvider={setVideoProvider}
-              videoUrl={videoUrl}
-              setVideoUrl={setVideoUrl}
-              playbackMode={playbackMode}
-              setPlaybackMode={setPlaybackMode}
-              embedUrl={embedUrl}
-              setEmbedUrl={setEmbedUrl}
-              mediaUrl={mediaUrl}
-              setMediaUrl={setMediaUrl}
-              posterUrl={posterUrl}
-              setPosterUrl={setPosterUrl}
-              durationSeconds={durationSeconds}
-              setDurationSeconds={setDurationSeconds}
-              attachVideo={attachVideo}
-              attachVideoFeedback={attachVideoFeedback}
-              videoFile={videoFile}
-              setVideoFile={setVideoFile}
-              videoFileUploading={videoFileUploading}
-              uploadVideoFile={uploadVideoFile}
-              loomVideoSource={loomVideoSource}
-              setLoomVideoSource={setLoomVideoSource}
               transcriptText={transcriptText}
               setTranscriptText={setTranscriptText}
               submitTranscript={submitTranscript}
               submitTranscriptFeedback={submitTranscriptFeedback}
-              transcriptFile={transcriptFile}
-              setTranscriptFile={setTranscriptFile}
-              transcriptFileUploading={transcriptFileUploading}
-              uploadTranscriptFile={uploadTranscriptFile}
             />
           ) : (
             <div className="participant-layout-root">

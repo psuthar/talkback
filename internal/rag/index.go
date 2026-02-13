@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
@@ -61,7 +62,7 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 		}
 	}
 
-	// 2) Material chunks
+	// 2) Material chunks (PDF with file path → page anchors; else block anchors from extracted text)
 	materials, err := db.GetMaterialsBySessionID(ctx, sessionID)
 	if err != nil {
 		log.Printf("IndexSession: get materials: %v", err)
@@ -70,7 +71,13 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 			if m.ExtractedText == nil || *m.ExtractedText == "" {
 				continue
 			}
-			matChunks := BuildMaterialChunks(sessionID, m.ID, *m.ExtractedText)
+			var matChunks []ChunkInput
+			if (m.ContentType == "application/pdf" || strings.HasSuffix(strings.ToLower(m.Filename), ".pdf")) && m.StorageURL != "" {
+				matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, m.StorageURL)
+			}
+			if matChunks == nil {
+				matChunks = BuildMaterialChunks(sessionID, m.ID, *m.ExtractedText)
+			}
 			allChunkInputs = append(allChunkInputs, matChunks...)
 		}
 	}

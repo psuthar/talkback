@@ -35,9 +35,10 @@ const (
 type MaterialTextStatus string
 
 const (
-	MaterialTextStatusPending MaterialTextStatus = "pending"
-	MaterialTextStatusReady   MaterialTextStatus = "ready"
-	MaterialTextStatusFailed  MaterialTextStatus = "failed"
+	MaterialTextStatusPending    MaterialTextStatus = "pending"
+	MaterialTextStatusProcessing MaterialTextStatus = "processing"
+	MaterialTextStatusReady      MaterialTextStatus = "ready"
+	MaterialTextStatusFailed     MaterialTextStatus = "failed"
 )
 
 type Material struct {
@@ -50,6 +51,8 @@ type Material struct {
 	StorageURL    string             `json:"storage_url"`
 	TextStatus    MaterialTextStatus `json:"text_status"`
 	ExtractedText *string            `json:"extracted_text,omitempty"`
+	Title         *string            `json:"title,omitempty"`          // Display title (defaults to filename)
+	ErrorMessage  *string            `json:"error_message,omitempty"`  // Set when text_status is failed
 	CreatedAt     time.Time          `json:"created_at"`
 }
 
@@ -147,7 +150,7 @@ type TranscriptSegmentRow struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// IngestionJob tracks Zoom (and future) import jobs per session
+// IngestionJob tracks Zoom (and future) import jobs per session (legacy; prefer SessionProcessingJob)
 type IngestionJob struct {
 	ID           uuid.UUID `json:"id"`
 	SessionID    uuid.UUID `json:"session_id"`
@@ -158,6 +161,50 @@ type IngestionJob struct {
 	LastError    *string   `json:"last_error,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// SessionProcessingJobState and Stage (Mission #4)
+const (
+	ProcessingStateQueued           = "queued"
+	ProcessingStateFetching         = "fetching"
+	ProcessingStateDownloading      = "downloading"
+	ProcessingStateParsing         = "parsing"
+	ProcessingStateChunking        = "chunking"
+	ProcessingStateEmbedding        = "embedding"
+	ProcessingStateWaiting         = "waiting"
+	ProcessingStateReady           = "ready"
+	ProcessingStateFailedTransient = "failed_transient"
+	ProcessingStateFailedPermanent = "failed_permanent"
+	ProcessingStateCanceled        = "canceled"
+)
+
+const (
+	ProcessingStageFetch   = "fetch"
+	ProcessingStageDownload = "download"
+	ProcessingStageParse   = "parse"
+	ProcessingStageChunk   = "chunk"
+	ProcessingStageEmbed   = "embed"
+	ProcessingStageReady   = "ready"
+)
+
+// SessionProcessingJob is the authoritative pipeline job for session import/index (Mission #4)
+type SessionProcessingJob struct {
+	ID               uuid.UUID  `json:"id"`
+	SessionID        uuid.UUID  `json:"session_id"`
+	Source           string     `json:"source"` // "zoom"
+	State            string     `json:"state"`
+	Stage            string     `json:"stage"`
+	AttemptCount     int        `json:"attempt_count"`
+	NextRetryAt      *time.Time `json:"next_retry_at,omitempty"`
+	LastErrorCode    *string    `json:"last_error_code,omitempty"`
+	LastErrorMessage *string    `json:"last_error_message,omitempty"`
+	LockedAt         *time.Time `json:"locked_at,omitempty"`
+	LockOwner        *string    `json:"lock_owner,omitempty"`
+	MeetingUUID      *string    `json:"meeting_uuid,omitempty"`
+	InstanceUUID     *string    `json:"instance_uuid,omitempty"`
+	CreatorIdentity  *string    `json:"creator_identity,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // ZoomConnection stores OAuth tokens for a creator's Zoom account (keyed by creator_identity_id)
@@ -260,10 +307,12 @@ type Session struct {
 	Status             SessionStatus         `json:"status"`
 	SourceProvider     SessionSourceProvider `json:"source_provider,omitempty"`
 	SourceReferenceURL *string               `json:"source_reference_url,omitempty"`
-	IndexStatus        string                `json:"index_status,omitempty"` // "none" | "building" | "ready" | "failed"
-	IndexUpdatedAt     *time.Time            `json:"index_updated_at,omitempty"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
+	IndexStatus          string     `json:"index_status,omitempty"`   // "none" | "building" | "ready" | "failed"
+	IndexUpdatedAt       *time.Time `json:"index_updated_at,omitempty"`
+	ProcessingState      string     `json:"processing_state,omitempty"`       // mirror of session_processing_jobs.state
+	ProcessingUpdatedAt  *time.Time `json:"processing_updated_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 type SessionParticipant struct {

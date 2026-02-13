@@ -306,8 +306,6 @@ button:disabled {
 }
 
 .participant-materials-panel {
-  width: 260px;
-  min-width: 260px;
   border-right: 1px solid #e0e0e0;
   background: #fafafa;
   color: #1a1a1a;
@@ -315,24 +313,45 @@ button:disabled {
   flex-direction: column;
   overflow: hidden;
   transition: min-width 0.2s ease, width 0.2s ease;
+  flex-shrink: 0;
 }
 
-.participant-layout-grid.materials-collapsed .participant-materials-panel {
+/* Expanded: full panel width so "Materials" and list are fully visible */
+.participant-materials-panel.materials-panel-expanded {
+  width: 260px;
+  min-width: 260px;
+}
+
+.participant-layout-grid.materials-collapsed .participant-materials-panel,
+.participant-materials-panel.materials-panel-collapsed {
   min-width: 48px;
   width: 48px;
 }
 
-.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-content {
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-content,
+.participant-materials-panel.materials-panel-collapsed .materials-tree-content {
   display: none;
 }
 
-.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header span {
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header span,
+.participant-materials-panel.materials-panel-collapsed .materials-tree-header span {
   display: none;
 }
 
-.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header {
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header,
+.participant-materials-panel.materials-panel-collapsed .materials-tree-header {
   justify-content: center;
   padding: 8px;
+}
+
+/* Collapsed: only show expand control; whole strip clickable, no text overflow */
+.participant-materials-panel.materials-panel-collapsed .materials-tree-header,
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header {
+  overflow: hidden;
+}
+.participant-materials-panel.materials-panel-collapsed .materials-tree-header:hover,
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header:hover {
+  background: #f0f0f0;
 }
 
 .participant-video-stage {
@@ -422,7 +441,7 @@ button:disabled {
 
 @media (max-width: 768px) {
   .participant-layout-grid {
-    grid-template-columns: 48px 1fr 280px;
+    grid-template-columns: 220px 1fr 280px;
   }
   .participant-layout-grid.materials-collapsed {
     grid-template-columns: 48px 1fr 280px;
@@ -431,10 +450,11 @@ button:disabled {
     min-width: 280px;
     width: 280px;
   }
-  .participant-materials-panel {
-    min-width: 48px;
-    width: 48px;
+  .participant-materials-panel.materials-panel-expanded {
+    min-width: 220px;
+    width: 220px;
   }
+  .participant-materials-panel.materials-panel-collapsed,
   .participant-layout-grid.materials-collapsed .participant-materials-panel {
     min-width: 48px;
     width: 48px;

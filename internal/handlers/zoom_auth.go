@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -227,7 +228,12 @@ func (h *Handlers) ZoomAuthDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // GetValidZoomAccessToken returns a valid access token for the creator identity, refreshing if expired
 func (h *Handlers) GetValidZoomAccessToken(r *http.Request, creatorIdentityID string) (accessToken string, conn *models.ZoomConnection, err error) {
-	conn, err = h.DB.GetZoomConnectionByCreatorIdentity(r.Context(), creatorIdentityID)
+	return h.GetValidZoomAccessTokenContext(r.Context(), creatorIdentityID)
+}
+
+// GetValidZoomAccessTokenContext is like GetValidZoomAccessToken but takes context (e.g. for background workers).
+func (h *Handlers) GetValidZoomAccessTokenContext(ctx context.Context, creatorIdentityID string) (accessToken string, conn *models.ZoomConnection, err error) {
+	conn, err = h.DB.GetZoomConnectionByCreatorIdentity(ctx, creatorIdentityID)
 	if err != nil || conn == nil {
 		return "", nil, fmt.Errorf("zoom not connected")
 	}
@@ -279,7 +285,7 @@ func (h *Handlers) GetValidZoomAccessToken(r *http.Request, creatorIdentityID st
 			return accessToken, conn, nil
 		}
 		expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-		if updateErr := h.DB.UpdateZoomConnectionTokens(r.Context(), creatorIdentityID, accessEnc, refreshEnc, expiresAt); updateErr != nil {
+		if updateErr := h.DB.UpdateZoomConnectionTokens(ctx, creatorIdentityID, accessEnc, refreshEnc, expiresAt); updateErr != nil {
 			log.Printf("Zoom update tokens after refresh: %v", updateErr)
 			return accessToken, conn, nil
 		}

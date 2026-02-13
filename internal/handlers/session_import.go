@@ -1,20 +1,124 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
-	"github.com/psuthar/talkback/internal/transcript"
-	"github.com/psuthar/talkback/internal/utils"
 )
+
+// ZoomImportRequest body for POST /api/zoom/import (create session + start import in one call)
+type ZoomImportRequest struct {
+	Title       string `json:"title"`
+	MeetingUUID string `json:"meeting_uuid"`
+	InstanceUUID string `json:"instance_uuid,omitempty"`
+}
+
+// ZoomImportResponse for POST /api/zoom/import
+type ZoomImportResponse struct {
+	ID     string `json:"id"`
+	JobID  string `json:"job_id"`
+	State  string `json:"state"`
+}
+
+// ZoomImport creates a session and starts Zoom import in one request (avoids "Session not found" from two-step create then import).
+func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Method not allowed"})
+		return
+	}
+	creatorIdentity := r.Header.Get("X-Creator-Identity")
+	if creatorIdentity == "" {
+		creatorIdentity = r.URL.Query().Get("creator_identity")
+	}
+	if creatorIdentity == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"code": "zoom_not_connected", "message": "creator_identity required"})
+		return
+	}
+	if _, _, err := h.GetValidZoomAccessToken(r, creatorIdentity); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"code": "zoom_not_connected", "message": "Zoom not connected. Connect Zoom first."})
+		return
+	}
+	var req ZoomImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Invalid request body"})
+		return
+	}
+	meetingUUID := strings.TrimSpace(req.MeetingUUID)
+	if meetingUUID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"message": "meeting_uuid required"})
+		return
+	}
+	instanceUUID := strings.TrimSpace(req.InstanceUUID)
+	if instanceUUID == "" {
+		instanceUUID = meetingUUID
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "Zoom Recording"
+	}
+
+	sessionID := uuid.New()
+	session := &models.Session{
+		ID:             sessionID,
+		Title:          title,
+		CreatedBy:      &creatorIdentity,
+		Status:         models.SessionStatusOpen,
+		SourceProvider: models.SessionSourceZoom,
+	}
+	if err := h.DB.CreateSession(r.Context(), session); err != nil {
+		log.Printf("ZoomImport create session error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to create session"})
+		return
+	}
+	if _, err := h.DB.CreateArtifact(r.Context(), sessionID, title, nil); err != nil {
+		log.Printf("ZoomImport create artifact error: %v", err)
+		// non-fatal
+	}
+
+	jobID := uuid.New()
+	job := &models.SessionProcessingJob{
+		ID:              jobID,
+		SessionID:       sessionID,
+		Source:          "zoom",
+		State:           models.ProcessingStateQueued,
+		Stage:           models.ProcessingStageFetch,
+		MeetingUUID:     &meetingUUID,
+		InstanceUUID:    &instanceUUID,
+		CreatorIdentity: &creatorIdentity,
+	}
+	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
+		log.Printf("ZoomImport create job error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to create import job"})
+		return
+	}
+	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(ZoomImportResponse{
+		ID:    sessionID.String(),
+		JobID: job.ID.String(),
+		State: job.State,
+	})
+}
 
 // SessionImportZoomRequest body for POST /api/sessions/:id/import/zoom
 type SessionImportZoomRequest struct {
@@ -36,6 +140,17 @@ type IngestionStatusResponse struct {
 	UpdatedAt    string `json:"updated_at"`
 	MeetingUUID  string `json:"meeting_uuid,omitempty"`  // For Retry
 	InstanceUUID string `json:"instance_uuid,omitempty"` // For Retry
+}
+
+// ProcessingStatusResponse for GET /api/sessions/:id/processing (Mission #4)
+type ProcessingStatusResponse struct {
+	State            string  `json:"state"`
+	Stage            string  `json:"stage"`
+	AttemptCount     int     `json:"attempt_count"`
+	NextRetryAt      *string `json:"next_retry_at,omitempty"`
+	LastErrorCode    string  `json:"last_error_code,omitempty"`
+	LastErrorMessage string  `json:"last_error_message,omitempty"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 // SessionImportZoom handles POST /api/sessions/:id/import/zoom
@@ -95,7 +210,7 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	if instanceUUID == "" {
 		instanceUUID = meetingUUID
 	}
-	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
+	_, _, err = h.GetValidZoomAccessToken(r, creatorIdentity)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -105,148 +220,31 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.New()
 	meetingUUIDPtr := &meetingUUID
 	instanceUUIDPtr := &instanceUUID
-	job := &models.IngestionJob{
-		ID:           jobID,
-		SessionID:    sessionID,
-		Source:       "zoom",
-		State:        "queued",
-		MeetingUUID:  meetingUUIDPtr,
-		InstanceUUID: instanceUUIDPtr,
+	creatorIdentityPtr := &creatorIdentity
+	job := &models.SessionProcessingJob{
+		ID:              jobID,
+		SessionID:       sessionID,
+		Source:          "zoom",
+		State:           models.ProcessingStateQueued,
+		Stage:           models.ProcessingStageFetch,
+		MeetingUUID:     meetingUUIDPtr,
+		InstanceUUID:    instanceUUIDPtr,
+		CreatorIdentity: creatorIdentityPtr,
 	}
-	if err := h.DB.CreateIngestionJob(r.Context(), job); err != nil {
-		log.Printf("Create ingestion job error: %v", err)
+	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
+		log.Printf("Create session processing job error: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to create import job"})
 		return
 	}
-	// Run ingestion asynchronously
-	go runZoomIngestion(context.Background(), h, sessionID, jobID, instanceUUID, accessToken, creatorIdentity)
+	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(SessionImportZoomResponse{
-		JobID: jobID.String(),
-		State: "queued",
+		JobID: job.ID.String(),
+		State: job.State,
 	})
-}
-
-func runZoomIngestion(ctx context.Context, h *Handlers, sessionID, jobID uuid.UUID, meetingUUID, accessToken, creatorIdentity string) {
-	_ = h.DB.UpdateIngestionJobState(ctx, jobID, "fetching", nil)
-	rec, err := utils.GetMeetingRecordingsWithRetry(accessToken, meetingUUID)
-	if err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion fetch error: %v", err)
-		return
-	}
-	transcriptFile := utils.FindTranscriptFile(rec.RecordingFiles)
-	if transcriptFile == nil {
-		errStr := "No transcript file available for this recording"
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		return
-	}
-	content, err := utils.DownloadTranscript(transcriptFile.DownloadURL, accessToken)
-	if err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion download transcript error: %v", err)
-		return
-	}
-	vttContent := string(content)
-	parsed, err := transcript.ParseVTT(bytes.NewReader(content))
-	if err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion parse VTT error: %v", err)
-		return
-	}
-	// Create transcript row (parsing) — idempotent via unique(session_id, source)
-	transcriptRow := &models.Transcript{
-		SessionID: sessionID,
-		Source:    "zoom",
-		Status:    models.TranscriptStatusParsing,
-	}
-	if err := h.DB.CreateTranscript(ctx, transcriptRow); err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion create transcript error: %v", err)
-		return
-	}
-	// Build segment rows and video-source segment slice
-	segmentRows := make([]models.TranscriptSegmentRow, 0, len(parsed))
-	videoSegments := make([]models.TranscriptSegment, 0, len(parsed))
-	var rawParts []string
-	for i, s := range parsed {
-		segmentRows = append(segmentRows, models.TranscriptSegmentRow{
-			TranscriptID: transcriptRow.ID,
-			SessionID:    sessionID,
-			Idx:          i,
-			StartMs:      s.StartMs,
-			EndMs:        s.EndMs,
-			Text:         s.Text,
-			SpeakerLabel: s.SpeakerLabel,
-			SourceRef:    s.SourceRef,
-		})
-		videoSegments = append(videoSegments, models.TranscriptSegment{
-			StartTime: float64(s.StartMs) / 1000,
-			EndTime:   float64(s.EndMs) / 1000,
-			Text:      s.Text,
-		})
-		rawParts = append(rawParts, s.Text)
-	}
-	rawText := strings.Join(rawParts, "\n")
-	// Idempotent: delete existing segments then insert
-	if err := h.DB.DeleteSegmentsByTranscriptID(ctx, transcriptRow.ID); err != nil {
-		log.Printf("Zoom ingestion delete segments (non-fatal): %v", err)
-	}
-	if err := h.DB.InsertTranscriptSegments(ctx, transcriptRow.ID, sessionID, segmentRows); err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateTranscriptStatus(ctx, transcriptRow.ID, models.TranscriptStatusFailed, nil, &errStr)
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion insert segments error: %v", err)
-		return
-	}
-	if err := h.DB.UpdateTranscriptStatus(ctx, transcriptRow.ID, models.TranscriptStatusReady, &rawText, nil); err != nil {
-		log.Printf("Zoom ingestion update transcript status (non-fatal): %v", err)
-	}
-	title := rec.Topic
-	if title == "" {
-		title = "Zoom Recording"
-	}
-	artifact, err := h.DB.CreateArtifact(ctx, sessionID, title, nil)
-	if err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion create artifact error: %v", err)
-		return
-	}
-	// Encode meeting_id so + and other chars are not corrupted when URL is parsed later (e.g. when streaming)
-	zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(meetingUUID)
-	videoID := uuid.New()
-	zoomAPI := "zoom_api"
-	videoSource := &models.VideoSource{
-		ID:                  videoID,
-		ArtifactID:          artifact.ID,
-		SessionID:           sessionID,
-		Provider:            "zoom",
-		VideoURL:            zoomURL,
-		PlaybackMode:        "embed",
-		OriginalURL:         &zoomURL,
-		TranscriptStatus:    models.VideoTranscriptStatusReady,
-		TranscriptionSource: &zoomAPI,
-		SourceType:          models.VideoSourceTypeEmbedURL,
-	}
-	if err := h.DB.CreateVideoSource(ctx, videoSource); err != nil {
-		errStr := err.Error()
-		_ = h.DB.UpdateIngestionJobState(ctx, jobID, "failed", &errStr)
-		log.Printf("Zoom ingestion create video source error: %v", err)
-		return
-	}
-	if err := h.DB.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments); err != nil {
-		log.Printf("Zoom ingestion update video source transcript (non-fatal): %v", err)
-	}
-	_ = h.DB.UpdateIngestionJobState(ctx, jobID, "ready", nil)
-	rag.IndexSessionAsync(sessionID, h.DB)
 }
 
 // SessionIngestionStatus handles GET /api/sessions/:id/ingestion
@@ -305,6 +303,133 @@ func (h *Handlers) SessionIngestionStatus(w http.ResponseWriter, r *http.Request
 		MeetingUUID:  meetingUUID,
 		InstanceUUID: instanceUUID,
 	})
+}
+
+// parseSessionIDFromProcessingPath extracts session ID from /api/sessions/:id/processing or /api/sessions/:id/processing/retry etc.
+func parseSessionIDFromProcessingPath(path string) (string, bool) {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 4 && parts[0] == "api" && parts[1] == "sessions" && parts[3] == "processing" {
+		return parts[2], true
+	}
+	if len(parts) >= 4 && parts[0] == "sessions" && parts[3] == "processing" {
+		return parts[1], true
+	}
+	return "", false
+}
+
+// SessionProcessingStatus handles GET /api/sessions/:id/processing (Mission #4)
+func (h *Handlers) SessionProcessingStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionIDStr, ok := parseSessionIDFromProcessingPath(r.URL.Path)
+	if !ok {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	job, err := h.DB.GetSessionProcessingJobBySessionID(r.Context(), sessionID, "zoom")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		return
+	}
+	if job == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ProcessingStatusResponse{
+			State:     "",
+			Stage:     "",
+			UpdatedAt: "",
+		})
+		return
+	}
+	var nextRetryAt *string
+	if job.NextRetryAt != nil {
+		s := job.NextRetryAt.Format("2006-01-02T15:04:05Z07:00")
+		nextRetryAt = &s
+	}
+	lastCode := ""
+	if job.LastErrorCode != nil {
+		lastCode = *job.LastErrorCode
+	}
+	lastMsg := ""
+	if job.LastErrorMessage != nil {
+		lastMsg = *job.LastErrorMessage
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(ProcessingStatusResponse{
+		State:            job.State,
+		Stage:            job.Stage,
+		AttemptCount:     job.AttemptCount,
+		NextRetryAt:      nextRetryAt,
+		LastErrorCode:    lastCode,
+		LastErrorMessage: lastMsg,
+		UpdatedAt:        job.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	})
+}
+
+// SessionProcessingRetry handles POST /api/sessions/:id/processing/retry
+func (h *Handlers) SessionProcessingRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionIDStr, ok := parseSessionIDFromProcessingPath(r.URL.Path)
+	if !ok {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.DB.RetrySessionProcessingJob(r.Context(), sessionID, "zoom"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		return
+	}
+	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, models.ProcessingStateQueued)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"state": "queued"})
+}
+
+// SessionProcessingCancel handles POST /api/sessions/:id/processing/cancel
+func (h *Handlers) SessionProcessingCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionIDStr, ok := parseSessionIDFromProcessingPath(r.URL.Path)
+	if !ok {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	if err := h.DB.CancelSessionProcessingJob(r.Context(), sessionID, "zoom"); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
+		return
+	}
+	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, models.ProcessingStateCanceled)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"state": "canceled"})
 }
 
 // SessionTranscriptResponse for GET /api/sessions/:id/transcript

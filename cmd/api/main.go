@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/golang-migrate/migrate/v4"
@@ -19,6 +20,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/migrations"
+	"github.com/psuthar/talkback/internal/processing"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -85,6 +87,15 @@ func main() {
 	// Initialize handlers
 	h := handlers.NewHandlers(db, jobProcessor)
 
+	// Mission #4: processing worker and reconciler for Zoom import pipeline
+	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {
+		tok, _, err := h.GetValidZoomAccessTokenContext(ctx, creatorIdentity)
+		return tok, err
+	}
+	go processing.RunWorker(ctx, db, getZoomToken, 15*time.Second, 15*time.Minute)
+	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
+	log.Println("Processing worker and reconciler started")
+
 	// CORS middleware
 	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -145,6 +156,7 @@ func main() {
 	http.HandleFunc("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect))
 	http.HandleFunc("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect))
 	http.HandleFunc("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings))
+	http.HandleFunc("/api/zoom/import", corsMiddleware(h.ZoomImport))
 
 	// API Session import + ingestion status (mission: /api/sessions/:id/import/zoom, /api/sessions/:id/ingestion)
 	http.HandleFunc("/api/sessions/", corsMiddleware(h.APISessionsRouter))

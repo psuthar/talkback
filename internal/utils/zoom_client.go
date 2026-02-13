@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,38 @@ import (
 	"regexp"
 	"strings"
 )
+
+// ZoomAPIError is returned when a Zoom API call fails; use for retry/waiting/permanent classification (Mission #4).
+type ZoomAPIError struct {
+	StatusCode int    // HTTP status (429, 404, 401, 403, 5xx)
+	Message    string // response body or description
+	Code       string // stable code: zoom_429, zoom_5xx, recording_not_found, transcript_not_ready, zoom_auth
+	NotReady   bool   // true if transcript not available yet (processing or missing) → state=waiting
+}
+
+func (e *ZoomAPIError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("zoom api: %s (%d): %s", e.Code, e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("zoom api (%d): %s", e.StatusCode, e.Message)
+}
+
+// Retryable returns true for 429, 5xx, network/timeouts → failed_transient.
+func (e *ZoomAPIError) Retryable() bool {
+	return e.StatusCode == 429 || (e.StatusCode >= 500 && e.StatusCode < 600)
+}
+
+// Permanent returns true for auth (401/403) or recording not found (404) after retries → failed_permanent.
+func (e *ZoomAPIError) Permanent() bool {
+	return e.StatusCode == 401 || e.StatusCode == 403 || e.Code == "recording_not_found"
+}
+
+// IsZoomAPIError returns the *ZoomAPIError if err wraps one.
+func IsZoomAPIError(err error) (*ZoomAPIError, bool) {
+	var z *ZoomAPIError
+	ok := errors.As(err, &z)
+	return z, ok
+}
 
 // ZoomRecordingFile represents a file in a Zoom cloud recording
 type ZoomRecordingFile struct {
@@ -142,7 +175,8 @@ func GetMeetingRecordingsWithRetry(accessToken, meetingID string) (*ZoomRecordin
 	if err == nil {
 		return rec, nil
 	}
-	if err.Error() != "recording not found" {
+	var z *ZoomAPIError
+	if errors.As(err, &z) && z.Code != "recording_not_found" {
 		return nil, err
 	}
 	// Retry with double encoding (e.g. + in UUID)
@@ -167,7 +201,24 @@ func GetMeetingRecordingsWithRetry(accessToken, meetingID string) (*ZoomRecordin
 			}
 		}
 	}
-	return nil, fmt.Errorf("recording not found")
+	return nil, &ZoomAPIError{StatusCode: 404, Message: "recording not found", Code: "recording_not_found"}
+}
+
+// GetMeetingRecordingsAndTranscript returns recordings and the transcript file if ready.
+// If transcript is missing or still processing, returns (rec, nil, *ZoomAPIError{NotReady: true}).
+func GetMeetingRecordingsAndTranscript(accessToken, meetingID string) (*ZoomRecordingResponse, *ZoomRecordingFile, error) {
+	rec, err := GetMeetingRecordingsWithRetry(accessToken, meetingID)
+	if err != nil {
+		return nil, nil, err
+	}
+	file, status := FindTranscriptFileWithStatus(rec.RecordingFiles)
+	if file == nil {
+		return rec, nil, &ZoomAPIError{StatusCode: 200, Code: "transcript_not_ready", Message: "no transcript file available", NotReady: true}
+	}
+	if status == TranscriptStatusProcessing {
+		return rec, nil, &ZoomAPIError{StatusCode: 200, Code: "transcript_not_ready", Message: "transcript still processing", NotReady: true}
+	}
+	return rec, file, nil
 }
 
 func getMeetingRecordingsWithEncoding(accessToken, meetingID string, doubleEncode bool) (*ZoomRecordingResponse, error) {
@@ -188,10 +239,19 @@ func getMeetingRecordingsWithEncoding(accessToken, meetingID string, doubleEncod
 		return nil, err
 	}
 	if resp.StatusCode == 404 {
-		return nil, fmt.Errorf("recording not found")
+		return nil, &ZoomAPIError{StatusCode: 404, Message: "recording not found", Code: "recording_not_found"}
+	}
+	if resp.StatusCode == 429 {
+		return nil, &ZoomAPIError{StatusCode: 429, Message: string(body), Code: "zoom_429"}
+	}
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_auth"}
+	}
+	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_5xx"}
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("zoom api error (%d): %s", resp.StatusCode, string(body))
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_api"}
 	}
 	var out ZoomRecordingResponse
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -389,7 +449,8 @@ func FindTranscriptFileWithStatus(files []ZoomRecordingFile) (*ZoomRecordingFile
 	return nil, TranscriptStatusNotAvailable
 }
 
-// DownloadTranscript fetches the transcript file content from download_url (with token)
+// DownloadTranscript fetches the transcript file content from download_url (with token).
+// Returns *ZoomAPIError with NotReady=true on 404 (transcript not ready yet), Retryable on 429/5xx.
 func DownloadTranscript(downloadURL, accessToken string) ([]byte, error) {
 	req, err := http.NewRequest("GET", downloadURL, nil)
 	if err != nil {
@@ -401,9 +462,18 @@ func DownloadTranscript(downloadURL, accessToken string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("download failed: %s", string(body))
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 404 {
+		return nil, &ZoomAPIError{StatusCode: 404, Code: "transcript_not_ready", Message: string(body), NotReady: true}
 	}
-	return io.ReadAll(resp.Body)
+	if resp.StatusCode == 429 {
+		return nil, &ZoomAPIError{StatusCode: 429, Message: string(body), Code: "zoom_429"}
+	}
+	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_5xx"}
+	}
+	if resp.StatusCode != 200 {
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_download"}
+	}
+	return body, nil
 }

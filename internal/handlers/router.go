@@ -131,6 +131,26 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "processing" {
+		if len(parts) == 4 {
+			if r.Method == http.MethodGet {
+				h.SessionProcessingStatus(w, r)
+				return
+			}
+		}
+		if len(parts) == 5 {
+			if parts[4] == "retry" && r.Method == http.MethodPost {
+				h.SessionProcessingRetry(w, r)
+				return
+			}
+			if parts[4] == "cancel" && r.Method == http.MethodPost {
+				h.SessionProcessingCancel(w, r)
+				return
+			}
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "transcript" {
 		if r.Method == http.MethodGet {
 			h.SessionTranscript(w, r)
@@ -151,6 +171,30 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			h.SessionReindex(w, r)
 			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "materials" {
+		if len(parts) == 4 {
+			if r.Method == http.MethodGet {
+				h.ListSessionMaterials(w, r)
+				return
+			}
+		}
+		if len(parts) == 5 {
+			if parts[4] == "upload" && r.Method == http.MethodPost {
+				h.SessionUploadMaterial(w, r)
+				return
+			}
+			if parts[4] == "paste" && r.Method == http.MethodPost {
+				h.SessionPasteMaterial(w, r)
+				return
+			}
+			if r.Method == http.MethodDelete {
+				h.DeleteSessionMaterial(w, r)
+				return
+			}
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -229,6 +273,14 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 				h.GetSessionTimeline(w, r)
 				return
 			}
+		case "materials":
+			// /sessions/{id}/materials - GET (list materials)
+			if r.Method == http.MethodGet {
+				h.ListSessionMaterials(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -280,6 +332,33 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/materials/upload - POST
+		if parts[2] == "materials" && parts[3] == "upload" {
+			if r.Method == http.MethodPost {
+				h.SessionUploadMaterial(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/materials/paste - POST
+		if parts[2] == "materials" && parts[3] == "paste" {
+			if r.Method == http.MethodPost {
+				h.SessionPasteMaterial(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+	}
+	if len(parts) == 5 && parts[2] == "materials" {
+		// /sessions/{id}/materials/{material_id} - DELETE
+		if r.Method == http.MethodDelete {
+			h.DeleteSessionMaterial(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
 	if len(parts) == 5 {

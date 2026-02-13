@@ -97,35 +97,43 @@ export function MaterialsTreePanel({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
       <div
-        className="materials-tree-header"
+        className={`materials-tree-header ${collapsed ? 'materials-tree-header-collapsed' : ''}`}
         style={{
           flexShrink: 0,
-          padding: '10px 12px',
+          padding: collapsed ? '8px 4px' : '10px 12px',
           borderBottom: '1px solid #e0e0e0',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '8px'
+          justifyContent: collapsed ? 'center' : 'space-between',
+          gap: '8px',
+          ...(collapsed && { cursor: 'pointer', minHeight: '36px' })
         }}
+        onClick={collapsed ? () => onCollapsedChange(false) : undefined}
+        onKeyDown={collapsed ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCollapsedChange(false); } } : undefined}
+        role={collapsed ? 'button' : undefined}
+        tabIndex={collapsed ? 0 : undefined}
+        aria-label={collapsed ? 'Expand materials panel' : undefined}
       >
-        <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          Materials
-          {unreadSet.size > 0 && (
-            <span style={{
-              background: '#e65100',
-              color: '#fff',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              padding: '2px 6px',
-              borderRadius: '10px'
-            }} title="New documents added by creator">
-              New {unreadSet.size}
-            </span>
-          )}
-        </span>
+        {!collapsed && (
+          <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Materials
+            {unreadSet.size > 0 && (
+              <span style={{
+                background: '#e65100',
+                color: '#fff',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                padding: '2px 6px',
+                borderRadius: '10px'
+              }} title="New documents added by creator">
+                New {unreadSet.size}
+              </span>
+            )}
+          </span>
+        )}
         <button
           type="button"
-          onClick={() => onCollapsedChange(!collapsed)}
+          onClick={(e) => { e.stopPropagation(); onCollapsedChange(!collapsed); }}
           aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
           style={{
             padding: '4px 8px',
@@ -133,7 +141,8 @@ export function MaterialsTreePanel({
             border: '1px solid #ccc',
             borderRadius: '4px',
             background: '#fff',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            flexShrink: 0
           }}
         >
           {collapsed ? '▶' : '◀'}

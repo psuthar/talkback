@@ -168,3 +168,14 @@ func (db *DB) DeleteChunkEmbeddingsBySessionID(ctx context.Context, sessionID uu
 	}
 	return nil
 }
+
+// DeleteSessionChunksBySource removes all chunks for a given source (e.g. one material). Embeddings are cascade-deleted.
+func (db *DB) DeleteSessionChunksBySource(ctx context.Context, sessionID uuid.UUID, sourceType string, sourceID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx,
+		`DELETE FROM session_chunks WHERE session_id = $1 AND source_type = $2 AND source_id = $3`,
+		sessionID, sourceType, sourceID)
+	if err != nil {
+		return fmt.Errorf("delete session chunks by source: %w", err)
+	}
+	return nil
+}

@@ -113,6 +113,93 @@ func TestCreateMaterial(t *testing.T) {
 		// Should succeed since there's no enum constraint on kind
 		assert.NoError(t, err)
 	})
+
+	t.Run("creates material with title and error_message", func(t *testing.T) {
+		title := "My Document"
+		errMsg := "extraction failed"
+		material := &models.Material{
+			ID:            uuid.New(),
+			ArtifactID:    artifact.ID,
+			SessionID:     session.ID,
+			Kind:          "document",
+			Filename:      "doc.pdf",
+			ContentType:   "application/pdf",
+			StorageURL:    "data/uploads/doc.pdf",
+			TextStatus:    models.MaterialTextStatusFailed,
+			Title:         &title,
+			ErrorMessage:  &errMsg,
+		}
+		err := db.CreateMaterial(ctx, material)
+		require.NoError(t, err)
+		got, err := db.GetMaterialByID(ctx, material.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, title, *got.Title)
+		assert.Equal(t, errMsg, *got.ErrorMessage)
+	})
+}
+
+func TestDeleteMaterial(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	session := createTestSession(t, db, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
+	require.NoError(t, err)
+
+	material := &models.Material{
+		ID:          uuid.New(),
+		ArtifactID:  artifact.ID,
+		SessionID:   session.ID,
+		Kind:        "document",
+		Filename:    "to-delete.txt",
+		ContentType: "text/plain",
+		StorageURL:  "data/uploads/to-delete.txt",
+		TextStatus:  models.MaterialTextStatusReady,
+	}
+	require.NoError(t, db.CreateMaterial(ctx, material))
+
+	err = db.DeleteMaterial(ctx, material.ID)
+	require.NoError(t, err)
+
+	got, err := db.GetMaterialByID(ctx, material.ID)
+	assert.Error(t, err)
+	assert.Nil(t, got)
+}
+
+func TestUpdateMaterialTextStatusWithError(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	session := createTestSession(t, db, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
+	require.NoError(t, err)
+
+	material := &models.Material{
+		ID:          uuid.New(),
+		ArtifactID:  artifact.ID,
+		SessionID:   session.ID,
+		Kind:        "document",
+		Filename:    "doc.txt",
+		ContentType: "text/plain",
+		StorageURL:  "data/uploads/doc.txt",
+		TextStatus:  models.MaterialTextStatusPending,
+	}
+	require.NoError(t, db.CreateMaterial(ctx, material))
+
+	errMsg := "PDF parse failed"
+	err = db.UpdateMaterialTextStatusWithError(ctx, material.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+	require.NoError(t, err)
+
+	got, err := db.GetMaterialByID(ctx, material.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, models.MaterialTextStatusFailed, got.TextStatus)
+	assert.Equal(t, errMsg, *got.ErrorMessage)
 }
 
 func TestGetMaterialsByArtifactID(t *testing.T) {

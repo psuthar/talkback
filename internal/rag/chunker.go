@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/utils"
 )
 
 const (
@@ -112,4 +114,36 @@ func chunkText(text string, chunkSize, overlap int) []string {
 		start = end - overlap
 	}
 	return chunks
+}
+
+// BuildMaterialChunksFromPDF builds chunks from a PDF file with page anchors (one chunk per non-empty page).
+// filePath is the path on disk (e.g. from material.StorageURL). Returns nil if extraction fails.
+func BuildMaterialChunksFromPDF(sessionID, materialID uuid.UUID, filePath string) []ChunkInput {
+	path := filepath.FromSlash(filePath)
+	pages, err := utils.ExtractPDFPages(path)
+	if err != nil {
+		return nil
+	}
+	var out []ChunkInput
+	for i, pageText := range pages {
+		if strings.TrimSpace(pageText) == "" {
+			continue
+		}
+		pageNum := i + 1 // 1-based
+		anchor := map[string]interface{}{
+			"type": "page",
+			"page": pageNum,
+		}
+		hash := ContentHash(pageText, anchor, sessionID, "material", materialID.String(), i)
+		out = append(out, ChunkInput{
+			SessionID:   sessionID,
+			SourceType:  "material",
+			SourceID:    &materialID,
+			ChunkIdx:    i,
+			Text:        pageText,
+			AnchorJSON:  anchor,
+			ContentHash: hash,
+		})
+	}
+	return out
 }

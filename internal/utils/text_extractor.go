@@ -33,28 +33,43 @@ func extractTextFile(filePath string) (string, error) {
 }
 
 func extractPDF(filePath string) (string, error) {
+	pages, err := ExtractPDFPages(filePath)
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(pages, "\n\n"), nil
+}
+
+// ExtractPDFPages returns text per page; out[i] is the text for page i+1 (1-based). Empty pages are "".
+func ExtractPDFPages(filePath string) ([]string, error) {
 	f, r, err := pdf.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open pdf: %w", err)
+		return nil, fmt.Errorf("failed to open pdf: %w", err)
 	}
 	defer f.Close()
 
-	reader, err := r.GetPlainText()
-	if err != nil {
-		return "", fmt.Errorf("failed to extract pdf text: %w", err)
+	numPage := r.NumPage()
+	out := make([]string, numPage)
+	hasAny := false
+	for i := 1; i <= numPage; i++ {
+		p := r.Page(i)
+		if p.V.IsNull() {
+			continue
+		}
+		text, err := p.GetPlainText(nil)
+		if err != nil {
+			continue
+		}
+		t := strings.TrimSpace(text)
+		out[i-1] = t
+		if t != "" {
+			hasAny = true
+		}
 	}
-
-	b, err := io.ReadAll(reader)
-	if err != nil {
-		return "", fmt.Errorf("failed to read extracted pdf text: %w", err)
+	if !hasAny {
+		return nil, fmt.Errorf("pdf text extraction produced no text")
 	}
-
-	text := strings.TrimSpace(string(b))
-	if text == "" {
-		return "", fmt.Errorf("pdf text extraction produced empty text")
-	}
-
-	return text, nil
+	return out, nil
 }
 
 func ChunkText(text string, chunkSize int, overlap int) []string {

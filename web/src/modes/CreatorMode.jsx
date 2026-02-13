@@ -2,8 +2,36 @@ import { useState, useRef, useEffect } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
+import { SessionMaterialsTab } from '../components/SessionMaterialsTab'
 import { SessionSharing } from '../components/SessionSharing'
-import { getMaterialIcon } from '../utils/materialIcons'
+
+const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready']
+
+function processingStageToStepIndex(stage) {
+  if (!stage) return 0
+  const s = (stage || '').toLowerCase()
+  if (s === 'fetch') return 0
+  if (s === 'download') return 1
+  if (s === 'parse') return 2
+  if (s === 'chunk') return 3
+  if (s === 'embed') return 4
+  if (s === 'ready') return 5
+  return 0
+}
+
+function relativeTime(isoString) {
+  if (!isoString) return ''
+  const d = new Date(isoString)
+  const now = new Date()
+  const sec = Math.floor((now - d) / 1000)
+  if (sec < 60) return 'just now'
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} min ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr} hr ago`
+  const day = Math.floor(hr / 24)
+  return `${day} day${day !== 1 ? 's' : ''} ago`
+}
 
 export function CreatorMode({
   currentSession,
@@ -32,44 +60,10 @@ export function CreatorMode({
   creatorIdentity,
   viewMode,
   setViewMode,
-  // Upload props
-  materialFiles,
-  setMaterialFiles,
-  uploadedMaterials,
-  setUploadedMaterials,
-  removeMaterialFile,
-  uploadMaterial,
-  uploadMaterialFeedback,
-  videoProvider,
-  setVideoProvider,
-  videoUrl,
-  setVideoUrl,
-  playbackMode,
-  setPlaybackMode,
-  embedUrl,
-  setEmbedUrl,
-  mediaUrl,
-  setMediaUrl,
-  posterUrl,
-  setPosterUrl,
-  durationSeconds,
-  setDurationSeconds,
-  attachVideo,
-  attachVideoFeedback,
-  videoFile,
-  setVideoFile,
-  videoFileUploading,
-  uploadVideoFile,
-  loomVideoSource,
-  setLoomVideoSource,
   transcriptText,
   setTranscriptText,
   submitTranscript,
-  submitTranscriptFeedback,
-  transcriptFile,
-  setTranscriptFile,
-  transcriptFileUploading,
-  uploadTranscriptFile
+  submitTranscriptFeedback
 }) {
   const [answeringQuestionId, setAnsweringQuestionId] = useState(null)
   const [answerText, setAnswerText] = useState('')
@@ -351,12 +345,44 @@ export function CreatorMode({
     ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`
     : null
 
-  // Ingestion status (mission: Session page ingest banner with polling)
-  const [ingestionStatus, setIngestionStatus] = useState(null) // { source, state, last_error, updated_at, meeting_uuid, instance_uuid }
+  // Processing status (Mission #4: GET /api/sessions/:id/processing) — preferred over legacy ingestion
+  const [processingStatus, setProcessingStatus] = useState(null) // { state, stage, attempt_count, next_retry_at, last_error_code, last_error_message, updated_at }
+  const [processingRetrying, setProcessingRetrying] = useState(false)
+  const processingIntervalRef = useRef(null)
+  useEffect(() => {
+    if (!sessionId || !apiBaseUrl) return
+    if (processingIntervalRef.current) {
+      clearInterval(processingIntervalRef.current)
+      processingIntervalRef.current = null
+    }
+    const fetchProcessing = () => {
+      fetch(`${apiBaseUrl}/api/sessions/${sessionId}/processing`, { headers: { 'X-Creator-Identity': creatorIdentity } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.state != null && data.state !== '') setProcessingStatus(data)
+          else setProcessingStatus(null)
+        })
+        .catch(() => setProcessingStatus(null))
+    }
+    fetchProcessing()
+    const terminal = processingStatus?.state && ['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state)
+    if (terminal) return
+    const intervalMs = processingStatus?.state === 'waiting' ? 15000 : 4000
+    processingIntervalRef.current = setInterval(fetchProcessing, intervalMs)
+    return () => {
+      if (processingIntervalRef.current) {
+        clearInterval(processingIntervalRef.current)
+        processingIntervalRef.current = null
+      }
+    }
+  }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
+
+  // Legacy ingestion status (fallback when no processing job)
+  const [ingestionStatus, setIngestionStatus] = useState(null)
   const [ingestionRetrying, setIngestionRetrying] = useState(false)
   const ingestionIntervalRef = useRef(null)
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl) return
+    if (!sessionId || !apiBaseUrl || (processingStatus?.state != null && processingStatus.state !== '')) return
     const fetchIngestion = () => {
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/ingestion`, {
         headers: { 'X-Creator-Identity': creatorIdentity }
@@ -383,18 +409,19 @@ export function CreatorMode({
         ingestionIntervalRef.current = null
       }
     }
-  }, [sessionId, apiBaseUrl, creatorIdentity])
+  }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
 
   // When Zoom import completes, refetch session once so video_sources and artifacts appear (video player, etc.)
   const hasRefetchedForIngestionReady = useRef(false)
+  const readyState = processingStatus?.state === 'ready' ? 'ready' : ingestionStatus?.state === 'ready' ? 'ready' : null
   useEffect(() => {
-    if (ingestionStatus?.state !== 'ready' || !refetchSession) return
+    if (readyState !== 'ready' || !refetchSession) return
     const hasVideos = currentSession?.video_sources && currentSession.video_sources.length > 0
     if (hasVideos) return
     if (hasRefetchedForIngestionReady.current) return
     hasRefetchedForIngestionReady.current = true
     refetchSession()
-  }, [ingestionStatus?.state, refetchSession, currentSession?.video_sources])
+  }, [readyState, refetchSession, currentSession?.video_sources])
   // Reset refs when session id changes so a new session can trigger refetch and poll
   const prevSessionIdRef = useRef(sessionId)
   const videoPollAttemptsRef = useRef(0)
@@ -451,8 +478,24 @@ export function CreatorMode({
         transcriptIntervalRef.current = null
       }
     }
-  }, [sessionId, apiBaseUrl, ingestionStatus?.state])
-  // ingestionStatus?.state in deps: when Zoom import completes (state -> 'ready'), effect re-runs and refetches transcript so it shows without refresh
+  }, [sessionId, apiBaseUrl, readyState])
+  // readyState in deps: when Zoom import completes (state -> 'ready'), effect re-runs and refetches transcript
+
+  const retryProcessing = async () => {
+    if (!sessionId || processingRetrying) return
+    setProcessingRetrying(true)
+    try {
+      await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/processing/retry`, {
+        method: 'POST',
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      setProcessingStatus((s) => (s ? { ...s, state: 'queued', last_error_code: '', last_error_message: '' } : null))
+    } catch {
+      // ignore
+    } finally {
+      setProcessingRetrying(false)
+    }
+  }
 
   const retryIngestion = async () => {
     if (!sessionId || !ingestionStatus?.meeting_uuid || ingestionRetrying) return
@@ -522,8 +565,105 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Ingestion status banner (mission) */}
-      {ingestionStatus?.source === 'zoom' && (
+      {/* Processing status banner (Mission #4A: stepper + state copy + metadata + actions) */}
+      {(processingStatus?.state != null && processingStatus.state !== '') && (() => {
+        const runningStates = ['queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding']
+        const isRunning = runningStates.includes(processingStatus.state)
+        const isFailed = processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent'
+        const isWaiting = processingStatus.state === 'waiting'
+        const effectiveStage = processingStatus.stage || (processingStatus.state && !['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state) ? 'fetch' : null)
+        const activeStepIndex = processingStageToStepIndex(effectiveStage)
+        return (
+          <div style={{
+            marginBottom: '20px',
+            padding: '16px',
+            borderRadius: '8px',
+            backgroundColor: processingStatus.state === 'ready' ? '#e8f5e9' : processingStatus.state === 'failed_permanent' ? '#ffebee' : isWaiting ? '#e3f2fd' : '#fff8e1',
+            border: processingStatus.state === 'ready' ? '1px solid #4CAF50' : processingStatus.state === 'failed_permanent' ? '1px solid #f44336' : isWaiting ? '1px solid #2196F3' : '1px solid #ff9800'
+          }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  {PROCESSING_STEPS.map((label, idx) => {
+                    const completed = idx < activeStepIndex || processingStatus.state === 'ready'
+                    const active = idx === activeStepIndex && !completed
+                    const future = idx > activeStepIndex
+                    const showSpinner = active && isRunning
+                    const showWaiting = active && isWaiting
+                    const showWarning = active && isFailed
+                    return (
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{
+                          fontSize: '13px',
+                          color: completed ? '#4CAF50' : active ? (showWarning ? '#f44336' : '#1976D2') : '#9e9e9e',
+                          fontWeight: active ? 600 : 400
+                        }}>
+                          {completed ? '✓' : showSpinner ? '⏳' : showWaiting ? '⏸' : showWarning ? '⚠' : '○'}
+                        </span>
+                        <span style={{ color: completed ? '#2e7d32' : active ? '#333' : '#9e9e9e', fontSize: '13px' }}>{label}</span>
+                        {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '4px', marginRight: '4px', color: '#bdbdbd' }}>→</span>}
+                      </div>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
+                  {isRunning
+                    ? 'Processing this session…'
+                    : isWaiting
+                      ? "Waiting for Zoom to finish processing. We'll keep checking."
+                      : processingStatus.state === 'failed_transient'
+                        ? "Temporary issue. We'll retry automatically. You can retry now."
+                        : processingStatus.state === 'failed_permanent'
+                          ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect Zoom or retry.`
+                          : processingStatus.state === 'ready'
+                            ? 'Zoom import complete'
+                            : processingStatus.state === 'canceled'
+                              ? 'Import canceled.'
+                              : processingStatus.state}
+                </div>
+                <div style={{ fontSize: '12px', color: '#666', display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                  {processingStatus.updated_at && (
+                    <span>Last updated: {relativeTime(processingStatus.updated_at)}</span>
+                  )}
+                  {processingStatus.next_retry_at && (
+                    <span>Next retry: {new Date(processingStatus.next_retry_at).toLocaleString()}</span>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {(processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent' || processingStatus.state === 'waiting') && (
+                  <button
+                    type="button"
+                    onClick={retryProcessing}
+                    disabled={processingRetrying}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '13px',
+                      backgroundColor: '#2196F3',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: processingRetrying ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {processingRetrying ? 'Retrying…' : 'Retry now'}
+                  </button>
+                )}
+                {processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
+                  <a
+                    href={`${window.location.origin}${window.location.pathname}?session=${sessionId}&zoom=connect`}
+                    style={{ fontSize: '13px', color: '#1976D2', fontWeight: 500 }}
+                  >
+                    Reconnect Zoom
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+      {/* Legacy ingestion banner (when no processing job) */}
+      {!(processingStatus?.state != null && processingStatus.state !== '') && ingestionStatus?.source === 'zoom' && (
         <div style={{
           marginBottom: '20px',
           padding: '12px 16px',
@@ -594,7 +734,24 @@ export function CreatorMode({
               <div style={{ color: '#c62828', marginBottom: '10px' }}>
                 {transcriptData.error_message || 'Transcript failed.'}
               </div>
-              {ingestionStatus?.meeting_uuid && (
+              {(processingStatus?.state != null && processingStatus.state !== '') ? (
+                <button
+                  type="button"
+                  onClick={retryProcessing}
+                  disabled={processingRetrying}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: processingRetrying ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {processingRetrying ? 'Retrying…' : 'Retry now'}
+                </button>
+              ) : ingestionStatus?.meeting_uuid ? (
                 <button
                   type="button"
                   onClick={retryIngestion}
@@ -611,7 +768,7 @@ export function CreatorMode({
                 >
                   {ingestionRetrying ? 'Retrying…' : 'Retry import'}
                 </button>
-              )}
+              ) : null}
             </div>
           ) : transcriptData.status === 'ready' && transcriptData.segments?.length > 0 ? (
             <div style={{ maxHeight: '400px', overflow: 'auto' }}>
@@ -717,7 +874,17 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Existing Materials */}
+      {/* Materials tab (Mission #6): upload, paste, list, preview, delete */}
+      {sessionId && (
+        <SessionMaterialsTab
+          sessionId={sessionId}
+          materials={currentSession?.materials || []}
+          apiBaseUrl={apiBaseUrl}
+          refetchSession={refetchSession}
+        />
+      )}
+
+      {/* Existing Materials (artifact view legacy list) */}
       {currentSession?.materials && currentSession.materials.length > 0 && (
         <MaterialsList materials={currentSession.materials} />
       )}
@@ -862,303 +1029,14 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Upload Sections - Only visible in Creator Mode */}
-      <h2>Upload Material</h2>
-      <div className="section">
-        <div className="form-group">
-          <label>Select Files (multiple):</label>
-          <input
-            type="file"
-            multiple
-            onChange={(e) => {
-              const files = Array.from(e.target.files || [])
-              setMaterialFiles(prev => [...prev, ...files])
-            }}
-          />
-        </div>
-        {/* List of selected files waiting to upload */}
-        {materialFiles.length > 0 && (
-          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '4px' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Files to Upload ({materialFiles.length}):</div>
-            {materialFiles.map((file, index) => (
-              <div key={index} style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                padding: '8px', 
-                marginBottom: '5px', 
-                backgroundColor: 'white', 
-                borderRadius: '4px',
-                border: '1px solid #ddd'
-              }}>
-                <span style={{ flex: 1 }}>
-                  {file.name} ({(file.size / 1024).toFixed(2)} KB)
-                </span>
-                <div style={{ display: 'flex', gap: '5px' }}>
-                  <button
-                    onClick={() => uploadMaterial(file)}
-                    disabled={!artifactId || loading}
-                    style={{ padding: '4px 8px', fontSize: '12px' }}
-                  >
-                    Upload
-                  </button>
-                  <button
-                    onClick={() => removeMaterialFile(index)}
-                    disabled={loading}
-                    style={{ padding: '4px 8px', fontSize: '12px', backgroundColor: '#f44336', color: 'white', border: 'none', borderRadius: '4px' }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* List of uploaded materials */}
-        {uploadedMaterials.length > 0 && (
-          <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px' }}>
-            <div style={{ fontWeight: 'bold', marginBottom: '10px', color: '#2e7d32' }}>Uploaded Materials ({uploadedMaterials.length}):</div>
-            {uploadedMaterials.map((material, index) => (
-              <div key={material.id || index} style={{ 
-                padding: '8px', 
-                marginBottom: '5px', 
-                backgroundColor: 'white', 
-                borderRadius: '4px',
-                border: '1px solid #4CAF50'
-              }}>
-                <div style={{ fontWeight: 'bold' }}>{getMaterialIcon(material)} {material.filename}</div>
-                <div style={{ fontSize: '12px', color: '#666' }}>
-                  Kind: {material.kind} | Status: {(() => {
-                    const ct = (material.content_type || '').toLowerCase()
-                    const fn = (material.filename || '').toLowerCase()
-                    const isImg = ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(e => fn.endsWith(e))
-                    return isImg ? 'N/A' : material.text_status
-                  })()}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {uploadMaterialFeedback.message && (
-          <div className={uploadMaterialFeedback.type} style={{ marginTop: '10px' }}>
-            {uploadMaterialFeedback.message}
-          </div>
-        )}
-      </div>
-
-      <h2>Attach Video</h2>
-      <div className="section">
-        {/* Transcript file upload option */}
-        <div className="form-group" style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e3f2fd', borderRadius: '5px', border: '1px solid #2196F3' }}>
-          <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Upload Transcript (MP4):</label>
-          <input
-            type="file"
-            accept="video/mp4"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) {
-                setTranscriptFile(file)
-              }
-            }}
-            style={{ marginBottom: '10px', width: '100%' }}
-            id="transcript-file-input-video-section"
-          />
-          {transcriptFile && (
-            <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: 'white', borderRadius: '4px', border: '1px solid #2196F3' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                <span>
-                  <strong>Selected:</strong> {transcriptFile.name} ({(transcriptFile.size / 1024 / 1024).toFixed(2)} MB)
-                </span>
-                <button
-                  onClick={uploadTranscriptFile}
-                  disabled={!currentSession?.session?.id || transcriptFileUploading || loading}
-                  style={{ 
-                    padding: '6px 12px',
-                    backgroundColor: (transcriptFileUploading || loading) ? '#ccc' : '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: (transcriptFileUploading || loading) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {transcriptFileUploading ? 'Transcribing...' : 'Upload and Transcribe'}
-                </button>
-              </div>
-            </div>
-          )}
-          <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
-            Upload an MP4 file to automatically transcribe it. The transcript will be populated in the "Submit Transcript" section below.
-          </div>
-        </div>
-
-        {/* Loom guidance callout */}
-        {loomVideoSource && loomVideoSource.source_type === 'embed_url' && (
-          <div style={{ 
-            marginBottom: '20px', 
-            padding: '15px', 
-            backgroundColor: '#fff3cd', 
-            borderRadius: '5px', 
-            border: '2px solid #ffc107' 
-          }}>
-            <div style={{ marginBottom: '10px', fontWeight: 'bold', color: '#856404' }}>
-              Loom Share URL Detected
-            </div>
-            <div style={{ marginBottom: '15px', color: '#856404' }}>
-              We can't transcribe a Loom share page directly. Please download the MP4 from Loom and upload it here — once uploaded, we'll transcribe it automatically.
-            </div>
-            <div>
-              <input
-                type="file"
-                accept="video/mp4"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) {
-                    setVideoFile(file)
-                  }
-                }}
-                style={{ marginBottom: '10px', width: '100%' }}
-                id="loom-video-file-input"
-              />
-              {videoFile && (
-                <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #4CAF50' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <span>
-                      <strong>Selected:</strong> {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
-                    </span>
-                    <button
-                      onClick={uploadVideoFile}
-                      disabled={!currentSession?.session?.id || videoFileUploading || loading}
-                      style={{ 
-                        padding: '6px 12px',
-                        backgroundColor: (videoFileUploading || loading) ? '#ccc' : '#4CAF50',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: (videoFileUploading || loading) ? 'not-allowed' : 'pointer'
-                      }}
-                    >
-                      {videoFileUploading ? 'Uploading...' : 'Upload MP4'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-        <div className="form-group">
-          <label>Upload MP4 File:</label>
-          <input
-            type="file"
-            accept="video/mp4"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) {
-                setVideoFile(file)
-              }
-            }}
-            style={{ marginBottom: '10px', width: '100%' }}
-            id="video-file-input"
-          />
-          {videoFile && !loomVideoSource && (
-            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e8f5e9', borderRadius: '4px', border: '1px solid #4CAF50' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                <span>
-                  <strong>Selected:</strong> {videoFile.name} ({(videoFile.size / 1024 / 1024).toFixed(2)} MB)
-                </span>
-                <button
-                  onClick={uploadVideoFile}
-                  disabled={!currentSession?.session?.id || videoFileUploading || loading}
-                  style={{ 
-                    padding: '6px 12px',
-                    backgroundColor: (videoFileUploading || loading) ? '#ccc' : '#4CAF50',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: (videoFileUploading || loading) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {videoFileUploading ? 'Uploading...' : 'Upload MP4'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="form-group">
-          <label>Or Paste Video URL:</label>
-          <input
-            type="url"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
-            placeholder="https://www.loom.com/share/... or https://example.com/video.mp4"
-            style={{ width: '100%' }}
-          />
-        </div>
-        <div className="form-group">
-          <label>Provider:</label>
-          <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)}>
-            <option value="loom">Loom</option>
-            <option value="zoom">Zoom</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <button onClick={attachVideo} disabled={!artifactId || !videoUrl || loading}>
-          Attach Video URL
-        </button>
-        {attachVideoFeedback.message && (
-          <div className={attachVideoFeedback.type} style={{ marginTop: '10px' }}>
-            {attachVideoFeedback.message}
-          </div>
-        )}
-      </div>
-
       <h2>Submit Transcript</h2>
       <div className="section">
         <div className="form-group">
-          <label>Upload Transcript File (MP4):</label>
-          <input
-            type="file"
-            accept="video/mp4"
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) {
-                setTranscriptFile(file)
-              }
-            }}
-            style={{ marginBottom: '10px', width: '100%' }}
-            id="transcript-file-input"
-          />
-          {transcriptFile && (
-            <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '4px', border: '1px solid #2196F3' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                <span>
-                  <strong>Selected:</strong> {transcriptFile.name} ({(transcriptFile.size / 1024 / 1024).toFixed(2)} MB)
-                </span>
-                <button
-                  onClick={uploadTranscriptFile}
-                  disabled={!currentSession?.session?.id || transcriptFileUploading || loading}
-                  style={{ 
-                    padding: '6px 12px',
-                    backgroundColor: (transcriptFileUploading || loading) ? '#ccc' : '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: (transcriptFileUploading || loading) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {transcriptFileUploading ? 'Transcribing...' : 'Upload and Transcribe'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="form-group">
-          <label>Or Paste Transcript Text:</label>
+          <label>Paste transcript text (for an existing video):</label>
           <textarea
             value={transcriptText}
             onChange={(e) => setTranscriptText(e.target.value)}
-            placeholder="Paste transcript text here or upload an MP4 file above to transcribe..."
+            placeholder="Paste transcript text here…"
             rows={10}
           />
         </div>
