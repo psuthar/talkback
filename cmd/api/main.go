@@ -35,16 +35,10 @@ type dbPingResponse struct {
 }
 
 func main() {
-	// Load .env file (autoload handles it, but log if missing)
-	if err := godotenv.Load(); err != nil {
-		log.Printf("Warning: .env file not found: %v, using environment variables", err)
-	} else {
-		log.Println("Successfully loaded .env file")
-		// Verify OPENAI_API_KEY is loaded (don't log the actual key)
-		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-			log.Printf("OPENAI_API_KEY is set (length: %d)", len(apiKey))
-		} else {
-			log.Println("Warning: OPENAI_API_KEY not found in environment after loading .env")
+	// Load .env only outside production (Render sets ENV=production and uses dashboard env vars)
+	if env := os.Getenv("ENV"); env != "production" {
+		if err := godotenv.Load(); err != nil {
+			log.Printf("Warning: .env file not found: %v, using environment variables", err)
 		}
 	}
 
@@ -96,10 +90,15 @@ func main() {
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 
-	// CORS middleware
+	// CORS middleware: origin configurable via CORS_ALLOWED_ORIGINS (default * for local dev)
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+	}
+	corsOrigin := allowedOrigin
 	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
 
@@ -114,6 +113,7 @@ func main() {
 
 	// Register routes with CORS
 	http.HandleFunc("/health", corsMiddleware(healthHandler))
+	http.HandleFunc("/healthz", corsMiddleware(healthHandler))
 	http.HandleFunc("/db/ping", corsMiddleware(dbPingHandler))
 
 	// Artifact endpoints with CORS
@@ -161,6 +161,7 @@ func main() {
 	// API Session import + ingestion status (mission: /api/sessions/:id/import/zoom, /api/sessions/:id/ingestion)
 	http.HandleFunc("/api/sessions/", corsMiddleware(h.APISessionsRouter))
 
+	// Local: PORT defaults to 8080 when unset; Render: provides PORT via env
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

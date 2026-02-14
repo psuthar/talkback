@@ -70,4 +70,4 @@ winget install OpenJS.NodeJS.LTS
 
 **API connection errors:**
 - Make sure the Go API server is running: `go run ./cmd/api`
-- Verify the API Base URL in the web UI matches your server port
+- Verify the API Base URL in the web UI (debug panel) matches your server, or set `VITE_API_BASE_URL` in `web/.env`

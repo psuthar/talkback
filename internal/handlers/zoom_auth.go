@@ -23,13 +23,17 @@ const (
 	zoomScopesDefault = "cloud_recording:read:list_user_recordings cloud_recording:read:list_recording_files user:read"
 )
 
-// ZoomOAuthConfig holds Zoom OAuth app config (from env)
+// ZoomOAuthConfig holds Zoom OAuth app config (from env).
+// Redirect URI is always BASE_URL + "/auth/zoom/callback". For production (e.g. Render),
+// set BASE_URL to your API host (e.g. https://your-app.onrender.com). In Zoom Marketplace
+// app, the redirect URL must be exactly: https://<api-host>/auth/zoom/callback.
+// Localhost fallback is used only when ENV != "production"; production must set BASE_URL.
 func zoomOAuthConfig() (clientID, clientSecret, baseURL, redirectURI string) {
 	clientID = os.Getenv("ZOOM_CLIENT_ID")
 	clientSecret = os.Getenv("ZOOM_CLIENT_SECRET")
 	baseURL = os.Getenv("BASE_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:8080" // default for local dev
+	if baseURL == "" && os.Getenv("ENV") != "production" {
+		baseURL = "http://localhost:8080" // local dev only; production must set BASE_URL
 	}
 	redirectURI = strings.TrimSuffix(baseURL, "/") + "/auth/zoom/callback"
 	return clientID, clientSecret, baseURL, redirectURI

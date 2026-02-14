@@ -4,6 +4,7 @@ import { QAHistory } from '../components/QAHistory'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
+import { getDefaultApiBaseUrl } from '../config'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
@@ -219,7 +220,7 @@ export function ParticipantMode({
         </div>
         {isFailedFetch && (
           <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>
-            The app could not reach the API server at <strong>{apiBaseUrl || 'API Base URL'}</strong>. Check that the API is running at that URL (e.g. the debugger often uses port 8081). In app settings, set <strong>API Base URL</strong> to match your server. If you opened a shared link, you can add <code>?api={apiBaseUrl || 'http://localhost:8081'}</code> to the link so the correct server is used.
+            The app could not reach the API server at <strong>{apiBaseUrl || 'API Base URL'}</strong>. Check that the API is running at that URL (e.g. the debugger often uses port 8081). In app settings, set <strong>API Base URL</strong> to match your server. If you opened a shared link, you can add <code>?api={apiBaseUrl || getDefaultApiBaseUrl()}</code> to the link so the correct server is used.
           </p>
         )}
         {sessionIdFromUrl && onRetryLoadSession && (

@@ -4,17 +4,17 @@ import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
 import { MaterialsList } from './components/MaterialsList'
+import { getDefaultApiBaseUrl } from './config'
 
-const API_BASE_URL_DEFAULT = 'http://localhost:8081'
-const API_BASE_URL_STORAGE_KEY = 'talkback.api_base_url'
+const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
 function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(() => {
     try {
-      const stored = localStorage.getItem(API_BASE_URL_STORAGE_KEY)
-      if (stored) return stored
+      const stored = localStorage.getItem(API_BASE_URL_STORAGE_KEY) || localStorage.getItem('talkback.api_base_url')
+      if (stored && stored.trim()) return stored.trim()
     } catch (_) { /* ignore */ }
-    return API_BASE_URL_DEFAULT
+    return getDefaultApiBaseUrl()
   })
   const [artifactId, setArtifactId] = useState('')
   const [videoId, setVideoId] = useState('')
@@ -1220,14 +1220,15 @@ function App() {
     return () => ac.abort()
   }, [creatorIdentity, apiBaseUrl])
 
-  // Persist API base URL so it survives refresh and works after Zoom OAuth redirect
+  // Persist API base URL only when debug mode is on (avoids leaking localhost into production)
   useEffect(() => {
+    if (!debugMode) return
     try {
       if (apiBaseUrl) localStorage.setItem(API_BASE_URL_STORAGE_KEY, apiBaseUrl)
     } catch (_) { /* ignore */ }
-  }, [apiBaseUrl])
+  }, [debugMode, apiBaseUrl])
 
-  // Allow API base URL from query param (e.g. participant link: ?session=xxx&mode=view&api=http://localhost:8080)
+  // Allow API base URL from query param (e.g. participant link: ?session=xxx&mode=view&api=https://...)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
@@ -1942,7 +1943,7 @@ function App() {
                 type="text"
                 value={apiBaseUrl}
                 onChange={(e) => setApiBaseUrl(e.target.value)}
-                placeholder="http://localhost:8081"
+                placeholder={getDefaultApiBaseUrl()}
                 style={{ flex: 1 }}
               />
               <button 
@@ -1952,6 +1953,16 @@ function App() {
               >
                 {healthChecking ? 'Checking...' : 'Check Health'}
               </button>
+              <button
+                type="button"
+                onClick={() => setApiBaseUrl(getDefaultApiBaseUrl())}
+                style={{ marginTop: 0, fontSize: '12px' }}
+              >
+                Reset to default
+              </button>
+            </div>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+              Default: <code>{getDefaultApiBaseUrl()}</code> (override in UI or set <code>VITE_API_BASE_URL</code> at build time for production)
             </div>
           </div>
           <div style={{ marginTop: '10px' }}>

@@ -277,6 +277,71 @@ Sessions provide a virtual meeting context around an artifact, allowing multiple
 - Both use the same RAG pipeline and retrieval logic
 - Session questions include `session_id` for filtering and context
 
+### Deploying on Render
+
+To run the API on [Render.com](https://render.com) as a Web Service.
+
+**Local vs Render — env contract**
+
+| | Local dev | Render (production) |
+|---|-----------|----------------------|
+| **ENV** | Not set (or `dev`) | `production` |
+| **.env** | Loaded if present; warning if missing | Not loaded, no dotenv warnings |
+| **PORT** | Defaults to `8080` if unset | Set by Render |
+| **CORS_ALLOWED_ORIGINS** | Defaults to `*` if unset | Set to your frontend URL |
+| **DATABASE_URL** | From `.env` or env | Set in Render dashboard |
+| **Zoom redirect** | N/A or from `BASE_URL` | `ZOOM_REDIRECT_URL` = `https://<api-host>/auth/zoom/callback` (must match app callback route) |
+
+**Test URLs:** `GET /health`, `GET /healthz`, `GET /db/ping` — all return JSON; use `/health` for Render health check.
+
+---
+
+1. **Create a PostgreSQL** instance on Render and note the internal `DATABASE_URL` (use "Internal" URL; Render adds `?sslmode=require`).
+
+2. **Create a Web Service** connected to your repo. Set:
+   - **Build command:** `go build -o app ./cmd/api`
+   - **Start command:** `./app`
+   - **Health check path:** `/health`
+
+3. **Environment variables** (set in Render dashboard):
+
+   | Variable | Required | Notes |
+   |----------|----------|--------|
+   | `DATABASE_URL` | Yes | From Render Postgres (auto if linked) |
+   | `ENV` | Yes | Set to `production` (skips .env load, no noisy logs) |
+   | `RUN_MIGRATIONS` | Yes | Set to `true` |
+   | `CORS_ALLOWED_ORIGINS` | Yes | Your frontend origin, e.g. `https://your-frontend.onrender.com` (default `*` if unset) |
+   | `OPENAI_API_KEY` | Yes | For RAG and Q&A |
+   | `BASE_URL` | Yes | Full API URL, e.g. `https://your-api.onrender.com` (used for Zoom OAuth redirect) |
+   | `ZOOM_CLIENT_ID` | If using Zoom | From Zoom Marketplace app |
+   | `ZOOM_CLIENT_SECRET` | If using Zoom | From Zoom Marketplace app |
+   | `APP_REDIRECT_URL` | If using Zoom | Frontend URL for post-OAuth redirect, e.g. `https://your-frontend.onrender.com` |
+   | `ENCRYPTION_KEY` | If using Zoom | 32-byte key for token encryption (production value) |
+   | `TRANSCRIPT_WORKERS` | No | Default 2 |
+   | `ALLOW_DEV_RESET` | No | Set to `false` in production |
+
+4. **Zoom OAuth:** In Zoom Marketplace app, set the redirect URL to `https://<your-api-host>/auth/zoom/callback` (e.g. `https://your-api.onrender.com/auth/zoom/callback`). This must match `BASE_URL` + `/auth/zoom/callback`.
+
+5. **Health and test endpoints:**
+   - `GET /health` or `GET /healthz` — returns `200` with `{"status":"ok"}`
+   - `GET /db/ping` — tests database connectivity
+
+Render sets `PORT` automatically; the app uses it by default.
+
+**Frontend (Static Site on Render)**
+
+To deploy the React SPA as a Render **Static Site**:
+
+1. Connect the repo and set **Root Directory** to `web` (or build from `web`).
+2. **Build command:** `npm ci && npm run build`
+3. **Publish directory:** `dist`
+4. **Environment variable** (required so the app talks to your API, not localhost):
+   - `VITE_API_BASE_URL=https://<your-api-service>.onrender.com`  
+   Example: if your API is `https://talkback-api.onrender.com`, set `VITE_API_BASE_URL=https://talkback-api.onrender.com` (no trailing slash).
+5. **Rebuild:** Changing `VITE_API_BASE_URL` (or any `VITE_*` var) requires a new build; Render will redeploy when env vars change.
+
+Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is not set (see `web/.env.example`).
+
 ### Environment Variables
 
 **RAG Debug Mode:**
@@ -439,8 +504,8 @@ The project is configured for debugging with Delve (dlv) in VS Code/Cursor.
    - Press F5 or click the green play button to start debugging
 
 2. **Debug Configurations:**
-   - **"Debug TalkBack API"** - Uses environment variables from system
-   - **"Debug TalkBack API (with .env file)"** - Automatically loads `.env` file before debugging
+   - **"Debug TalkBack API"** - Uses environment variables from launch config (sets `PORT=8081`, `BIND_ADDRESS=127.0.0.1` so you’ll see *Server starting on 127.0.0.1:8081*)
+   - **"Debug TalkBack API (with .env file)"** - Same, but loads `.env` first
    - **"Attach to Process"** - Attach to a running Go process (enter process ID when prompted)
 
 #### Debugging Tests
