@@ -312,7 +312,8 @@ To run the API on [Render.com](https://render.com) as a Web Service.
    | `RUN_MIGRATIONS` | Yes | Set to `true` |
    | `CORS_ALLOWED_ORIGINS` | Yes | Your frontend origin, e.g. `https://your-frontend.onrender.com` (default `*` if unset) |
    | `OPENAI_API_KEY` | Yes | For RAG and Q&A |
-   | `BASE_URL` | Yes | Full API URL, e.g. `https://your-api.onrender.com` (used for Zoom OAuth redirect) |
+   | `BASE_URL` | Yes | Full API URL, e.g. `https://your-api.onrender.com` (used for post-OAuth redirect) |
+   | `ZOOM_REDIRECT_URL` | If using Zoom | **Absolute** callback URL, e.g. `https://your-api.onrender.com/auth/zoom/callback` (required in production; local fallback is `http://localhost:8081/auth/zoom/callback`) |
    | `ZOOM_CLIENT_ID` | If using Zoom | From Zoom Marketplace app |
    | `ZOOM_CLIENT_SECRET` | If using Zoom | From Zoom Marketplace app |
    | `APP_REDIRECT_URL` | If using Zoom | Frontend URL for post-OAuth redirect, e.g. `https://your-frontend.onrender.com` |
@@ -320,7 +321,7 @@ To run the API on [Render.com](https://render.com) as a Web Service.
    | `TRANSCRIPT_WORKERS` | No | Default 2 |
    | `ALLOW_DEV_RESET` | No | Set to `false` in production |
 
-4. **Zoom OAuth:** In Zoom Marketplace app, set the redirect URL to `https://<your-api-host>/auth/zoom/callback` (e.g. `https://your-api.onrender.com/auth/zoom/callback`). This must match `BASE_URL` + `/auth/zoom/callback`.
+4. **Zoom OAuth:** Set `ZOOM_REDIRECT_URL` to your API’s absolute callback URL (e.g. `https://talkback-895n.onrender.com/auth/zoom/callback`). In Zoom Marketplace app, set the OAuth Redirect URL to the same value. Relative URLs are rejected by Zoom (invalid redirect 4,700).
 
 5. **Health and test endpoints:**
    - `GET /health` or `GET /healthz` — returns `200` with `{"status":"ok"}`

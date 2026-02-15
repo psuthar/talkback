@@ -24,19 +24,29 @@ const (
 )
 
 // ZoomOAuthConfig holds Zoom OAuth app config (from env).
-// Redirect URI is always BASE_URL + "/auth/zoom/callback". For production (e.g. Render),
-// set BASE_URL to your API host (e.g. https://your-app.onrender.com). In Zoom Marketplace
-// app, the redirect URL must be exactly: https://<api-host>/auth/zoom/callback.
-// Localhost fallback is used only when ENV != "production"; production must set BASE_URL.
-func zoomOAuthConfig() (clientID, clientSecret, baseURL, redirectURI string) {
+// redirect_uri must be an absolute URL for Zoom; use ZOOM_REDIRECT_URL in production
+// (e.g. https://talkback-895n.onrender.com/auth/zoom/callback). Local fallback only when ENV != "production".
+func zoomOAuthConfig() (clientID, clientSecret, baseURL, redirectURI string, err error) {
 	clientID = os.Getenv("ZOOM_CLIENT_ID")
 	clientSecret = os.Getenv("ZOOM_CLIENT_SECRET")
-	baseURL = os.Getenv("BASE_URL")
+	baseURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("BASE_URL")), "/")
 	if baseURL == "" && os.Getenv("ENV") != "production" {
-		baseURL = "http://localhost:8080" // local dev only; production must set BASE_URL
+		baseURL = "http://localhost:8080"
 	}
-	redirectURI = strings.TrimSuffix(baseURL, "/") + "/auth/zoom/callback"
-	return clientID, clientSecret, baseURL, redirectURI
+
+	redirectURI = strings.TrimSpace(os.Getenv("ZOOM_REDIRECT_URL"))
+	if redirectURI == "" && os.Getenv("ENV") != "production" {
+		redirectURI = "http://localhost:8081/auth/zoom/callback"
+	}
+	if redirectURI != "" {
+		redirectURI, err = utils.RequireAbsoluteURL("ZOOM_REDIRECT_URL", redirectURI)
+		if err != nil {
+			return "", "", "", "", err
+		}
+	} else {
+		return "", "", "", "", fmt.Errorf("ZOOM_REDIRECT_URL must be set in production (e.g. https://your-api.onrender.com/auth/zoom/callback)")
+	}
+	return clientID, clientSecret, baseURL, redirectURI, nil
 }
 
 // ZoomTokenResponse is the response from Zoom token endpoint
@@ -62,24 +72,37 @@ func (h *Handlers) ZoomAuthStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	clientID, _, _, redirectURI := zoomOAuthConfig()
+	clientID, _, _, redirectURI, err := zoomOAuthConfig()
+	if err != nil {
+		log.Printf("Zoom OAuth config: %v", err)
+		http.Error(w, "Zoom OAuth redirect URL misconfigured: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if clientID == "" {
 		http.Error(w, "Zoom OAuth not configured (ZOOM_CLIENT_ID)", http.StatusInternalServerError)
 		return
 	}
-	// state = creator_identity (from query so frontend can pass it)
+	source := "env"
+	if os.Getenv("ZOOM_REDIRECT_URL") == "" {
+		source = "fallback"
+	}
+	log.Printf("Zoom OAuth redirect_uri resolved to: %s (source=%s)", redirectURI, source)
+
 	creatorIdentity := r.URL.Query().Get("creator_identity")
 	if creatorIdentity == "" {
-		// Generate a new one and pass back via redirect so frontend can store it
 		creatorIdentity = uuid.New().String()
 	}
 	scopes := os.Getenv("ZOOM_OAUTH_SCOPES")
 	if scopes == "" {
 		scopes = zoomScopesDefault
 	}
-	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s&scope=%s",
-		zoomAuthURL, url.QueryEscape(clientID), url.QueryEscape(redirectURI), url.QueryEscape(creatorIdentity), url.QueryEscape(scopes))
-	// Redirect to app after callback with creator_identity so frontend can store it
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("state", creatorIdentity)
+	params.Set("scope", scopes)
+	authURL := zoomAuthURL + "?" + params.Encode()
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -96,7 +119,12 @@ func (h *Handlers) ZoomAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creatorIdentity := state
-	clientID, clientSecret, baseURL, redirectURI := zoomOAuthConfig()
+	clientID, clientSecret, baseURL, redirectURI, err := zoomOAuthConfig()
+	if err != nil {
+		log.Printf("Zoom OAuth config: %v", err)
+		http.Redirect(w, r, "/?zoom=error&message=redirect_misconfigured", http.StatusFound)
+		return
+	}
 	if clientID == "" || clientSecret == "" {
 		http.Redirect(w, r, "/?zoom=error&message=server_not_configured", http.StatusFound)
 		return
@@ -256,8 +284,8 @@ func (h *Handlers) GetValidZoomAccessTokenContext(ctx context.Context, creatorId
 		if decErr != nil {
 			return "", nil, fmt.Errorf("decrypt refresh token: %w", decErr)
 		}
-		clientID, clientSecret, _, _ := zoomOAuthConfig()
-		if clientID == "" || clientSecret == "" {
+		clientID, clientSecret, _, _, cfgErr := zoomOAuthConfig()
+		if cfgErr != nil || clientID == "" || clientSecret == "" {
 			return accessToken, conn, nil // return current token even if we can't refresh
 		}
 		form := url.Values{}

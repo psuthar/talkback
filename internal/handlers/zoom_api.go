@@ -73,7 +73,13 @@ func (h *Handlers) ZoomAPIConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	clientID, _, baseURL, redirectURI := zoomOAuthConfig()
+	clientID, _, baseURL, redirectURI, err := zoomOAuthConfig()
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Zoom OAuth redirect URL misconfigured: " + err.Error()})
+		return
+	}
 	if clientID == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -85,21 +91,19 @@ func (h *Handlers) ZoomAPIConnect(w http.ResponseWriter, r *http.Request) {
 		creatorIdentity = r.URL.Query().Get("creator_identity")
 	}
 	if creatorIdentity == "" {
-		creatorIdentity = strings.ReplaceAll(string(fmt.Sprintf("%d", time.Now().UnixNano())), " ", "") + "-" + strings.ReplaceAll(string(fmt.Sprintf("%d", time.Now().Unix())), " ", "")
-		// Simple fallback id
 		creatorIdentity = fmt.Sprintf("creator-%d", time.Now().UnixNano())
 	}
 	scopes := os.Getenv("ZOOM_OAUTH_SCOPES")
 	if scopes == "" {
 		scopes = zoomScopesDefault
 	}
-	authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s&scope=%s",
-		zoomAuthURL,
-		url.QueryEscape(clientID),
-		url.QueryEscape(redirectURI),
-		url.QueryEscape(creatorIdentity),
-		url.QueryEscape(scopes),
-	)
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURI)
+	params.Set("state", creatorIdentity)
+	params.Set("scope", scopes)
+	authURL := zoomAuthURL + "?" + params.Encode()
 	_ = baseURL
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
