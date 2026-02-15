@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -36,20 +37,32 @@ type WhisperTranscriber struct {
 	client  *http.Client
 }
 
-// NewWhisperTranscriber creates a new Whisper transcriber
+// NewWhisperTranscriber creates a new Whisper transcriber (for long-form; uses WHISPER_MODEL).
 func NewWhisperTranscriber() *WhisperTranscriber {
-	apiKey := os.Getenv("OPENAI_API_KEY")
 	model := os.Getenv("WHISPER_MODEL")
 	if model == "" {
-		model = "whisper-1" // Default model
+		model = "whisper-1"
 	}
+	return NewWhisperTranscriberForSTT(model)
+}
 
+// NewWhisperTranscriberForSTT creates a Whisper API transcriber with the given model (for mic STT).
+// Uses OPENAI_API_KEY and OPENAI_BASE_URL. Timeout is 10 min for file jobs; callers (e.g. hybrid) use context timeout for mic.
+func NewWhisperTranscriberForSTT(model string) *WhisperTranscriber {
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1/audio/transcriptions"
+	}
+	if model == "" {
+		model = "whisper-1"
+	}
 	return &WhisperTranscriber{
 		apiKey:  apiKey,
-		baseURL: "https://api.openai.com/v1/audio/transcriptions",
+		baseURL: baseURL,
 		model:   model,
 		client: &http.Client{
-			Timeout: 10 * time.Minute, // Whisper can take a while for long videos
+			Timeout: 10 * time.Minute,
 		},
 	}
 }
@@ -201,4 +214,14 @@ func (w *WhisperTranscriber) TranscribeFile(ctx context.Context, filePath string
 // CanTranscribe checks if Whisper transcription is available
 func (w *WhisperTranscriber) CanTranscribe() bool {
 	return w.apiKey != ""
+}
+
+// TranscribeAudio implements the SpeechToText interface for short mic recordings.
+// Uses response_format "text" for minimal payload. Confidence is not provided by the API.
+func (w *WhisperTranscriber) TranscribeAudio(ctx context.Context, inputFilePath string) (string, *float32, error) {
+	res, err := w.TranscribeFile(ctx, inputFilePath, "", "text", nil)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSpace(res.Text), nil, nil
 }

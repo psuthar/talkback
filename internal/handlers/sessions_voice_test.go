@@ -58,7 +58,8 @@ func TestTranscribeSessionQuestionVoice(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("returns 503 when whisper cli is not available", func(t *testing.T) {
+	t.Run("returns 503 when no STT backend is available", func(t *testing.T) {
+		t.Setenv("OPENAI_API_KEY", "") // force CLI path
 		t.Setenv("WHISPER_CLI", "talkback_nonexistent_whisper_cli")
 
 		var body bytes.Buffer

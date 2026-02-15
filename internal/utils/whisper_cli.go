@@ -23,20 +23,24 @@ type WhisperCLITranscriber struct {
 }
 
 func NewWhisperCLITranscriberFromEnv() *WhisperCLITranscriber {
-	cli := strings.TrimSpace(os.Getenv("WHISPER_CLI"))
-	if cli == "" {
-		cli = "whisper"
-	}
-
 	model := strings.TrimSpace(os.Getenv("WHISPER_MODEL"))
 	if model == "" {
 		model = "base"
 	}
+	return NewWhisperCLITranscriberForSTT(model)
+}
 
+// NewWhisperCLITranscriberForSTT creates a CLI transcriber with the given model (for mic STT; use tiny/base for speed).
+func NewWhisperCLITranscriberForSTT(model string) *WhisperCLITranscriber {
+	cli := strings.TrimSpace(os.Getenv("WHISPER_CLI"))
+	if cli == "" {
+		cli = "whisper"
+	}
+	if model == "" {
+		model = "tiny"
+	}
 	language := strings.TrimSpace(os.Getenv("WHISPER_LANGUAGE"))
-
 	extraArgs := strings.Fields(strings.TrimSpace(os.Getenv("WHISPER_EXTRA_ARGS")))
-
 	return &WhisperCLITranscriber{
 		cliPath:   cli,
 		model:     model,

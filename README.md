@@ -345,6 +345,18 @@ Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is no
 
 ### Environment Variables
 
+**Speech-to-text (UI mic — ask/answer with voice):**
+- By default the app uses **OpenAI Whisper API** when `OPENAI_API_KEY` is set (faster, no local CLI). Fallback: **Whisper CLI** (openai-whisper) when API is unavailable or `STT_PREFER_CLI=true`.
+- `STT_MODE` — `api` | `cli` | `hybrid` (default `hybrid`: try API then CLI).
+- `STT_PREFER_CLI` — set to `true` to force CLI even when API key is set.
+- `STT_MAX_AUDIO_SECONDS` — max duration for mic uploads (default 30); over-long returns 413.
+- `STT_TIMEOUT_MS` — timeout for mic transcription (default 15000).
+- `STT_API_MODEL` — Whisper API model for mic (default `whisper-1`).
+- `STT_CLI_MODEL` — Whisper CLI model for mic (default `tiny` for speed).
+- `STT_DAILY_MAX_SECONDS` — optional daily cap; when exceeded, returns 429.
+- `STT_COST_PER_MIN_USD` — for cost logging (default 0.006).
+- `WHISPER_CLI` — path to `whisper` CLI when using CLI; `FFMPEG_BIN_DIR` if ffmpeg not on PATH.
+
 **RAG Debug Mode:**
 - `RAG_DEBUG=true` - Enables detailed logging of retrieved chunks and scores for debugging RAG retrieval
 

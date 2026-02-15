@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -690,14 +691,22 @@ func (h *Handlers) TranscribeSessionQuestionVoice(w http.ResponseWriter, r *http
 	}
 	defer cleanup()
 
-	transcriber := utils.NewWhisperCLITranscriberFromEnv()
+	transcriber := utils.NewSpeechToTextFromEnv()
 	if !transcriber.CanTranscribe() {
-		http.Error(w, "Speech-to-text is not available (whisper CLI not found). Configure WHISPER_CLI and install openai-whisper.", http.StatusServiceUnavailable)
+		http.Error(w, "Speech-to-text is not available. Configure OPENAI_API_KEY (Whisper API) or WHISPER_CLI (local).", http.StatusServiceUnavailable)
 		return
 	}
 
 	text, confidence, err := transcriber.TranscribeAudio(r.Context(), tempFilePath)
 	if err != nil {
+		if errors.Is(err, utils.ErrAudioTooLong) {
+			http.Error(w, fmt.Sprintf("Audio exceeds maximum duration (STT_MAX_AUDIO_SECONDS). %v", err), http.StatusRequestEntityTooLarge)
+			return
+		}
+		if errors.Is(err, utils.ErrDailyCapExceeded) {
+			http.Error(w, "Daily speech-to-text limit reached. Try again tomorrow.", http.StatusTooManyRequests)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Transcription failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -985,14 +994,22 @@ func (h *Handlers) TranscribeSessionAnswerVoice(w http.ResponseWriter, r *http.R
 	}
 	defer cleanup()
 
-	transcriber := utils.NewWhisperCLITranscriberFromEnv()
+	transcriber := utils.NewSpeechToTextFromEnv()
 	if !transcriber.CanTranscribe() {
-		http.Error(w, "Speech-to-text is not available (whisper CLI not found). Configure WHISPER_CLI and install openai-whisper.", http.StatusServiceUnavailable)
+		http.Error(w, "Speech-to-text is not available. Configure OPENAI_API_KEY (Whisper API) or WHISPER_CLI (local).", http.StatusServiceUnavailable)
 		return
 	}
 
 	text, confidence, err := transcriber.TranscribeAudio(r.Context(), tempFilePath)
 	if err != nil {
+		if errors.Is(err, utils.ErrAudioTooLong) {
+			http.Error(w, fmt.Sprintf("Audio exceeds maximum duration (STT_MAX_AUDIO_SECONDS). %v", err), http.StatusRequestEntityTooLarge)
+			return
+		}
+		if errors.Is(err, utils.ErrDailyCapExceeded) {
+			http.Error(w, "Daily speech-to-text limit reached. Try again tomorrow.", http.StatusTooManyRequests)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Transcription failed: %v", err), http.StatusInternalServerError)
 		return
 	}
