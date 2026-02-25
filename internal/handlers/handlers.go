@@ -165,6 +165,16 @@ func (h *Handlers) GetArtifact(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// isOfficeFile returns true if the file is a supported Office document (docx, xlsx, pptx) by extension or content-type.
+func isOfficeFile(ext, contentType string) bool {
+	if ext == ".docx" || ext == ".xlsx" || ext == ".pptx" {
+		return true
+	}
+	ct := strings.ToLower(contentType)
+	return strings.Contains(ct, "openxmlformats-officedocument") ||
+		strings.Contains(ct, "vnd.openxmlformats-officedocument")
+}
+
 // deriveMaterialKind returns material kind from file extension and content-type for grouping in UI.
 func deriveMaterialKind(ext, contentType string, isImage bool) string {
 	if isImage {
@@ -175,6 +185,8 @@ func deriveMaterialKind(ext, contentType string, isImage bool) string {
 	case ".pdf":
 		return "document"
 	case ".txt", ".md":
+		return "document"
+	case ".docx", ".doc":
 		return "document"
 	case ".pptx", ".ppt":
 		return "slides"
@@ -293,6 +305,18 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		} else if strings.TrimSpace(text) == "" {
 			textStatus = models.MaterialTextStatusFailed
 			log.Printf("PDF text extraction produced empty text for file %s", header.Filename)
+		} else {
+			extractedText = &text
+			textStatus = models.MaterialTextStatusReady
+		}
+	case isOfficeFile(ext, contentType):
+		text, err := utils.ExtractTextFromFile(filePath)
+		if err != nil {
+			textStatus = models.MaterialTextStatusFailed
+			log.Printf("Office extraction failed for file %s: %v", header.Filename, err)
+		} else if strings.TrimSpace(text) == "" {
+			textStatus = models.MaterialTextStatusFailed
+			log.Printf("Office extraction produced empty text for file %s", header.Filename)
 		} else {
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady

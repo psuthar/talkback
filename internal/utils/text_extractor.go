@@ -18,6 +18,8 @@ func ExtractTextFromFile(filePath string) (string, error) {
 		return extractTextFile(filePath)
 	case ".pdf":
 		return extractPDF(filePath)
+	case ".docx", ".xlsx", ".pptx":
+		return DefaultOfficeExtractor.ExtractText(filePath)
 	default:
 		// For now, try to read as text
 		return extractTextFile(filePath)

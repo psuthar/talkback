@@ -140,6 +140,21 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady
 		}
+	case isOfficeFile(ext, contentType):
+		text, err := utils.ExtractTextFromFile(filePath)
+		if err != nil {
+			textStatus = models.MaterialTextStatusFailed
+			s := err.Error()
+			errMsg = &s
+			log.Printf("Office extraction failed for %s: %v", header.Filename, err)
+		} else if strings.TrimSpace(text) == "" {
+			textStatus = models.MaterialTextStatusFailed
+			s := "Office extraction produced empty text"
+			errMsg = &s
+		} else {
+			extractedText = &text
+			textStatus = models.MaterialTextStatusReady
+		}
 	}
 
 	titleFromForm := r.FormValue("title")

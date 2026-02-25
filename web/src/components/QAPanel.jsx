@@ -18,7 +18,11 @@ export function QAPanel({
   showVoiceConfirm,
   voiceTranscribedText,
   setVoiceTranscribedText,
-  confirmVoiceQuestion
+  confirmVoiceQuestion,
+  cancelVoiceReview,
+  polishVoiceQuestion,
+  voicePolishing,
+  voicePolishMode
 }) {
   const isThinking = loading && questionText && (!currentAnswer || !currentAnswer.answer)
 
@@ -83,27 +87,31 @@ export function QAPanel({
             {voiceFeedback.message}
           </div>
         )}
-        <textarea
-          value={questionText}
-          onChange={(e) => setQuestionText(e.target.value)}
-          placeholder="Ask a question..."
-          rows={2}
-          style={{
-            width: '100%',
-            marginBottom: '8px',
-            resize: 'vertical',
-            minHeight: '44px',
-            padding: '8px'
-          }}
-        />
-        <button
-          type="button"
-          onClick={askSessionQuestion}
-          disabled={!questionText?.trim() || loading}
-          style={{ width: '100%' }}
-        >
-          Ask
-        </button>
+        {!showVoiceConfirm && (
+          <>
+            <textarea
+              value={questionText}
+              onChange={(e) => setQuestionText(e.target.value)}
+              placeholder="Ask a question..."
+              rows={2}
+              style={{
+                width: '100%',
+                marginBottom: '8px',
+                resize: 'vertical',
+                minHeight: '44px',
+                padding: '8px'
+              }}
+            />
+            <button
+              type="button"
+              onClick={askSessionQuestion}
+              disabled={!questionText?.trim() || loading}
+              style={{ width: '100%' }}
+            >
+              Ask
+            </button>
+          </>
+        )}
         {showVoiceConfirm && (
           <div style={{
             marginTop: '10px',
@@ -112,22 +120,59 @@ export function QAPanel({
             borderRadius: '4px',
             backgroundColor: '#f9f9f9'
           }}>
-            <div style={{ fontWeight: 600, marginBottom: '6px', fontSize: '13px' }}>Review transcription</div>
-            <textarea
-              value={voiceTranscribedText}
-              onChange={(e) => setVoiceTranscribedText(e.target.value)}
-              rows={2}
-              style={{ width: '100%', marginBottom: '8px', padding: '6px' }}
-            />
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading} style={{ marginTop: 0 }}>
+            <div style={{ position: 'relative', marginBottom: '8px' }}>
+              <textarea
+                value={voiceTranscribedText}
+                onChange={(e) => setVoiceTranscribedText(e.target.value)}
+                rows={2}
+                style={{ width: '100%', paddingRight: '26px', boxSizing: 'border-box', padding: '6px' }}
+              />
+              {polishVoiceQuestion && (
+                <button
+                  type="button"
+                  onClick={() => polishVoiceQuestion(true)}
+                  disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
+                  title="AI polish"
+                  style={{
+                    position: 'absolute',
+                    top: '6px',
+                    right: '6px',
+                    margin: 0,
+                    padding: '3px',
+                    border: '1px solid #e0e0e0',
+                    borderRadius: '4px',
+                    background: voicePolishing && voicePolishMode === 'llm' ? '#e3f2fd' : 'rgba(255,255,255,0.9)',
+                    cursor: (!voiceTranscribedText?.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
+                  }}
+                >
+                  {voicePolishing && voicePolishMode === 'llm' ? (
+                    <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden />
+                  ) : (
+                    <img
+                      src="https://static.thenounproject.com/png/1294-200.png"
+                      alt=""
+                      width={14}
+                      height={14}
+                      style={{ display: 'block' }}
+                      aria-hidden
+                    />
+                  )}
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} style={{ marginTop: 0 }}>
                 Confirm & Submit
               </button>
               <button
                 type="button"
-                onClick={() => { setShowVoiceConfirm?.(false); setVoiceTranscribedText(''); }}
+                onClick={() => cancelVoiceReview?.()}
                 disabled={loading}
-                style={{ marginTop: 0, backgroundColor: '#757575' }}
+                style={{ marginTop: 0, backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
               >
                 Cancel
               </button>

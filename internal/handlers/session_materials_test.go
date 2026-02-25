@@ -1,18 +1,23 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xuri/excelize/v2"
 )
 
 func TestListSessionMaterials(t *testing.T) {
@@ -124,6 +129,128 @@ func TestSessionUploadMaterial(t *testing.T) {
 		h.SessionUploadMaterial(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+
+	t.Run("uploads docx and extracts text", func(t *testing.T) {
+		tmp := t.TempDir()
+		docxPath := filepath.Join(tmp, "minimal.docx")
+		createMinimalDocx(t, docxPath, "Session DOCX content")
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		fileWriter, err := writer.CreateFormFile("file", "minimal.docx")
+		require.NoError(t, err)
+		data, err := os.ReadFile(docxPath)
+		require.NoError(t, err)
+		_, err = fileWriter.Write(data)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.SessionUploadMaterial(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var m map[string]interface{}
+		err = json.NewDecoder(w.Body).Decode(&m)
+		require.NoError(t, err)
+		assert.Equal(t, "ready", m["text_status"])
+		ext, ok := m["extracted_text"].(string)
+		require.True(t, ok)
+		assert.True(t, strings.Contains(ext, "Session DOCX content"), "extracted_text should contain expected string: %q", ext)
+	})
+
+	t.Run("uploads xlsx and extracts text", func(t *testing.T) {
+		tmp := t.TempDir()
+		xlsxPath := filepath.Join(tmp, "minimal.xlsx")
+		f := excelize.NewFile()
+		require.NoError(t, f.SetCellValue("Sheet1", "A1", "Session XLSX content"))
+		require.NoError(t, f.SaveAs(xlsxPath))
+		f.Close()
+
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		fileWriter, err := writer.CreateFormFile("file", "minimal.xlsx")
+		require.NoError(t, err)
+		data, err := os.ReadFile(xlsxPath)
+		require.NoError(t, err)
+		_, err = fileWriter.Write(data)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.SessionUploadMaterial(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var m map[string]interface{}
+		err = json.NewDecoder(w.Body).Decode(&m)
+		require.NoError(t, err)
+		assert.Equal(t, "ready", m["text_status"])
+		ext, ok := m["extracted_text"].(string)
+		require.True(t, ok)
+		assert.True(t, strings.Contains(ext, "Session XLSX content"), "extracted_text should contain expected string: %q", ext)
+	})
+
+	t.Run("uploads pptx and extracts text", func(t *testing.T) {
+		tmp := t.TempDir()
+		pptxPath := filepath.Join(tmp, "minimal.pptx")
+		createMinimalPptx(t, pptxPath, "Session PPTX content")
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		fileWriter, err := writer.CreateFormFile("file", "minimal.pptx")
+		require.NoError(t, err)
+		data, err := os.ReadFile(pptxPath)
+		require.NoError(t, err)
+		_, err = fileWriter.Write(data)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.SessionUploadMaterial(w, req)
+		assert.Equal(t, http.StatusCreated, w.Code)
+		var m map[string]interface{}
+		err = json.NewDecoder(w.Body).Decode(&m)
+		require.NoError(t, err)
+		assert.Equal(t, "ready", m["text_status"])
+		ext, ok := m["extracted_text"].(string)
+		require.True(t, ok)
+		assert.True(t, strings.Contains(ext, "Session PPTX content"), "extracted_text should contain expected string: %q", ext)
+	})
+}
+
+func createMinimalDocx(t *testing.T, path, text string) {
+	t.Helper()
+	w, err := os.Create(path)
+	require.NoError(t, err)
+	zw := zip.NewWriter(w)
+	docXML := `<?xml version="1.0"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>` + text + `</w:t></w:r></w:p></w:body>
+</w:document>`
+	fw, err := zw.Create("word/document.xml")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(docXML))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, w.Close())
+}
+
+func createMinimalPptx(t *testing.T, path, text string) {
+	t.Helper()
+	w, err := os.Create(path)
+	require.NoError(t, err)
+	zw := zip.NewWriter(w)
+	slideXML := `<?xml version="1.0"?>
+<sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <cSld><spTree><sp><txBody><a:p><a:r><a:t>` + text + `</a:t></a:r></a:p></txBody></sp></spTree></cSld>
+</sld>`
+	fw, err := zw.Create("ppt/slides/slide1.xml")
+	require.NoError(t, err)
+	_, err = fw.Write([]byte(slideXML))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.NoError(t, w.Close())
 }
 
 func TestDeleteSessionMaterial(t *testing.T) {

@@ -29,7 +29,12 @@ const (
 func zoomOAuthConfig() (clientID, clientSecret, baseURL, redirectURI string, err error) {
 	clientID = os.Getenv("ZOOM_CLIENT_ID")
 	clientSecret = os.Getenv("ZOOM_CLIENT_SECRET")
-	baseURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("BASE_URL")), "/")
+	// APP_BASE_URL or BASE_URL: API root for post-OAuth redirect when APP_REDIRECT_URL is unset
+	baseURL = strings.TrimSpace(os.Getenv("APP_BASE_URL"))
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(os.Getenv("BASE_URL"))
+	}
+	baseURL = strings.TrimSuffix(baseURL, "/")
 	if baseURL == "" && os.Getenv("ENV") != "production" {
 		baseURL = "http://localhost:8080"
 	}
@@ -60,8 +65,8 @@ type ZoomTokenResponse struct {
 
 // ZoomUserResponse for /users/me
 type ZoomUserResponse struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
+	ID        string `json:"id"`
+	Email     string `json:"email"`
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 }

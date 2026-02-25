@@ -77,6 +77,7 @@ The web UI will open at `http://localhost:3000` and allows you to:
 - Optionally create extra artifacts to group materials
 - Ask questions and view answers with citations
 - View question history
+- Ask by voice (mic): after transcription, you can **Clean up** (remove fillers/repetition) or **Polish with AI** before submitting
 
 **Data model note:** The main content in a session is Zoom video, uploaded documents, and transcripts. These are all first-class content. "Artifacts" are an optional grouping container; each session gets a default one, and you can create more only if you want to organize materials into separate groups.
 
@@ -271,6 +272,10 @@ Sessions provide a virtual meeting context around an artifact, allowing multiple
 - `GET /sessions/{session_id}/questions` - Get questions for a session
   Returns: `200 OK` with questions and answers array (up to 20 most recent)
 
+- `POST /api/sessions/{session_id}/questions/polish` - Polish spoken question text (voice flow)
+  Request: `{"text": "um so what was uh the point"}`. Optional query: `?mode=llm` for AI rewrite.
+  Returns: `200 OK` with `{"polished_text": "so what was the point"}`. Use before submitting a voice question so fillers and repetition are removed.
+
 **Session vs Artifact Q&A:**
 - Artifact-level questions (`POST /artifacts/{id}/questions`) are global to the artifact
 - Session-level questions (`POST /sessions/{id}/questions`) are scoped to a specific session
@@ -342,6 +347,11 @@ To deploy the React SPA as a Render **Static Site**:
 5. **Rebuild:** Changing `VITE_API_BASE_URL` (or any `VITE_*` var) requires a new build; Render will redeploy when env vars change.
 
 Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is not set (see `web/.env.example`).
+
+**Render checklist (recent changes)**  
+- **Backend:** Migrations run on startup from embedded files (`internal/migrations/migrations/`). New migrations (e.g. 000021) run automatically when `RUN_MIGRATIONS=true`. No new env vars required.  
+- **Frontend:** Ensure `VITE_API_BASE_URL` is set to your API URL so the app and docx viewer (mammoth) fetch from the API. `mammoth` is in `dependencies` and is installed by `npm ci`; commit `package-lock.json` so Render installs it.  
+- **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
 
 ### Environment Variables
 

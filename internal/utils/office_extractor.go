@@ -1,0 +1,205 @@
+package utils
+
+import (
+	"archive/zip"
+	"encoding/xml"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+
+	"github.com/xuri/excelize/v2"
+)
+
+// OfficeExtractor extracts plain text from Office documents (docx, xlsx, pptx).
+// Implementations can be swapped (e.g. pure-Go vs LibreOffice-based) without changing callers.
+type OfficeExtractor interface {
+	ExtractText(filePath string) (string, error)
+}
+
+// DefaultOfficeExtractor is the default pure-Go implementation.
+var DefaultOfficeExtractor OfficeExtractor = defaultOfficeExtractor{}
+
+type defaultOfficeExtractor struct{}
+
+func (defaultOfficeExtractor) ExtractText(filePath string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".docx":
+		return extractDocx(filePath)
+	case ".xlsx":
+		return extractXlsx(filePath)
+	case ".pptx":
+		return extractPptx(filePath)
+	default:
+		return "", fmt.Errorf("unsupported office extension: %s", ext)
+	}
+}
+
+// extractDocx reads a .docx (ZIP) and extracts text from word/document.xml,
+// grouping by paragraph (w:p) so output is readable: paragraphs separated by "\n\n",
+// text runs within a paragraph joined with no separator (preserves in-document spacing).
+func extractDocx(filePath string) (string, error) {
+	r, err := zip.OpenReader(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open docx: %w", err)
+	}
+	defer r.Close()
+
+	var docReader io.ReadCloser
+	for _, f := range r.File {
+		if f.Name == "word/document.xml" {
+			docReader, err = f.Open()
+			if err != nil {
+				return "", fmt.Errorf("open document.xml: %w", err)
+			}
+			break
+		}
+	}
+	if docReader == nil {
+		return "", fmt.Errorf("word/document.xml not found in docx")
+	}
+	defer docReader.Close()
+
+	var paragraphs []string
+	var inParagraph bool
+	var currentRuns []string
+
+	dec := xml.NewDecoder(docReader)
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("decode document.xml: %w", err)
+		}
+		switch v := tok.(type) {
+		case xml.StartElement:
+			if v.Name.Local == "p" {
+				inParagraph = true
+				currentRuns = nil
+			} else if v.Name.Local == "t" && inParagraph {
+				next, err := dec.Token()
+				if err != nil {
+					continue
+				}
+				if cd, ok := next.(xml.CharData); ok {
+					currentRuns = append(currentRuns, string(cd))
+				}
+			}
+		case xml.EndElement:
+			if v.Name.Local == "p" {
+				if inParagraph && len(currentRuns) > 0 {
+					para := strings.TrimSpace(strings.Join(currentRuns, ""))
+					if para != "" {
+						paragraphs = append(paragraphs, para)
+					}
+				}
+				inParagraph = false
+			}
+		}
+	}
+
+	if len(paragraphs) == 0 {
+		return "", fmt.Errorf("docx text extraction produced no text")
+	}
+	return strings.Join(paragraphs, "\n\n"), nil
+}
+
+// extractXlsx reads a .xlsx and extracts cell text from all sheets.
+func extractXlsx(filePath string) (string, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open xlsx: %w", err)
+	}
+	defer f.Close()
+
+	var parts []string
+	for _, name := range f.GetSheetList() {
+		rows, err := f.GetRows(name)
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			var rowParts []string
+			for _, cell := range row {
+				cell = strings.TrimSpace(cell)
+				if cell != "" {
+					rowParts = append(rowParts, cell)
+				}
+			}
+			if len(rowParts) > 0 {
+				parts = append(parts, strings.Join(rowParts, "\t"))
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return "", fmt.Errorf("xlsx text extraction produced no text")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// extractPptx reads a .pptx (ZIP) and extracts text from ppt/slides/slideN.xml (a:t elements).
+func extractPptx(filePath string) (string, error) {
+	r, err := zip.OpenReader(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open pptx: %w", err)
+	}
+	defer r.Close()
+
+	var allParts []string
+	slidePrefix := "ppt/slides/slide"
+	for _, f := range r.File {
+		if !strings.HasPrefix(f.Name, slidePrefix) || !strings.HasSuffix(f.Name, ".xml") {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		parts := extractPptxSlideText(rc)
+		rc.Close()
+		for _, p := range parts {
+			if strings.TrimSpace(p) != "" {
+				allParts = append(allParts, strings.TrimSpace(p))
+			}
+		}
+	}
+
+	if len(allParts) == 0 {
+		return "", fmt.Errorf("pptx text extraction produced no text")
+	}
+	return strings.Join(allParts, "\n"), nil
+}
+
+func extractPptxSlideText(r io.Reader) []string {
+	var parts []string
+	dec := xml.NewDecoder(r)
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		// DrawingML text: a:t (often in namespace ending with drawingml)
+		if se.Name.Local != "t" {
+			continue
+		}
+		next, err := dec.Token()
+		if err != nil {
+			continue
+		}
+		if cd, ok := next.(xml.CharData); ok {
+			parts = append(parts, string(cd))
+		}
+	}
+	return parts
+}

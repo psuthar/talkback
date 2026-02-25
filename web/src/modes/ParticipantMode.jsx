@@ -4,7 +4,9 @@ import { QAHistory } from '../components/QAHistory'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
+import mammoth from 'mammoth'
 import { getDefaultApiBaseUrl } from '../config'
+import { getMaterialTypeLabel } from '../utils/materialIcons'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
@@ -42,6 +44,10 @@ export function ParticipantMode({
   voiceTranscribedText,
   setVoiceTranscribedText,
   confirmVoiceQuestion,
+  cancelVoiceReview,
+  polishVoiceQuestion,
+  voicePolishing,
+  voicePolishMode,
   refetchSession,
   markMaterialsSeen,
   sessionLoadError,
@@ -378,7 +384,11 @@ export function ParticipantMode({
             setShowVoiceConfirm={setShowVoiceConfirm}
             voiceTranscribedText={voiceTranscribedText}
             setVoiceTranscribedText={setVoiceTranscribedText}
-            confirmVoiceQuestion={confirmVoiceQuestion}
+confirmVoiceQuestion={confirmVoiceQuestion}
+  cancelVoiceReview={cancelVoiceReview}
+  polishVoiceQuestion={polishVoiceQuestion}
+            voicePolishing={voicePolishing}
+            voicePolishMode={voicePolishMode}
           />
         </aside>
       </div>
@@ -387,18 +397,48 @@ export function ParticipantMode({
   )
 }
 
+// Match backend MaterialChunkSize / MaterialChunkOverlap for block highlighting
+const MATERIAL_CHUNK_SIZE = 1200
+const MATERIAL_CHUNK_OVERLAP = 150
+
+function chunkTextForDisplay(text, chunkSize = MATERIAL_CHUNK_SIZE, overlap = MATERIAL_CHUNK_OVERLAP) {
+  const t = (text || '').trim()
+  if (t.length <= chunkSize) return [t]
+  const chunks = []
+  let start = 0
+  while (start < t.length) {
+    let end = start + chunkSize
+    if (end > t.length) end = t.length
+    chunks.push(t.slice(start, end))
+    if (end >= t.length) break
+    start = end - overlap
+  }
+  return chunks
+}
+
 function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock }) {
+  const contentRef = useRef(null)
+  const blockRefs = useRef([])
+  const [docxHtml, setDocxHtml] = useState(null)
+  const [docxLoading, setDocxLoading] = useState(false)
+  const [docxError, setDocxError] = useState(null)
+
   const isTranscript = doc?.type === 'transcript'
   const title = isTranscript ? (doc?.title || 'Transcript') : (doc?.filename || doc?.title || 'Document')
-  const meta = isTranscript ? 'Transcript' : (doc?.content_type || '')
+  const meta = isTranscript ? 'Transcript' : (getMaterialTypeLabel(doc) || doc?.content_type || '')
   const bodyText = isTranscript ? (doc?.text || '') : (doc?.extracted_text ?? '')
   const contentType = (doc?.content_type || '').toLowerCase()
+  const fn = (doc?.filename || '').toLowerCase()
   const isPdf = !isTranscript && contentType.includes('pdf')
+  const isDocx = !isTranscript && (
+    contentType.includes('wordprocessingml') || contentType.includes('msword') ||
+    fn.endsWith('.docx') || fn.endsWith('.doc')
+  )
   const storageUrl = !isTranscript && doc?.storage_url
   const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']
   const isImage = !isTranscript && (
     contentType.startsWith('image/') ||
-    imageExts.some(e => (doc?.filename || '').toLowerCase().endsWith(e))
+    imageExts.some(e => fn.endsWith(e))
   )
   const baseMaterialFileUrl = apiBaseUrl && doc?.artifact_id && doc?.id && !isTranscript
     ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
@@ -406,6 +446,45 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
   const materialFileUrl = baseMaterialFileUrl && (initialPage != null && initialPage >= 1)
     ? `${baseMaterialFileUrl}#page=${Number(initialPage)}`
     : baseMaterialFileUrl
+
+  // Load .docx and convert to HTML for formatted display
+  useEffect(() => {
+    if (!isDocx || !baseMaterialFileUrl) {
+      setDocxHtml(null)
+      setDocxError(null)
+      return
+    }
+    let cancelled = false
+    setDocxLoading(true)
+    setDocxError(null)
+    setDocxHtml(null)
+    fetch(baseMaterialFileUrl)
+      .then(res => res.arrayBuffer())
+      .then(arrayBuffer => mammoth.convertToHtml({ arrayBuffer }))
+      .then(({ value }) => {
+        if (!cancelled) setDocxHtml(value)
+      })
+      .catch(err => {
+        if (!cancelled) setDocxError(err?.message || 'Failed to load formatted view')
+      })
+      .finally(() => {
+        if (!cancelled) setDocxLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [isDocx, baseMaterialFileUrl, doc?.id])
+
+  // For text-based docs (Office, etc.): chunk and scroll/highlight block when opened from citation with block index
+  const textChunks = (bodyText && initialBlock != null && !isPdf && !isImage && !docxHtml)
+    ? chunkTextForDisplay(bodyText)
+    : null
+
+  useEffect(() => {
+    if (initialBlock == null || !contentRef.current || !Array.isArray(textChunks) || initialBlock < 0 || initialBlock >= textChunks.length) return
+    const el = blockRefs.current[initialBlock]
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [initialBlock, textChunks?.length])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -500,6 +579,41 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
                 </div>
               </details>
             )}
+          </div>
+        ) : isDocx && docxHtml ? (
+          <div
+            className="docx-rendered"
+            style={{ fontSize: '14px', lineHeight: 1.6 }}
+            dangerouslySetInnerHTML={{ __html: docxHtml }}
+          />
+        ) : isDocx && docxLoading ? (
+          <div style={{ padding: '24px', color: '#666' }}>Loading document…</div>
+        ) : textChunks && textChunks.length > 0 ? (
+          <div ref={contentRef} style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
+            fontSize: '14px',
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            fontFamily: 'inherit'
+          }}>
+            {textChunks.map((chunk, i) => (
+              <div
+                key={i}
+                ref={(el) => { blockRefs.current[i] = el }}
+                data-block-index={i}
+                style={{
+                  marginBottom: '1em',
+                  padding: initialBlock === i ? '10px 12px' : '6px 0',
+                  borderRadius: 4,
+                  backgroundColor: initialBlock === i ? 'rgba(33, 150, 243, 0.08)' : 'transparent',
+                  borderLeft: initialBlock === i ? '3px solid #2196F3' : '3px solid transparent'
+                }}
+              >
+                {chunk}
+              </div>
+            ))}
           </div>
         ) : (
           <div style={{

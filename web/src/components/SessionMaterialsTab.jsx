@@ -13,6 +13,7 @@ function statusColor(s) {
 export function SessionMaterialsTab({
   sessionId,
   materials = [],
+  videoSources = [],
   apiBaseUrl,
   refetchSession,
   onUploading,
@@ -29,6 +30,7 @@ export function SessionMaterialsTab({
   const [previewMaterial, setPreviewMaterial] = useState(null)
   const [videoUrl, setVideoUrl] = useState('')
   const [videoUrlAdding, setVideoUrlAdding] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState(null) // { files: File[], duplicateNames: string[], nameToMaterialId: { [name]: id } }
 
   const base = (apiBaseUrl || '').replace(/\/$/, '')
 
@@ -38,10 +40,32 @@ export function SessionMaterialsTab({
     return type === 'video/mp4' || name.endsWith('.mp4')
   }
 
-  const uploadFiles = async (e) => {
-    const files = Array.from(e?.target?.files || [])
+  const existingNamesSet = () => {
+    const names = new Set()
+    for (const m of materials) {
+      const n = (m?.filename || m?.title || '').toString().toLowerCase().trim()
+      if (n) names.add(n)
+    }
+    if (videoSources?.length) {
+      for (const v of videoSources) {
+        const n = (v?.original_filename || v?.filename || v?.title || '').toString().toLowerCase().trim()
+        if (n) names.add(n)
+      }
+    }
+    return names
+  }
+
+  const nameToMaterialIdMap = () => {
+    const map = {}
+    for (const m of materials) {
+      const n = (m?.filename || m?.title || '').toString().toLowerCase().trim()
+      if (n && m?.id) map[n] = m.id
+    }
+    return map
+  }
+
+  const doUploadFiles = async (files) => {
     if (files.length === 0 || !sessionId) return
-    e.target.value = ''
     setUploading(true)
     setUploadFeedback('')
     onUploading?.()
@@ -71,7 +95,7 @@ export function SessionMaterialsTab({
         }
       }
       if (materialsCount > 0 || videosCount > 0) {
-        await refetchSession?.()
+        await refetchSession?.(sessionId)
         onUploadDone?.()
         const parts = []
         if (materialsCount > 0) parts.push(`${materialsCount} material${materialsCount !== 1 ? 's' : ''}`)
@@ -87,6 +111,56 @@ export function SessionMaterialsTab({
       setUploadFeedback(err?.message || 'Upload failed')
     } finally {
       setUploading(false)
+    }
+  }
+
+  const uploadFiles = (e) => {
+    const files = Array.from(e?.target?.files || [])
+    e.target.value = ''
+    if (files.length === 0 || !sessionId) return
+    const existing = existingNamesSet()
+    const nameToMaterialId = nameToMaterialIdMap()
+    const duplicateNames = [...new Set(files.map(f => f.name).filter(n => existing.has((n || '').toLowerCase().trim())))]
+    if (duplicateNames.length > 0) {
+      setDuplicateWarning({ files, duplicateNames, nameToMaterialId })
+      return
+    }
+    doUploadFiles(files)
+  }
+
+  const confirmDuplicateUpload = () => {
+    if (duplicateWarning?.files?.length) {
+      doUploadFiles(duplicateWarning.files)
+      setDuplicateWarning(null)
+    }
+  }
+
+  const confirmReplace = async () => {
+    if (!duplicateWarning?.files?.length || !sessionId) return
+    const { files, nameToMaterialId } = duplicateWarning
+    setUploading(true)
+    setUploadFeedback('')
+    onUploading?.()
+    const errors = []
+    try {
+      const materialIdsToDelete = [...new Set(files.map(f => nameToMaterialId[(f.name || '').toLowerCase().trim()]).filter(Boolean))]
+      for (const materialId of materialIdsToDelete) {
+        const res = await fetch(`${base}/sessions/${sessionId}/materials/${materialId}`, { method: 'DELETE' })
+        if (!res.ok) errors.push(`Failed to remove existing: ${await res.text()}`)
+      }
+      if (errors.length > 0) {
+        setUploadFeedback(errors.join('; '))
+        onError?.(errors.join('; '))
+      } else {
+        await doUploadFiles(files)
+        setUploadFeedback((prev) => (prev ? `${prev} ` : '') + 'Replaced existing file(s).')
+      }
+    } catch (err) {
+      setUploadFeedback(err?.message || 'Replace failed')
+      onError?.(err?.message)
+    } finally {
+      setUploading(false)
+      setDuplicateWarning(null)
     }
   }
 
@@ -112,7 +186,7 @@ export function SessionMaterialsTab({
         setUploadFeedback(msg)
       } else {
         const data = await res.json().catch(() => ({}))
-        await refetchSession?.()
+        await refetchSession?.(sessionId)
         onUploadDone?.()
         setVideoUrl('')
         setUploadFeedback(data.message || 'Video added.')
@@ -136,7 +210,7 @@ export function SessionMaterialsTab({
         body: JSON.stringify({ title: (pasteTitle || '').trim() || 'Pasted text', text })
       })
       if (!res.ok) throw new Error(await res.text())
-      await refetchSession?.()
+      await refetchSession?.(sessionId)
       setPasteModal(false)
       setPasteTitle('')
       setPasteText('')
@@ -154,7 +228,7 @@ export function SessionMaterialsTab({
     try {
       const res = await fetch(`${base}/sessions/${sessionId}/materials/${materialId}`, { method: 'DELETE' })
       if (!res.ok) throw new Error(await res.text())
-      await refetchSession?.()
+      await refetchSession?.(sessionId)
       if (previewMaterial?.id === materialId) setPreviewMaterial(null)
     } catch (err) {
       onError?.(err?.message || 'Delete failed')
@@ -179,7 +253,7 @@ export function SessionMaterialsTab({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', backgroundColor: '#2196F3', color: '#fff', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
-          <input type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,video/mp4,.mp4" multiple onChange={uploadFiles} disabled={uploading || !sessionId} style={{ display: 'none' }} />
+          <input type="file" accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,video/mp4,.mp4" multiple onChange={uploadFiles} disabled={uploading || !sessionId} style={{ display: 'none' }} />
           {uploading ? 'Uploading…' : 'Upload file'}
         </label>
         <button type="button" onClick={() => setPasteModal(true)} disabled={pasting || !sessionId} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #2196F3', backgroundColor: '#fff', color: '#2196F3', cursor: 'pointer', fontWeight: 500 }}>
@@ -210,6 +284,32 @@ export function SessionMaterialsTab({
             <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
               <button type="button" onClick={pasteSubmit} disabled={pasting || !pasteText.trim()} style={{ padding: '8px 16px', background: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>{pasting ? 'Adding…' : 'Add'}</button>
               <button type="button" onClick={() => setPasteModal(false)} disabled={pasting} style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {duplicateWarning && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setDuplicateWarning(null)}>
+          <div style={{ background: '#fff', padding: 24, borderRadius: 8, maxWidth: 440, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, color: '#e65100' }}>File(s) already in session</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 14, color: '#333' }}>
+              The following file(s) are already in this session.
+            </p>
+            <ul style={{ margin: '0 0 16px', paddingLeft: 20, fontSize: 14 }}>
+              {duplicateWarning.duplicateNames.map((name, i) => (
+                <li key={i} style={{ marginBottom: 4 }}><strong>{name}</strong></li>
+              ))}
+            </ul>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#666' }}>
+              Replace the existing file(s) with the new upload, add as duplicates, or cancel?
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {duplicateWarning.nameToMaterialId && duplicateWarning.duplicateNames.some(name => duplicateWarning.nameToMaterialId[(name || '').toLowerCase().trim()]) && (
+                <button type="button" onClick={confirmReplace} disabled={uploading} style={{ padding: '8px 16px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Replace'}</button>
+              )}
+              <button type="button" onClick={confirmDuplicateUpload} disabled={uploading} style={{ padding: '8px 16px', background: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Upload as duplicate'}</button>
+              <button type="button" onClick={() => setDuplicateWarning(null)} disabled={uploading} style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>Cancel</button>
             </div>
           </div>
         </div>

@@ -879,6 +879,7 @@ export function CreatorMode({
         <SessionMaterialsTab
           sessionId={sessionId}
           materials={currentSession?.materials || []}
+          videoSources={currentSession?.video_sources || []}
           apiBaseUrl={apiBaseUrl}
           refetchSession={refetchSession}
         />
@@ -886,7 +887,12 @@ export function CreatorMode({
 
       {/* Existing Materials (artifact view legacy list) */}
       {currentSession?.materials && currentSession.materials.length > 0 && (
-        <MaterialsList materials={currentSession.materials} />
+        <MaterialsList
+          materials={currentSession.materials}
+          sessionId={sessionId}
+          apiBaseUrl={apiBaseUrl}
+          refetchSession={refetchSession}
+        />
       )}
 
       {/* Video Player */}

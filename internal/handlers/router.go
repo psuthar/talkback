@@ -167,6 +167,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "questions" && len(parts) >= 5 && parts[4] == "polish" {
+		if r.Method == http.MethodPost {
+			h.SessionPolishQuestion(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "reindex" {
 		if r.Method == http.MethodPost {
 			h.SessionReindex(w, r)
@@ -348,6 +356,11 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/materials/{material_id} - DELETE (4 path segments)
+		if parts[2] == "materials" && r.Method == http.MethodDelete {
+			h.DeleteSessionMaterial(w, r)
 			return
 		}
 	}

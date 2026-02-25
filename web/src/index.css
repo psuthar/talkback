@@ -460,3 +460,49 @@ button:disabled {
     width: 48px;
   }
 }
+
+/* Word document content rendered by mammoth (participant document viewer) */
+.docx-rendered {
+  font-family: inherit;
+}
+.docx-rendered p {
+  margin: 0 0 0.75em;
+}
+.docx-rendered p:last-child {
+  margin-bottom: 0;
+}
+.docx-rendered strong, .docx-rendered b {
+  font-weight: 600;
+}
+.docx-rendered em, .docx-rendered i {
+  font-style: italic;
+}
+.docx-rendered ul, .docx-rendered ol {
+  margin: 0.5em 0 0.75em 1.25em;
+  padding-left: 1.25em;
+}
+.docx-rendered li {
+  margin-bottom: 0.25em;
+}
+.docx-rendered h1, .docx-rendered h2, .docx-rendered h3 {
+  margin: 1em 0 0.5em;
+  font-weight: 600;
+  color: #333;
+}
+.docx-rendered h1 { font-size: 1.35em; }
+.docx-rendered h2 { font-size: 1.2em; }
+.docx-rendered h3 { font-size: 1.1em; }
+.docx-rendered table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  width: 100%;
+}
+.docx-rendered th, .docx-rendered td {
+  border: 1px solid #ddd;
+  padding: 6px 10px;
+  text-align: left;
+}
+.docx-rendered th {
+  font-weight: 600;
+  background: #f5f5f5;
+}

@@ -38,10 +38,13 @@ function App() {
   const [voiceFeedback, setVoiceFeedback] = useState({ type: '', message: '' })
   const [voiceTranscribedText, setVoiceTranscribedText] = useState('')
   const [showVoiceConfirm, setShowVoiceConfirm] = useState(false)
+  const [voicePolishing, setVoicePolishing] = useState(false)
+  const [voicePolishMode, setVoicePolishMode] = useState(null) // 'rules' | 'llm' when polishing
   const [mediaRecorder, setMediaRecorder] = useState(null)
   const [mediaStream, setMediaStream] = useState(null)
   const voiceChunksRef = useRef([])
-  
+  const materialFileInputRef = useRef(null)
+
   // Phase 3: Session states
   const [sessionTitle, setSessionTitle] = useState('')
   const [sessionCreatedBy, setSessionCreatedBy] = useState('anonymous')
@@ -411,6 +414,9 @@ function App() {
       // Remove file from materialFiles array
       setMaterialFiles(prev => prev.filter(f => f !== file))
       setUploadMaterialFeedback({ type: 'success', message: `Material uploaded! Filename: ${data.filename}, Text Status: ${data.text_status}` })
+      if (materialFileInputRef.current) materialFileInputRef.current.value = ''
+      // Refresh session so materials section shows the new file without page reload
+      await refetchSession()
     } catch (err) {
       setUploadMaterialFeedback({ type: 'error', message: `Failed to upload material: ${err.message}` })
     } finally {
@@ -1228,52 +1234,50 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [debugMode, apiBaseUrl])
 
-  // Allow API base URL from query param (e.g. participant link: ?session=xxx&mode=view&api=https://...)
+  // On mount: apply api from URL and load session from URL in one pass so the first request
+  // uses the correct API base (avoids flash of "Unable to load" in private window when link has ?api=)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
+    const sessionId = urlParams.get('session')
+    const mode = urlParams.get('mode') // 'edit' or 'view'
+
+    let apiOriginForSession = null
     if (apiFromUrl) {
       try {
         const u = new URL(apiFromUrl)
+        apiOriginForSession = u.origin
         setApiBaseUrl(u.origin)
       } catch (_) { /* ignore invalid */ }
     }
-  }, [])
 
-  // Check URL for session and mode on mount
-  useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search)
-    const sessionId = urlParams.get('session')
-    const mode = urlParams.get('mode') // 'edit' or 'view'
-    
     if (sessionId) {
-      // Set mode immediately based on URL, even before API call completes
       if (mode === 'view') {
         setSessionUserMode('participant')
         setCurrentUser('participant')
-        setViewMode('session') // Participant mode should always use session view
+        setViewMode('session')
       } else {
-        // Default to creator mode
         setSessionUserMode('creator')
       }
-      
-      // Then try to load the session
+
+      // Use api from URL for this load so we don't depend on state (prevents race in private window)
       if (mode === 'edit') {
-        openSession(sessionId, 'creator')
+        openSession(sessionId, 'creator', false, apiOriginForSession)
       } else if (mode === 'view') {
-        openSession(sessionId, 'participant')
+        openSession(sessionId, 'participant', false, apiOriginForSession)
       } else {
-        // No mode specified, default to creator view
-        openSession(sessionId, 'creator')
+        openSession(sessionId, 'creator', false, apiOriginForSession)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const openSession = async (sessionId, forceMode = null, stayInSessionView = false) => {
+  const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null) => {
     setLoading(true)
     clearFeedback(setSessionSelectFeedback)
-    
+
+    const baseUrl = overrideApiBaseUrl != null ? overrideApiBaseUrl : apiBaseUrl
+
     // Set mode immediately based on forceMode, even if API call fails
     if (forceMode === 'participant') {
       setSessionUserMode('participant')
@@ -1281,7 +1285,7 @@ function App() {
     } else if (forceMode === 'creator') {
       setSessionUserMode('creator')
     }
-    
+
     try {
       // When in participant mode, send participant_ref so backend can return unread_material_ids for "new document" marker
       const isParticipant = forceMode === 'participant' || (typeof sessionUserMode !== 'undefined' && sessionUserMode === 'participant')
@@ -1289,7 +1293,7 @@ function App() {
       if (isParticipant && participantRef) {
         headers['X-Participant-Ref'] = participantRef
       }
-      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}`, { headers })
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers })
       if (!response.ok) {
         setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${response.status}` })
         // Mode is already set above, so UI will still hide/show correct sections
@@ -1306,7 +1310,7 @@ function App() {
       if (data.session && (!data.video_sources || data.video_sources.length === 0)) {
         const loadedId = data.session.id || sessionId
         setTimeout(() => {
-          fetch(`${apiBaseUrl}/sessions/${sessionId}`, { headers })
+          fetch(`${baseUrl}/sessions/${sessionId}`, { headers })
             .then((r) => r.ok ? r.json() : null)
             .then((retryData) => {
               const currentId = loadedId
@@ -1346,7 +1350,7 @@ function App() {
         setCurrentUser('participant')
         setSessionUserMode('participant')
         // Update URL to reflect participant mode (include api so refresh/new window works)
-        window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`)
+        window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
       } else {
         // No explicit mode, determine from URL or default to creator
         const urlParams = new URLSearchParams(window.location.search)
@@ -1355,7 +1359,7 @@ function App() {
         if (urlMode === 'view') {
           setCurrentUser('participant')
           setSessionUserMode('participant')
-          window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`)
+          window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
         } else {
           // Default to creator mode
           if (data.session && data.session.created_by) {
@@ -1403,11 +1407,11 @@ function App() {
     }
   }
 
-  const refetchSession = useCallback(async () => {
-    const id = currentSession?.session?.id || currentSession?.id
+  const refetchSession = useCallback(async (overrideSessionId) => {
+    const id = overrideSessionId ?? currentSession?.session?.id ?? currentSession?.id
     if (!id) return
     await openSession(id, sessionUserMode)
-  }, [currentSession?.session?.id, currentSession?.id, sessionUserMode])
+  }, [currentSession?.session?.id, currentSession?.id, sessionUserMode, openSession])
 
   const markMaterialsSeen = useCallback(async (materialIds) => {
     const sessionId = currentSession?.session?.id || currentSession?.id
@@ -1485,7 +1489,7 @@ function App() {
     await submitSessionQuestion(questionText)
   }
 
-  const submitSessionQuestion = async (text) => {
+  const submitSessionQuestion = async (text, askedVia = 'text') => {
     clearFeedback(setAskQuestionFeedback)
     setLoading(true)
 
@@ -1494,7 +1498,7 @@ function App() {
       const response = await fetch(`${apiBaseUrl}/api/sessions/${currentSession.session.id}/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question_text: text, asked_via: 'text' })
+        body: JSON.stringify({ question_text: text, asked_via: askedVia })
       })
 
       if (!response.ok) {
@@ -1659,10 +1663,27 @@ function App() {
       }
 
       const data = await response.json()
-      const text = (data && data.transcribed_text) ? data.transcribed_text : ''
+      let text = (data && data.transcribed_text) ? data.transcribed_text : ''
       if (!text.trim()) {
         setVoiceFeedback({ type: 'error', message: 'Transcription was empty. Please try again or type your question.' })
         return
+      }
+
+      // Run rule-based cleanup by default
+      try {
+        const polishUrl = `${apiBaseUrl}/api/sessions/${currentSession.session.id}/questions/polish`
+        const polishRes = await fetch(polishUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text.trim() })
+        })
+        if (polishRes.ok) {
+          const polishData = await polishRes.json()
+          const polished = (polishData && polishData.polished_text != null) ? String(polishData.polished_text).trim() : text
+          if (polished) text = polished
+        }
+      } catch (_) {
+        // keep original text if cleanup fails
       }
 
       setVoiceTranscribedText(text)
@@ -1676,6 +1697,13 @@ function App() {
     }
   }
 
+  const cancelVoiceReview = () => {
+    setShowVoiceConfirm(false)
+    setVoiceTranscribedText('')
+    setVoicePolishing(false)
+    setVoicePolishMode(null)
+  }
+
   const confirmVoiceQuestion = async () => {
     if (!voiceTranscribedText.trim()) {
       setVoiceFeedback({ type: 'error', message: 'Please enter a question before submitting.' })
@@ -1684,8 +1712,38 @@ function App() {
     setShowVoiceConfirm(false)
     const text = voiceTranscribedText.trim()
     setVoiceTranscribedText('')
-    await submitSessionQuestion(text)
+    await submitSessionQuestion(text, 'voice')
     // Questions will be refreshed by submitSessionQuestion
+  }
+
+  const polishVoiceQuestion = async (useLLM = false) => {
+    const text = voiceTranscribedText.trim()
+    if (!text || !currentSession?.session?.id) return
+    setVoicePolishing(true)
+    setVoicePolishMode(useLLM ? 'llm' : 'rules')
+    clearFeedback(setVoiceFeedback)
+    try {
+      const url = `${apiBaseUrl}/api/sessions/${currentSession.session.id}/questions/polish${useLLM ? '?mode=llm' : ''}`
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      })
+      if (!response.ok) {
+        const errText = await response.text()
+        setVoiceFeedback({ type: 'error', message: `Clean up failed: ${response.status} ${errText}` })
+        return
+      }
+      const data = await response.json()
+      const polished = (data && data.polished_text != null) ? String(data.polished_text).trim() : text
+      setVoiceTranscribedText(polished)
+      setVoiceFeedback({ type: 'success', message: useLLM ? 'Polished with AI.' : 'Cleaned up fillers and repetition.' })
+    } catch (err) {
+      setVoiceFeedback({ type: 'error', message: `Clean up failed: ${err.message}` })
+    } finally {
+      setVoicePolishing(false)
+      setVoicePolishMode(null)
+    }
   }
 
   const fetchSessionQuestions = async (sessionId) => {
@@ -2542,9 +2600,13 @@ function App() {
                 voiceFeedback={voiceFeedback}
                 showVoiceConfirm={showVoiceConfirm}
               setShowVoiceConfirm={setShowVoiceConfirm}
-              voiceTranscribedText={voiceTranscribedText}
+                voiceTranscribedText={voiceTranscribedText}
               setVoiceTranscribedText={setVoiceTranscribedText}
               confirmVoiceQuestion={confirmVoiceQuestion}
+              cancelVoiceReview={cancelVoiceReview}
+              polishVoiceQuestion={polishVoiceQuestion}
+              voicePolishing={voicePolishing}
+              voicePolishMode={voicePolishMode}
               refetchSession={refetchSession}
               markMaterialsSeen={markMaterialsSeen}
               sessionLoadError={sessionSelectFeedback.type === 'error' ? sessionSelectFeedback.message : ''}
@@ -2612,9 +2674,14 @@ function App() {
             </div>
           )}
 
-          {/* Show existing materials */}
+          {/* Show existing materials (creator mode: show delete) */}
           {currentSession.materials && currentSession.materials.length > 0 && (
-            <MaterialsList materials={currentSession.materials} />
+            <MaterialsList
+              materials={currentSession.materials}
+              sessionId={currentSession.session?.id || currentSession.id}
+              apiBaseUrl={apiBaseUrl}
+              refetchSession={refetchSession}
+            />
           )}
 
           {/* Video Player Section (Artifact View) */}
@@ -2764,7 +2831,9 @@ function App() {
         <div className="form-group">
           <label>File:</label>
           <input
+            ref={materialFileInputRef}
             type="file"
+            accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
             multiple
             onChange={(e) => {
               const files = Array.from(e.target.files || [])
@@ -2867,25 +2936,62 @@ function App() {
             )}
             {showVoiceConfirm && (
               <div style={{ marginBottom: '15px', padding: '12px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: '#f9f9f9' }}>
-                <div style={{ fontWeight: 600, marginBottom: '8px' }}>Review transcription</div>
-                <textarea
-                  value={voiceTranscribedText}
-                  onChange={(e) => setVoiceTranscribedText(e.target.value)}
-                  rows={3}
-                  style={{ width: '100%', marginBottom: '10px' }}
-                />
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ position: 'relative', marginBottom: '10px' }}>
+                  <textarea
+                    value={voiceTranscribedText}
+                    onChange={(e) => setVoiceTranscribedText(e.target.value)}
+                    rows={3}
+                    style={{ width: '100%', paddingRight: '28px', boxSizing: 'border-box' }}
+                  />
+                  {polishVoiceQuestion && (
+                    <button
+                      type="button"
+                      onClick={() => polishVoiceQuestion(true)}
+                      disabled={!voiceTranscribedText.trim() || loading || voicePolishing}
+                      title="AI polish"
+                      style={{
+                        position: 'absolute',
+                        top: '8px',
+                        right: '8px',
+                        margin: 0,
+                        padding: '4px',
+                        border: '1px solid #e0e0e0',
+                        borderRadius: '4px',
+                        background: voicePolishing && voicePolishMode === 'llm' ? '#e3f2fd' : 'rgba(255,255,255,0.9)',
+                        cursor: (!voiceTranscribedText.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
+                      }}
+                    >
+                      {voicePolishing && voicePolishMode === 'llm' ? (
+                        <span className="spinner" style={{ width: 14, height: 14 }} aria-hidden />
+                      ) : (
+                        <img
+                          src="https://static.thenounproject.com/png/1294-200.png"
+                          alt=""
+                          width={16}
+                          height={16}
+                          style={{ display: 'block' }}
+                          aria-hidden
+                        />
+                      )}
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                   <button
                     onClick={confirmVoiceQuestion}
-                    disabled={!voiceTranscribedText.trim() || loading}
+                    disabled={!voiceTranscribedText.trim() || loading || voicePolishing}
                     style={{ marginTop: 0 }}
                   >
                     Confirm & Submit (Session)
                   </button>
                   <button
-                    onClick={() => { setShowVoiceConfirm(false); setVoiceTranscribedText('') }}
+                    onClick={cancelVoiceReview}
                     disabled={loading}
-                    style={{ marginTop: 0, backgroundColor: '#757575' }}
+                    style={{ marginTop: 0, backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
                   >
                     Cancel
                   </button>
@@ -2894,17 +3000,21 @@ function App() {
             )}
           </>
         )}
-        <div className="form-group">
-          <label>Question:</label>
-          <textarea
-            value={questionText}
-            onChange={(e) => setQuestionText(e.target.value)}
-            placeholder="What is the main topic discussed?"
-          />
-        </div>
-        <button onClick={askQuestion} disabled={!artifactId || !questionText || loading}>
-          Ask Question
-        </button>
+        {!showVoiceConfirm && (
+          <>
+            <div className="form-group">
+              <label>Question:</label>
+              <textarea
+                value={questionText}
+                onChange={(e) => setQuestionText(e.target.value)}
+                placeholder="What is the main topic discussed?"
+              />
+            </div>
+            <button onClick={askQuestion} disabled={!artifactId || !questionText || loading}>
+              Ask Question
+            </button>
+          </>
+        )}
         {askQuestionFeedback.message && (
           <div className={askQuestionFeedback.type} style={{ marginTop: '10px' }}>
             {askQuestionFeedback.message}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { getMaterialTypeLabel } from '../utils/materialIcons'
 
 function getFocusableElements(container) {
   if (!container) return []
@@ -60,7 +61,7 @@ export function DocumentViewerOverlay({ document: doc, open: isOpen, onClose }) 
 
   const isTranscript = doc?.type === 'transcript'
   const title = isTranscript ? (doc?.title || 'Transcript') : (doc?.filename || doc?.title || 'Document')
-  const meta = isTranscript ? 'Transcript' : (doc?.content_type || '')
+  const meta = isTranscript ? 'Transcript' : (getMaterialTypeLabel(doc) || doc?.content_type || '')
   const bodyText = isTranscript ? (doc?.text || '') : (doc?.extracted_text ?? '')
   const isPdf = !isTranscript && (doc?.content_type || '').toLowerCase().includes('pdf')
   const storageUrl = !isTranscript && doc?.storage_url
