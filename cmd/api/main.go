@@ -351,6 +351,17 @@ func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 			}
 			log.Printf("Bootstrap admin: existing user %s promoted to admin", email)
 		}
+		// If bootstrap password is set, sync it so admin can always log in with env password after redeploys.
+		if password != "" {
+			hash, err := auth.HashPassword(password)
+			if err != nil {
+				return fmt.Errorf("hashing bootstrap admin password for sync: %w", err)
+			}
+			if err := db.UpdatePasswordCredential(ctx, existing.ID, hash); err != nil {
+				return fmt.Errorf("updating bootstrap admin password: %w", err)
+			}
+			log.Printf("Bootstrap admin: synced password for %s", email)
+		}
 		return nil
 	}
 	// No user with this email: create admin account (password required)

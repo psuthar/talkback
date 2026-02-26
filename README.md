@@ -83,6 +83,18 @@ The web UI will open at `http://localhost:3000` and allows you to:
 
 See `web/README.md` for detailed instructions.
 
+### Local Auth Check (Mission 1)
+
+To verify TalkBack auth (users, login sessions, signup/login/logout, bootstrap admin) locally, run:
+
+```bash
+make auth-check
+```
+
+Or directly: `bash scripts/auth_check.sh` (on Windows, use Git Bash or WSL).
+
+**Requirements:** API server running (e.g. `go run ./cmd/api` on port 8081), Postgres with migrations applied. For full checks (DB tables, disabled-user test), set `DATABASE_URL` (e.g. from `.env`) or `TB_PSQL_DSN`. Optional env: `TB_BASE_URL` (default `http://localhost:8081`), `TB_COOKIE_NAME` (default `tb_login`), `TB_TEST_EMAIL` / `TB_TEST_PASSWORD`, `TB_ADMIN_EMAIL` / `TB_ADMIN_PASSWORD`. For Step 7 (bootstrap admin), start the server with `TALKBACK_BOOTSTRAP_ADMIN_EMAIL=<admin-email>`.
+
 ### Testing the API
 
 Use the `requests.http` file in the repository root to test endpoints. This file contains example requests for all Phase 1 and Phase 2 endpoints.

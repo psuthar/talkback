@@ -134,3 +134,9 @@ func (db *DB) GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUI
 	}
 	return c, nil
 }
+
+// UpdatePasswordCredential updates the password hash for the user (e.g. bootstrap admin sync).
+func (db *DB) UpdatePasswordCredential(ctx context.Context, userID uuid.UUID, passwordHash string) error {
+	_, err := db.Pool.Exec(ctx, `UPDATE password_credentials SET password_hash = $1, password_updated_at = now(), updated_at = now() WHERE user_id = $2`, passwordHash, userID)
+	return err
+}
