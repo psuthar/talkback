@@ -57,5 +57,16 @@ func loadConfig() ConfigStruct {
 			}
 		}
 	}
+	// Fallback: use CORS_ALLOWED_ORIGINS so one env var works for both CORS and cookie SameSite on Render
+	if len(c.AllowedOrigins) == 0 {
+		if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
+			for _, o := range strings.Split(v, ",") {
+				o = strings.TrimSpace(o)
+				if o != "" {
+					c.AllowedOrigins = append(c.AllowedOrigins, o)
+				}
+			}
+		}
+	}
 	return c
 }

@@ -10,8 +10,8 @@ import (
 // SetSessionCookie sets the session cookie on the response.
 func SetSessionCookie(w http.ResponseWriter, sessionID uuid.UUID, expiresAt time.Time) {
 	sameSite := http.SameSiteLaxMode
-	if Config.CookieSecure && len(Config.AllowedOrigins) > 1 {
-		// Cross-site: use None so cookie is sent cross-origin (with Secure)
+	if Config.CookieSecure && len(Config.AllowedOrigins) > 0 {
+		// Cross-origin (frontend on different domain): use None so cookie is sent with credentials
 		sameSite = http.SameSiteNoneMode
 	}
 	cookie := &http.Cookie{
@@ -32,6 +32,10 @@ func SetSessionCookie(w http.ResponseWriter, sessionID uuid.UUID, expiresAt time
 
 // ClearSessionCookie removes the session cookie.
 func ClearSessionCookie(w http.ResponseWriter) {
+	sameSite := http.SameSiteLaxMode
+	if Config.CookieSecure && len(Config.AllowedOrigins) > 0 {
+		sameSite = http.SameSiteNoneMode
+	}
 	cookie := &http.Cookie{
 		Name:     Config.SessionCookieName,
 		Value:    "",
@@ -40,7 +44,7 @@ func ClearSessionCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   Config.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	}
 	if Config.CookieDomain != "" {
 		cookie.Domain = Config.CookieDomain
