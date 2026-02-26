@@ -44,6 +44,12 @@ func main() {
 			log.Printf("Warning: .env file not found: %v, using environment variables", err)
 		}
 	}
+	// Log auth cookie config so Render logs show whether cross-origin login will work (SameSite=None requires Secure + AllowedOrigins)
+	if auth.Config.CookieSecure && len(auth.Config.AllowedOrigins) > 0 {
+		log.Printf("Auth: cookie SameSite=None (cross-origin login enabled), %d origin(s)", len(auth.Config.AllowedOrigins))
+	} else if len(auth.Config.AllowedOrigins) == 0 {
+		log.Printf("Auth: CORS_ALLOWED_ORIGINS or TB_ALLOWED_ORIGINS unset; set to frontend URL (e.g. https://talkback-ux.onrender.com) for cross-origin login")
+	}
 
 	// Run migrations on startup if RUN_MIGRATIONS is set (or default to true in dev)
 	runMigrationsEnv := os.Getenv("RUN_MIGRATIONS")
