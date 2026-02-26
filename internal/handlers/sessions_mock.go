@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 )
 
@@ -49,6 +50,23 @@ func (h *Handlers) CreateMockQuestion(w http.ResponseWriter, r *http.Request) {
 
 	if len(artifacts) == 0 {
 		http.Error(w, "No artifacts found for this session", http.StatusNotFound)
+		return
+	}
+
+	// Enforce per-session question limit (mock questions count toward limit conceptually; limit is on persisted count)
+	count, err := h.DB.CountQuestionsBySessionID(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("CreateMockQuestion CountQuestionsBySessionID: %v", err)
+		http.Error(w, "Failed to check question limit", http.StatusInternalServerError)
+		return
+	}
+	if count >= auth.Config.MaxQuestionsPerSession {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "session question limit reached",
+			"max_questions":  auth.Config.MaxQuestionsPerSession,
+		})
 		return
 	}
 

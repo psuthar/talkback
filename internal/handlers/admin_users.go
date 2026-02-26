@@ -28,6 +28,12 @@ type AdminCreateUserRequest struct {
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name"`
 	Password    string `json:"password"`
+	GlobalRole  string `json:"global_role"` // optional: admin, creator, participant; default creator
+}
+
+// AdminUpdateUserRequest is the body for PATCH /api/admin/users/:id.
+type AdminUpdateUserRequest struct {
+	GlobalRole string `json:"global_role"` // admin, creator, or participant
 }
 
 // ListAdminUsers handles GET /api/admin/users (RequireAuth + RequireAdmin).
@@ -92,6 +98,14 @@ func (h *Handlers) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already registered"})
 		return
 	}
+	role := parseGlobalRole(req.GlobalRole)
+	if strings.TrimSpace(req.GlobalRole) != "" && role == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "global_role must be admin, creator, or participant"})
+		return
+	}
+	if role == "" {
+		role = models.GlobalRoleCreator
+	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create user"})
@@ -102,7 +116,7 @@ func (h *Handlers) CreateAdminUser(w http.ResponseWriter, r *http.Request) {
 		Email:       email,
 		DisplayName: displayName,
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  role,
 	}
 	if err := h.DB.CreateUser(ctx, user); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create user"})
@@ -180,7 +194,90 @@ func (h *Handlers) DeleteAdminUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// AdminUsersHandler dispatches GET/POST /api/admin/users and DELETE /api/admin/users/:id.
+// parseGlobalRole returns models.GlobalRole for admin, creator, participant; empty string if invalid.
+func parseGlobalRole(s string) models.GlobalRole {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "admin":
+		return models.GlobalRoleAdmin
+	case "creator":
+		return models.GlobalRoleCreator
+	case "participant":
+		return models.GlobalRoleParticipant
+	case "user":
+		return models.GlobalRoleCreator // legacy
+	default:
+		return ""
+	}
+}
+
+// UpdateAdminUserRole handles PATCH /api/admin/users/:id (RequireAuth + RequireAdmin). Body: { "global_role": "admin"|"creator"|"participant" }.
+func (h *Handlers) UpdateAdminUserRole(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	var idStr string
+	for i, p := range parts {
+		if p == "users" && i+1 < len(parts) {
+			idStr = parts[i+1]
+			break
+		}
+	}
+	if idStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user id required"})
+		return
+	}
+	userID, err := uuid.Parse(idStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+		return
+	}
+	var req AdminUpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	role := parseGlobalRole(req.GlobalRole)
+	if role == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "global_role must be admin, creator, or participant"})
+		return
+	}
+	ctx := r.Context()
+	existing, _ := h.DB.GetUserByID(ctx, userID)
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+	// Last-admin safeguard: cannot demote the last admin.
+	if existing.GlobalRole == models.GlobalRoleAdmin && role != models.GlobalRoleAdmin {
+		count, err := h.DB.CountAdmins(ctx)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check admin count"})
+			return
+		}
+		if count <= 1 {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cannot demote the last admin; there must be at least one admin"})
+			return
+		}
+	}
+	if err := h.DB.SetUserGlobalRole(ctx, userID, role); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update role"})
+		return
+	}
+	writeJSON(w, http.StatusOK, AdminUserPayload{
+		ID:          existing.ID.String(),
+		Email:       existing.Email,
+		DisplayName: existing.DisplayName,
+		Status:      string(existing.Status),
+		GlobalRole:  string(role),
+		CreatedAt:   existing.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		SessionIDs:  []string{},
+	})
+}
+
+// AdminUsersHandler dispatches GET/POST /api/admin/users, PATCH/DELETE /api/admin/users/:id.
 func (h *Handlers) AdminUsersHandler(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
@@ -202,9 +299,15 @@ func (h *Handlers) AdminUsersHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	if len(parts) == 4 && r.Method == http.MethodDelete {
-		h.DeleteAdminUser(w, r)
-		return
+	if len(parts) == 4 {
+		switch r.Method {
+		case http.MethodDelete:
+			h.DeleteAdminUser(w, r)
+			return
+		case http.MethodPatch:
+			h.UpdateAdminUserRole(w, r)
+			return
+		}
 	}
 	writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 }

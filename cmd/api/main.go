@@ -160,15 +160,15 @@ func main() {
 	}))
 	http.HandleFunc("/artifacts/", corsMiddleware(h.ArtifactsRouter))
 
-	// Session endpoints with CORS (Phase 3)
-	http.HandleFunc("/sessions", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	// Session endpoints with CORS (Phase 3). POST create requires auth + admin/creator role.
+	http.HandleFunc("/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sessions" && r.Method == http.MethodPost {
-			h.CreateSession(w, r)
+			h.RequireAuth(h.CreateSession)(w, r)
 		} else {
 			h.SessionsRouter(w, r)
 		}
 	}))
-	http.HandleFunc("/sessions/from-zoom", corsMiddleware(h.CreateSessionFromZoom))
+	http.HandleFunc("/sessions/from-zoom", corsWithCredentials(h.RequireAuth(h.CreateSessionFromZoom)))
 	http.HandleFunc("/sessions/", corsMiddleware(h.SessionsRouter))
 
 	// WebSocket endpoint for session updates
@@ -191,7 +191,7 @@ func main() {
 	http.HandleFunc("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect))
 	http.HandleFunc("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect))
 	http.HandleFunc("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings))
-	http.HandleFunc("/api/zoom/import", corsMiddleware(h.ZoomImport))
+	http.HandleFunc("/api/zoom/import", corsWithCredentials(h.RequireAuth(h.ZoomImport)))
 
 	// API Session list (my sessions): GET /api/sessions requires auth
 	http.HandleFunc("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {

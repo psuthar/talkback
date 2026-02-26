@@ -27,7 +27,7 @@ func TestSessionInvite_AsCreator_Returns201(t *testing.T) {
 		Email:       creatorEmail,
 		DisplayName: "Creator",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, creator))
 	invitee := &models.User{
@@ -35,7 +35,7 @@ func TestSessionInvite_AsCreator_Returns201(t *testing.T) {
 		Email:       "invitee@example.com",
 		DisplayName: "Invitee",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, invitee))
 
@@ -85,7 +85,7 @@ func TestSessionInvite_AsInvitedUser_Returns201(t *testing.T) {
 		Email:       creatorEmail,
 		DisplayName: "Creator",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, creator))
 	invitedUser := &models.User{
@@ -93,7 +93,7 @@ func TestSessionInvite_AsInvitedUser_Returns201(t *testing.T) {
 		Email:       "invited@example.com",
 		DisplayName: "Invited",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, invitedUser))
 	invitee := &models.User{
@@ -101,7 +101,7 @@ func TestSessionInvite_AsInvitedUser_Returns201(t *testing.T) {
 		Email:       "newinvitee@example.com",
 		DisplayName: "New Invitee",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, invitee))
 
@@ -161,7 +161,7 @@ func TestSessionInvite_NotCreatorNorInvited_Returns403(t *testing.T) {
 		Email:       creatorEmail,
 		DisplayName: "Creator",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, creator))
 	otherUser := &models.User{
@@ -169,7 +169,7 @@ func TestSessionInvite_NotCreatorNorInvited_Returns403(t *testing.T) {
 		Email:       "other@example.com",
 		DisplayName: "Other",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, otherUser))
 	invitee := &models.User{
@@ -177,7 +177,7 @@ func TestSessionInvite_NotCreatorNorInvited_Returns403(t *testing.T) {
 		Email:       "invitee3@example.com",
 		DisplayName: "Invitee",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, invitee))
 
@@ -223,7 +223,7 @@ func TestSessionInvite_AlreadyInvited_Returns409(t *testing.T) {
 		Email:       creatorEmail,
 		DisplayName: "Creator",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, creator))
 	invitee := &models.User{
@@ -231,7 +231,7 @@ func TestSessionInvite_AlreadyInvited_Returns409(t *testing.T) {
 		Email:       "invitee4@example.com",
 		DisplayName: "Invitee",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, invitee))
 

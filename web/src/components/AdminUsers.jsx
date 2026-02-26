@@ -9,8 +9,10 @@ export function AdminUsers({ apiBaseUrl }) {
   const [addPassword, setAddPassword] = useState('')
   const [addSubmitting, setAddSubmitting] = useState(false)
   const [addError, setAddError] = useState('')
+  const [addRole, setAddRole] = useState('creator')
   const [removeId, setRemoveId] = useState(null)
   const [removeConfirm, setRemoveConfirm] = useState('')
+  const [roleUpdatingId, setRoleUpdatingId] = useState(null)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [resetFeedback, setResetFeedback] = useState({ type: '', message: '' })
@@ -54,7 +56,8 @@ export function AdminUsers({ apiBaseUrl }) {
         body: JSON.stringify({
           email: addEmail.trim().toLowerCase(),
           display_name: addDisplayName.trim() || addEmail.trim(),
-          password: addPassword
+          password: addPassword,
+          global_role: addRole
         })
       })
       if (!res.ok) {
@@ -65,11 +68,43 @@ export function AdminUsers({ apiBaseUrl }) {
       setAddEmail('')
       setAddDisplayName('')
       setAddPassword('')
+      setAddRole('creator')
       fetchUsers()
     } catch (e) {
       setAddError(e.message || 'Network error')
     } finally {
       setAddSubmitting(false)
+    }
+  }
+
+  const ROLE_OPTIONS = [
+    { value: 'admin', label: 'Admin' },
+    { value: 'creator', label: 'Can create sessions' },
+    { value: 'participant', label: 'Join existing sessions only' }
+  ]
+  const roleLabel = (role) => ROLE_OPTIONS.find((o) => o.value === role)?.label || role || '—'
+
+  const handleRoleChange = async (userId, newRole) => {
+    if (newRole === '') return
+    setRoleUpdatingId(userId)
+    setAddError('')
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/admin/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ global_role: newRole })
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setAddError(data.error || `Failed to update role: ${res.status}`)
+        return
+      }
+      fetchUsers()
+    } catch (e) {
+      setAddError(e.message || 'Network error')
+    } finally {
+      setRoleUpdatingId(null)
     }
   }
 
@@ -163,6 +198,18 @@ export function AdminUsers({ apiBaseUrl }) {
               placeholder="Required"
             />
           </div>
+          <div className="form-group" style={{ marginBottom: 0, minWidth: '200px' }}>
+            <label>Role</label>
+            <select
+              value={addRole}
+              onChange={(e) => setAddRole(e.target.value)}
+              style={{ display: 'block', padding: '6px 8px', width: '100%' }}
+            >
+              {ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
           <button type="submit" disabled={addSubmitting} style={{ marginTop: 0 }}>
             {addSubmitting ? 'Adding…' : 'Add user'}
           </button>
@@ -194,7 +241,20 @@ export function AdminUsers({ apiBaseUrl }) {
                 <td style={{ padding: '8px 12px' }}>{u.email}</td>
                 <td style={{ padding: '8px 12px' }}>{u.display_name || '—'}</td>
                 <td style={{ padding: '8px 12px' }}>{u.status || '—'}</td>
-                <td style={{ padding: '8px 12px' }}>{u.global_role || '—'}</td>
+                <td style={{ padding: '8px 12px' }}>
+                  <span title={u.global_role}>{roleLabel(u.global_role)}</span>
+                  <select
+                    value={u.global_role}
+                    onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                    disabled={isLastAdmin || roleUpdatingId === u.id}
+                    title={isLastAdmin ? 'Cannot demote the last admin' : 'Change role'}
+                    style={{ marginLeft: '8px', fontSize: '12px', padding: '2px 6px', maxWidth: '160px' }}
+                  >
+                    {ROLE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </td>
                 <td style={{ padding: '8px 12px' }}>{(u.session_ids && u.session_ids.length) || 0}</td>
                 <td style={{ padding: '8px 12px' }}>
                   {removeId === u.id ? (

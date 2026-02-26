@@ -16,7 +16,7 @@ type SessionInviteRequest struct {
 	Email  string `json:"email"`
 }
 
-// SessionInvite handles POST /api/sessions/:id/invite (RequireAuth). Inviter must be session creator or an invited participant.
+// SessionInvite handles POST /api/sessions/:id/invite (RequireAuth). Inviter must be session creator, an invited participant, or a global admin.
 func (h *Handlers) SessionInvite(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -72,10 +72,11 @@ func (h *Handlers) SessionInvite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
-	// Inviter must be creator (created_by matches current user email) or an invited participant
+	// Inviter must be creator, an invited participant, or a global admin
 	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
 	invited, _ := h.DB.UserInvitedToSession(ctx, sessionID, user.ID)
-	if !isCreator && !invited {
+	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
+	if !isCreator && !invited && !isAdmin {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only session creator or an invited participant can invite"})
 		return
 	}

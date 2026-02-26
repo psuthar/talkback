@@ -125,7 +125,7 @@ func (h *Handlers) AuthSignup(w http.ResponseWriter, r *http.Request) {
 		Email:       email,
 		DisplayName: displayName,
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator, // default for signup; bootstrap can override to admin
 	}
 	if auth.Config.BootstrapAdminEmail != "" && email == auth.Config.BootstrapAdminEmail {
 		count, _ := h.DB.CountUsers(ctx)

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -96,7 +97,22 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 		for _, s := range all {
 			out = append(out, SessionWithRole{Session: s, MyRole: "admin"})
 		}
+	} else if user.GlobalRole == models.GlobalRoleParticipant {
+		// Participant role: only sessions they are invited to (no created sessions).
+		invited, err := h.DB.ListSessionsForInvitedUser(ctx, user.ID)
+		if err != nil {
+			log.Printf("ListSessions (invited): %v", err)
+			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		for _, s := range invited {
+			out = append(out, SessionWithRole{Session: s, MyRole: "participant"})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Session.UpdatedAt.After(out[j].Session.UpdatedAt)
+		})
 	} else {
+		// Creator (or legacy user): created + invited
 		created, err := h.DB.ListSessionsByCreatedBy(ctx, user.Email)
 		if err != nil {
 			log.Printf("ListSessions (created): %v", err)
@@ -138,10 +154,19 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// CreateSession creates a new session (no longer requires artifact)
+// CreateSession creates a new session (RequireAuth; requires admin or creator role).
 func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !user.GlobalRole.CanCreateSessions() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "your role does not allow creating sessions"})
 		return
 	}
 
@@ -157,11 +182,12 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create session
+	createdBy := user.Email
+	// Create session (creator is the authenticated user)
 	session := &models.Session{
 		ID:        uuid.New(),
 		Title:     req.Title,
-		CreatedBy: req.CreatedBy,
+		CreatedBy: &createdBy,
 		Status:    models.SessionStatusOpen,
 	}
 
@@ -601,6 +627,23 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK) // 200 OK for cached response
 		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Enforce per-session question limit
+	count, err := h.DB.CountQuestionsBySessionID(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("Error counting session questions: %v", err)
+		http.Error(w, "Failed to check question limit", http.StatusInternalServerError)
+		return
+	}
+	if count >= auth.Config.MaxQuestionsPerSession {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "session question limit reached",
+			"max_questions":  auth.Config.MaxQuestionsPerSession,
+		})
 		return
 	}
 

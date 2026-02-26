@@ -414,9 +414,16 @@ const (
 type GlobalRole string
 
 const (
-	GlobalRoleUser  GlobalRole = "user"
-	GlobalRoleAdmin GlobalRole = "admin"
+	GlobalRoleUser       GlobalRole = "user"        // legacy; treat as creator
+	GlobalRoleAdmin      GlobalRole = "admin"
+	GlobalRoleCreator    GlobalRole = "creator"
+	GlobalRoleParticipant GlobalRole = "participant"
 )
+
+// CanCreateSessions returns true for admin and creator roles.
+func (r GlobalRole) CanCreateSessions() bool {
+	return r == GlobalRoleAdmin || r == GlobalRoleCreator || r == GlobalRoleUser
+}
 
 type User struct {
 	ID          uuid.UUID  `json:"id"`

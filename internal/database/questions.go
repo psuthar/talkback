@@ -96,6 +96,16 @@ func (db *DB) GetQuestionByID(ctx context.Context, questionID uuid.UUID) (*model
 	return question, nil
 }
 
+// CountQuestionsBySessionID returns the number of questions for a session.
+func (db *DB) CountQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM questions WHERE session_id = $1`, sessionID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count questions: %w", err)
+	}
+	return n, nil
+}
+
 // GetQuestionsByArtifactID retrieves questions for an artifact with their latest answers
 func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID, limit int) ([]*models.Question, []*models.Answer, error) {
 	if limit <= 0 {

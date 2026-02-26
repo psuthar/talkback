@@ -138,10 +138,19 @@ func getZoomTranscriptStatus(accessToken, meetingID string) (status string, rec 
 	return utils.TranscriptStatusNotAvailable, rec, nil, ""
 }
 
-// CreateSessionFromZoom handles POST /sessions/from-zoom
+// CreateSessionFromZoom handles POST /sessions/from-zoom (RequireAuth; requires admin or creator role).
 func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSONError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !user.GlobalRole.CanCreateSessions() {
+		writeJSONError(w, "your role does not allow creating sessions", http.StatusForbidden)
 		return
 	}
 	creatorIdentity := r.Header.Get("X-Creator-Identity")
@@ -150,6 +159,10 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 	}
 	if creatorIdentity == "" {
 		writeJSONError(w, "Creator identity required (X-Creator-Identity header or creator_identity query)", http.StatusUnauthorized)
+		return
+	}
+	if creatorIdentity != user.Email {
+		writeJSONError(w, "creator identity must match the authenticated user", http.StatusForbidden)
 		return
 	}
 

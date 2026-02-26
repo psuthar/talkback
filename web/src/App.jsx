@@ -49,7 +49,6 @@ function App() {
 
   // Phase 3: Session states
   const [sessionTitle, setSessionTitle] = useState('')
-  const [sessionCreatedBy, setSessionCreatedBy] = useState('anonymous')
   const [sessions, setSessions] = useState([])
   const [currentSession, setCurrentSession] = useState(null)
   const [participantRef, setParticipantRef] = useState('anonymous')
@@ -327,6 +326,13 @@ function App() {
       })
     return () => { cancelled = true }
   }, [apiBaseUrl])
+
+  // When user is participant (join-only), default to "Use Existing Session" and keep them there
+  useEffect(() => {
+    if (authUser?.global_role === 'participant') {
+      setSessionMode('select')
+    }
+  }, [authUser?.global_role])
 
   // Fetch "my sessions" when in creator mode with no session and user is logged in
   useEffect(() => {
@@ -1079,9 +1085,9 @@ function App() {
       const response = await fetch(`${apiBaseUrl}/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          title: sessionTitle,
-          created_by: sessionCreatedBy || undefined
+          title: sessionTitle
         })
       })
 
@@ -1099,9 +1105,9 @@ function App() {
       const data = await response.json()
       setCreateSessionFeedback({ type: 'success', message: `Session created! ID: ${data.id}` })
       setSessionTitle('')
-      // Set currentUser to match the created_by so we're in creator mode
-      if (sessionCreatedBy) {
-        setCurrentUser(sessionCreatedBy)
+      // Creator is the logged-in user; set currentUser so UI shows creator mode
+      if (authUser?.email) {
+        setCurrentUser(authUser.email)
       }
       // Automatically open the newly created session in creator mode
       await openSession(data.id, 'creator')
@@ -1156,7 +1162,7 @@ function App() {
     try {
       const headers = { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity }
       const body = JSON.stringify({ zoom_url: url, title: zoomTitle?.trim() || undefined })
-      const response = await fetch(`${apiBaseUrl}/sessions/from-zoom`, { method: 'POST', headers, body })
+      const response = await fetch(`${apiBaseUrl}/sessions/from-zoom`, { method: 'POST', headers, body, credentials: 'include' })
       const text = await response.text()
       let data = {}
       try {
@@ -1242,6 +1248,7 @@ function App() {
       const res = await fetch(`${apiBaseUrl}/api/zoom/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        credentials: 'include',
         body: JSON.stringify({
           title: rec.meeting_topic || 'Zoom Recording',
           meeting_uuid: rec.meeting_uuid,
@@ -1924,6 +1931,8 @@ function App() {
   const isAdminMode = urlMode === 'admin'
   const showAdminView = isAdminMode && authUser?.global_role === 'admin'
   const showAdminForbidden = isAdminMode && (!authUser || authUser.global_role !== 'admin')
+  // Participant role can only join sessions; hide create-session UI (create form, Zoom, mode toggle).
+  const canCreateSessions = !authUser || authUser.global_role !== 'participant'
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view'
   // Use session from URL so participant tab can connect to WebSocket before openSession() completes
   const urlSessionId = urlParams.get('session')
@@ -2252,7 +2261,8 @@ function App() {
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
-            {/* Zoom: Connect / Disconnect and Create session from Zoom */}
+            {/* Zoom: Connect / Disconnect and Create session from Zoom (hidden for participant role) */}
+            {canCreateSessions && (
             <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
               <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
               {zoomConnection ? (
@@ -2417,7 +2427,10 @@ function App() {
                 </div>
               )}
             </div>
+            )}
 
+            {/* Select Mode: only show toggle when user can create sessions; participants see only "Use Existing Session" */}
+            {canCreateSessions && (
             <div style={{ marginBottom: '15px' }}>
               <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
                 Select Mode:
@@ -2451,8 +2464,9 @@ function App() {
                 </button>
               </div>
             </div>
+            )}
 
-            {sessionMode === 'create' ? (
+            {sessionMode === 'create' && canCreateSessions ? (
               <div>
                 <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
                   <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Create New Session</div>
@@ -2463,16 +2477,6 @@ function App() {
                       value={sessionTitle}
                       onChange={(e) => setSessionTitle(e.target.value)}
                       placeholder="e.g., Weekly review - Jan 2026"
-                      style={{ marginBottom: '10px' }}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>Created By (optional):</label>
-                    <input
-                      type="text"
-                      value={sessionCreatedBy}
-                      onChange={(e) => setSessionCreatedBy(e.target.value)}
-                      placeholder="anonymous"
                       style={{ marginBottom: '10px' }}
                     />
                   </div>
@@ -2496,7 +2500,9 @@ function App() {
                     ) : mySessionsError ? (
                       <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{mySessionsError}</div>
                     ) : mySessions.length === 0 ? (
-                      <div className="info" style={{ marginTop: '8px' }}>No sessions. Create one via Zoom above, or get invited to a session.</div>
+                      <div className="info" style={{ marginTop: '8px' }}>
+                        {canCreateSessions ? 'No sessions. Create one via Zoom above, or get invited to a session.' : 'No sessions. You can only join sessions you\'re invited to.'}
+                      </div>
                     ) : (
                       <div style={{ maxHeight: '280px', overflowY: 'auto', marginTop: '8px' }}>
                         {mySessions.map((item) => {
@@ -2597,7 +2603,7 @@ function App() {
                     </button>
                   </div>
                 )}
-                {!artifactId && (
+                {!artifactId && canCreateSessions && (
                   <div className="info" style={{ marginTop: '10px' }}>
                     Create an artifact below to see its sessions, or enter a session ID directly above.
                   </div>
@@ -2683,8 +2689,8 @@ function App() {
         </>
       )}
 
-      {/* Phase 3: Sessions Section - Hidden when session is selected, shown in artifact view, only in creator mode */}
-      {artifactId && viewMode === 'artifact' && !currentSession && !isParticipantMode && (
+      {/* Phase 3: Sessions Section - Hidden when session is selected, shown in artifact view, only when user can create sessions */}
+      {artifactId && viewMode === 'artifact' && !currentSession && !isParticipantMode && canCreateSessions && (
         <div className="section">
           <h2>Phase 3: Sessions</h2>
           
@@ -2695,13 +2701,6 @@ function App() {
               value={sessionTitle}
               onChange={(e) => setSessionTitle(e.target.value)}
               placeholder="Session title (e.g., Weekly review - Jan 2026)"
-              style={{ marginBottom: '10px' }}
-            />
-            <input
-              type="text"
-              value={sessionCreatedBy}
-              onChange={(e) => setSessionCreatedBy(e.target.value)}
-              placeholder="Created by (optional)"
               style={{ marginBottom: '10px' }}
             />
             <button onClick={createSession} disabled={!sessionTitle || loading}>

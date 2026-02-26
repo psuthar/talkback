@@ -24,12 +24,25 @@ type ZoomImportResponse struct {
 	State  string `json:"state"`
 }
 
-// ZoomImport creates a session and starts Zoom import in one request (avoids "Session not found" from two-step create then import).
+// ZoomImport creates a session and starts Zoom import in one request (RequireAuth; requires admin or creator role).
 func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(w).Encode(map[string]string{"message": "Method not allowed"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"code": "unauthorized", "message": "unauthorized"})
+		return
+	}
+	if !user.GlobalRole.CanCreateSessions() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"code": "forbidden", "message": "your role does not allow creating sessions"})
 		return
 	}
 	creatorIdentity := r.Header.Get("X-Creator-Identity")
@@ -40,6 +53,12 @@ func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"code": "zoom_not_connected", "message": "creator_identity required"})
+		return
+	}
+	if creatorIdentity != user.Email {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"code": "forbidden", "message": "creator identity must match the authenticated user"})
 		return
 	}
 	if _, _, err := h.GetValidZoomAccessToken(r, creatorIdentity); err != nil {

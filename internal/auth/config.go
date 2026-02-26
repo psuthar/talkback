@@ -17,13 +17,15 @@ type ConfigStruct struct {
 	BootstrapAdminEmail     string // if set and matches first signup/login, set global_role=admin; also used for auto-create at startup
 	BootstrapAdminPassword  string // if set with BootstrapAdminEmail, auto-create admin account at startup when missing
 	AllowedOrigins          []string
+	MaxQuestionsPerSession  int    // max questions allowed per session (default 10); set via TB_MAX_QUESTIONS_PER_SESSION
 }
 
 func loadConfig() ConfigStruct {
 	c := ConfigStruct{
-		SessionCookieName: "tb_login",
-		SessionTTLHours:   168, // 7 days
-		CookieSecure:      false,
+		SessionCookieName:      "tb_login",
+		SessionTTLHours:        168, // 7 days
+		CookieSecure:           false,
+		MaxQuestionsPerSession: 10,
 	}
 	if v := os.Getenv("TB_SESSION_COOKIE_NAME"); v != "" {
 		c.SessionCookieName = v
@@ -55,6 +57,11 @@ func loadConfig() ConfigStruct {
 			if o != "" {
 				c.AllowedOrigins = append(c.AllowedOrigins, o)
 			}
+		}
+	}
+	if v := os.Getenv("TB_MAX_QUESTIONS_PER_SESSION"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.MaxQuestionsPerSession = n
 		}
 	}
 	// Fallback: use CORS_ALLOWED_ORIGINS so one env var works for both CORS and cookie SameSite on Render

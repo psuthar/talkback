@@ -38,7 +38,7 @@ func TestAuthSignup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "test@example.com", me["email"])
 	assert.Equal(t, "Test User", me["display_name"])
-	assert.Equal(t, "user", me["global_role"])
+	assert.Equal(t, "creator", me["global_role"])
 	assert.Equal(t, "active", me["status"])
 	assert.NotEmpty(t, me["id"])
 
@@ -66,7 +66,7 @@ func TestAuthLogin_BadPassword(t *testing.T) {
 		Email:       "login@example.com",
 		DisplayName: "Login User",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, user))
 	hash, _ := auth.HashPassword("correct")
@@ -109,7 +109,7 @@ func TestAuthMe_WithValidSession(t *testing.T) {
 		Email:       "me@example.com",
 		DisplayName: "Me User",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, user))
 	expiresAt := time.Now().Add(24 * time.Hour)
@@ -145,7 +145,7 @@ func TestAuthMe_DisabledUserBlocked(t *testing.T) {
 		Email:       "disabled@example.com",
 		DisplayName: "Disabled User",
 		Status:      models.UserStatusDisabled,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, user))
 	expiresAt := time.Now().Add(24 * time.Hour)

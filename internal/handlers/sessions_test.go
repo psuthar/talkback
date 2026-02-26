@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,16 +21,38 @@ func TestCreateSession(t *testing.T) {
 	h, cleanup := setupTestHandlers(t)
 	defer cleanup()
 
-	t.Run("creates session with title only", func(t *testing.T) {
-		reqBody := map[string]interface{}{
-			"title": "Weekly Review",
-		}
+	t.Run("returns 401 when not authenticated", func(t *testing.T) {
+		reqBody := map[string]interface{}{"title": "Weekly Review"}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
-		h.CreateSession(w, req)
+		h.RequireAuth(h.CreateSession)(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("returns 403 when authenticated as participant", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader([]byte(`{"title":"Weekly Review"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		addParticipantSessionCookie(t, h, req)
+		w := httptest.NewRecorder()
+
+		h.RequireAuth(h.CreateSession)(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("creates session with title when authenticated as creator", func(t *testing.T) {
+		reqBody := map[string]interface{}{"title": "Weekly Review"}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		creator := addUserSessionCookie(t, h, req, "creator@example.com")
+		w := httptest.NewRecorder()
+
+		h.RequireAuth(h.CreateSession)(w, req)
 
 		assert.Equal(t, http.StatusCreated, w.Code)
 		var response CreateSessionResponse
@@ -38,9 +61,11 @@ func TestCreateSession(t *testing.T) {
 		assert.NotEmpty(t, response.ID)
 		assert.Equal(t, "Weekly Review", response.Title)
 		assert.Equal(t, "open", response.Status)
+		require.NotNil(t, response.CreatedBy)
+		assert.Equal(t, creator.Email, *response.CreatedBy)
 	})
 
-	t.Run("creates session with title and created_by", func(t *testing.T) {
+	t.Run("creates session with title and created_by (body ignored, uses auth user)", func(t *testing.T) {
 		reqBody := map[string]interface{}{
 			"title":      "Design Review",
 			"created_by": "Paresh",
@@ -48,9 +73,10 @@ func TestCreateSession(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		creator := addUserSessionCookie(t, h, req, "creator2@example.com")
 		w := httptest.NewRecorder()
 
-		h.CreateSession(w, req)
+		h.RequireAuth(h.CreateSession)(w, req)
 
 		assert.Equal(t, http.StatusCreated, w.Code)
 		var response CreateSessionResponse
@@ -58,8 +84,8 @@ func TestCreateSession(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEmpty(t, response.ID)
 		assert.Equal(t, "Design Review", response.Title)
-		assert.NotNil(t, response.CreatedBy)
-		assert.Equal(t, "Paresh", *response.CreatedBy)
+		require.NotNil(t, response.CreatedBy)
+		assert.Equal(t, creator.Email, *response.CreatedBy)
 		assert.Equal(t, "open", response.Status)
 	})
 
@@ -68,9 +94,10 @@ func TestCreateSession(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/sessions", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addUserSessionCookie(t, h, req, "creator3@example.com")
 		w := httptest.NewRecorder()
 
-		h.CreateSession(w, req)
+		h.RequireAuth(h.CreateSession)(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -504,6 +531,47 @@ func TestAskSessionQuestion(t *testing.T) {
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+}
+
+func TestAskSessionQuestion_LimitReached(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+	db := h.DB
+	ctx := context.Background()
+
+	oldMax := auth.Config.MaxQuestionsPerSession
+	auth.Config.MaxQuestionsPerSession = 2
+	defer func() { auth.Config.MaxQuestionsPerSession = oldMax }()
+
+	session := createTestSessionForHandlers(t, h.DB, "Limit Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
+	require.NoError(t, err)
+
+	// Create 2 questions directly so session is at limit
+	for i := 0; i < 2; i++ {
+		q := &models.Question{
+			ID:             uuid.New(),
+			ArtifactID:     artifact.ID,
+			SessionID:      session.ID,
+			QuestionText:   fmt.Sprintf("Question %d?", i+1),
+			QuestionSource: models.QuestionSourceText,
+		}
+		require.NoError(t, db.CreateQuestion(ctx, q))
+	}
+
+	reqBody := map[string]interface{}{"question_text": "Third question?"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/questions", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.AskSessionQuestion(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "session question limit reached", resp["error"])
+	assert.EqualValues(t, 2, resp["max_questions"])
 }
 
 func TestGetSessionQuestions(t *testing.T) {

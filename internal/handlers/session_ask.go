@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
@@ -151,6 +152,25 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+
+	// Enforce per-session question limit
+	count, err := h.DB.CountQuestionsBySessionID(ctx, sessionID)
+	if err != nil {
+		log.Printf("SessionAsk CountQuestionsBySessionID: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to check question limit"})
+		return
+	}
+	if count >= auth.Config.MaxQuestionsPerSession {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "session question limit reached",
+			"max_questions":  auth.Config.MaxQuestionsPerSession,
+		})
+		return
 	}
 
 	// Create question

@@ -47,7 +47,30 @@ func addUserSessionCookie(t *testing.T, h *Handlers, req *http.Request, email st
 		Email:       email,
 		DisplayName: "User",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, u))
+	session := &models.LoginSession{
+		ID:        uuid.New(),
+		UserID:    u.ID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, session))
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: session.ID.String()})
+	return u
+}
+
+// addParticipantSessionCookie creates a participant (join-only) user and login session, adds the session cookie to req.
+func addParticipantSessionCookie(t *testing.T, h *Handlers, req *http.Request) *models.User {
+	t.Helper()
+	ctx := context.Background()
+	u := &models.User{
+		ID:          uuid.New(),
+		Email:       "participant@example.com",
+		DisplayName: "Participant",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleParticipant,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, u))
 	session := &models.LoginSession{
@@ -97,7 +120,7 @@ func TestAdminUsers_GET_Success(t *testing.T) {
 		Email:       "existing@example.com",
 		DisplayName: "Existing",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, u))
 
@@ -118,7 +141,7 @@ func TestAdminUsers_GET_Success(t *testing.T) {
 			found = true
 			assert.Equal(t, "Existing", item["display_name"])
 			assert.Equal(t, "active", item["status"])
-			assert.Equal(t, "user", item["global_role"])
+			assert.Equal(t, "creator", item["global_role"])
 			break
 		}
 	}
@@ -148,7 +171,7 @@ func TestAdminUsers_POST_CreatesUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "newuser@example.com", me["email"])
 	assert.Equal(t, "New User", me["display_name"])
-	assert.Equal(t, "user", me["global_role"])
+	assert.Equal(t, "creator", me["global_role"])
 	assert.Equal(t, "active", me["status"])
 	assert.NotEmpty(t, me["id"])
 	_, hasPassword := me["password"]
@@ -165,7 +188,7 @@ func TestAdminUsers_POST_ConflictWhenEmailExists(t *testing.T) {
 		Email:       "dup@example.com",
 		DisplayName: "Existing",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, existing))
 
@@ -195,7 +218,7 @@ func TestAdminUsers_DELETE_Success(t *testing.T) {
 		Email:       "todelete@example.com",
 		DisplayName: "To Delete",
 		Status:      models.UserStatusActive,
-		GlobalRole:  models.GlobalRoleUser,
+		GlobalRole:  models.GlobalRoleCreator,
 	}
 	require.NoError(t, h.DB.CreateUser(ctx, toDelete))
 
@@ -271,4 +294,103 @@ func TestAdminUsers_DELETE_LastAdmin_Forbidden(t *testing.T) {
 	err := json.NewDecoder(w.Body).Decode(&body)
 	require.NoError(t, err)
 	assert.Contains(t, body["error"], "last admin")
+}
+
+func TestAdminUsers_POST_WithRoleParticipant(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+
+	body := map[string]interface{}{
+		"email":        "participant@example.com",
+		"display_name": "Participant User",
+		"password":     "secret123",
+		"global_role":  "participant",
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/users", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	addAdminSessionCookie(t, h, req)
+	w := httptest.NewRecorder()
+
+	h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var me map[string]interface{}
+	err := json.NewDecoder(w.Body).Decode(&me)
+	require.NoError(t, err)
+	assert.Equal(t, "participant@example.com", me["email"])
+	assert.Equal(t, "participant", me["global_role"])
+}
+
+func TestAdminUsers_PATCH_UpdateRole(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	u := &models.User{
+		ID:          uuid.New(),
+		Email:       "patchme@example.com",
+		DisplayName: "Patch Me",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleCreator,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, u))
+
+	body := map[string]string{"global_role": "participant"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+u.ID.String(), bytes.NewReader(b))
+	req.URL.Path = "/api/admin/users/" + u.ID.String()
+	req.Header.Set("Content-Type", "application/json")
+	addAdminSessionCookie(t, h, req)
+	w := httptest.NewRecorder()
+
+	h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var payload map[string]interface{}
+	err := json.NewDecoder(w.Body).Decode(&payload)
+	require.NoError(t, err)
+	assert.Equal(t, "participant", payload["global_role"])
+
+	got, _ := h.DB.GetUserByID(ctx, u.ID)
+	require.NotNil(t, got)
+	assert.Equal(t, models.GlobalRoleParticipant, got.GlobalRole)
+}
+
+func TestAdminUsers_PATCH_LastAdmin_Forbidden(t *testing.T) {
+	h, cleanup := setupTestHandlers(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	admin := &models.User{
+		ID:          uuid.New(),
+		Email:       "onlyadmin@example.com",
+		DisplayName: "Only Admin",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleAdmin,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, admin))
+	sess := &models.LoginSession{
+		ID:        uuid.New(),
+		UserID:    admin.ID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, sess))
+
+	body := map[string]string{"global_role": "creator"}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+admin.ID.String(), bytes.NewReader(b))
+	req.URL.Path = "/api/admin/users/" + admin.ID.String()
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: sess.ID.String()})
+	w := httptest.NewRecorder()
+
+	h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	var resBody map[string]string
+	err := json.NewDecoder(w.Body).Decode(&resBody)
+	require.NoError(t, err)
+	assert.Contains(t, resBody["error"], "last admin")
 }
