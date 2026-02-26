@@ -281,7 +281,7 @@ func TruncateTables(t *testing.T, pool *pgxpool.Pool) {
 	}
 	defer tx.Rollback(ctx)
 
-	tables := []string{"session_events", "session_participants", "sessions", "answers", "questions", "video_sources", "materials", "artifacts"}
+	tables := []string{"session_events", "session_participants", "session_invitations", "sessions", "answers", "questions", "video_sources", "materials", "artifacts", "login_sessions", "password_credentials", "users"}
 	for _, table := range tables {
 		_, err := tx.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s CASCADE", table))
 		if err != nil {

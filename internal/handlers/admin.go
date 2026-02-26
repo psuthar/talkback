@@ -117,6 +117,20 @@ func (h *Handlers) ResetAllData(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted["artifacts"] = count
 
+	// Delete session invitations (references sessions and users)
+	count, err = h.DB.DeleteAllSessionInvitations(ctx)
+	if err != nil {
+		log.Printf("Error deleting session_invitations: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ResetErrorResponse{
+			Error:   "internal_error",
+			Message: fmt.Sprintf("Failed to delete session_invitations: %v", err),
+		})
+		return
+	}
+	deleted["session_invitations"] = count
+
 	// Optionally delete uploaded files
 	if deleteFiles {
 		uploadsDir := "./data/uploads"

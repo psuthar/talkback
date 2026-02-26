@@ -84,6 +84,108 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 	return session, nil
 }
 
+// ListSessionsByCreatedBy returns sessions where created_by equals the given string, ordered by updated_at DESC.
+func (db *DB) ListSessionsByCreatedBy(ctx context.Context, createdBy string) ([]*models.Session, error) {
+	query := `
+		SELECT id, title, created_by, status, source_provider, source_reference_url,
+			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			created_at, updated_at
+		FROM sessions
+		WHERE created_by = $1
+		ORDER BY updated_at DESC
+	`
+	rows, err := db.Pool.Query(ctx, query, createdBy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions by created_by: %w", err)
+	}
+	defer rows.Close()
+	return scanSessionRows(rows)
+}
+
+// ListSessionsForInvitedUser returns sessions the user is invited to (via session_invitations), ordered by updated_at DESC.
+func (db *DB) ListSessionsForInvitedUser(ctx context.Context, userID uuid.UUID) ([]*models.Session, error) {
+	query := `
+		SELECT s.id, s.title, s.created_by, s.status, s.source_provider, s.source_reference_url,
+			COALESCE(s.index_status, 'none'), s.index_updated_at, s.processing_state, s.processing_updated_at,
+			s.created_at, s.updated_at
+		FROM sessions s
+		INNER JOIN session_invitations si ON s.id = si.session_id
+		WHERE si.user_id = $1
+		ORDER BY s.updated_at DESC
+	`
+	rows, err := db.Pool.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions for invited user: %w", err)
+	}
+	defer rows.Close()
+	return scanSessionRows(rows)
+}
+
+// ListAllSessions returns all sessions ordered by updated_at DESC (admin).
+func (db *DB) ListAllSessions(ctx context.Context) ([]*models.Session, error) {
+	query := `
+		SELECT id, title, created_by, status, source_provider, source_reference_url,
+			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			created_at, updated_at
+		FROM sessions
+		ORDER BY updated_at DESC
+	`
+	rows, err := db.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list all sessions: %w", err)
+	}
+	defer rows.Close()
+	return scanSessionRows(rows)
+}
+
+// scanSessionRows scans session rows (shared by ListSessionsByCreatedBy, ListSessionsForInvitedUser, ListAllSessions).
+func scanSessionRows(rows interface {
+	Next() bool
+	Scan(dest ...interface{}) error
+	Err() error
+}) ([]*models.Session, error) {
+	var sessions []*models.Session
+	for rows.Next() {
+		session := &models.Session{}
+		var sourceProviderStr, sourceRefURL, processingState *string
+		var indexUpdatedAt, processingUpdatedAt *time.Time
+		err := rows.Scan(
+			&session.ID,
+			&session.Title,
+			&session.CreatedBy,
+			&session.Status,
+			&sourceProviderStr,
+			&sourceRefURL,
+			&session.IndexStatus,
+			&indexUpdatedAt,
+			&processingState,
+			&processingUpdatedAt,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+		if sourceProviderStr != nil {
+			session.SourceProvider = models.SessionSourceProvider(*sourceProviderStr)
+		}
+		session.SourceReferenceURL = sourceRefURL
+		session.IndexUpdatedAt = indexUpdatedAt
+		if processingState != nil {
+			session.ProcessingState = *processingState
+		}
+		session.ProcessingUpdatedAt = processingUpdatedAt
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating sessions: %w", err)
+	}
+	if sessions == nil {
+		sessions = []*models.Session{}
+	}
+	return sessions, nil
+}
+
 // GetArtifactsBySessionID retrieves all artifacts for a session
 func (db *DB) GetArtifactsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.Artifact, error) {
 	query := `

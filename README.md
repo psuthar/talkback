@@ -353,6 +353,13 @@ Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is no
 - **Frontend:** Ensure `VITE_API_BASE_URL` is set to your API URL so the app and docx viewer (mammoth) fetch from the API. `mammoth` is in `dependencies` and is installed by `npm ci`; commit `package-lock.json` so Render installs it.  
 - **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
 
+**TalkBack Auth (users + login sessions)**  
+- Native user accounts and cookie-based sessions. Endpoints: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me` (requires auth).
+- Cookie name and TTL: `TB_SESSION_COOKIE_NAME` (default `tb_login`), `TB_SESSION_TTL_HOURS` (default 168). For cross-origin cookies set `TB_COOKIE_SECURE=true` and optionally `TB_COOKIE_DOMAIN`.
+- First-user admin bootstrap: set `TALKBACK_BOOTSTRAP_ADMIN_EMAIL`; the first signup or login with that email gets `global_role=admin`.
+- Origin check: for mutating auth routes (signup/login/logout), if the request sends an `Origin` header it must be in `TB_ALLOWED_ORIGINS` (comma-separated). Omit to allow any origin (e.g. local dev).
+- Frontend: call `GET /api/me` with `credentials: 'include'`; the app shows "Logged in as …" when the cookie is valid. For cross-site (e.g. Render frontend + API), set `CORS_ALLOWED_ORIGINS` to the frontend URL and use `corsWithCredentials` (already wired for `/api/auth/*` and `/api/me`).
+
 ### Environment Variables
 
 **Speech-to-text (UI mic — ask/answer with voice):**

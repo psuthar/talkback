@@ -4,6 +4,8 @@ import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
 import { MaterialsList } from './components/MaterialsList'
+import { AdminUsers } from './components/AdminUsers'
+import { LoginPage } from './components/LoginPage'
 import { getDefaultApiBaseUrl } from './config'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
@@ -59,6 +61,15 @@ function App() {
   // Creator/Participant Mode states
   const [currentUser, setCurrentUser] = useState('') // User identifier for mode detection
   const [sessionUserMode, setSessionUserMode] = useState(null) // 'creator' or 'participant' - from API
+
+  // TalkBack auth: logged-in user from GET /api/me (cookie-based)
+  const [authUser, setAuthUser] = useState(null) // { id, email, display_name, global_role, status } or null
+  const [authChecked, setAuthChecked] = useState(false) // true after first /api/me request completes
+
+  // My sessions (creator): list of sessions created by current user, for session selection
+  const [mySessions, setMySessions] = useState([])
+  const [mySessionsLoading, setMySessionsLoading] = useState(false)
+  const [mySessionsError, setMySessionsError] = useState('')
   
   // Response states - per-section feedback
   const [createArtifactFeedback, setCreateArtifactFeedback] = useState({ type: '', message: '' })
@@ -67,10 +78,12 @@ function App() {
   const [submitTranscriptFeedback, setSubmitTranscriptFeedback] = useState({ type: '', message: '' })
   const [askQuestionFeedback, setAskQuestionFeedback] = useState({ type: '', message: '' })
   const [questionHistoryFeedback, setQuestionHistoryFeedback] = useState({ type: '', message: '' })
-  const [resetFeedback, setResetFeedback] = useState({ type: '', message: '' })
   const [createSessionFeedback, setCreateSessionFeedback] = useState({ type: '', message: '' })
   const [joinSessionFeedback, setJoinSessionFeedback] = useState({ type: '', message: '' })
-  
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteFeedback, setInviteFeedback] = useState({ type: '', message: '' })
+  const [inviteLoading, setInviteLoading] = useState(false)
+
   // Global states
   const [loading, setLoading] = useState(false)
   const [currentAnswer, setCurrentAnswer] = useState(null)
@@ -86,8 +99,6 @@ function App() {
   const [apiHealth, setApiHealth] = useState(null) // null = unknown, true = healthy, false = unhealthy
   const [healthChecking, setHealthChecking] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
-  const [resetConfirmText, setResetConfirmText] = useState('')
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
   
   // Video player states
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -284,6 +295,89 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl])
+
+  // Fetch /api/me (TalkBack auth) when API URL changes — cookie-based, credentials: include
+  useEffect(() => {
+    if (!apiBaseUrl) {
+      setAuthUser(null)
+      setAuthChecked(true)
+      return
+    }
+    setAuthChecked(false)
+    let cancelled = false
+    fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/me`, { credentials: 'include' })
+      .then(res => {
+        if (cancelled) return
+        if (res.ok) return res.json()
+        setAuthUser(null)
+        return null
+      })
+      .then(data => {
+        if (!cancelled) {
+          if (data) setAuthUser(data)
+          else setAuthUser(null)
+          setAuthChecked(true)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuthUser(null)
+          setAuthChecked(true)
+        }
+      })
+    return () => { cancelled = true }
+  }, [apiBaseUrl])
+
+  // Fetch "my sessions" when in creator mode with no session and user is logged in
+  useEffect(() => {
+    if (!authUser || !apiBaseUrl || currentSession) {
+      if (!authUser && !currentSession) {
+        setMySessions([])
+        setMySessionsError('')
+      }
+      return
+    }
+    let cancelled = false
+    setMySessionsLoading(true)
+    setMySessionsError('')
+    const url = apiBaseUrl.replace(/\/$/, '') + '/api/sessions'
+    fetch(url, { credentials: 'include' })
+      .then(res => {
+        if (cancelled) return
+        if (res.status === 401) {
+          setMySessions([])
+          setMySessionsError('')
+          return []
+        }
+        if (!res.ok) {
+          throw new Error(res.statusText || 'Failed to load sessions')
+        }
+        return res.json()
+      })
+      .then(data => {
+        if (!cancelled && Array.isArray(data)) {
+          setMySessions(data) // [{ session, my_role }, ...]
+          setMySessionsError('')
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setMySessions([])
+          setMySessionsError(err?.message || 'Failed to load your sessions')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMySessionsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [authUser, apiBaseUrl, currentSession])
+
+  // Sync creator identity to logged-in user email so new sessions (e.g. from Zoom) show in "Your sessions"
+  useEffect(() => {
+    if (authUser?.email) {
+      setCreatorIdentity(authUser.email)
+    }
+  }, [authUser?.email])
 
   // Poll for transcript job status when videos are pending
   useEffect(() => {
@@ -1407,6 +1501,37 @@ function App() {
     }
   }
 
+  const inviteUserToSession = async () => {
+    const email = inviteEmail?.trim()?.toLowerCase()
+    if (!email || !currentSession?.session?.id) return
+    setInviteLoading(true)
+    setInviteFeedback({ type: '', message: '' })
+    try {
+      const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/sessions/${currentSession.session.id}/invite`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      })
+      const data = response.ok ? await response.json().catch(() => ({})) : await response.json().catch(() => ({}))
+      if (response.status === 201) {
+        setInviteEmail('')
+        setInviteFeedback({ type: 'success', message: 'Invitation sent.' })
+        setTimeout(() => setInviteFeedback({ type: '', message: '' }), 3000)
+      } else if (response.status === 404) {
+        setInviteFeedback({ type: 'error', message: 'No user with that email address. They need an account in the system first.' })
+      } else if (response.status === 409) {
+        setInviteFeedback({ type: 'error', message: 'That user is already invited.' })
+      } else {
+        setInviteFeedback({ type: 'error', message: (data && data.error) || 'Failed to send invitation.' })
+      }
+    } catch (err) {
+      setInviteFeedback({ type: 'error', message: err?.message || 'Failed to send invitation.' })
+    } finally {
+      setInviteLoading(false)
+    }
+  }
+
   const refetchSession = useCallback(async (overrideSessionId) => {
     const id = overrideSessionId ?? currentSession?.session?.id ?? currentSession?.id
     if (!id) return
@@ -1796,6 +1921,9 @@ function App() {
   // Check URL mode as fallback to determine if we're in participant mode
   const urlParams = new URLSearchParams(window.location.search)
   const urlMode = urlParams.get('mode')
+  const isAdminMode = urlMode === 'admin'
+  const showAdminView = isAdminMode && authUser?.global_role === 'admin'
+  const showAdminForbidden = isAdminMode && (!authUser || authUser.global_role !== 'admin')
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view'
   // Use session from URL so participant tab can connect to WebSocket before openSession() completes
   const urlSessionId = urlParams.get('session')
@@ -1920,6 +2048,23 @@ function App() {
     }
   }, [wsConnected, effectiveSessionId, wsUrl])
 
+  // Require login: show login page until auth is checked and user is logged in
+  if (!authChecked) {
+    return (
+      <div className="container" style={{ padding: '40px', textAlign: 'center' }}>
+        <p style={{ color: '#666' }}>Loading…</p>
+      </div>
+    )
+  }
+  if (!authUser) {
+    return (
+      <LoginPage
+        apiBaseUrl={apiBaseUrl}
+        onLoginSuccess={(user) => setAuthUser(user)}
+      />
+    )
+  }
+
   return (
     <div className="container">
       {zoomImportToast && (
@@ -1943,6 +2088,33 @@ function App() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ margin: 0 }}>TalkBack Phase 3 - Web UI</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* TalkBack auth: logged-in state + Log out */}
+          <span style={{ fontSize: '13px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            Logged in as {authUser.display_name || authUser.email}
+            {authUser.global_role === 'admin' && (
+              <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#1976d2', color: '#fff', fontSize: '11px', fontWeight: '600' }}>Admin</span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+              } catch (_) { /* ignore */ }
+              setAuthUser(null)
+            }}
+            style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555' }}
+          >
+            Log out
+          </button>
+          {/* Admin: link on all screens when user is admin; Back to app when in admin mode */}
+          {authUser?.global_role === 'admin' && (
+            showAdminView ? (
+              <a href="?" style={{ fontSize: '14px', fontWeight: '600' }}>Back to app</a>
+            ) : (
+              <a href="?mode=admin" style={{ fontSize: '14px', fontWeight: '600' }}>Admin</a>
+            )
+          )}
           {/* Debug mode toggle - Upper right */}
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer', userSelect: 'none' }}>
             <input
@@ -1991,7 +2163,16 @@ function App() {
           )}
         </div>
       </div>
-      
+
+      {showAdminView && <AdminUsers apiBaseUrl={apiBaseUrl} />}
+      {showAdminForbidden && (
+        <div className="section" style={{ padding: '24px' }}>
+          <p className="error">Forbidden. Admin access required.</p>
+          <a href="?">Back to app</a>
+        </div>
+      )}
+      {!showAdminView && !showAdminForbidden && (
+      <>
       {debugMode && (
         <div className="section">
           <div className="form-group">
@@ -2053,11 +2234,19 @@ function App() {
               ✓ Active Session: <span className="artifact-id">{currentSession.session.title}</span> (ID: {currentSession.session.id})
             </div>
           )}
+          {/* TalkBack auth /api/me */}
+          <div style={{ marginTop: '10px', fontSize: '13px' }}>
+            {authUser ? (
+              <span className="success">✓ Logged in: {authUser.display_name} ({authUser.email}) · {authUser.global_role} · {authUser.status}</span>
+            ) : (
+              <span className="info">Not logged in (GET /api/me returns 401 without cookie)</span>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Session Selector - Only shown in creator mode, not in participant mode */}
-      {!isParticipantMode && (
+      {/* Session Selector - when no session: show picker (all modes). When session and creator: show Active Session bar. */}
+      {(!currentSession || !isParticipantMode) && (
         <>
           <h2>Session Selection (Required)</h2>
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
@@ -2299,29 +2488,66 @@ function App() {
               </div>
             ) : (
               <div>
-                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Use Existing Session</div>
-                  <div className="form-group">
-                    <label>Enter Session ID:</label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <input
-                        type="text"
-                        value={sessionIdInput}
-                        onChange={(e) => setSessionIdInput(e.target.value)}
-                        placeholder="Enter session UUID"
-                        style={{ flex: 1 }}
-                      />
-                      <button onClick={() => loadSessionById('creator')} disabled={!sessionIdInput.trim() || loading}>
-                        Load Session
-                      </button>
-                    </div>
+                {authUser && (
+                  <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Sessions</div>
+                    {mySessionsLoading ? (
+                      <div className="info" style={{ marginTop: '8px' }}>Loading sessions…</div>
+                    ) : mySessionsError ? (
+                      <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{mySessionsError}</div>
+                    ) : mySessions.length === 0 ? (
+                      <div className="info" style={{ marginTop: '8px' }}>No sessions. Create one via Zoom above, or get invited to a session.</div>
+                    ) : (
+                      <div style={{ maxHeight: '280px', overflowY: 'auto', marginTop: '8px' }}>
+                        {mySessions.map((item) => {
+                          const session = item.session || item
+                          const myRole = item.my_role || (session.created_by === authUser?.email ? 'creator' : 'participant')
+                          return (
+                            <div
+                              key={session.id}
+                              style={{
+                                padding: '10px',
+                                marginBottom: '8px',
+                                border: '1px solid #ddd',
+                                borderRadius: '5px',
+                                cursor: 'pointer',
+                                backgroundColor: session.status === 'open' ? '#e8f5e9' : '#f5f5f5',
+                                transition: 'background-color 0.2s'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? '#c8e6c9' : '#e0e0e0' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? '#e8f5e9' : '#f5f5f5' }}
+                              onClick={() => openSession(session.id, myRole === 'participant' ? 'participant' : 'creator')}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
+                                <span style={{ fontWeight: 'bold' }}>{session.title || 'Untitled session'}</span>
+                                <span
+                                  style={{
+                                    fontSize: '10px',
+                                    padding: '2px 6px',
+                                    borderRadius: '4px',
+                                    backgroundColor: myRole === 'admin' ? '#1976d2' : myRole === 'creator' ? '#2e7d32' : '#757575',
+                                    color: '#fff',
+                                    fontWeight: '600',
+                                    textTransform: 'capitalize'
+                                  }}
+                                >
+                                  {myRole}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '11px', color: '#666', marginBottom: '5px' }}>
+                                ID: <code style={{ fontSize: '10px' }}>{session.id}</code>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#666' }}>
+                                Status: <span style={{ color: session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>{session.status}</span>
+                                {session.updated_at && ` · Updated ${new Date(session.updated_at).toLocaleDateString()}`}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
-                  {sessionSelectFeedback.message && (
-                    <div className={sessionSelectFeedback.type} style={{ marginTop: '10px' }}>
-                      {sessionSelectFeedback.message}
-                    </div>
-                  )}
-                </div>
+                )}
 
                 {/* List sessions for current artifact */}
                 {artifactId && (
@@ -2383,8 +2609,23 @@ function App() {
           <div style={{ padding: '15px', backgroundColor: '#fff', borderRadius: '5px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   Active Session: {currentSession?.session?.title ?? 'Loading...'}
+                  {currentSession?.session && authUser?.email && (
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575',
+                        color: '#fff',
+                        fontWeight: '600',
+                        textTransform: 'capitalize'
+                      }}
+                    >
+                      {currentSession.session.created_by === authUser.email ? 'Creator' : 'Participant'}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>
                   ID: <code style={{ fontSize: '11px' }}>{currentSession?.session?.id ?? '—'}</code> | 
@@ -2414,47 +2655,31 @@ function App() {
                 Clear Session
               </button>
             </div>
+            {authUser && (
+              <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #eee' }}>
+                <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invite by email:</label>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="user@example.com"
+                    style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
+                  />
+                  <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || inviteLoading}>
+                    {inviteLoading ? 'Sending…' : 'Invite'}
+                  </button>
+                </div>
+                {inviteFeedback.message && (
+                  <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
+                    {inviteFeedback.message}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
-        </>
-      )}
-
-      {/* Artifact Creation - Only visible when NOT in participant mode. Optional: sessions already include a default container; Zoom video, documents, and transcripts are the main content. */}
-      {!isParticipantMode && (
-        <>
-          <h2>1. Add content container (optional)</h2>
-          <p style={{ fontSize: '12px', color: '#666', marginTop: '-8px', marginBottom: '8px' }}>
-            Sessions already have a default container. Create another only if you want to group extra materials separately.
-          </p>
-          <div className="section">
-            <div className="form-group">
-              <label>Title:</label>
-              <input
-                type="text"
-                value={artifactTitle}
-                onChange={(e) => setArtifactTitle(e.target.value)}
-                placeholder="My Artifact Title"
-              />
-            </div>
-            <div className="form-group">
-              <label>Description (optional):</label>
-              <textarea
-                value={artifactDescription}
-                onChange={(e) => setArtifactDescription(e.target.value)}
-                placeholder="Optional description"
-              />
-            </div>
-            <button onClick={createArtifact} disabled={!artifactTitle || loading}>
-              Create Artifact
-            </button>
-            {createArtifactFeedback.message && (
-              <div className={createArtifactFeedback.type} style={{ marginTop: '10px' }}>
-                {createArtifactFeedback.message}
-              </div>
-            )}
-            {loading && <div className="loading" style={{ marginTop: '10px' }}>Loading...</div>}
-          </div>
         </>
       )}
 
@@ -2566,10 +2791,17 @@ function App() {
               setTranscriptText={setTranscriptText}
               submitTranscript={submitTranscript}
               submitTranscriptFeedback={submitTranscriptFeedback}
+              authUser={authUser}
+              inviteEmail={inviteEmail}
+              setInviteEmail={setInviteEmail}
+              inviteFeedback={inviteFeedback}
+              inviteLoading={inviteLoading}
+              inviteUserToSession={inviteUserToSession}
             />
           ) : (
             <div className="participant-layout-root">
               <ParticipantMode
+                authUser={authUser}
                 currentSession={currentSession}
                 selectedVideo={selectedVideo}
                 setSelectedVideo={setSelectedVideo}
@@ -3272,118 +3504,7 @@ function App() {
         </>
       )}
 
-      {/* Reset All Data - Only visible in creator mode */}
-      {!isParticipantMode && (
-        <>
-          <h2>⚠ Reset All Data (Dev Only)</h2>
-          <div className="section" style={{ border: '2px solid #fcc', backgroundColor: '#fff5f5' }}>
-        <div style={{ marginBottom: '15px', color: '#c33', fontWeight: 600 }}>
-          ⚠️ WARNING: This will delete ALL artifacts, materials, videos, questions, and answers!
-        </div>
-        
-        {!showResetConfirm ? (
-          <>
-            <div className="form-group">
-              <label>This action cannot be undone. Click below to confirm:</label>
-            </div>
-            <button 
-              onClick={() => setShowResetConfirm(true)}
-              style={{ backgroundColor: '#dc3545', marginTop: 0 }}
-            >
-              Show Reset Confirmation
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="form-group">
-              <label>
-                Type <strong>RESET</strong> to confirm deletion:
-              </label>
-              <input
-                type="text"
-                value={resetConfirmText}
-                onChange={(e) => setResetConfirmText(e.target.value)}
-                placeholder="Type RESET to confirm"
-                style={{ border: '2px solid #dc3545' }}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={async () => {
-                  if (resetConfirmText !== 'RESET') {
-                    setResetFeedback({ type: 'error', message: 'Please type RESET exactly to confirm' })
-                    return
-                  }
-
-                  clearFeedback(setResetFeedback)
-                  setLoading(true)
-
-                  try {
-                    const response = await fetch(`${apiBaseUrl}/admin/reset`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' }
-                    })
-
-                    const data = await response.json()
-
-                    if (!response.ok) {
-                      setResetFeedback({ type: 'error', message: `Reset failed: ${JSON.stringify(data, null, 2)}` })
-                      return
-                    }
-
-                    setResetFeedback({ type: 'success', message: `Reset successful! ${JSON.stringify(data, null, 2)}` })
-                    setArtifactId('')
-                    setVideoId('')
-                    setQuestions([])
-                    setMockQuestions([])
-                    setCurrentAnswer(null)
-                    setResetConfirmText('')
-                    setShowResetConfirm(false)
-                    // Clear all other feedback
-                    clearFeedback(setCreateArtifactFeedback)
-                    clearFeedback(setUploadMaterialFeedback)
-                    clearFeedback(setAttachVideoFeedback)
-                    clearFeedback(setSubmitTranscriptFeedback)
-                    clearFeedback(setAskQuestionFeedback)
-                    clearFeedback(setQuestionHistoryFeedback)
-                  } catch (err) {
-                    setResetFeedback({ type: 'error', message: `Failed to reset: ${err.message}` })
-                  } finally {
-                    setLoading(false)
-                  }
-                }}
-                disabled={resetConfirmText !== 'RESET' || loading}
-                style={{ 
-                  backgroundColor: '#dc3545',
-                  marginTop: 0
-                }}
-              >
-                {loading ? 'Resetting...' : '⚠ Reset All Data'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowResetConfirm(false)
-                  setResetConfirmText('')
-                  clearFeedback(setResetFeedback)
-                }}
-                disabled={loading}
-                style={{ 
-                  backgroundColor: '#6c757d',
-                  marginTop: 0
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-            {resetFeedback.message && (
-              <div className={resetFeedback.type} style={{ marginTop: '10px' }}>
-                {resetFeedback.message}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-        </>
+      </>
       )}
     </div>
   )

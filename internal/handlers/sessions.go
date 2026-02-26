@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,6 +63,79 @@ type CreateEventRequest struct {
 type transcribeVoiceResponse struct {
 	TranscribedText string   `json:"transcribed_text"`
 	Confidence      *float32 `json:"confidence,omitempty"`
+}
+
+// SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
+type SessionWithRole struct {
+	Session *models.Session `json:"session"`
+	MyRole  string         `json:"my_role"` // "creator" | "participant" | "admin"
+}
+
+// ListSessions returns all sessions the current user may access, with my_role per session (RequireAuth).
+// Admins see all sessions with my_role "admin"; others see sessions they created (my_role "creator") or are invited to (my_role "participant").
+func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ctx := r.Context()
+	var out []SessionWithRole
+
+	if user.GlobalRole == models.GlobalRoleAdmin {
+		all, err := h.DB.ListAllSessions(ctx)
+		if err != nil {
+			log.Printf("ListSessions (admin): %v", err)
+			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		for _, s := range all {
+			out = append(out, SessionWithRole{Session: s, MyRole: "admin"})
+		}
+	} else {
+		created, err := h.DB.ListSessionsByCreatedBy(ctx, user.Email)
+		if err != nil {
+			log.Printf("ListSessions (created): %v", err)
+			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		invited, err := h.DB.ListSessionsForInvitedUser(ctx, user.ID)
+		if err != nil {
+			log.Printf("ListSessions (invited): %v", err)
+			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		roleByID := make(map[uuid.UUID]string)
+		sessionByID := make(map[uuid.UUID]*models.Session)
+		for _, s := range created {
+			roleByID[s.ID] = "creator"
+			sessionByID[s.ID] = s
+		}
+		for _, s := range invited {
+			if _, exists := roleByID[s.ID]; !exists {
+				roleByID[s.ID] = "participant"
+				sessionByID[s.ID] = s
+			}
+		}
+		// Single list ordered by updated_at desc (collect then sort)
+		for id, s := range sessionByID {
+			out = append(out, SessionWithRole{Session: s, MyRole: roleByID[id]})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Session.UpdatedAt.After(out[j].Session.UpdatedAt)
+		})
+	}
+
+	if out == nil {
+		out = []SessionWithRole{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(out)
 }
 
 // CreateSession creates a new session (no longer requires artifact)

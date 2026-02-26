@@ -63,7 +63,13 @@ export function CreatorMode({
   transcriptText,
   setTranscriptText,
   submitTranscript,
-  submitTranscriptFeedback
+  submitTranscriptFeedback,
+  authUser,
+  inviteEmail,
+  setInviteEmail,
+  inviteFeedback,
+  inviteLoading,
+  inviteUserToSession
 }) {
   const [answeringQuestionId, setAnsweringQuestionId] = useState(null)
   const [answerText, setAnswerText] = useState('')
@@ -562,6 +568,28 @@ export function CreatorMode({
               ← Back to Artifact View
             </button>
           </div>
+          {authUser && inviteUserToSession && (
+            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invite by email:</label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="email"
+                  value={inviteEmail ?? ''}
+                  onChange={(e) => setInviteEmail?.(e.target.value)}
+                  placeholder="user@example.com"
+                  style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
+                />
+                <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || inviteLoading}>
+                  {inviteLoading ? 'Sending…' : 'Invite'}
+                </button>
+              </div>
+              {inviteFeedback?.message && (
+                <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
+                  {inviteFeedback.message}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

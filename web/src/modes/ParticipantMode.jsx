@@ -11,6 +11,7 @@ import { getMaterialTypeLabel } from '../utils/materialIcons'
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
 export function ParticipantMode({
+  authUser,
   currentSession,
   selectedVideo,
   setSelectedVideo,
@@ -261,14 +262,14 @@ export function ParticipantMode({
           {currentSession.session.title}
         </h2>
         <span style={{
-          backgroundColor: '#4CAF50',
+          backgroundColor: currentSession.session.created_by === authUser?.email ? '#2e7d32' : '#757575',
           color: 'white',
           padding: '4px 12px',
           borderRadius: '4px',
           fontWeight: 'bold',
           fontSize: '14px'
         }}>
-          Participant
+          {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
         </span>
       </div>
 

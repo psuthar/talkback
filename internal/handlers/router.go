@@ -210,6 +210,15 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
+// ApiSessionsRouterWithInvite wraps APISessionsRouter: if path is .../invite and POST, runs RequireAuth(SessionInvite); otherwise APISessionsRouter.
+func (h *Handlers) ApiSessionsRouterWithInvite(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/invite") {
+		h.RequireAuth(h.SessionInvite)(w, r)
+		return
+	}
+	h.APISessionsRouter(w, r)
+}
+
 // SessionsRouter handles session-related routes
 func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")

@@ -401,3 +401,57 @@ type SessionChunkEmbedding struct {
 	Embedding      []float32 `json:"embedding"`
 	CreatedAt      time.Time `json:"created_at"`
 }
+
+// --- TalkBack auth (users, login sessions) ---
+
+type UserStatus string
+
+const (
+	UserStatusActive   UserStatus = "active"
+	UserStatusDisabled UserStatus = "disabled"
+)
+
+type GlobalRole string
+
+const (
+	GlobalRoleUser  GlobalRole = "user"
+	GlobalRoleAdmin GlobalRole = "admin"
+)
+
+type User struct {
+	ID          uuid.UUID  `json:"id"`
+	Email       string     `json:"email"`
+	DisplayName string     `json:"display_name"`
+	Status      UserStatus `json:"status"`
+	GlobalRole  GlobalRole `json:"global_role"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+}
+
+type PasswordCredential struct {
+	UserID            uuid.UUID `json:"user_id"`
+	PasswordHash      string    `json:"-"`
+	PasswordUpdatedAt time.Time `json:"password_updated_at"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type LoginSession struct {
+	ID        uuid.UUID  `json:"id"`
+	UserID    uuid.UUID  `json:"user_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	IP        *string   `json:"ip,omitempty"`
+	UserAgent *string   `json:"user_agent,omitempty"`
+}
+
+// SessionInvitation records that a user was invited to a session (by creator or another invited participant).
+type SessionInvitation struct {
+	ID               uuid.UUID `json:"id"`
+	SessionID        uuid.UUID `json:"session_id"`
+	UserID           uuid.UUID `json:"user_id"`
+	InvitedByUserID  *uuid.UUID `json:"invited_by_user_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
