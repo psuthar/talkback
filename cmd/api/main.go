@@ -98,16 +98,38 @@ func main() {
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 
-	// CORS middleware: origin configurable via CORS_ALLOWED_ORIGINS (default * for local dev)
-	allowedOrigin := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	if allowedOrigin == "" {
-		allowedOrigin = "*"
-		log.Println("CORS: CORS_ALLOWED_ORIGINS unset; auth routes will reflect request Origin for credential requests")
+	// CORS: parse CORS_ALLOWED_ORIGINS as comma-separated list (trimmed). Empty => reflect Origin for dev.
+	var allowedOrigins []string
+	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if o := strings.TrimSpace(o); o != "" {
+			allowedOrigins = append(allowedOrigins, o)
+		}
 	}
-	corsOrigin := allowedOrigin
+	if len(allowedOrigins) == 0 {
+		log.Println("CORS: CORS_ALLOWED_ORIGINS unset; auth routes will reflect request Origin for credentialed requests")
+	}
+	originAllowed := func(origin string) bool {
+		origin = strings.TrimSpace(origin)
+		for _, a := range allowedOrigins {
+			if a == origin {
+				return true
+			}
+		}
+		return false
+	}
 	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+			origin := "*"
+			if len(allowedOrigins) > 0 {
+				if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" && originAllowed(o) {
+					origin = o
+				} else if len(allowedOrigins) == 1 {
+					origin = allowedOrigins[0]
+				}
+			} else if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" {
+				origin = o
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
 
@@ -119,19 +141,24 @@ func main() {
 			next(w, r)
 		}
 	}
-	// CORS with credentials for cookie-based auth (/api/auth, /api/me). Browser requires a specific origin
-	// (not *) and Allow-Credentials when credentials: 'include' is used. When CORS_ALLOWED_ORIGINS is unset
-	// (e.g. local dev), reflect the request Origin so login works without configuring env.
+	// CORS with credentials for cookie-based auth (/api/auth, /api/me, /api/sessions). Browser requires
+	// a single specific origin and Allow-Credentials. Use request Origin when it's in the allowed list
+	// so cross-origin cookies work (e.g. frontend on talkback-ux, API on talkback-895n on Render).
 	corsWithCredentials := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			origin := corsOrigin
-			if origin == "*" {
-				if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" {
-					origin = o
-					log.Printf("CORS: reflecting Origin for credentialed request: %s", origin)
-				}
+			origin := ""
+			reqOrigin := strings.TrimSpace(r.Header.Get("Origin"))
+			if reqOrigin != "" && len(allowedOrigins) > 0 && originAllowed(reqOrigin) {
+				origin = reqOrigin
+			} else if len(allowedOrigins) == 1 {
+				origin = allowedOrigins[0]
+			} else if reqOrigin != "" && len(allowedOrigins) == 0 {
+				origin = reqOrigin
+				log.Printf("CORS: reflecting Origin for credentialed request: %s", origin)
 			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")

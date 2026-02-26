@@ -338,7 +338,7 @@ export function ParticipantMode({
                         playing={isVideoPlaying}
                         sessionId={currentSession?.session?.id}
                         apiBaseUrl={apiBaseUrl}
-                        creatorIdentity={creatorIdentity}
+                        creatorIdentity={currentSession?.session?.created_by ?? creatorIdentity}
                       />
                     </div>
                     {video.transcript_text && (

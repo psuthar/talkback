@@ -16,12 +16,17 @@ export function Html5VideoPlayer({
   onEvent, 
   onTimeUpdate,
   currentTime: externalCurrentTime,
-  playing: externalPlaying 
+  playing: externalPlaying,
+  /** Optional: shown when video fails to load (e.g. "Open in Zoom") */
+  openUrl = null,
+  /** Optional: label for openUrl link */
+  openUrlLabel = 'Open in new tab'
 }) {
   const videoRef = useRef(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playing, setPlaying] = useState(false)
+  const [loadError, setLoadError] = useState(null)
 
   useEffect(() => {
     const video = videoRef.current
@@ -59,11 +64,18 @@ export function Html5VideoPlayer({
       onEvent?.({ type: PlayerEvent.TIMEUPDATE, time })
     }
 
+    const handleError = () => {
+      const err = video.error
+      const message = err?.message || (err?.code === 4 ? 'Video not found or access denied.' : 'Video failed to load.')
+      setLoadError(message)
+    }
+
     video.addEventListener('loadedmetadata', handleLoadedMetadata)
     video.addEventListener('play', handlePlay)
     video.addEventListener('pause', handlePause)
     video.addEventListener('seeked', handleSeeked)
     video.addEventListener('timeupdate', handleTimeUpdate)
+    video.addEventListener('error', handleError)
 
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata)
@@ -71,6 +83,7 @@ export function Html5VideoPlayer({
       video.removeEventListener('pause', handlePause)
       video.removeEventListener('seeked', handleSeeked)
       video.removeEventListener('timeupdate', handleTimeUpdate)
+      video.removeEventListener('error', handleError)
     }
   }, [onEvent, onTimeUpdate])
 
@@ -120,6 +133,49 @@ export function Html5VideoPlayer({
     const mins = Math.floor(seconds / 60)
     const secs = Math.floor(seconds % 60)
     return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  // Reset error when mediaUrl changes (e.g. user switched video)
+  useEffect(() => {
+    setLoadError(null)
+  }, [mediaUrl])
+
+  if (loadError) {
+    return (
+      <div style={{
+        padding: '24px',
+        backgroundColor: '#fff5f5',
+        borderRadius: '8px',
+        border: '2px solid #feb2b2',
+        textAlign: 'center'
+      }}>
+        <p style={{ margin: '0 0 12px', color: '#c53030', fontSize: '15px' }}>
+          Video could not be loaded: {loadError}
+        </p>
+        <p style={{ margin: '0 0 16px', color: '#718096', fontSize: '13px' }}>
+          If this is a Zoom recording, the creator may need to reconnect Zoom, or the recording may have expired.
+        </p>
+        {openUrl && (
+          <a
+            href={openUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: 'inline-block',
+              padding: '10px 20px',
+              backgroundColor: '#2D8CFF',
+              color: '#fff',
+              borderRadius: '6px',
+              textDecoration: 'none',
+              fontWeight: '600',
+              fontSize: '14px'
+            }}
+          >
+            {openUrlLabel}
+          </a>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -326,6 +382,8 @@ export function VideoPlayer({
         onTimeUpdate={onTimeUpdate}
         currentTime={externalCurrentTime}
         playing={externalPlaying}
+        openUrl={video.provider === 'zoom' ? openUrl : (openUrl || null)}
+        openUrlLabel={video.provider === 'zoom' ? 'Open in Zoom' : 'Open in new tab'}
       />
     )
   } else if (video.provider === 'zoom' && !zoomStreamUrl && openUrl) {
