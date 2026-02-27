@@ -27,6 +27,7 @@ export function Html5VideoPlayer({
   const [duration, setDuration] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [loadError, setLoadError] = useState(null)
+  const [serverStatus, setServerStatus] = useState(null) // after error, fetch stream URL to show real HTTP status
 
   useEffect(() => {
     const video = videoRef.current
@@ -138,7 +139,27 @@ export function Html5VideoPlayer({
   // Reset error when mediaUrl changes (e.g. user switched video)
   useEffect(() => {
     setLoadError(null)
+    setServerStatus(null)
   }, [mediaUrl])
+
+  // When video fails, probe stream URL to show real HTTP status (helps debug 403/CORS on Render)
+  useEffect(() => {
+    if (!loadError || !mediaUrl) return
+    let cancelled = false
+    fetch(mediaUrl, { method: 'GET', credentials: 'omit' })
+      .then((res) => {
+        if (cancelled) return
+        if (res.status === 0) {
+          setServerStatus('Response blocked (check CORS for stream URL)')
+        } else {
+          setServerStatus(`Server returned ${res.status} ${res.statusText}`)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setServerStatus('Could not reach stream URL')
+      })
+    return () => { cancelled = true }
+  }, [loadError, mediaUrl])
 
   if (loadError) {
     return (
@@ -152,6 +173,11 @@ export function Html5VideoPlayer({
         <p style={{ margin: '0 0 12px', color: '#c53030', fontSize: '15px' }}>
           Video could not be loaded: {loadError}
         </p>
+        {serverStatus && (
+          <p style={{ margin: '0 0 8px', color: '#c53030', fontSize: '14px', fontWeight: '600' }}>
+            {serverStatus}
+          </p>
+        )}
         <p style={{ margin: '0 0 16px', color: '#718096', fontSize: '13px' }}>
           If this is a Zoom recording, the creator may need to reconnect Zoom, or the recording may have expired.
         </p>

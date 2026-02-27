@@ -283,48 +283,50 @@ func (h *Handlers) GetValidZoomAccessTokenContext(ctx context.Context, creatorId
 		return "", nil, fmt.Errorf("decrypt access token: %w", err)
 	}
 	accessToken = string(accessPlain)
-	// Refresh if expired or expiring in 5 minutes
-	if time.Until(conn.ExpiresAt) < 5*time.Minute {
+	// Refresh if expired or expiring in 5 minutes (so creator/participants never need to "log into Zoom" — backend keeps token valid)
+	needsRefresh := time.Until(conn.ExpiresAt) < 5*time.Minute
+	if needsRefresh {
 		refreshPlain, decErr := utils.DecryptToken(conn.RefreshTokenEncrypted, encKey)
 		if decErr != nil {
 			return "", nil, fmt.Errorf("decrypt refresh token: %w", decErr)
 		}
 		clientID, clientSecret, _, _, cfgErr := zoomOAuthConfig()
 		if cfgErr != nil || clientID == "" || clientSecret == "" {
-			return accessToken, conn, nil // return current token even if we can't refresh
+			// No OAuth config (e.g. dev); return current token and hope it still works
+			return accessToken, conn, nil
 		}
 		form := url.Values{}
 		form.Set("grant_type", "refresh_token")
 		form.Set("refresh_token", string(refreshPlain))
-		req, _ := http.NewRequest("POST", zoomTokenURL, strings.NewReader(form.Encode()))
+		req, _ := http.NewRequestWithContext(ctx, "POST", zoomTokenURL, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.SetBasicAuth(clientID, clientSecret)
 		resp, doErr := http.DefaultClient.Do(req)
 		if doErr != nil {
-			return accessToken, conn, nil
+			return "", nil, fmt.Errorf("zoom token refresh request failed: %w", doErr)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
-			log.Printf("Zoom token refresh failed: %s", string(body))
-			return accessToken, conn, nil
+			log.Printf("Zoom token refresh failed (creator %q): %d %s", creatorIdentityID, resp.StatusCode, string(body))
+			return "", nil, fmt.Errorf("zoom token expired or revoked; creator should reconnect Zoom in TalkBack Settings")
 		}
 		var tokenResp ZoomTokenResponse
 		if json.Unmarshal(body, &tokenResp) != nil {
-			return accessToken, conn, nil
+			return "", nil, fmt.Errorf("zoom token refresh response invalid")
 		}
 		accessEnc, encErr := utils.EncryptToken([]byte(tokenResp.AccessToken), encKey)
 		if encErr != nil {
-			return accessToken, conn, nil
+			return "", nil, fmt.Errorf("encrypt new access token: %w", encErr)
 		}
 		refreshEnc, encErr := utils.EncryptToken([]byte(tokenResp.RefreshToken), encKey)
 		if encErr != nil {
-			return accessToken, conn, nil
+			return "", nil, fmt.Errorf("encrypt new refresh token: %w", encErr)
 		}
 		expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 		if updateErr := h.DB.UpdateZoomConnectionTokens(ctx, creatorIdentityID, accessEnc, refreshEnc, expiresAt); updateErr != nil {
 			log.Printf("Zoom update tokens after refresh: %v", updateErr)
-			return accessToken, conn, nil
+			return "", nil, fmt.Errorf("failed to save refreshed Zoom token: %w", updateErr)
 		}
 		accessToken = tokenResp.AccessToken
 		conn.ExpiresAt = expiresAt

@@ -38,7 +38,7 @@ If the participant was invited correctly but still sees no sessions, the session
 
 ## Video shows "Format error" or won’t play
 
-- The in-app player streams via your API using the **creator’s** Zoom token. Participants do not need Zoom; the backend proxies the video.
+- The in-app player streams via your API using the **creator’s** Zoom token. No one needs to log into Zoom. The session creator connects Zoom once in TalkBack; the backend stores and refreshes the token so video works for creator and participants. If the creator's connection expires, they reconnect once in Settings; then video works again for everyone.
 - If you see "MEDIA_ELEMENT_ERROR: Format error", often the **server returned an error** (e.g. 403) and the browser treats the response as non-video.
 - **Checks:**
   1. **Creator** has connected Zoom (Settings → Connect Zoom) so the API has a token for the session creator.

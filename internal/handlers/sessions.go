@@ -1487,7 +1487,11 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
 	if err != nil {
 		log.Printf("Zoom video stream: get token for creator %q: %v", creatorIdentity, err)
-		http.Error(w, "Zoom not connected for this session's creator. Reconnect Zoom and try again.", http.StatusForbidden)
+		msg := "Zoom not connected for this session's creator. The creator should connect (or reconnect) Zoom in TalkBack Settings once; then the video works for everyone without anyone logging into Zoom."
+		if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "revoked") {
+			msg = "Session creator's Zoom connection has expired. Ask the session creator to reconnect Zoom in TalkBack Settings."
+		}
+		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
 	rec, err := utils.GetMeetingRecordingsWithRetry(accessToken, meetingID)

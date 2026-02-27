@@ -98,6 +98,7 @@ function App() {
   const [apiHealth, setApiHealth] = useState(null) // null = unknown, true = healthy, false = unhealthy
   const [healthChecking, setHealthChecking] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
+  const [urlKey, setUrlKey] = useState(0) // bump to re-read URL after clearing ?mode=admin for non-admins
   
   // Video player states
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -333,6 +334,18 @@ function App() {
       setSessionMode('select')
     }
   }, [authUser?.global_role])
+
+  // If URL has ?mode=admin but user is not admin, clear it so they see session list instead of "Forbidden"
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mode') === 'admin' && authUser && authUser.global_role !== 'admin') {
+      params.delete('mode')
+      const newSearch = params.toString()
+      const newUrl = window.location.pathname + (newSearch ? '?' + newSearch : '') + (window.location.hash || '')
+      window.history.replaceState(null, '', newUrl)
+      setUrlKey(k => k + 1)
+    }
+  }, [authUser])
 
   // Fetch "my sessions" when in creator mode with no session and user is logged in
   useEffect(() => {
