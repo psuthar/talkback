@@ -320,7 +320,7 @@ func buildPriorQA(questions []*models.Question, answers []*models.Answer, exclud
 // sessionAskAnswerFromModelWithContext builds the answer response with citation_id, label, anchor, excerpt, and navigation.
 func (h *Handlers) sessionAskAnswerFromModelWithContext(ctx context.Context, sessionID uuid.UUID, a *models.Answer) SessionAskAnswerResponse {
 	videoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sessionID)
-	materials, _ := h.DB.GetMaterialsBySessionID(ctx, sessionID)
+	materials, _ := h.DB.GetActiveMaterialsBySessionID(ctx, sessionID)
 	return sessionAskAnswerFromAnswer(a, videoSources, materials)
 }
 

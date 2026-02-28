@@ -366,6 +366,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	sizeBytes := header.Size
 	material := &models.Material{
 		ID:              uuid.New(),
 		ArtifactID:      artifactID,
@@ -376,6 +377,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		StorageURL:      storageURL,
 		StorageProvider: storageProvider,
 		StorageKey:      storageKey,
+		SizeBytes:       &sizeBytes,
 		TextStatus:      textStatus,
 		ExtractedText:   extractedText,
 	}
@@ -428,6 +430,10 @@ func (h *Handlers) ServeMaterialFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if mat.ArtifactID != artifactID {
 		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.DeletedAt != nil {
+		http.Error(w, "File has been deleted", http.StatusGone)
 		return
 	}
 	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
@@ -794,8 +800,8 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve materials and video sources for RAG (from session)
-	materials, err := h.DB.GetMaterialsBySessionID(r.Context(), artifact.SessionID)
+	// Retrieve materials and video sources for RAG (from session; active only)
+	materials, err := h.DB.GetActiveMaterialsBySessionID(r.Context(), artifact.SessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		materials = []*models.Material{}

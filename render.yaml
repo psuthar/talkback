@@ -14,4 +14,16 @@ services:
         value: production
       - key: RUN_MIGRATIONS
         value: "true"
-      # Add DATABASE_URL (from linked Postgres), CORS_ALLOWED_ORIGINS, BASE_URL, OPENAI_API_KEY, etc. in Dashboard
+      # R2 storage (stops "video presign and file artifacts will return 503"). Also set in Dashboard:
+      # R2_BUCKET, R2_ACCOUNT_ID, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, PUBLIC_APP_ORIGIN
+      - key: STORAGE_DRIVER
+        value: r2
+      - key: R2_REGION
+        value: auto
+      - key: R2_PREFIX
+        value: talkback/
+      - key: R2_PRESIGN_PUT_TTL_SECONDS
+        value: "900"
+      - key: R2_PRESIGN_GET_TTL_SECONDS
+        value: "3600"
+      # Add in Dashboard: DATABASE_URL, CORS_ALLOWED_ORIGINS, BASE_URL, OPENAI_API_KEY, and R2_* above

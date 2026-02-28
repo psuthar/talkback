@@ -24,10 +24,12 @@ See `.env.example` for:
 
 ## Render checklist
 
-- [ ] In Render Web Service → Environment, set:
-  - `STORAGE_DRIVER=r2`
+If you see in Render logs: **"R2 storage not configured (STORAGE_DRIVER is not 'r2'); video presign and file artifacts will return 503"**, add the env vars below (Dashboard or via `render.yaml`).
+
+- [ ] In Render Web Service → **Environment**, set:
+  - `STORAGE_DRIVER=r2` ← required; without it R2 is off and presign/artifacts return 503
   - `R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_REGION`
-  - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (as secrets)
+  - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (as **Secret**)
   - `R2_PREFIX`, `R2_PRESIGN_PUT_TTL_SECONDS`, `R2_PRESIGN_GET_TTL_SECONDS`
   - `PUBLIC_APP_ORIGIN=https://<your-frontend-domain>`
   - Optional caps: `MAX_UPLOAD_BYTES_DEFAULT`, `MAX_UPLOAD_BYTES_VIDEO`, `MAX_SESSION_ARTIFACTS`

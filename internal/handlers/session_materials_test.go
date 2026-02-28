@@ -275,15 +275,22 @@ func TestDeleteSessionMaterial(t *testing.T) {
 	}
 	require.NoError(t, h.DB.CreateMaterial(ctx, material))
 
-	t.Run("deletes material successfully", func(t *testing.T) {
+	t.Run("deletes material successfully (soft-delete tombstone)", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodDelete, "/sessions/"+session.ID.String()+"/materials/"+material.ID.String(), nil)
 		w := httptest.NewRecorder()
 		h.DeleteSessionMaterial(w, req)
 		assert.Equal(t, http.StatusNoContent, w.Code)
 
+		// Row still exists as tombstone; deleted_at set, storage_key cleared
 		got, err := h.DB.GetMaterialByID(ctx, material.ID)
-		assert.Error(t, err)
-		assert.Nil(t, got)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.NotNil(t, got.DeletedAt, "expected tombstone: deleted_at set")
+		assert.Empty(t, got.StorageKey, "expected storage_key cleared")
+		// Active list should not include deleted material
+		active, err := h.DB.GetActiveMaterialsBySessionID(ctx, session.ID)
+		require.NoError(t, err)
+		assert.Len(t, active, 0)
 	})
 
 	t.Run("returns 404 when material does not exist", func(t *testing.T) {

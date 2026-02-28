@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { getMaterialIcon } from '../utils/materialIcons'
 
 function statusDisplay(m) {
@@ -31,6 +31,7 @@ export function SessionMaterialsTab({
   const [videoUrl, setVideoUrl] = useState('')
   const [videoUrlAdding, setVideoUrlAdding] = useState(false)
   const [duplicateWarning, setDuplicateWarning] = useState(null) // { files: File[], duplicateNames: string[], nameToMaterialId: { [name]: id } }
+  const fileInputRef = useRef(null)
 
   const base = (apiBaseUrl || '').replace(/\/$/, '')
 
@@ -107,6 +108,7 @@ export function SessionMaterialsTab({
     if (files.length === 0 || !sessionId) return
     setUploading(true)
     setUploadFeedback('')
+    setDuplicateWarning(null)
     onUploading?.()
     let materialsCount = 0
     let videosCount = 0
@@ -158,12 +160,16 @@ export function SessionMaterialsTab({
       setUploadFeedback(err?.message || 'Upload failed')
     } finally {
       setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   const uploadFiles = (e) => {
     const files = Array.from(e?.target?.files || [])
-    e.target.value = ''
+    const input = e?.target
+    if (input) input.value = ''
+    setUploadFeedback('')
+    setDuplicateWarning(null)
     if (files.length === 0 || !sessionId) return
     const existing = existingNamesSet()
     const nameToMaterialId = nameToMaterialIdMap()
@@ -300,7 +306,7 @@ export function SessionMaterialsTab({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', backgroundColor: '#2196F3', color: '#fff', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
-          <input type="file" accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,video/mp4,.mp4" multiple onChange={uploadFiles} disabled={uploading || !sessionId} style={{ display: 'none' }} />
+          <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,video/mp4,.mp4" multiple onChange={uploadFiles} disabled={uploading || !sessionId} style={{ display: 'none' }} />
           {uploading ? 'Uploading…' : 'Upload file'}
         </label>
         <button type="button" onClick={() => setPasteModal(true)} disabled={pasting || !sessionId} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #2196F3', backgroundColor: '#fff', color: '#2196F3', cursor: 'pointer', fontWeight: 500 }}>

@@ -51,11 +51,13 @@ type Material struct {
 	StorageURL      string             `json:"storage_url"`
 	StorageProvider string             `json:"storage_provider"` // "local" or "r2"
 	StorageKey      string             `json:"storage_key"`      // R2 object key when storage_provider is "r2"
+	SizeBytes       *int64             `json:"size_bytes,omitempty"` // file size in bytes; nil for pasted content
 	TextStatus      MaterialTextStatus `json:"text_status"`
 	ExtractedText   *string            `json:"extracted_text,omitempty"`
 	Title           *string            `json:"title,omitempty"`          // Display title (defaults to filename)
 	ErrorMessage    *string            `json:"error_message,omitempty"`  // Set when text_status is failed
 	CreatedAt       time.Time          `json:"created_at"`
+	DeletedAt       *time.Time         `json:"deleted_at,omitempty"`     // Set when user deletes file (tombstone); file removed from R2/local
 }
 
 type VideoProvider string

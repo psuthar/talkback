@@ -562,6 +562,7 @@ function App() {
       setUploadMaterialFeedback({ type: 'error', message: `Failed to upload material: ${err.message}` })
     } finally {
       setLoading(false)
+      if (materialFileInputRef.current) materialFileInputRef.current.value = ''
     }
   }
 
@@ -3136,7 +3137,8 @@ function App() {
             multiple
             onChange={(e) => {
               const files = Array.from(e.target.files || [])
-              setMaterialFiles(prev => [...prev, ...files])
+              setMaterialFiles(files)
+              clearFeedback(setUploadMaterialFeedback)
             }}
           />
         </div>

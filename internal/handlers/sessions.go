@@ -303,8 +303,8 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		artifacts = []*models.Artifact{}
 	}
 
-	// Get materials and video sources from session
-	allMaterials, err := h.DB.GetMaterialsBySessionID(r.Context(), sessionID)
+	// Get materials and video sources from session (active only; excludes soft-deleted)
+	allMaterials, err := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		allMaterials = []*models.Material{}
@@ -739,8 +739,8 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve materials and video sources from session
-	allMaterials, err := h.DB.GetMaterialsBySessionID(r.Context(), sessionID)
+	// Retrieve materials and video sources from session (active only)
+	allMaterials, err := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("Warning: Failed to get materials: %v", err)
 		allMaterials = []*models.Material{}

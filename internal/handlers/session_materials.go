@@ -34,7 +34,7 @@ func (h *Handlers) ListSessionMaterials(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
-	materials, err := h.DB.GetMaterialsBySessionID(r.Context(), sessionID)
+	materials, err := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("ListSessionMaterials: %v", err)
 		http.Error(w, "Failed to list materials", http.StatusInternalServerError)
@@ -218,6 +218,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		title = &header.Filename
 	}
 
+	sizeBytes := header.Size
 	material := &models.Material{
 		ID:               uuid.New(),
 		ArtifactID:       artifactID,
@@ -228,6 +229,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		StorageURL:       storageURL,
 		StorageProvider:  storageProvider,
 		StorageKey:       storageKey,
+		SizeBytes:        &sizeBytes,
 		TextStatus:       textStatus,
 		ExtractedText:    extractedText,
 		Title:            title,
@@ -355,20 +357,22 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}
+	// Remove file from storage first (R2 or local), then soft-delete the row (tombstone).
+	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
+		if err := h.Storage.Delete(r.Context(), mat.StorageKey); err != nil {
+			log.Printf("DeleteSessionMaterial R2 Delete: %v", err)
+		}
+	} else if mat.StorageURL != "" {
+		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
+		_ = os.Remove(path)
+	}
 	// Delete chunks for this material (embeddings cascade-delete)
 	if err := h.DB.DeleteSessionChunksBySource(r.Context(), sessionID, "material", materialID); err != nil {
 		log.Printf("DeleteSessionMaterial delete chunks: %v", err)
 	}
-	if err := h.DB.DeleteMaterial(r.Context(), materialID); err != nil {
+	if err := h.DB.SoftDeleteMaterial(r.Context(), materialID); err != nil {
 		http.Error(w, "Failed to delete material", http.StatusInternalServerError)
 		return
-	}
-	// Remove file from storage: R2 or local disk
-	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
-		_ = h.Storage.Delete(r.Context(), mat.StorageKey)
-	} else if mat.StorageURL != "" {
-		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
-		_ = os.Remove(path)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

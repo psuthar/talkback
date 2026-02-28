@@ -610,6 +610,16 @@ ALTER TABLE materials ADD CONSTRAINT materials_text_status_check
 -- Backfill title from filename where title is null
 UPDATE materials SET title = filename WHERE title IS NULL;
 
+-- Materials: support R2-backed storage (storage_provider + storage_key). Required for GET session and uploads when STORAGE_DRIVER=r2.
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_provider TEXT NOT NULL DEFAULT 'local';
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS storage_key TEXT;
+
+-- Materials: file size in bytes (nullable for pasted content / legacy rows).
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS size_bytes BIGINT NULL;
+
+-- Materials: tombstone for soft-delete (deleted_at set; file removed from R2/local).
+ALTER TABLE materials ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
+
 -- === 000020_session_processing_jobs.up.sql ===
 -- Mission #4: Unified pipeline state machine for ingestion + indexing
 -- session_processing_jobs: one job per session/source (Zoom import → transcript → chunk → embed)

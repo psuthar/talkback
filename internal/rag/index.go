@@ -68,7 +68,7 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 	}
 
 	// 2) Material chunks (PDF with file path → page anchors; else block anchors from extracted text)
-	materials, err := db.GetMaterialsBySessionID(ctx, sessionID)
+	materials, err := db.GetActiveMaterialsBySessionID(ctx, sessionID)
 	if err != nil {
 		log.Printf("IndexSession: get materials: %v", err)
 	} else {
