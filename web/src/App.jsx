@@ -335,6 +335,20 @@ function App() {
     }
   }, [authUser?.global_role])
 
+  // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session)
+  useEffect(() => {
+    if (authUser?.global_role !== 'participant') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mode') === 'view') return
+    const sessionId = params.get('session')
+    const apiPart = params.get('api') || (apiBaseUrl ? encodeURIComponent(apiBaseUrl) : '')
+    const parts = ['mode=view']
+    if (sessionId) parts.unshift(`session=${sessionId}`)
+    if (apiPart) parts.push(`api=${apiPart}`)
+    window.history.replaceState(null, '', `${window.location.pathname}?${parts.join('&')}`)
+    setUrlKey(k => k + 1)
+  }, [authUser?.global_role, apiBaseUrl])
+
   // If URL has ?mode=admin but user is not admin, clear it so they see session list instead of "Forbidden"
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -1362,8 +1376,9 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [debugMode, apiBaseUrl])
 
-  // On mount: apply api from URL and load session from URL in one pass so the first request
-  // uses the correct API base (avoids flash of "Unable to load" in private window when link has ?api=)
+  // On mount (and when auth loads): apply api from URL and load session from URL in one pass so the first request
+  // uses the correct API base (avoids flash of "Unable to load" in private window when link has ?api=).
+  // When mode is missing, participants always open in view mode; others default to creator.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
@@ -1384,6 +1399,15 @@ function App() {
         setSessionUserMode('participant')
         setCurrentUser('participant')
         setViewMode('session')
+      } else if (mode !== 'edit') {
+        // No mode in URL: participants default to view, others to creator
+        if (authUser?.global_role === 'participant') {
+          setSessionUserMode('participant')
+          setCurrentUser('participant')
+          setViewMode('session')
+        } else {
+          setSessionUserMode('creator')
+        }
       } else {
         setSessionUserMode('creator')
       }
@@ -1394,11 +1418,13 @@ function App() {
       } else if (mode === 'view') {
         openSession(sessionId, 'participant', false, apiOriginForSession)
       } else {
-        openSession(sessionId, 'creator', false, apiOriginForSession)
+        // No mode: participants go to view, everyone else to edit
+        const defaultMode = authUser?.global_role === 'participant' ? 'participant' : 'creator'
+        openSession(sessionId, defaultMode, false, apiOriginForSession)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [authUser?.global_role])
 
   const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null) => {
     setLoading(true)
@@ -2297,10 +2323,10 @@ function App() {
         </div>
       )}
 
-      {/* Session Selector - when no session: show picker (all modes). When session and creator: show Active Session bar. */}
+      {/* Session Selector - when no session: show picker (all modes). When session and creator: show Active Session bar. Participants only see "Sessions you're part of" list. */}
       {(!currentSession || !isParticipantMode) && (
         <>
-          <h2>Session Selection (Required)</h2>
+          <h2>{authUser?.global_role === 'participant' && !currentSession ? "Sessions you're part of" : 'Session Selection (Required)'}</h2>
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
@@ -2537,14 +2563,14 @@ function App() {
               <div>
                 {authUser && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Sessions</div>
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>{canCreateSessions ? 'Sessions' : "Sessions you're part of"}</div>
                     {mySessionsLoading ? (
                       <div className="info" style={{ marginTop: '8px' }}>Loading sessions…</div>
                     ) : mySessionsError ? (
                       <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{mySessionsError}</div>
                     ) : mySessions.length === 0 ? (
                       <div className="info" style={{ marginTop: '8px' }}>
-                        {canCreateSessions ? 'No sessions. Create one via Zoom above, or get invited to a session.' : 'No sessions. You can only join sessions you\'re invited to.'}
+                        {canCreateSessions ? 'No sessions. Create one via Zoom above, or get invited to a session.' : 'There are no sessions to which you have been invited.'}
                       </div>
                     ) : (
                       <div style={{ maxHeight: '280px', overflowY: 'auto', marginTop: '8px' }}>
@@ -2598,8 +2624,8 @@ function App() {
                   </div>
                 )}
 
-                {/* List sessions for current artifact */}
-                {artifactId && (
+                {/* List sessions for current artifact (creators only; participants only see "Sessions you're part of" above) */}
+                {artifactId && canCreateSessions && (
                   <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>
                       Sessions for Current Artifact ({sessions.length}):
@@ -2795,9 +2821,8 @@ function App() {
         </div>
       )}
 
-      {/* Session View - Mode-based rendering */}
-      {/* Render mode components when viewMode is 'session', even if currentSession is null (e.g., API error) */}
-      {viewMode === 'session' && (
+      {/* Session View - Mode-based rendering. Only show when a session is open so participants without a session see only the session list (no materials/player). */}
+      {viewMode === 'session' && currentSession && (
         <>
           {/* Session header is now inside each mode component */}
           {/* Use isParticipantMode to determine which component to render */}

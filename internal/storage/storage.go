@@ -14,6 +14,8 @@ type Interface interface {
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (url string, err error)
 	// Put uploads from reader (used for Zoom ingest server-side). Returns etag and size.
 	Put(ctx context.Context, key string, reader io.Reader, contentType string) (etag string, size int64, err error)
+	// Get returns a reader for the object body. Caller must close the returned io.ReadCloser.
+	Get(ctx context.Context, key string) (io.ReadCloser, error)
 	// Head returns whether the object exists and its size/content-type.
 	Head(ctx context.Context, key string) (exists bool, size int64, contentType string, err error)
 	// Delete removes the object.

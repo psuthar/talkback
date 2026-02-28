@@ -352,7 +352,7 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rag.IndexSessionAsync(sessionID, h.DB)
+	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
 
 	vsIDStr := videoID.String()
 	response := CreateSessionFromZoomResponse{

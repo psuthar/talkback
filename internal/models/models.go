@@ -42,18 +42,20 @@ const (
 )
 
 type Material struct {
-	ID            uuid.UUID          `json:"id"`
-	ArtifactID    uuid.UUID          `json:"artifact_id"` // Still keep for reference, but session_id is primary
-	SessionID     uuid.UUID          `json:"session_id"`  // Materials belong to sessions
-	Kind          string             `json:"kind"`
-	Filename      string             `json:"filename"`
-	ContentType   string             `json:"content_type"`
-	StorageURL    string             `json:"storage_url"`
-	TextStatus    MaterialTextStatus `json:"text_status"`
-	ExtractedText *string            `json:"extracted_text,omitempty"`
-	Title         *string            `json:"title,omitempty"`          // Display title (defaults to filename)
-	ErrorMessage  *string            `json:"error_message,omitempty"`  // Set when text_status is failed
-	CreatedAt     time.Time          `json:"created_at"`
+	ID              uuid.UUID          `json:"id"`
+	ArtifactID      uuid.UUID          `json:"artifact_id"` // Still keep for reference, but session_id is primary
+	SessionID       uuid.UUID          `json:"session_id"`  // Materials belong to sessions
+	Kind            string             `json:"kind"`
+	Filename        string             `json:"filename"`
+	ContentType     string             `json:"content_type"`
+	StorageURL      string             `json:"storage_url"`
+	StorageProvider string             `json:"storage_provider"` // "local" or "r2"
+	StorageKey      string             `json:"storage_key"`      // R2 object key when storage_provider is "r2"
+	TextStatus      MaterialTextStatus `json:"text_status"`
+	ExtractedText   *string            `json:"extracted_text,omitempty"`
+	Title           *string            `json:"title,omitempty"`          // Display title (defaults to filename)
+	ErrorMessage    *string            `json:"error_message,omitempty"`  // Set when text_status is failed
+	CreatedAt       time.Time          `json:"created_at"`
 }
 
 type VideoProvider string

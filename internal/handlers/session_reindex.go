@@ -42,7 +42,7 @@ func (h *Handlers) SessionReindex(w http.ResponseWriter, r *http.Request) {
 		log.Printf("SessionReindex: delete chunks: %v", err)
 	}
 	embedder := &rag.OpenAIEmbedder{}
-	if err := rag.IndexSession(ctx, h.DB, embedder, sessionID); err != nil {
+	if err := rag.IndexSession(ctx, h.DB, embedder, sessionID, h.Storage); err != nil {
 		log.Printf("SessionReindex: %v", err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

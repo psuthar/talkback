@@ -86,7 +86,6 @@ func main() {
 		}
 	}
 	jobProcessor := utils.NewJobProcessor(db, workers)
-	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db) }
 
 	// Start job processor in background
 	ctx, cancel := context.WithCancel(context.Background())
@@ -102,12 +101,16 @@ func main() {
 	if os.Getenv("STORAGE_DRIVER") == "r2" {
 		cfg := r2.LoadConfig()
 		if client, err := r2.New(cfg); err != nil {
-			log.Printf("R2 storage disabled: %v", err)
+			log.Printf("R2 storage disabled: %v (set R2_BUCKET, R2_ENDPOINT, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY on Render)", err)
 		} else {
 			store = client
-			log.Println("R2 storage enabled")
+			log.Printf("R2 storage enabled (bucket=%s)", cfg.Bucket)
 		}
+	} else {
+		log.Println("R2 storage not configured (STORAGE_DRIVER is not 'r2'); video presign and file artifacts will return 503")
 	}
+
+	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
 
 	// Initialize handlers
 	h := handlers.NewHandlers(db, jobProcessor, store)

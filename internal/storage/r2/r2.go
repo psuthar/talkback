@@ -169,6 +169,22 @@ func (c *Client) Put(ctx context.Context, key string, reader io.Reader, contentT
 	return etag, 0, nil
 }
 
+// Get returns a reader for the object body. Caller must close the returned io.ReadCloser.
+func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	k := c.key(key)
+	out, err := c.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.cfg.Bucket),
+		Key:    aws.String(k),
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+			return nil, fmt.Errorf("r2 Get: object not found")
+		}
+		return nil, fmt.Errorf("r2 Get: %w", err)
+	}
+	return out.Body, nil
+}
+
 // Head returns exists, size, contentType.
 func (c *Client) Head(ctx context.Context, key string) (exists bool, size int64, contentType string, err error) {
 	k := c.key(key)

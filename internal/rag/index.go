@@ -3,7 +3,9 @@ package rag
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -13,8 +15,9 @@ import (
 	"github.com/psuthar/talkback/internal/storage"
 )
 
-// IndexSession builds chunks from transcript + materials, embeds them, and stores (idempotent)
-func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessionID uuid.UUID) error {
+// IndexSession builds chunks from transcript + materials, embeds them, and stores (idempotent).
+// store is optional; when non-nil, R2-backed materials (e.g. PDFs) are fetched from storage for chunking.
+func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessionID uuid.UUID, store storage.Interface) error {
 	// Optional: set index_status = building
 	_ = setSessionIndexStatus(db, ctx, sessionID, "building")
 
@@ -74,9 +77,31 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 				continue
 			}
 			var matChunks []ChunkInput
-			if (m.ContentType == "application/pdf" || strings.HasSuffix(strings.ToLower(m.Filename), ".pdf")) && m.StorageURL != "" {
-				absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
-				matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, absPath)
+			isPDF := m.ContentType == "application/pdf" || strings.HasSuffix(strings.ToLower(m.Filename), ".pdf")
+			if isPDF {
+				var pdfPath string
+				if m.StorageProvider == "r2" && m.StorageKey != "" && store != nil {
+					rc, err := store.Get(ctx, m.StorageKey)
+					if err != nil {
+						log.Printf("IndexSession: get R2 material %s: %v", m.ID, err)
+					} else {
+						tmpF, err := os.CreateTemp(os.TempDir(), "talkback-rag-pdf-*")
+						if err != nil {
+							_ = rc.Close()
+							log.Printf("IndexSession: create temp file: %v", err)
+						} else {
+							_, _ = io.Copy(tmpF, rc)
+							_ = rc.Close()
+							pdfPath = tmpF.Name()
+							_ = tmpF.Close()
+							matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, pdfPath)
+							_ = os.Remove(pdfPath)
+						}
+					}
+				} else if m.StorageURL != "" {
+					absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
+					matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, absPath)
+				}
 			}
 			if matChunks == nil {
 				matChunks = BuildMaterialChunks(sessionID, m.ID, *m.ExtractedText)
@@ -164,7 +189,7 @@ func videoSourceToSegmentRows(vs *models.VideoSource) []models.TranscriptSegment
 }
 
 // EnsureSessionIndex builds index if not ready (sync on first question)
-func EnsureSessionIndex(ctx context.Context, db *database.DB, embedder Embedder, sessionID uuid.UUID) error {
+func EnsureSessionIndex(ctx context.Context, db *database.DB, embedder Embedder, sessionID uuid.UUID, store storage.Interface) error {
 	nEmb, err := db.CountEmbeddingsBySessionID(ctx, sessionID)
 	if err != nil {
 		return err
@@ -172,16 +197,16 @@ func EnsureSessionIndex(ctx context.Context, db *database.DB, embedder Embedder,
 	if nEmb > 0 {
 		return nil
 	}
-	return IndexSession(ctx, db, embedder, sessionID)
+	return IndexSession(ctx, db, embedder, sessionID, store)
 }
 
 // IndexSessionAsync runs IndexSession in a goroutine so new content is indexed without blocking the caller.
-// Call this whenever transcript or material content is added to a session.
-func IndexSessionAsync(sessionID uuid.UUID, db *database.DB) {
+// Call this whenever transcript or material content is added to a session. store may be nil (R2-backed PDFs will use extracted text only).
+func IndexSessionAsync(sessionID uuid.UUID, db *database.DB, store storage.Interface) {
 	go func() {
 		bg := context.Background()
 		embedder := &OpenAIEmbedder{}
-		if err := IndexSession(bg, db, embedder, sessionID); err != nil {
+		if err := IndexSession(bg, db, embedder, sessionID, store); err != nil {
 			log.Printf("IndexSessionAsync: %v", err)
 		}
 	}()

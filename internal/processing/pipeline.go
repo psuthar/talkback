@@ -258,7 +258,7 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 	updateMirror(models.ProcessingStateEmbedding)
 
 	embedder := &rag.OpenAIEmbedder{}
-	if indexErr := rag.IndexSession(ctx, db, embedder, sessionID); indexErr != nil {
+	if indexErr := rag.IndexSession(ctx, db, embedder, sessionID, store); indexErr != nil {
 		log.Printf("processing job error: session_id=%s job_id=%s stage=embed error=%v", sessionID, jobID, indexErr)
 		// Transient (e.g. OpenAI rate limit) vs permanent
 		msg := indexErr.Error()

@@ -123,7 +123,7 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure index (chunk + embed) if not ready
 	embedder := &rag.OpenAIEmbedder{}
-	if err := rag.EnsureSessionIndex(ctx, h.DB, embedder, sessionID); err != nil {
+	if err := rag.EnsureSessionIndex(ctx, h.DB, embedder, sessionID, h.Storage); err != nil {
 		log.Printf("SessionAsk EnsureSessionIndex: %v", err)
 		// Continue with empty chunks; LLM will return not_covered
 	}
@@ -143,7 +143,7 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		if len(sessionChunks) == 0 && sessionHasTranscriptContent(ctx, h.DB, sessionID) {
 			_ = h.DB.DeleteChunkEmbeddingsBySessionID(ctx, sessionID)
 			_ = h.DB.DeleteSessionChunksBySessionID(ctx, sessionID)
-			if reindexErr := rag.IndexSession(ctx, h.DB, embedder, sessionID); reindexErr != nil {
+			if reindexErr := rag.IndexSession(ctx, h.DB, embedder, sessionID, h.Storage); reindexErr != nil {
 				log.Printf("SessionAsk reindex after 0 chunks: %v", reindexErr)
 			} else {
 				sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK)

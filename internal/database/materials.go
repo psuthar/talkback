@@ -10,10 +10,13 @@ import (
 
 func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) error {
 	query := `
-		INSERT INTO materials (id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, title, error_message)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO materials (id, artifact_id, session_id, kind, filename, content_type, storage_url, storage_provider, storage_key, text_status, extracted_text, title, error_message)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`
-
+	storageProvider := material.StorageProvider
+	if storageProvider == "" {
+		storageProvider = "local"
+	}
 	_, err := db.Pool.Exec(ctx, query,
 		material.ID,
 		material.ArtifactID,
@@ -22,6 +25,8 @@ func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) err
 		material.Filename,
 		material.ContentType,
 		material.StorageURL,
+		storageProvider,
+		material.StorageKey,
 		material.TextStatus,
 		material.ExtractedText,
 		material.Title,
@@ -36,7 +41,7 @@ func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) err
 
 func (db *DB) GetMaterialByID(ctx context.Context, materialID uuid.UUID) (*models.Material, error) {
 	query := `
-		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, title, error_message, created_at
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, COALESCE(storage_provider, 'local'), storage_key, text_status, extracted_text, title, error_message, created_at
 		FROM materials
 		WHERE id = $1
 	`
@@ -49,6 +54,8 @@ func (db *DB) GetMaterialByID(ctx context.Context, materialID uuid.UUID) (*model
 		&m.Filename,
 		&m.ContentType,
 		&m.StorageURL,
+		&m.StorageProvider,
+		&m.StorageKey,
 		&m.TextStatus,
 		&m.ExtractedText,
 		&m.Title,
@@ -58,12 +65,15 @@ func (db *DB) GetMaterialByID(ctx context.Context, materialID uuid.UUID) (*model
 	if err != nil {
 		return nil, fmt.Errorf("failed to get material: %w", err)
 	}
+	if m.StorageProvider == "" {
+		m.StorageProvider = "local"
+	}
 	return m, nil
 }
 
 func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID) ([]*models.Material, error) {
 	query := `
-		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, title, error_message, created_at
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, COALESCE(storage_provider, 'local'), storage_key, text_status, extracted_text, title, error_message, created_at
 		FROM materials
 		WHERE artifact_id = $1
 		ORDER BY created_at
@@ -86,6 +96,8 @@ func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID
 			&m.Filename,
 			&m.ContentType,
 			&m.StorageURL,
+			&m.StorageProvider,
+			&m.StorageKey,
 			&m.TextStatus,
 			&m.ExtractedText,
 			&m.Title,
@@ -94,6 +106,9 @@ func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan material: %w", err)
+		}
+		if m.StorageProvider == "" {
+			m.StorageProvider = "local"
 		}
 		materials = append(materials, m)
 	}
@@ -113,7 +128,7 @@ func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID
 // GetMaterialsBySessionID retrieves all materials for a session
 func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.Material, error) {
 	query := `
-		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, text_status, extracted_text, title, error_message, created_at
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, COALESCE(storage_provider, 'local'), storage_key, text_status, extracted_text, title, error_message, created_at
 		FROM materials
 		WHERE session_id = $1
 		ORDER BY created_at
@@ -136,6 +151,8 @@ func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) 
 			&m.Filename,
 			&m.ContentType,
 			&m.StorageURL,
+			&m.StorageProvider,
+			&m.StorageKey,
 			&m.TextStatus,
 			&m.ExtractedText,
 			&m.Title,
@@ -144,6 +161,9 @@ func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) 
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan material: %w", err)
+		}
+		if m.StorageProvider == "" {
+			m.StorageProvider = "local"
 		}
 		materials = append(materials, m)
 	}

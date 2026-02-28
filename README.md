@@ -363,6 +363,15 @@ To wipe the database and then deploy (e.g. for staging or a clean slate):
    - **Manual:** Build command: `go build -o app ./cmd/api && go build -o reset-db ./cmd/reset-db`. Release / pre-deploy command: `if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then ./reset-db; fi`
    Leave `RENDER_RESET_DB_ON_RELEASE` unset (or delete it) for production so the DB is never wiped on deploy.
 
+**One-time: Render DB was migrated with the old migration set (versions 1–26)**  
+We use a **squashed** migration set: one baseline (version 1) in `internal/migrations/migrations/` plus delta migrations (e.g. 000002 for file_artifacts_r2). If deploy fails with *"no migration found for version 26"*, the database was created with the previous 26-migration set. Run this **once** against the Render Postgres (Dashboard → Connect → External connection string, then `psql` or any SQL client):
+
+```sql
+UPDATE schema_migrations SET version = 1, dirty = false;
+```
+
+Then redeploy. The migrator will treat the baseline as applied and run the next migration (e.g. 000002_file_artifacts_r2). Do not run this on a fresh DB that has never had migrations; use reset-db + deploy for that.
+
 **Frontend (Static Site on Render)**
 
 To deploy the React SPA as a Render **Static Site**:

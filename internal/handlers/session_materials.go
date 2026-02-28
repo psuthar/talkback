@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -96,27 +97,69 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Explicit path: <UploadRoot>/sessions/{session_id}/data/uploads/{filename}
-	uploadsDir := storage.SessionUploadsAbsDir(sessionID)
-	log.Printf("SessionUploadMaterial: storing to %s", uploadsDir)
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-		http.Error(w, "Failed to create uploads directory", http.StatusInternalServerError)
-		return
-	}
-	filePath := filepath.Join(uploadsDir, header.Filename)
-	if err := utils.SaveFile(file, filePath); err != nil {
-		http.Error(w, "Failed to save file", http.StatusInternalServerError)
-		return
-	}
-	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
 	ext := strings.ToLower(filepath.Ext(header.Filename))
 	isImage := strings.HasPrefix(contentType, "image/") ||
 		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
 	kind := deriveMaterialKind(ext, contentType, isImage)
+
+	var filePath string
+	var storageProvider string
+	var storageKey string
+
+	if h.Storage != nil {
+		// R2 path: write to temp file, upload to R2, extract from temp, then remove temp
+		tmpDir := os.TempDir()
+		tmpFile, err := os.CreateTemp(tmpDir, "talkback-upload-*")
+		if err != nil {
+			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
+			return
+		}
+		filePath = tmpFile.Name()
+		defer func() { _ = os.Remove(filePath) }()
+		if _, err := io.Copy(tmpFile, file); err != nil {
+			_ = tmpFile.Close()
+			http.Error(w, "Failed to write temp file", http.StatusInternalServerError)
+			return
+		}
+		if err := tmpFile.Close(); err != nil {
+			http.Error(w, "Failed to close temp file", http.StatusInternalServerError)
+			return
+		}
+		prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, header.Filename)
+		f, err := os.Open(filePath)
+		if err != nil {
+			http.Error(w, "Failed to open temp file for upload", http.StatusInternalServerError)
+			return
+		}
+		_, _, err = h.Storage.Put(r.Context(), storageKey, f, contentType)
+		_ = f.Close()
+		if err != nil {
+			log.Printf("SessionUploadMaterial R2 Put: %v", err)
+			http.Error(w, "Failed to upload file to storage", http.StatusInternalServerError)
+			return
+		}
+		storageProvider = "r2"
+	} else {
+		// Local path: write to uploads dir
+		uploadsDir := storage.SessionUploadsAbsDir(sessionID)
+		log.Printf("SessionUploadMaterial: storing to %s", uploadsDir)
+		if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+			http.Error(w, "Failed to create uploads directory", http.StatusInternalServerError)
+			return
+		}
+		filePath = filepath.Join(uploadsDir, header.Filename)
+		if err := utils.SaveFile(file, filePath); err != nil {
+			http.Error(w, "Failed to save file", http.StatusInternalServerError)
+			return
+		}
+		storageProvider = "local"
+	}
 
 	textStatus := models.MaterialTextStatusPending
 	var extractedText *string
@@ -176,25 +219,32 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	}
 
 	material := &models.Material{
-		ID:            uuid.New(),
-		ArtifactID:    artifactID,
-		SessionID:     sessionID,
-		Kind:          kind,
-		Filename:      header.Filename,
-		ContentType:   contentType,
-		StorageURL:    storageURL,
-		TextStatus:    textStatus,
-		ExtractedText: extractedText,
-		Title:         title,
-		ErrorMessage:  errMsg,
+		ID:               uuid.New(),
+		ArtifactID:       artifactID,
+		SessionID:        sessionID,
+		Kind:             kind,
+		Filename:         header.Filename,
+		ContentType:      contentType,
+		StorageURL:       storageURL,
+		StorageProvider:  storageProvider,
+		StorageKey:       storageKey,
+		TextStatus:       textStatus,
+		ExtractedText:    extractedText,
+		Title:            title,
+		ErrorMessage:     errMsg,
 	}
 	if err := h.DB.CreateMaterial(r.Context(), material); err != nil {
-		os.Remove(filePath)
+		if storageProvider == "r2" && storageKey != "" && h.Storage != nil {
+			_ = h.Storage.Delete(r.Context(), storageKey)
+		}
+		if storageProvider == "local" && filePath != "" {
+			_ = os.Remove(filePath)
+		}
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
 	if material.ExtractedText != nil && *material.ExtractedText != "" {
-		rag.IndexSessionAsync(sessionID, h.DB)
+		rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -261,7 +311,7 @@ func (h *Handlers) SessionPasteMaterial(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to create material", http.StatusInternalServerError)
 		return
 	}
-	rag.IndexSessionAsync(sessionID, h.DB)
+	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(material)
@@ -313,8 +363,10 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to delete material", http.StatusInternalServerError)
 		return
 	}
-	// Optionally remove file from disk if StorageURL set
-	if mat.StorageURL != "" {
+	// Remove file from storage: R2 or local disk
+	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
+		_ = h.Storage.Delete(r.Context(), mat.StorageKey)
+	} else if mat.StorageURL != "" {
 		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
 		_ = os.Remove(path)
 	}
