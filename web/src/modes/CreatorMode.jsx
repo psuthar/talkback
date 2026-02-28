@@ -327,7 +327,11 @@ export function CreatorMode({
     setAnswerVoiceTranscribedText('')
   }
 
-  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0])
+  // Prefer R2 primary video when session has primary_video_artifact_id and video_access_url (Zoom import or upload)
+  const primaryVideoAccessUrl = currentSession?.video_access_url || ''
+  const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
+  const syntheticR2Video = hasPrimaryR2Video ? { provider: 'r2', playback_mode: 'direct', media_url: primaryVideoAccessUrl } : null
+  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]) || syntheticR2Video
 
   // Fetch questions on mount/change (WebSocket handles real-time updates)
   useEffect(() => {
@@ -417,17 +421,21 @@ export function CreatorMode({
     }
   }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
 
-  // When Zoom import completes, refetch session once so video_sources and artifacts appear (video player, etc.)
+  // When Zoom import completes, refetch session so video_sources/primary_video and transcript appear (video player, etc.)
   const hasRefetchedForIngestionReady = useRef(false)
   const readyState = processingStatus?.state === 'ready' ? 'ready' : ingestionStatus?.state === 'ready' ? 'ready' : null
+  const hasVideoContent = (currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id
   useEffect(() => {
     if (readyState !== 'ready' || !refetchSession) return
-    const hasVideos = currentSession?.video_sources && currentSession.video_sources.length > 0
-    if (hasVideos) return
+    if (hasVideoContent) return
     if (hasRefetchedForIngestionReady.current) return
     hasRefetchedForIngestionReady.current = true
     refetchSession()
-  }, [readyState, refetchSession, currentSession?.video_sources])
+    // Schedule extra refetches in case the first one raced with backend (Zoom import writes video + transcript async)
+    const t1 = setTimeout(() => refetchSession(), 1500)
+    const t2 = setTimeout(() => refetchSession(), 3500)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [readyState, refetchSession, hasVideoContent])
   // Reset refs when session id changes so a new session can trigger refetch and poll
   const prevSessionIdRef = useRef(sessionId)
   const videoPollAttemptsRef = useRef(0)
@@ -439,13 +447,12 @@ export function CreatorMode({
     }
   }, [sessionId])
 
-  // Poll session until video_sources appear (Zoom import is async; ingestion status may be delayed)
+  // Poll session until video_sources or primary_video_artifact_id appear (Zoom import is async)
   const VIDEO_POLL_MAX_ATTEMPTS = 20
   const VIDEO_POLL_INTERVAL_MS = 2500
   useEffect(() => {
     if (!sessionId || !apiBaseUrl || !refetchSession) return
-    const hasVideos = currentSession?.video_sources && currentSession.video_sources.length > 0
-    if (hasVideos) return
+    if (hasVideoContent) return
     if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) return
     const t = setInterval(() => {
       videoPollAttemptsRef.current += 1
@@ -453,7 +460,7 @@ export function CreatorMode({
       refetchSession()
     }, VIDEO_POLL_INTERVAL_MS)
     return () => clearInterval(t)
-  }, [sessionId, apiBaseUrl, refetchSession, currentSession?.video_sources?.length])
+  }, [sessionId, apiBaseUrl, refetchSession, hasVideoContent])
 
   // Session transcript (Mission #2: GET /api/sessions/:id/transcript)
   const [transcriptData, setTranscriptData] = useState(null) // { status, source, updated_at, error_message, segments }
@@ -923,12 +930,12 @@ export function CreatorMode({
         />
       )}
 
-      {/* Video Player */}
-      {currentSession?.video_sources && currentSession.video_sources.length > 0 && (
+      {/* Video Player: show when we have video_sources or R2 primary video (Zoom import / upload) */}
+      {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
         <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fff3e0', border: '1px solid #ff9800' }}>
           <h2>Video Player</h2>
           
-          {currentSession.video_sources.length > 1 && (
+          {currentSession?.video_sources && currentSession.video_sources.length > 1 && (
             <div style={{ marginBottom: '15px' }}>
               <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Select Video:</label>
               <select 
@@ -1053,6 +1060,7 @@ export function CreatorMode({
                 sessionId={currentSession?.session?.id || currentSession?.id}
                 apiBaseUrl={apiBaseUrl}
                 creatorIdentity={creatorIdentity}
+                primaryVideoAccessUrl={primaryVideoAccessUrl}
               />
 
               {video.transcript_text && (

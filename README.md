@@ -346,6 +346,23 @@ To run the API on [Render.com](https://render.com) as a Web Service.
 
 Render sets `PORT` automatically; the app uses it by default.
 
+**Reset database and deploy on Render**
+
+To wipe the database and then deploy (e.g. for staging or a clean slate):
+
+1. **Reset from your machine (recommended)**  
+   Use Render’s **external** PostgreSQL URL (Dashboard → Postgres → Connect → “External connection string”). Then run:
+   ```bash
+   DATABASE_URL="postgres://...?sslmode=require" go run ./cmd/reset-db
+   ```
+   After the reset, trigger a deploy (or push a commit). On startup the API will run migrations from scratch.
+
+2. **Optional: reset during Render release (use with care)**  
+   To reset automatically on each deploy for a **non-production** service you can either use the repo’s **Blueprint** or set commands manually:
+   - **Blueprint:** The repo includes a `render.yaml` that builds both binaries and runs `./reset-db` in a pre-deploy step only when `RENDER_RESET_DB_ON_RELEASE` is set. Deploy via Render’s “Blueprint” flow; then set `RENDER_RESET_DB_ON_RELEASE=true` only for that service in the dashboard.
+   - **Manual:** Build command: `go build -o app ./cmd/api && go build -o reset-db ./cmd/reset-db`. Release / pre-deploy command: `if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then ./reset-db; fi`
+   Leave `RENDER_RESET_DB_ON_RELEASE` unset (or delete it) for production so the DB is never wiped on deploy.
+
 **Frontend (Static Site on Render)**
 
 To deploy the React SPA as a Render **Static Site**:

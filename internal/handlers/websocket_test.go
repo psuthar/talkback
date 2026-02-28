@@ -305,7 +305,7 @@ func TestHandleWebSocket(t *testing.T) {
 	err = db.CreateSession(context.Background(), session)
 	require.NoError(t, err)
 
-	h := NewHandlers(db, nil)
+	h := NewHandlers(db, nil, nil)
 	hub := h.Hub
 
 	t.Run("requires session parameter", func(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"log"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/transcript"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -20,8 +22,10 @@ import (
 type ZoomTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
 
 // RunJob runs the ingestion pipeline for one session_processing_job (fetch → download → parse → chunk → embed → ready).
+// When store and storagePrefix are set, downloads Zoom MP4 and uploads to storage, then sets session primary_video_artifact_id.
 // Idempotent: skips stages whose outputs already exist. Updates job state and session mirror.
-func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc) (err error) {
+// onJobReady is optional; when set, it is called when the job reaches ready so the API can broadcast to WebSocket clients.
+func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, onJobReady OnJobReadyFunc) (err error) {
 	sessionID := job.SessionID
 	jobID := job.ID
 	attempt := job.AttemptCount + 1
@@ -188,6 +192,65 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments)
 	}
 
+	// Zoom MP4 → R2: when storage is configured, download MP4 and set primary_video_artifact_id (no Zoom playback URL for this flow).
+	if store != nil && storagePrefix != "" {
+		mp4File := utils.FindMP4RecordingFile(rec.RecordingFiles)
+		if mp4File != nil {
+			mp4Data, downErr := utils.DownloadZoomMP4(mp4File.DownloadURL, accessToken, 0)
+			if downErr != nil {
+				log.Printf("processing job: zoom mp4 download error: session_id=%s job_id=%s error=%v", sessionID, jobID, downErr)
+				// Treat as transient so job can retry
+				next := time.Now().Add(BackoffTransient(attempt))
+				setJobFailedTransient(ctx, db, jobID, attempt, "zoom_mp4_download", downErr.Error(), next)
+				updateMirror(models.ProcessingStateFailedTransient)
+				return nil
+			}
+			artifactID := uuid.New()
+			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
+			bucket := os.Getenv("R2_BUCKET")
+			if bucket == "" {
+				bucket = "talkback-r2-bucket"
+			}
+			zoomMp4Filename := "zoom.mp4"
+			fa := &models.FileArtifact{
+				ID:              artifactID,
+				SessionID:       &sessionID,
+				Kind:            models.FileArtifactKindVideo,
+				Filename:        &zoomMp4Filename,
+				ContentType:     "video/mp4",
+				StorageProvider: "r2",
+				StorageBucket:   bucket,
+				StorageKey:      storageKey,
+				Status:          models.FileArtifactStatusPending,
+			}
+			if err := db.CreateFileArtifact(ctx, fa); err != nil {
+				setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			_, _, putErr := store.Put(ctx, storageKey, bytes.NewReader(mp4Data), "video/mp4")
+			if putErr != nil {
+				log.Printf("processing job: r2 put error: session_id=%s artifact_id=%s error=%v", sessionID, artifactID, putErr)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", putErr.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			exists, size, contentType, headErr := store.Head(ctx, storageKey)
+			if headErr != nil || !exists {
+				ct := "video/mp4"
+				if contentType != "" {
+					ct = contentType
+				}
+				_ = db.UpdateFileArtifactToReady(ctx, artifactID, int64(len(mp4Data)), ct)
+			} else {
+				_ = db.UpdateFileArtifactToReady(ctx, artifactID, size, contentType)
+			}
+			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
+			}
+		}
+	}
+
 	// --- Stage: chunk + embed ---
 	updateJobState(ctx, db, jobID, models.ProcessingStateChunking, models.ProcessingStageChunk, attempt, nil, nil, nil)
 	updateMirror(models.ProcessingStateChunking)
@@ -214,6 +277,9 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 	updateJobState(ctx, db, jobID, models.ProcessingStateReady, models.ProcessingStageReady, attempt, nil, nil, nil)
 	updateMirror(models.ProcessingStateReady)
 	_ = db.UnlockSessionProcessingJob(ctx, jobID)
+	if onJobReady != nil {
+		onJobReady(sessionID)
+	}
 	log.Printf("processing job completed: session_id=%s job_id=%s state=ready stage=ready duration_ok", sessionID, jobID)
 	return nil
 }

@@ -91,7 +91,7 @@ func setupTestHandlers(t *testing.T) (*Handlers, func()) {
 			os.Unsetenv("DATABASE_URL")
 		}
 	}
-	return NewHandlers(db, nil), cleanup // Job processor not needed for these tests
+	return NewHandlers(db, nil, nil), cleanup // Job processor not needed for these tests
 }
 
 // createTestSessionForHandlers is a helper to create a test session for handler tests

@@ -126,8 +126,8 @@ func TestUploadMaterial(t *testing.T) {
 	t.Run("defaults kind to document when not provided", func(t *testing.T) {
 		body := &bytes.Buffer{}
 		writer := multipart.NewWriter(body)
-		
-		fileWriter, err := writer.CreateFormFile("file", "test.txt")
+		// Use a different filename so duplicate-filename check doesn't return 409 (same session)
+		fileWriter, err := writer.CreateFormFile("file", "other.txt")
 		require.NoError(t, err)
 		_, err = fileWriter.Write([]byte("Test content"))
 		require.NoError(t, err)
@@ -144,6 +144,7 @@ func TestUploadMaterial(t *testing.T) {
 		var material map[string]interface{}
 		err = json.Unmarshal(w.Body.Bytes(), &material)
 		require.NoError(t, err)
+		assert.Equal(t, "other.txt", material["filename"])
 		assert.Equal(t, "document", material["kind"]) // Should default to "document"
 	})
 }

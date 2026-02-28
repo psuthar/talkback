@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -78,8 +79,7 @@ func (h *Handlers) UploadVideoFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create storage directory
-	storageDir := filepath.Join("data", "uploads", sessionID.String(), "videos")
+	storageDir := storage.SessionVideosDir(sessionID)
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create storage directory: %v", err), http.StatusInternalServerError)
 		return
@@ -95,8 +95,7 @@ func (h *Handlers) UploadVideoFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create object key (relative path)
-	objectKey := filepath.Join("data", "uploads", sessionID.String(), "videos", videoID.String()+".mp4")
+	objectKey := storage.SessionVideoPath(sessionID, videoID, ".mp4")
 
 	// Create artifact for this video (required by current schema)
 	// Use a default artifact or create one

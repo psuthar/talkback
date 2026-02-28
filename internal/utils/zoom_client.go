@@ -397,6 +397,33 @@ func FindMP4RecordingFile(files []ZoomRecordingFile) *ZoomRecordingFile {
 	return nil
 }
 
+// DownloadZoomMP4 downloads the MP4 file from Zoom (for R2 upload). Returns body and error.
+// maxBytes caps the response size (0 = 2GB). Used by Zoom import pipeline to upload to R2.
+func DownloadZoomMP4(downloadURL, accessToken string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		maxBytes = 2 * 1024 * 1024 * 1024 // 2GB
+	}
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &ZoomAPIError{StatusCode: resp.StatusCode, Message: string(body), Code: "zoom_download"}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
 // FindTranscriptFile returns the first recording file that is a transcript (VTT/CC)
 func FindTranscriptFile(files []ZoomRecordingFile) *ZoomRecordingFile {
 	f, _ := FindTranscriptFileWithStatus(files)

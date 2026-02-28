@@ -361,6 +361,7 @@ function getLoomEmbedUrl(shareUrl) {
 }
 
 // Main Video Player Component. Pass sessionId + apiBaseUrl for Zoom so video plays in-app via backend proxy.
+// When primaryVideoAccessUrl is set (R2 presigned URL from session.primary_video_artifact_id), it is used for playback.
 export function VideoPlayer({ 
   video, 
   onEvent,
@@ -369,7 +370,8 @@ export function VideoPlayer({
   playing: externalPlaying,
   sessionId = null,
   apiBaseUrl = '',
-  creatorIdentity = ''
+  creatorIdentity = '',
+  primaryVideoAccessUrl = ''
 }) {
   if (!video) return null
 
@@ -385,15 +387,14 @@ export function VideoPlayer({
     embedUrl = convertedUrl || null
   }
   
-  // Zoom in session: use backend proxy so video plays in-app (users stay in TalkBack)
-  // Pass creator_identity for legacy sessions where session.CreatedBy is nil
-  const streamBase = (video.provider === 'zoom' && sessionId && apiBaseUrl && video.id)
-    ? `${apiBaseUrl.replace(/\/$/, '')}/sessions/${sessionId}/video-sources/${video.id}/stream`
+  // R2 primary video: use presigned URL when session has primary_video_artifact_id (Zoom import or upload)
+  const zoomStreamUrl = !primaryVideoAccessUrl && video.provider === 'zoom' && sessionId && apiBaseUrl && video.id
+    ? (creatorIdentity
+        ? `${apiBaseUrl.replace(/\/$/, '')}/sessions/${sessionId}/video-sources/${video.id}/stream?creator_identity=${encodeURIComponent(creatorIdentity)}`
+        : `${apiBaseUrl.replace(/\/$/, '')}/sessions/${sessionId}/video-sources/${video.id}/stream`)
     : null
-  const zoomStreamUrl = streamBase
-    ? (creatorIdentity ? `${streamBase}?creator_identity=${encodeURIComponent(creatorIdentity)}` : streamBase)
-    : null
-  const mediaUrl = video.media_url ||
+  const mediaUrl = primaryVideoAccessUrl ||
+    video.media_url ||
     zoomStreamUrl ||
     (video.video_url && playbackMode === 'direct' ? video.video_url : null)
 

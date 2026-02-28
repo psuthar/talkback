@@ -4,6 +4,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	_ "github.com/psuthar/talkback/internal/env" // load .env before we read TALKBACK_BOOTSTRAP_* etc.
 )
 
 // Config holds auth-related env (session cookie, TTL, bootstrap admin).

@@ -160,6 +160,19 @@ func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) 
 	return materials, nil
 }
 
+// ExistsMaterialWithFilenameInSession returns true if the session already has a material with the same filename (case-insensitive).
+func (db *DB) ExistsMaterialWithFilenameInSession(ctx context.Context, sessionID uuid.UUID, filename string) (bool, error) {
+	var exists bool
+	err := db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM materials WHERE session_id = $1 AND LOWER(filename) = LOWER($2))`,
+		sessionID, filename,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check duplicate filename: %w", err)
+	}
+	return exists, nil
+}
+
 func (db *DB) UpdateMaterialTextStatus(ctx context.Context, materialID uuid.UUID, textStatus models.MaterialTextStatus, extractedText *string) error {
 	return db.UpdateMaterialTextStatusWithError(ctx, materialID, textStatus, extractedText, nil)
 }

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // IndexSession builds chunks from transcript + materials, embeds them, and stores (idempotent)
@@ -73,7 +75,8 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 			}
 			var matChunks []ChunkInput
 			if (m.ContentType == "application/pdf" || strings.HasSuffix(strings.ToLower(m.Filename), ".pdf")) && m.StorageURL != "" {
-				matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, m.StorageURL)
+				absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
+				matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, absPath)
 			}
 			if matChunks == nil {
 				matChunks = BuildMaterialChunks(sessionID, m.ID, *m.ExtractedText)

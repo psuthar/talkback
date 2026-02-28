@@ -6,11 +6,11 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // IsLoomShareURL checks if a URL is a Loom share URL
@@ -83,13 +83,11 @@ func ProbeMediaURL(ctx context.Context, url string) (bool, string, error) {
 // DownloadVideoToStorage downloads a video from a URL and stores it locally
 // Returns the object key (storage path) and error
 func DownloadVideoToStorage(ctx context.Context, url string, sessionID uuid.UUID, videoID uuid.UUID) (string, error) {
-	// Create storage directory
-	storageDir := filepath.Join("data", "uploads", sessionID.String(), "videos")
+	storageDir := storage.SessionVideosDir(sessionID)
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
-	// Determine file extension from URL or Content-Type
 	ext := ".mp4"
 	if strings.HasSuffix(strings.ToLower(url), ".webm") {
 		ext = ".webm"
@@ -97,8 +95,7 @@ func DownloadVideoToStorage(ctx context.Context, url string, sessionID uuid.UUID
 		ext = ".m4v"
 	}
 
-	// Create file path
-	objectKey := filepath.Join("data", "uploads", sessionID.String(), "videos", videoID.String()+ext)
+	objectKey := storage.SessionVideoPath(sessionID, videoID, ext)
 	filePath := objectKey
 
 	// Create file

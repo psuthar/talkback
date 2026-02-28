@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -51,6 +52,7 @@ func (h *Handlers) ListSessionMaterials(w http.ResponseWriter, r *http.Request) 
 
 // SessionUploadMaterial handles POST /api/sessions/:id/materials/upload and POST /sessions/:id/materials/upload
 func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request) {
+	log.Printf("SessionUploadMaterial called: %s %s", r.Method, r.URL.Path)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -83,12 +85,20 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close()
 
-	dataDir := "./data"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		http.Error(w, "Failed to create data directory", http.StatusInternalServerError)
+	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, header.Filename)
+	if err != nil {
+		log.Printf("SessionUploadMaterial check duplicate: %v", err)
+		http.Error(w, "Failed to check existing files", http.StatusInternalServerError)
 		return
 	}
-	uploadsDir := filepath.Join("data", "uploads", artifactID.String())
+	if exists {
+		http.Error(w, fmt.Sprintf("A file named %q is already in this session", header.Filename), http.StatusConflict)
+		return
+	}
+
+	// Explicit path: <UploadRoot>/sessions/{session_id}/data/uploads/{filename}
+	uploadsDir := storage.SessionUploadsAbsDir(sessionID)
+	log.Printf("SessionUploadMaterial: storing to %s", uploadsDir)
 	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
 		http.Error(w, "Failed to create uploads directory", http.StatusInternalServerError)
 		return
@@ -98,7 +108,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to save file", http.StatusInternalServerError)
 		return
 	}
-	storageURL := filepath.Join("data", "uploads", artifactID.String(), header.Filename)
+	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -305,7 +315,7 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 	}
 	// Optionally remove file from disk if StorageURL set
 	if mat.StorageURL != "" {
-		path := filepath.FromSlash(mat.StorageURL)
+		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
 		_ = os.Remove(path)
 	}
 	w.WriteHeader(http.StatusNoContent)

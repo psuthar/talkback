@@ -142,8 +142,9 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	var tempFile string
 	var cleanup func()
 
-	// Check if source URL is a local file path (uploaded or downloaded MP4)
-	if strings.HasPrefix(job.SourceURL, "data/uploads/") || strings.HasPrefix(job.SourceURL, "./data/uploads/") {
+	// Local file path: sessions/{session_id}/... or legacy data/...
+	if strings.HasPrefix(job.SourceURL, "sessions/") || strings.HasPrefix(job.SourceURL, "./sessions/") ||
+		strings.HasPrefix(job.SourceURL, "data/") || strings.HasPrefix(job.SourceURL, "./data/") {
 		// Local file - use it directly, no download needed
 		filePath := job.SourceURL
 		if strings.HasPrefix(filePath, "./") {

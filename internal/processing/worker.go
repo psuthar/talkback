@@ -5,12 +5,20 @@ import (
 	"log"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
+// OnJobReadyFunc is called when a processing job reaches ready (e.g. Zoom import complete). Optional; used to broadcast over WebSocket.
+type OnJobReadyFunc func(sessionID uuid.UUID)
+
 // RunWorker claims and runs session_processing_jobs. Run in a goroutine; exits when ctx is done.
-func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, pollInterval, lockDuration time.Duration) {
+// store can be nil; when set (e.g. R2), Zoom import will upload MP4 to storage and set primary_video_artifact_id.
+// storagePrefix is the R2 key prefix (e.g. "talkback") used when building artifact keys; only used when store != nil.
+// onJobReady is optional; when set, it is called when a job reaches ready so the API can broadcast to WebSocket clients.
+func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, pollInterval, lockDuration time.Duration, onJobReady OnJobReadyFunc) {
 	if pollInterval <= 0 {
 		pollInterval = 15 * time.Second
 	}
@@ -32,17 +40,17 @@ func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc,
 			if job == nil {
 				continue
 			}
-			runOne(ctx, db, job, getZoomToken)
+			runOne(ctx, db, job, getZoomToken, store, storagePrefix, onJobReady)
 		}
 	}
 }
 
-func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc) {
+func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, onJobReady OnJobReadyFunc) {
 	defer func() {
 		// Ensure unlock on panic
 		_ = db.UnlockSessionProcessingJob(ctx, job.ID)
 	}()
-	_ = RunJob(ctx, db, job, getZoomToken)
+	_ = RunJob(ctx, db, job, getZoomToken, store, storagePrefix, onJobReady)
 }
 
 // RunReconciler resets next_retry_at for stuck or waiting jobs so the worker can pick them up. Run in a goroutine.

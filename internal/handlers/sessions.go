@@ -48,6 +48,7 @@ type GetSessionResponse struct {
 	RecentAnswers      []*models.Answer     `json:"recent_answers"`
 	Mode               string               `json:"mode"` // "creator" or "participant"
 	UnreadMaterialIDs  []string             `json:"unread_material_ids,omitempty"` // only when participant_ref provided
+	VideoAccessURL     string               `json:"video_access_url,omitempty"`    // presigned R2 URL when session has primary_video_artifact_id
 }
 
 type JoinParticipantRequest struct {
@@ -351,6 +352,17 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// When session has primary_video_artifact_id and storage is configured, add presigned GET URL for playback (R2).
+	var videoAccessURL string
+	if session.PrimaryVideoArtifactID != nil && h.Storage != nil {
+		fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
+		if err == nil && fa != nil && fa.Status == models.FileArtifactStatusReady {
+			if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
+				videoAccessURL = url
+			}
+		}
+	}
+
 	response := GetSessionResponse{
 		Session:           session,
 		Artifacts:         artifacts,
@@ -360,11 +372,75 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		RecentAnswers:     answers,
 		Mode:              mode,
 		UnreadMaterialIDs: unreadMaterialIDs,
+		VideoAccessURL:    videoAccessURL,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// SetPrimaryVideoArtifactRequest body for POST /api/sessions/:id/primary-video-artifact
+type SetPrimaryVideoArtifactRequest struct {
+	ArtifactID string `json:"artifact_id"`
+}
+
+// SetSessionPrimaryVideoArtifact sets the session's primary_video_artifact_id (for R2 playback). Called after client completes presign-put flow.
+func (h *Handlers) SetSessionPrimaryVideoArtifact(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// /api/sessions/:id/primary-video-artifact -> parts ["api","sessions", id, "primary-video-artifact"]
+	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "primary-video-artifact" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[2])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	var req SetPrimaryVideoArtifactRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	artifactID, err := uuid.Parse(strings.TrimSpace(req.ArtifactID))
+	if err != nil {
+		http.Error(w, "Invalid artifact_id", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	fa, err := h.DB.GetFileArtifactByID(r.Context(), artifactID)
+	if err != nil || fa == nil {
+		http.Error(w, "Artifact not found", http.StatusNotFound)
+		return
+	}
+	if fa.SessionID == nil || *fa.SessionID != sessionID {
+		http.Error(w, "Artifact does not belong to this session", http.StatusBadRequest)
+		return
+	}
+	if fa.Kind != models.FileArtifactKindVideo {
+		http.Error(w, "Artifact is not a video", http.StatusBadRequest)
+		return
+	}
+	if fa.Status != models.FileArtifactStatusReady {
+		http.Error(w, "Artifact is not ready", http.StatusBadRequest)
+		return
+	}
+	if err := h.DB.SetSessionPrimaryVideoArtifact(r.Context(), sessionID, &artifactID); err != nil {
+		log.Printf("SetSessionPrimaryVideoArtifact: %v", err)
+		http.Error(w, "Failed to set primary video artifact", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video artifact set"})
 }
 
 // MarkSessionMaterialsSeenRequest body for POST /sessions/:id/materials/seen
@@ -1152,9 +1228,8 @@ func saveMultipartToTempFile(file multipart.File, header *multipart.FileHeader) 
 		ext = ".webm"
 	}
 
-	// Use a stable temp location under the repo to avoid OS temp cleaners/AV races on Windows.
-	// This file is still short-lived and deleted via cleanup.
-	dir := filepath.Join("data", "tmp", "voice")
+	// Temp location for voice recording (not under session storage; short-lived, cleaned up).
+	dir := filepath.Join("tmp", "voice")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", nil, err
 	}
@@ -1423,6 +1498,7 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 }
 
 // ZoomVideoStream proxies the Zoom recording MP4 so it can be played in-app (Zoom blocks iframe embed).
+// Used for legacy Zoom-only sessions; when session has primary_video_artifact_id the frontend uses video_access_url (R2) instead.
 // GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream
 func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

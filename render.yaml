@@ -1,0 +1,17 @@
+# Render Blueprint: TalkBack API (optional reset on deploy)
+# See README "Reset database and deploy on Render" for when to set RENDER_RESET_DB_ON_RELEASE.
+# Link a Render Postgres in the dashboard and set DATABASE_URL (or use envVar fromDatabase).
+services:
+  - type: web
+    name: talkback-api
+    runtime: go
+    buildCommand: go build -o app ./cmd/api && go build -o reset-db ./cmd/reset-db
+    preDeployCommand: sh -c 'if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then ./reset-db; fi'
+    startCommand: ./app
+    healthCheckPath: /health
+    envVars:
+      - key: ENV
+        value: production
+      - key: RUN_MIGRATIONS
+        value: "true"
+      # Add DATABASE_URL (from linked Postgres), CORS_ALLOWED_ORIGINS, BASE_URL, OPENAI_API_KEY, etc. in Dashboard

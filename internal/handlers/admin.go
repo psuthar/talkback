@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // ResetResponse represents the response from the reset endpoint
@@ -131,14 +133,17 @@ func (h *Handlers) ResetAllData(w http.ResponseWriter, r *http.Request) {
 	}
 	deleted["session_invitations"] = count
 
-	// Optionally delete uploaded files
+	// Optionally delete session file content: sessions/ and legacy data/uploads/
 	if deleteFiles {
-		uploadsDir := "./data/uploads"
-		if err := deleteUploadsDirectory(uploadsDir); err != nil {
-			log.Printf("Warning: Failed to delete uploads directory: %v", err)
-			// Don't fail the request, just log the warning
+		sessionRoot := "./" + storage.SessionStorageRoot
+		if err := deleteUploadsDirectory(sessionRoot); err != nil {
+			log.Printf("Warning: Failed to delete session storage directory: %v", err)
 		} else {
-			deleted["uploaded_files"] = 1 // Indicate files were deleted
+			deleted["uploaded_files"] = 1
+		}
+		legacyUploads := "./data/uploads"
+		if err := deleteUploadsDirectory(legacyUploads); err != nil {
+			log.Printf("Warning: Failed to delete legacy data/uploads: %v", err)
 		}
 	}
 

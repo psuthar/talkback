@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -80,8 +81,7 @@ func (h *Handlers) UploadTranscriptFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Create storage directory
-	storageDir := filepath.Join("data", "uploads", sessionID.String(), "transcripts")
+	storageDir := storage.SessionTranscriptsDir(sessionID)
 	if err := os.MkdirAll(storageDir, 0755); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create storage directory: %v", err), http.StatusInternalServerError)
 		return
@@ -97,8 +97,7 @@ func (h *Handlers) UploadTranscriptFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Create object key (relative path)
-	objectKey := filepath.Join("data", "uploads", sessionID.String(), "transcripts", tempID.String()+".mp4")
+	objectKey := storage.SessionTranscriptPath(sessionID, tempID)
 
 	// Create a minimal artifact for this transcript (required by schema)
 	artifact, err := h.DB.CreateArtifact(r.Context(), sessionID, "Transcript Upload", nil)

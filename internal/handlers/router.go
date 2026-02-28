@@ -183,6 +183,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "primary-video-artifact" {
+		if r.Method == http.MethodPost {
+			h.SetSessionPrimaryVideoArtifact(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "materials" {
 		if len(parts) == 4 {
 			if r.Method == http.MethodGet {

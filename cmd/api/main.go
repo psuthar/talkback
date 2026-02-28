@@ -25,6 +25,8 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/processing"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
+	"github.com/psuthar/talkback/internal/storage/r2"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -92,15 +94,36 @@ func main() {
 	jobProcessor.Start(ctx)
 	log.Printf("Job processor started with %d workers", workers)
 
+	uploadRoot := storage.UploadRoot()
+	log.Printf("Uploads will be written to: %s (path: sessions/{session_id}/data/uploads/{filename})", uploadRoot)
+
+	// Storage (R2 when STORAGE_DRIVER=r2)
+	var store storage.Interface
+	if os.Getenv("STORAGE_DRIVER") == "r2" {
+		cfg := r2.LoadConfig()
+		if client, err := r2.New(cfg); err != nil {
+			log.Printf("R2 storage disabled: %v", err)
+		} else {
+			store = client
+			log.Println("R2 storage enabled")
+		}
+	}
+
 	// Initialize handlers
-	h := handlers.NewHandlers(db, jobProcessor)
+	h := handlers.NewHandlers(db, jobProcessor, store)
 
 	// Mission #4: processing worker and reconciler for Zoom import pipeline
 	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {
 		tok, _, err := h.GetValidZoomAccessTokenContext(ctx, creatorIdentity)
 		return tok, err
 	}
-	go processing.RunWorker(ctx, db, getZoomToken, 15*time.Second, 15*time.Minute)
+	storagePrefix := ""
+	if store != nil {
+		storagePrefix = strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+	}
+	go processing.RunWorker(ctx, db, getZoomToken, store, storagePrefix, 15*time.Second, 15*time.Minute, func(sessionID uuid.UUID) {
+		h.Hub.BroadcastSessionProcessingReady(sessionID)
+	})
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 
@@ -183,6 +206,16 @@ func main() {
 	http.HandleFunc("/healthz", corsMiddleware(healthHandler))
 	http.HandleFunc("/db/ping", corsMiddleware(dbPingHandler))
 
+	// Log upload requests so we can confirm they hit this process (debug: breakpoints not hitting)
+	logUploadIfMatch := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost && (strings.Contains(r.URL.Path, "materials/upload") || (strings.Contains(r.URL.Path, "/artifacts/") && strings.Contains(r.URL.Path, "/materials"))) {
+				log.Printf("UPLOAD REQUEST received: %s %s", r.Method, r.URL.Path)
+			}
+			next(w, r)
+		}
+	}
+
 	// Artifact endpoints with CORS
 	http.HandleFunc("/artifacts", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/artifacts" && r.Method == http.MethodPost {
@@ -191,7 +224,7 @@ func main() {
 			h.ArtifactsRouter(w, r)
 		}
 	}))
-	http.HandleFunc("/artifacts/", corsMiddleware(h.ArtifactsRouter))
+	http.HandleFunc("/artifacts/", corsMiddleware(logUploadIfMatch(h.ArtifactsRouter)))
 
 	// Session endpoints with CORS (Phase 3). POST create requires auth + admin/creator role.
 	http.HandleFunc("/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +235,7 @@ func main() {
 		}
 	}))
 	http.HandleFunc("/sessions/from-zoom", corsWithCredentials(h.RequireAuth(h.CreateSessionFromZoom)))
-	http.HandleFunc("/sessions/", corsMiddleware(h.SessionsRouter))
+	http.HandleFunc("/sessions/", corsMiddleware(logUploadIfMatch(h.SessionsRouter)))
 
 	// WebSocket endpoint for session updates
 	http.HandleFunc("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub)))
@@ -245,6 +278,9 @@ func main() {
 	// Admin user management (RequireAuth + RequireAdmin)
 	http.HandleFunc("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))))
 	http.HandleFunc("/api/admin/users/", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))))
+
+	// API file artifacts (presigned PUT/GET for R2)
+	http.HandleFunc("/api/artifacts/", corsWithCredentials(h.ApiArtifactsRouter))
 
 	// TalkBack auth: signup, login, logout (cookie-based); /api/me requires auth
 	http.HandleFunc("/api/auth/signup", corsWithCredentials(h.AuthSignup))

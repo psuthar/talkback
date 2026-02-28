@@ -39,7 +39,7 @@ func TestResetAllData(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	h := NewHandlers(db, nil) // Job processor not needed for these tests
+	h := NewHandlers(db, nil, nil) // Job processor not needed for these tests
 
 	t.Run("returns 403 when ALLOW_DEV_RESET is not set", func(t *testing.T) {
 		// Ensure flag is not set

@@ -64,6 +64,45 @@ export function SessionMaterialsTab({
     return map
   }
 
+  // R2 presign-put flow for video: presign-put → PUT to URL → complete → set session primary-video-artifact
+  const uploadVideoFileR2 = async (file) => {
+    const presignRes = await fetch(`${base}/api/artifacts/presign-put`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        session_id: sessionId,
+        kind: 'video',
+        filename: file.name,
+        content_type: file.type || 'video/mp4',
+        size_bytes: file.size
+      })
+    })
+    if (!presignRes.ok) return { ok: false, error: await presignRes.text() || presignRes.statusText }
+    const { artifact_id, put_url, required_headers } = await presignRes.json()
+    const putRes = await fetch(put_url, {
+      method: 'PUT',
+      headers: { ...(required_headers || {}), 'Content-Type': file.type || 'video/mp4' },
+      body: file
+    })
+    if (!putRes.ok) return { ok: false, error: `PUT failed: ${putRes.status}` }
+    const completeRes = await fetch(`${base}/api/artifacts/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ artifact_id, size_bytes: file.size })
+    })
+    if (!completeRes.ok) return { ok: false, error: await completeRes.text() || completeRes.statusText }
+    const primaryRes = await fetch(`${base}/api/sessions/${sessionId}/primary-video-artifact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ artifact_id })
+    })
+    if (!primaryRes.ok) return { ok: false, error: await primaryRes.text() || primaryRes.statusText }
+    return { ok: true }
+  }
+
   const doUploadFiles = async (files) => {
     if (files.length === 0 || !sessionId) return
     setUploading(true)
@@ -74,18 +113,26 @@ export function SessionMaterialsTab({
     const errors = []
     try {
       for (const file of files) {
-        const form = new FormData()
-        form.append('file', file)
         if (isVideoFile(file)) {
-          const res = await fetch(`${base}/sessions/${sessionId}/video/upload`, { method: 'POST', body: form })
-          if (!res.ok) {
-            const t = await res.text()
-            errors.push(`${file.name}: ${t || res.statusText}`)
-          } else {
+          const r2Result = await uploadVideoFileR2(file)
+          if (r2Result.ok) {
             videosCount += 1
+          } else {
+            // Fallback to legacy multipart upload when R2 not configured (503) or other failure
+            const form = new FormData()
+            form.append('file', file)
+            const res = await fetch(`${base}/sessions/${sessionId}/video/upload`, { method: 'POST', body: form })
+            if (!res.ok) {
+              const t = await res.text()
+              errors.push(`${file.name}: ${t || res.statusText}`)
+            } else {
+              videosCount += 1
+            }
           }
         } else {
-          const res = await fetch(`${base}/sessions/${sessionId}/materials/upload`, { method: 'POST', body: form })
+          const form = new FormData()
+          form.append('file', file)
+          const res = await fetch(`${base}/sessions/${sessionId}/materials/upload`, { method: 'POST', body: form, credentials: 'include' })
           if (!res.ok) {
             const t = await res.text()
             errors.push(`${file.name}: ${t || res.statusText}`)

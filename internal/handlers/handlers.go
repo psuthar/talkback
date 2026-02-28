@@ -13,6 +13,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -20,15 +21,17 @@ type Handlers struct {
 	DB           *database.DB
 	JobProcessor *utils.JobProcessor
 	Hub          *SessionHub
+	Storage      storage.Interface // R2 for file_artifacts (presigned PUT/GET)
 }
 
-func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor) *Handlers {
+func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor, store storage.Interface) *Handlers {
 	hub := NewSessionHub()
 	go hub.Run()
 	return &Handlers{
 		DB:           db,
 		JobProcessor: jobProcessor,
 		Hub:          hub,
+		Storage:      store,
 	}
 }
 
@@ -227,6 +230,11 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusNotFound)
 		return
 	}
+	if artifact.SessionID == uuid.Nil {
+		http.Error(w, "Artifact has no session; uploads require a session-scoped artifact", http.StatusBadRequest)
+		return
+	}
+	sessionID := artifact.SessionID
 
 	// Parse multipart form
 	err = r.ParseMultipartForm(10 << 20) // 10 MB max
@@ -242,10 +250,22 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Create data directory if it doesn't exist
-	dataDir := "./data"
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create data directory: %v", err), http.StatusInternalServerError)
+	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, header.Filename)
+	if err != nil {
+		log.Printf("UploadMaterial check duplicate: %v", err)
+		http.Error(w, "Failed to check existing files", http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		http.Error(w, fmt.Sprintf("A file named %q is already in this session", header.Filename), http.StatusConflict)
+		return
+	}
+
+	// Explicit path: <UploadRoot>/sessions/{session_id}/data/uploads/{filename}
+	uploadsDir := storage.SessionUploadsAbsDir(sessionID)
+	log.Printf("UploadMaterial: storing to %s", uploadsDir)
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create uploads directory: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -255,13 +275,6 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/octet-stream"
 	}
 
-	// Create uploads directory structure
-	uploadsDir := filepath.Join("data", "uploads", artifactID.String())
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create uploads directory: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	// Save file
 	filePath := filepath.Join(uploadsDir, header.Filename)
 	if err := utils.SaveFile(file, filePath); err != nil {
@@ -269,8 +282,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Store file under ./data/uploads/{artifact_id}/...
-	storageURL := filepath.Join("data", "uploads", artifactID.String(), header.Filename)
+	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
 
 	// Skip text extraction for known image formats; mark as ready for viewing only.
 	ext := strings.ToLower(filepath.Ext(header.Filename))
@@ -382,8 +394,8 @@ func (h *Handlers) ServeMaterialFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}
-	// StorageURL is relative path e.g. data/uploads/artifact_id/filename
-	path := filepath.FromSlash(mat.StorageURL)
+	// StorageURL is relative path: sessions/{session_id}/data/uploads/{filename}
+	path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
 	f, err := os.Open(path)
 	if err != nil {
 		log.Printf("ServeMaterialFile: open %s: %v", path, err)

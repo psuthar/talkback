@@ -157,6 +157,15 @@ func (h *SessionHub) BroadcastAnswerUpdated(sessionID uuid.UUID, answer *models.
 	}
 }
 
+// BroadcastSessionProcessingReady notifies clients that Zoom import (or other processing) for the session reached ready.
+func (h *SessionHub) BroadcastSessionProcessingReady(sessionID uuid.UUID) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "session_processing_ready",
+		Data:      map[string]string{"state": "ready"},
+	}
+}
+
 // HandleWebSocket handles WebSocket connections for session updates
 func (h *Handlers) HandleWebSocket(hub *SessionHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

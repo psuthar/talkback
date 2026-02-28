@@ -123,6 +123,47 @@ const (
 	TranscriptStatusFailed  TranscriptStatus = "failed"
 )
 
+// FileArtifactKind is the type of binary file stored in R2.
+type FileArtifactKind string
+
+const (
+	FileArtifactKindVideo          FileArtifactKind = "video"
+	FileArtifactKindDocument       FileArtifactKind = "document"
+	FileArtifactKindImage          FileArtifactKind = "image"
+	FileArtifactKindAttachment     FileArtifactKind = "attachment"
+	FileArtifactKindExport         FileArtifactKind = "export"
+	FileArtifactKindTranscriptRaw  FileArtifactKind = "transcript_raw"
+)
+
+// FileArtifactStatus is the upload/processing status of a file artifact.
+type FileArtifactStatus string
+
+const (
+	FileArtifactStatusPending FileArtifactStatus = "pending"
+	FileArtifactStatusReady   FileArtifactStatus = "ready"
+	FileArtifactStatusFailed  FileArtifactStatus = "failed"
+)
+
+// FileArtifact represents a binary file stored in R2 (video, document, image, etc.).
+type FileArtifact struct {
+	ID               uuid.UUID         `json:"id"`
+	SessionID        *uuid.UUID        `json:"session_id,omitempty"`
+	OwnerUserID      *uuid.UUID        `json:"owner_user_id,omitempty"`
+	Kind             FileArtifactKind  `json:"kind"`
+	Filename         *string           `json:"filename,omitempty"`
+	ContentType      string            `json:"content_type"`
+	SizeBytes        *int64            `json:"size_bytes,omitempty"`
+	Sha256           *string           `json:"sha256,omitempty"`
+	StorageProvider  string            `json:"storage_provider"`
+	StorageBucket    string            `json:"storage_bucket"`
+	StorageKey       string            `json:"storage_key"`
+	Status           FileArtifactStatus `json:"status"`
+	FailureReason    *string           `json:"failure_reason,omitempty"`
+	MetadataJSON     []byte            `json:"metadata_json,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+}
+
 // Transcript represents a transcript artifact for a session (Mission #2)
 type Transcript struct {
 	ID           uuid.UUID        `json:"id"`
@@ -301,18 +342,19 @@ const (
 )
 
 type Session struct {
-	ID                 uuid.UUID             `json:"id"`
-	Title              string                `json:"title"`
-	CreatedBy          *string               `json:"created_by,omitempty"`
-	Status             SessionStatus         `json:"status"`
-	SourceProvider     SessionSourceProvider `json:"source_provider,omitempty"`
-	SourceReferenceURL *string               `json:"source_reference_url,omitempty"`
-	IndexStatus          string     `json:"index_status,omitempty"`   // "none" | "building" | "ready" | "failed"
-	IndexUpdatedAt       *time.Time `json:"index_updated_at,omitempty"`
-	ProcessingState      string     `json:"processing_state,omitempty"`       // mirror of session_processing_jobs.state
-	ProcessingUpdatedAt  *time.Time `json:"processing_updated_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                      uuid.UUID  `json:"id"`
+	Title                   string     `json:"title"`
+	CreatedBy               *string    `json:"created_by,omitempty"`
+	Status                  SessionStatus         `json:"status"`
+	SourceProvider          SessionSourceProvider `json:"source_provider,omitempty"`
+	SourceReferenceURL      *string    `json:"source_reference_url,omitempty"`
+	PrimaryVideoArtifactID  *uuid.UUID `json:"primary_video_artifact_id,omitempty"` // R2 file_artifact for main video
+	IndexStatus             string    `json:"index_status,omitempty"`   // "none" | "building" | "ready" | "failed"
+	IndexUpdatedAt          *time.Time `json:"index_updated_at,omitempty"`
+	ProcessingState         string    `json:"processing_state,omitempty"`       // mirror of session_processing_jobs.state
+	ProcessingUpdatedAt     *time.Time `json:"processing_updated_at,omitempty"`
+	CreatedAt               time.Time `json:"created_at"`
+	UpdatedAt               time.Time `json:"updated_at"`
 }
 
 type SessionParticipant struct {

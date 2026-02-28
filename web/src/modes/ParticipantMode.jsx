@@ -58,7 +58,10 @@ export function ParticipantMode({
 }) {
   const hasSession = currentSession && currentSession.session
 
-  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0])
+  const primaryVideoAccessUrl = currentSession?.video_access_url || ''
+  const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
+  const syntheticR2Video = hasPrimaryR2Video ? { provider: 'r2', playback_mode: 'direct', media_url: primaryVideoAccessUrl } : null
+  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]) || syntheticR2Video
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
 
@@ -302,9 +305,9 @@ export function ParticipantMode({
                 initialPage={citationScrollTarget?.page}
                 initialBlock={citationScrollTarget?.block}
               />
-            ) : currentSession.video_sources && currentSession.video_sources.length > 0 ? (
+            ) : (currentSession.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id ? (
               <>
-                {currentSession.video_sources.length > 1 && (
+                {currentSession?.video_sources && currentSession.video_sources.length > 1 && (
                   <div style={{ marginBottom: '10px' }}>
                     <label style={{ fontWeight: 'bold', marginRight: '8px' }}>Video:</label>
                     <select
@@ -339,6 +342,7 @@ export function ParticipantMode({
                         sessionId={currentSession?.session?.id}
                         apiBaseUrl={apiBaseUrl}
                         creatorIdentity={currentSession?.session?.created_by ?? creatorIdentity}
+                        primaryVideoAccessUrl={primaryVideoAccessUrl}
                       />
                     </div>
                     {video.transcript_text && (

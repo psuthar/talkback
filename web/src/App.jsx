@@ -347,6 +347,20 @@ function App() {
     }
   }, [authUser])
 
+  // Participants must never see edit mode: if auth just loaded and user is participant but we're in creator mode (e.g. opened via ?mode=edit before auth loaded), force participant mode and URL
+  useEffect(() => {
+    if (authUser?.global_role !== 'participant') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mode') !== 'edit') return
+    const sessionId = params.get('session')
+    if (!sessionId) return
+    setSessionUserMode('participant')
+    setCurrentUser('participant')
+    const apiParam = params.get('api') ? `&api=${params.get('api')}` : (apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : '')
+    window.history.replaceState(null, '', `${window.location.pathname}?session=${sessionId}&mode=view${apiParam}`)
+    setUrlKey(k => k + 1)
+  }, [authUser?.global_role, apiBaseUrl])
+
   // Fetch "my sessions" when in creator mode with no session and user is logged in
   useEffect(() => {
     if (!authUser || !apiBaseUrl || currentSession) {
@@ -1392,6 +1406,11 @@ function App() {
 
     const baseUrl = overrideApiBaseUrl != null ? overrideApiBaseUrl : apiBaseUrl
 
+    // Participants (join-only role) must never get creator mode, even if URL has ?mode=edit
+    if (forceMode === 'creator' && authUser?.global_role === 'participant') {
+      forceMode = 'participant'
+    }
+
     // Set mode immediately based on forceMode, even if API call fails
     if (forceMode === 'participant') {
       setSessionUserMode('participant')
@@ -1466,11 +1485,12 @@ function App() {
         // Update URL to reflect participant mode (include api so refresh/new window works)
         window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
       } else {
-        // No explicit mode, determine from URL or default to creator
+        // No explicit mode, determine from URL or default to creator (unless user is participant role)
         const urlParams = new URLSearchParams(window.location.search)
         const urlMode = urlParams.get('mode')
-        
-        if (urlMode === 'view') {
+        const mustBeParticipant = authUser?.global_role === 'participant'
+
+        if (urlMode === 'view' || mustBeParticipant) {
           setCurrentUser('participant')
           setSessionUserMode('participant')
           window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
@@ -1946,7 +1966,8 @@ function App() {
   const showAdminForbidden = isAdminMode && (!authUser || authUser.global_role !== 'admin')
   // Participant role can only join sessions; hide create-session UI (create form, Zoom, mode toggle).
   const canCreateSessions = !authUser || authUser.global_role !== 'participant'
-  const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view'
+  // Render participant view when session mode is participant, URL is view, or user role is participant (so ?mode=edit never shows edit UI)
+  const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view' || authUser?.global_role === 'participant'
   // Use session from URL so participant tab can connect to WebSocket before openSession() completes
   const urlSessionId = urlParams.get('session')
   const effectiveSessionId = sessionId || (urlMode === 'view' && urlSessionId ? urlSessionId : null)
@@ -2005,6 +2026,12 @@ function App() {
           fetchSessionQuestions(effectiveSessionId)
         }
       }
+    } else if (message.type === 'session_processing_ready') {
+      const msgSessionId = message.SessionID ?? message.session_id
+      if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
+        console.log('WebSocket: Session processing ready, refetching session...')
+        refetchSession()
+      }
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
       console.log('WebSocket: Answer created/updated, refreshing questions...')
       
@@ -2040,7 +2067,7 @@ function App() {
         }
       }
     }
-  }, [effectiveSessionId, fetchSessionQuestions])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, currentSession?.session?.id, currentSession?.id])
 
   // Clear mock questions when session changes
   useEffect(() => {
@@ -2124,6 +2151,9 @@ function App() {
                 await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
               } catch (_) { /* ignore */ }
               setAuthUser(null)
+              // Clear query params for all roles (creator, participant, admin) so they don't carry forward on next login (e.g. no ?mode=admin or ?session=...)
+              window.history.replaceState(null, '', window.location.pathname)
+              setUrlKey(k => k + 1)
             }}
             style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555' }}
           >

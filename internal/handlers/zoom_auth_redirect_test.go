@@ -29,7 +29,7 @@ func TestZoomAuthStart_RedirectURI(t *testing.T) {
 	db, err := database.New()
 	require.NoError(t, err)
 	defer db.Close()
-	h := NewHandlers(db, nil)
+	h := NewHandlers(db, nil, nil)
 
 	saveEnv := func(key string) (restore func()) {
 		v := os.Getenv(key)
