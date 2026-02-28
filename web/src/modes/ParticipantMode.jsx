@@ -343,6 +343,7 @@ export function ParticipantMode({
                         apiBaseUrl={apiBaseUrl}
                         creatorIdentity={currentSession?.session?.created_by ?? creatorIdentity}
                         primaryVideoAccessUrl={primaryVideoAccessUrl}
+                        primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
                       />
                     </div>
                     {video.transcript_text && (

@@ -6,16 +6,35 @@ All binary files (Zoom MP4 ingests, user uploads, exports) are stored in **Cloud
 - **Upload flow:** `POST /api/artifacts/presign-put` → client PUT to R2 → `POST /api/artifacts/complete`
 - **Access flow:** `GET /api/artifacts/{id}/access` → returns presigned GET URL for video/docs/images
 
-## Environment variables
+## Environment variables (required for R2)
 
-See `.env.example` for:
+Set these for local and for Render (or any deploy):
 
-- `STORAGE_DRIVER=r2`
-- `R2_BUCKET`, `R2_ACCOUNT_ID`, `R2_ENDPOINT`, `R2_REGION`
-- `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`
-- `R2_PREFIX`, `R2_PRESIGN_PUT_TTL_SECONDS`, `R2_PRESIGN_GET_TTL_SECONDS`
-- `PUBLIC_APP_ORIGIN`
+- **STORAGE_DRIVER** = `r2` (required; without it R2 is off and presign/artifacts return 503)
+- **R2_BUCKET** = `talkback-r2-bucket` (or your bucket name)
+- **R2_ENDPOINT** – e.g. `https://<account_id>.r2.cloudflarestorage.com`
+- **R2_REGION** = `auto` (recommended for R2)
+- **R2_ACCESS_KEY_ID**, **R2_SECRET_ACCESS_KEY** – R2 API token (Secret on Render)
+- **R2_PREFIX** = `talkback/` (object key prefix; no leading/trailing slash in code)
+
+Optional:
+
+- `R2_ACCOUNT_ID`, `R2_PRESIGN_PUT_TTL_SECONDS`, `R2_PRESIGN_GET_TTL_SECONDS`
+- `PUBLIC_APP_ORIGIN` (for CORS / redirects)
 - Upload caps: `MAX_UPLOAD_BYTES_DEFAULT`, `MAX_UPLOAD_BYTES_VIDEO`, `MAX_SESSION_ARTIFACTS`
+
+See `.env.example` for a full list.
+
+## R2 bucket CORS (for presigned GET video playback)
+
+The browser fetches video via presigned GET URLs. For the `<video>` element to load R2 objects from your frontend origin, configure CORS on the R2 bucket (Cloudflare dashboard → R2 → your bucket → Settings → CORS policy).
+
+- **Allowed origins:** your frontend origins, e.g. `http://localhost:5173`, `http://localhost:3000`, and your Render frontend (e.g. `https://your-app.onrender.com`).
+- **Allowed methods:** `GET`, `HEAD`.
+- **Allowed headers:** (leave default or add any the client sends).
+- **Expose headers:** optional; `Content-Length`, `Content-Range`, `Accept-Ranges` help with seeking.
+
+Without CORS, the video may fail to load with a network or “blocked” error in the console.
 
 ## Local dev
 

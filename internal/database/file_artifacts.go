@@ -104,6 +104,23 @@ func (db *DB) UpdateFileArtifactToReady(ctx context.Context, id uuid.UUID, sizeB
 	return nil
 }
 
+// UpdateFileArtifactToFailed sets status=failed and failure_reason (e.g. zoom_download or r2_put).
+func (db *DB) UpdateFileArtifactToFailed(ctx context.Context, id uuid.UUID, failureReason string) error {
+	query := `
+		UPDATE file_artifacts
+		SET status = 'failed', failure_reason = $1, updated_at = now()
+		WHERE id = $2
+	`
+	result, err := db.Pool.Exec(ctx, query, failureReason, id)
+	if err != nil {
+		return fmt.Errorf("update file_artifact to failed: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("file_artifact not found: %s", id)
+	}
+	return nil
+}
+
 // SetSessionPrimaryVideoArtifact sets sessions.primary_video_artifact_id for the given session.
 func (db *DB) SetSessionPrimaryVideoArtifact(ctx context.Context, sessionID uuid.UUID, artifactID *uuid.UUID) error {
 	query := `UPDATE sessions SET primary_video_artifact_id = $1, updated_at = now() WHERE id = $2`

@@ -3,6 +3,7 @@ package processing
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/transcript"
 	"github.com/psuthar/talkback/internal/utils"
+	"github.com/psuthar/talkback/internal/zoom"
 )
 
 // ZoomTokenFunc returns a valid Zoom access token for the given creator identity (for background workers).
@@ -192,63 +194,96 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments)
 	}
 
-	// Zoom MP4 → R2: when storage is configured, download MP4 and set primary_video_artifact_id (no Zoom playback URL for this flow).
+	// Zoom MP4 → R2: when storage is configured, stream Zoom MP4 into R2 and set primary_video_artifact_id (playback only from R2).
 	if store != nil && storagePrefix != "" {
-		mp4File := utils.FindMP4RecordingFile(rec.RecordingFiles)
-		if mp4File != nil {
-			mp4Data, downErr := utils.DownloadZoomMP4(mp4File.DownloadURL, accessToken, 0)
-			if downErr != nil {
-				log.Printf("processing job: zoom mp4 download error: session_id=%s job_id=%s error=%v", sessionID, jobID, downErr)
-				// Treat as transient so job can retry
-				next := time.Now().Add(BackoffTransient(attempt))
-				setJobFailedTransient(ctx, db, jobID, attempt, "zoom_mp4_download", downErr.Error(), next)
-				updateMirror(models.ProcessingStateFailedTransient)
-				return nil
-			}
-			artifactID := uuid.New()
-			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
-			bucket := os.Getenv("R2_BUCKET")
-			if bucket == "" {
-				bucket = "talkback-r2-bucket"
-			}
-			zoomMp4Filename := "zoom.mp4"
-			fa := &models.FileArtifact{
-				ID:              artifactID,
-				SessionID:       &sessionID,
-				Kind:            models.FileArtifactKindVideo,
-				Filename:        &zoomMp4Filename,
-				ContentType:     "video/mp4",
-				StorageProvider: "r2",
-				StorageBucket:   bucket,
-				StorageKey:      storageKey,
-				Status:          models.FileArtifactStatusPending,
-			}
-			if err := db.CreateFileArtifact(ctx, fa); err != nil {
-				setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
-				updateMirror(models.ProcessingStateFailedPermanent)
-				return nil
-			}
-			_, _, putErr := store.Put(ctx, storageKey, bytes.NewReader(mp4Data), "video/mp4")
-			if putErr != nil {
-				log.Printf("processing job: r2 put error: session_id=%s artifact_id=%s error=%v", sessionID, artifactID, putErr)
-				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", putErr.Error())
-				updateMirror(models.ProcessingStateFailedPermanent)
-				return nil
-			}
-			exists, size, contentType, headErr := store.Head(ctx, storageKey)
-			if headErr != nil || !exists {
-				ct := "video/mp4"
-				if contentType != "" {
-					ct = contentType
-				}
-				_ = db.UpdateFileArtifactToReady(ctx, artifactID, int64(len(mp4Data)), ct)
-			} else {
-				_ = db.UpdateFileArtifactToReady(ctx, artifactID, size, contentType)
-			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
-				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
+		log.Printf("IMPORT_START session_id=%s meeting_uuid=%s", sessionID, instanceUUID)
+		fileTypes := make([]string, 0, len(rec.RecordingFiles))
+		recTypes := make([]string, 0, len(rec.RecordingFiles))
+		for _, f := range rec.RecordingFiles {
+			fileTypes = append(fileTypes, f.FileType)
+			if f.RecordingType != "" {
+				recTypes = append(recTypes, f.RecordingType)
 			}
 		}
+		log.Printf("ZOOM_RECORDING_FILES count=%d file_types=%v recording_types=%v", len(rec.RecordingFiles), fileTypes, recTypes)
+
+		mp4File, selErr := utils.SelectCanonicalMP4(rec.RecordingFiles)
+		if selErr != nil {
+			log.Printf("CANONICAL_FILE_SELECTED error=%v (no MP4)", selErr)
+			setJobFailedPermanent(ctx, db, jobID, attempt, "no_mp4", "No MP4 recording found for this meeting recording.")
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		log.Printf("CANONICAL_FILE_SELECTED file_type=%s recording_type=%s download_url_present=%v", mp4File.FileType, mp4File.RecordingType, mp4File.DownloadURL != "")
+
+		artifactID := uuid.New()
+		storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
+		bucket := os.Getenv("R2_BUCKET")
+		if bucket == "" {
+			bucket = "talkback-r2-bucket"
+		}
+		zoomMp4Filename := "zoom.mp4"
+		fa := &models.FileArtifact{
+			ID:              artifactID,
+			SessionID:       &sessionID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &zoomMp4Filename,
+			ContentType:     "video/mp4",
+			StorageProvider: "r2",
+			StorageBucket:   bucket,
+			StorageKey:      storageKey,
+			Status:          models.FileArtifactStatusPending,
+		}
+		// Store Zoom metadata for troubleshooting (no download_url for playback)
+		if meta := zoomArtifactMetadata(instanceUUID, mp4File); len(meta) > 0 {
+			fa.MetadataJSON = meta
+		}
+		if err := db.CreateFileArtifact(ctx, fa); err != nil {
+			setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+
+		resp, downErr := zoom.DownloadRecordingFile(ctx, mp4File.DownloadURL, accessToken)
+		if downErr != nil {
+			log.Printf("ZOOM_DOWNLOAD status=error error=%v", downErr)
+			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "zoom_download: "+downErr.Error())
+			next := time.Now().Add(BackoffTransient(attempt))
+			setJobFailedTransient(ctx, db, jobID, attempt, "zoom_mp4_download", downErr.Error(), next)
+			updateMirror(models.ProcessingStateFailedTransient)
+			return nil
+		}
+		defer resp.Body.Close()
+
+		log.Printf("R2_UPLOAD_START bucket=%s key=%s", bucket, storageKey)
+		etag, _, putErr := store.Put(ctx, storageKey, resp.Body, "video/mp4")
+		if putErr != nil {
+			log.Printf("R2_UPLOAD_DONE error=%v", putErr)
+			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_put: "+putErr.Error())
+			setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", putErr.Error())
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		log.Printf("R2_UPLOAD_DONE etag=%s", etag)
+
+		exists, size, contentType, headErr := store.Head(ctx, storageKey)
+		if headErr != nil || !exists {
+			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_head_verify: object missing after put")
+			setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", "object missing after upload")
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		ct := "video/mp4"
+		if contentType != "" {
+			ct = contentType
+		}
+		if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, ct); err != nil {
+			log.Printf("processing job: update artifact ready: %v", err)
+		}
+		if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
+		}
+		log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s", artifactID, storageKey)
 	}
 
 	// --- Stage: chunk + embed ---
@@ -292,6 +327,25 @@ func meetingUUIDForJob(job *models.SessionProcessingJob) string {
 		return *job.MeetingUUID
 	}
 	return ""
+}
+
+// zoomArtifactMetadata returns JSON for artifact.metadata_json (meeting_uuid, recording file id for troubleshooting).
+func zoomArtifactMetadata(meetingUUID string, mp4File *utils.ZoomRecordingFile) []byte {
+	if meetingUUID == "" && (mp4File == nil || mp4File.ID == "") {
+		return nil
+	}
+	m := map[string]string{}
+	if meetingUUID != "" {
+		m["zoom_meeting_uuid"] = meetingUUID
+	}
+	if mp4File != nil && mp4File.ID != "" {
+		m["zoom_recording_file_id"] = mp4File.ID
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(m)
+	return b
 }
 
 func updateJobState(ctx context.Context, db *database.DB, jobID uuid.UUID, state, stage string, attempt int, nextRetryAt *time.Time, code, msg *string) {

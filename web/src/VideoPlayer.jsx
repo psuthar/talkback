@@ -20,9 +20,13 @@ export function Html5VideoPlayer({
   /** Optional: shown when video fails to load (e.g. "Open in Zoom") */
   openUrl = null,
   /** Optional: label for openUrl link */
-  openUrlLabel = 'Open in new tab'
+  openUrlLabel = 'Open in new tab',
+  /** Optional: when set with apiBaseUrlForRefresh, on error (e.g. expired presigned URL) we re-fetch GET /api/artifacts/{id}/access and set new src, then resume at currentTime */
+  artifactIdForRefresh = null,
+  apiBaseUrlForRefresh = ''
 }) {
   const videoRef = useRef(null)
+  const lastKnownTimeRef = useRef(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -34,6 +38,7 @@ export function Html5VideoPlayer({
     if (!video) return
 
     const handleLoadedMetadata = () => {
+      lastKnownTimeRef.current = video.currentTime
       setDuration(video.duration)
       onEvent?.({ type: PlayerEvent.READY })
     }
@@ -42,6 +47,7 @@ export function Html5VideoPlayer({
       setPlaying(true)
       const time = Math.floor(video.currentTime)
       setCurrentTime(time)
+      lastKnownTimeRef.current = video.currentTime
       onEvent?.({ type: PlayerEvent.PLAY, time })
     }
 
@@ -49,25 +55,53 @@ export function Html5VideoPlayer({
       setPlaying(false)
       const time = Math.floor(video.currentTime)
       setCurrentTime(time)
+      lastKnownTimeRef.current = video.currentTime
       onEvent?.({ type: PlayerEvent.PAUSE, time })
     }
 
     const handleSeeked = () => {
       const time = Math.floor(video.currentTime)
       setCurrentTime(time)
+      lastKnownTimeRef.current = video.currentTime
       onEvent?.({ type: PlayerEvent.SEEK, time })
     }
 
     const handleTimeUpdate = () => {
       const time = Math.floor(video.currentTime)
       setCurrentTime(time)
+      lastKnownTimeRef.current = video.currentTime
       onTimeUpdate?.(time)
       onEvent?.({ type: PlayerEvent.TIMEUPDATE, time })
     }
 
     const handleError = () => {
       const err = video.error
-      const message = err?.message || (err?.code === 4 ? 'Video not found or access denied.' : 'Video failed to load.')
+      const code = err?.code
+      const isExpiredOrNetwork = code === 4 || code === 2 // MEDIA_ERR_SRC_NOT_SUPPORTED, MEDIA_ERR_NETWORK
+      if (isExpiredOrNetwork && artifactIdForRefresh && apiBaseUrlForRefresh) {
+        const base = apiBaseUrlForRefresh.replace(/\/$/, '')
+        const lastTime = lastKnownTimeRef.current || video.currentTime || 0
+        fetch(`${base}/api/artifacts/${artifactIdForRefresh}/access`, { credentials: 'include' })
+          .then(res => res.ok ? res.json() : Promise.reject(new Error(res.statusText)))
+          .then(data => {
+            if (!data?.url || !videoRef.current) return
+            const v = videoRef.current
+            v.src = data.url
+            const onMeta = () => {
+              v.currentTime = lastTime
+              v.play().catch(() => {})
+              v.removeEventListener('loadedmetadata', onMeta)
+            }
+            v.addEventListener('loadedmetadata', onMeta)
+            setLoadError(null)
+            setServerStatus(null)
+          })
+          .catch(() => {
+            setLoadError(err?.message || (code === 4 ? 'Video not found or access denied.' : 'Video failed to load.'))
+          })
+        return
+      }
+      const message = err?.message || (code === 4 ? 'Video not found or access denied.' : 'Video failed to load.')
       setLoadError(message)
     }
 
@@ -86,7 +120,7 @@ export function Html5VideoPlayer({
       video.removeEventListener('timeupdate', handleTimeUpdate)
       video.removeEventListener('error', handleError)
     }
-  }, [onEvent, onTimeUpdate])
+  }, [onEvent, onTimeUpdate, artifactIdForRefresh, apiBaseUrlForRefresh])
 
   // Handle external control
   useEffect(() => {
@@ -371,7 +405,9 @@ export function VideoPlayer({
   sessionId = null,
   apiBaseUrl = '',
   creatorIdentity = '',
-  primaryVideoAccessUrl = ''
+  primaryVideoAccessUrl = '',
+  /** When using R2 primary video (primaryVideoAccessUrl), pass artifact ID so the player can refresh presigned URL on expiry */
+  primaryVideoArtifactId = null
 }) {
   if (!video) return null
 
@@ -411,6 +447,8 @@ export function VideoPlayer({
         playing={externalPlaying}
         openUrl={video.provider === 'zoom' ? openUrl : (openUrl || null)}
         openUrlLabel={video.provider === 'zoom' ? 'Open in Zoom' : 'Open in new tab'}
+        artifactIdForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? primaryVideoArtifactId : null}
+        apiBaseUrlForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? apiBaseUrl : ''}
       />
     )
   } else if (video.provider === 'zoom' && !zoomStreamUrl && openUrl) {

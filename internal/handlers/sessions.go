@@ -1525,6 +1525,16 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+	// Playback is only from R2 when primary_video_artifact_id is set; do not proxy Zoom.
+	if session.PrimaryVideoArtifactID != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusGone)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "Video not ingested",
+			"message": "Video is served from R2. Use the session's video_access_url (from GET /api/sessions/:id) for playback.",
+		})
+		return
+	}
 	// Use session creator, or fallback to creator_identity query param (for sessions created before we set CreatedBy)
 	creatorIdentity := ""
 	if session.CreatedBy != nil && *session.CreatedBy != "" {

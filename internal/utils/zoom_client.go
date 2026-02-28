@@ -54,6 +54,7 @@ type ZoomRecordingFile struct {
 	FileSize       int64  `json:"file_size"`
 	DownloadURL    string `json:"download_url"`
 	Status         string `json:"status"`
+	RecordingType  string `json:"recording_type"` // e.g. "shared_screen_with_speaker_view", "speaker_view", "gallery_view"
 }
 
 // ZoomMeetingsListResponse from GET /users/{userId}/recordings (list recordings)
@@ -386,15 +387,43 @@ const (
 	TranscriptStatusNotAvailable = "not_available" // no transcript file (not enabled for recording)
 )
 
-// FindMP4RecordingFile returns the first MP4 recording file (video) for in-app playback.
+// FindMP4RecordingFile returns the first MP4 recording file (video). Prefer SelectCanonicalMP4 when you need deterministic choice or an error when no MP4 exists.
 func FindMP4RecordingFile(files []ZoomRecordingFile) *ZoomRecordingFile {
+	f, _ := SelectCanonicalMP4(files)
+	return f
+}
+
+// ErrNoMP4Recording is returned when no MP4 recording file exists for the meeting.
+var ErrNoMP4Recording = errors.New("no MP4 recording found for this meeting recording")
+
+// SelectCanonicalMP4 selects a single MP4 file deterministically: filter to MP4 only, then prefer
+// shared_screen_with_speaker_view > speaker_view > gallery_view > first MP4. Returns (nil, ErrNoMP4Recording) if no MP4.
+func SelectCanonicalMP4(files []ZoomRecordingFile) (*ZoomRecordingFile, error) {
+	var mp4s []*ZoomRecordingFile
 	for i := range files {
 		f := &files[i]
-		if strings.ToUpper(strings.TrimSpace(f.FileType)) == "MP4" && f.DownloadURL != "" {
-			return f
+		if !strings.EqualFold(strings.TrimSpace(f.FileType), "MP4") || f.DownloadURL == "" {
+			continue
+		}
+		mp4s = append(mp4s, f)
+	}
+	if len(mp4s) == 0 {
+		return nil, ErrNoMP4Recording
+	}
+	// Preference order (Zoom recording_type values)
+	order := []string{
+		"shared_screen_with_speaker_view", "shared_screen_with_speaker_view_cc",
+		"speaker_view", "gallery_view", "shared_screen_with_gallery_view",
+		"shared_screen", "active_speaker",
+	}
+	for _, want := range order {
+		for _, f := range mp4s {
+			if strings.EqualFold(strings.TrimSpace(f.RecordingType), want) {
+				return f, nil
+			}
 		}
 	}
-	return nil
+	return mp4s[0], nil
 }
 
 // DownloadZoomMP4 downloads the MP4 file from Zoom (for R2 upload). Returns body and error.

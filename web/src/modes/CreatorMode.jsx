@@ -1061,6 +1061,7 @@ export function CreatorMode({
                 apiBaseUrl={apiBaseUrl}
                 creatorIdentity={creatorIdentity}
                 primaryVideoAccessUrl={primaryVideoAccessUrl}
+                primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
               />
 
               {video.transcript_text && (
