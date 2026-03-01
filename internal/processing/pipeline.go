@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -68,13 +70,185 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 		return nil
 	}
 
-	// --- Stage: fetch ---
+	// --- Stage: fetch (recordings only; transcript checked after MP4 ingest) ---
 	updateJobState(ctx, db, jobID, models.ProcessingStateFetching, models.ProcessingStageFetch, attempt, nil, nil, nil)
 	updateMirror(models.ProcessingStateFetching)
 
-	rec, transcriptFile, fetchErr := utils.GetMeetingRecordingsAndTranscript(accessToken, instanceUUID)
+	rec, fetchErr := utils.GetMeetingRecordingsWithRetry(accessToken, instanceUUID)
 	if fetchErr != nil {
 		return handleZoomError(ctx, db, job, attempt, fetchErr, updateMirror)
+	}
+
+	// Zoom MP4 ingest: R2 when configured, else local disk (for local debugging). Idempotent: skip if session already has primary.
+	doMp4Ingest := true
+	if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
+		if fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID); fa != nil && fa.Status == models.FileArtifactStatusReady {
+			doMp4Ingest = false
+			log.Printf("IMPORT_START session_id=%s meeting_uuid=%s skip_mp4=already_ingested", sessionID, instanceUUID)
+		}
+	}
+
+	if doMp4Ingest {
+		fileTypes := make([]string, 0, len(rec.RecordingFiles))
+		recTypes := make([]string, 0, len(rec.RecordingFiles))
+		for _, f := range rec.RecordingFiles {
+			fileTypes = append(fileTypes, f.FileType)
+			if f.RecordingType != "" {
+				recTypes = append(recTypes, f.RecordingType)
+			}
+		}
+		log.Printf("IMPORT_START session_id=%s meeting_uuid=%s", sessionID, instanceUUID)
+		log.Printf("ZOOM_RECORDING_FILES count=%d file_types=%v recording_types=%v", len(rec.RecordingFiles), fileTypes, recTypes)
+
+		mp4File, selErr := utils.SelectCanonicalMP4(rec.RecordingFiles)
+		if selErr != nil {
+			log.Printf("CANONICAL_FILE_SELECTED error=%v (no MP4)", selErr)
+			setJobFailedPermanent(ctx, db, jobID, attempt, "no_mp4", "No MP4 recording found for this meeting recording.")
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		log.Printf("CANONICAL_FILE_SELECTED file_type=%s recording_type=%s download_url_present=%v", mp4File.FileType, mp4File.RecordingType, mp4File.DownloadURL != "")
+
+		resp, downErr := zoom.DownloadRecordingFile(ctx, mp4File.DownloadURL, accessToken)
+		if downErr != nil {
+			log.Printf("ZOOM_DOWNLOAD status=error error=%v", downErr)
+			next := time.Now().Add(BackoffTransient(attempt))
+			setJobFailedTransient(ctx, db, jobID, attempt, "zoom_mp4_download", downErr.Error(), next)
+			updateMirror(models.ProcessingStateFailedTransient)
+			return nil
+		}
+		defer resp.Body.Close()
+
+		if store != nil && storagePrefix != "" {
+			// R2 path
+			artifactID := uuid.New()
+			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
+			bucket := os.Getenv("R2_BUCKET")
+			if bucket == "" {
+				bucket = "talkback-r2-bucket"
+			}
+			zoomMp4Filename := "zoom.mp4"
+			fa := &models.FileArtifact{
+				ID:              artifactID,
+				SessionID:       &sessionID,
+				Kind:            models.FileArtifactKindVideo,
+				Filename:        &zoomMp4Filename,
+				ContentType:     "video/mp4",
+				StorageProvider: "r2",
+				StorageBucket:   bucket,
+				StorageKey:      storageKey,
+				Status:          models.FileArtifactStatusPending,
+			}
+			if meta := zoomArtifactMetadata(instanceUUID, mp4File); len(meta) > 0 {
+				fa.MetadataJSON = meta
+			}
+			if err := db.CreateFileArtifact(ctx, fa); err != nil {
+				setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+
+			log.Printf("R2_UPLOAD_START bucket=%s key=%s", bucket, storageKey)
+			etag, _, putErr := store.Put(ctx, storageKey, resp.Body, "video/mp4")
+			if putErr != nil {
+				log.Printf("R2_UPLOAD_DONE error=%v", putErr)
+				_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_put: "+putErr.Error())
+				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", putErr.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			log.Printf("R2_UPLOAD_DONE etag=%s", etag)
+
+			exists, size, contentType, headErr := store.Head(ctx, storageKey)
+			if headErr != nil || !exists {
+				_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_head_verify: object missing after put")
+				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", "object missing after upload")
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			ct := "video/mp4"
+			if contentType != "" {
+				ct = contentType
+			}
+			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, ct); err != nil {
+				log.Printf("processing job: update artifact ready: %v", err)
+			}
+			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
+			}
+			log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s storage=r2", artifactID, storageKey)
+		} else {
+			// Local path (for local debugging without R2)
+			artifactID := uuid.New()
+			localRelKey := filepath.Join(storage.SessionStorageRoot, sessionID.String(), "videos", "zoom.mp4")
+			uploadRoot := storage.UploadRoot()
+			dir := filepath.Join(uploadRoot, storage.SessionStorageRoot, sessionID.String(), "videos")
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				log.Printf("LOCAL_MP4 mkdir error: %v", err)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "local_mkdir", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			absPath := filepath.Join(uploadRoot, localRelKey)
+			f, err := os.Create(absPath)
+			if err != nil {
+				log.Printf("LOCAL_MP4 create file error: %v", err)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "local_create", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			size, err := io.Copy(f, resp.Body)
+			_ = f.Close()
+			if err != nil {
+				os.Remove(absPath)
+				log.Printf("LOCAL_MP4 write error: %v", err)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "local_write", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			zoomMp4Filename := "zoom.mp4"
+			fa := &models.FileArtifact{
+				ID:              artifactID,
+				SessionID:       &sessionID,
+				Kind:            models.FileArtifactKindVideo,
+				Filename:        &zoomMp4Filename,
+				ContentType:     "video/mp4",
+				StorageProvider: "local",
+				StorageBucket:   "local",
+				StorageKey:      localRelKey,
+				Status:          models.FileArtifactStatusPending,
+			}
+			if meta := zoomArtifactMetadata(instanceUUID, mp4File); len(meta) > 0 {
+				fa.MetadataJSON = meta
+			}
+			if err := db.CreateFileArtifact(ctx, fa); err != nil {
+				os.Remove(absPath)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
+				log.Printf("processing job: update artifact ready: %v", err)
+			}
+			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
+			}
+			log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s storage=local", artifactID, localRelKey)
+		}
+	}
+
+	// Transcript required for the rest of the pipeline (parse, segments, video source, chunk, embed)
+	transcriptFile, transcriptStatus := utils.FindTranscriptFileWithStatus(rec.RecordingFiles)
+	if transcriptFile == nil || transcriptStatus == utils.TranscriptStatusProcessing {
+		code := "transcript_not_ready"
+		msg := "no transcript file available"
+		if transcriptStatus == utils.TranscriptStatusProcessing {
+			msg = "transcript still processing"
+		}
+		next := time.Now().Add(BackoffWaiting(attempt))
+		setJobWaiting(ctx, db, jobID, attempt, code, msg, next)
+		updateMirror(models.ProcessingStateWaiting)
+		return nil
 	}
 
 	// --- Stage: download ---
@@ -192,98 +366,6 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			return nil
 		}
 		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments)
-	}
-
-	// Zoom MP4 → R2: when storage is configured, stream Zoom MP4 into R2 and set primary_video_artifact_id (playback only from R2).
-	if store != nil && storagePrefix != "" {
-		log.Printf("IMPORT_START session_id=%s meeting_uuid=%s", sessionID, instanceUUID)
-		fileTypes := make([]string, 0, len(rec.RecordingFiles))
-		recTypes := make([]string, 0, len(rec.RecordingFiles))
-		for _, f := range rec.RecordingFiles {
-			fileTypes = append(fileTypes, f.FileType)
-			if f.RecordingType != "" {
-				recTypes = append(recTypes, f.RecordingType)
-			}
-		}
-		log.Printf("ZOOM_RECORDING_FILES count=%d file_types=%v recording_types=%v", len(rec.RecordingFiles), fileTypes, recTypes)
-
-		mp4File, selErr := utils.SelectCanonicalMP4(rec.RecordingFiles)
-		if selErr != nil {
-			log.Printf("CANONICAL_FILE_SELECTED error=%v (no MP4)", selErr)
-			setJobFailedPermanent(ctx, db, jobID, attempt, "no_mp4", "No MP4 recording found for this meeting recording.")
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		log.Printf("CANONICAL_FILE_SELECTED file_type=%s recording_type=%s download_url_present=%v", mp4File.FileType, mp4File.RecordingType, mp4File.DownloadURL != "")
-
-		artifactID := uuid.New()
-		storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
-		bucket := os.Getenv("R2_BUCKET")
-		if bucket == "" {
-			bucket = "talkback-r2-bucket"
-		}
-		zoomMp4Filename := "zoom.mp4"
-		fa := &models.FileArtifact{
-			ID:              artifactID,
-			SessionID:       &sessionID,
-			Kind:            models.FileArtifactKindVideo,
-			Filename:        &zoomMp4Filename,
-			ContentType:     "video/mp4",
-			StorageProvider: "r2",
-			StorageBucket:   bucket,
-			StorageKey:      storageKey,
-			Status:          models.FileArtifactStatusPending,
-		}
-		// Store Zoom metadata for troubleshooting (no download_url for playback)
-		if meta := zoomArtifactMetadata(instanceUUID, mp4File); len(meta) > 0 {
-			fa.MetadataJSON = meta
-		}
-		if err := db.CreateFileArtifact(ctx, fa); err != nil {
-			setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-
-		resp, downErr := zoom.DownloadRecordingFile(ctx, mp4File.DownloadURL, accessToken)
-		if downErr != nil {
-			log.Printf("ZOOM_DOWNLOAD status=error error=%v", downErr)
-			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "zoom_download: "+downErr.Error())
-			next := time.Now().Add(BackoffTransient(attempt))
-			setJobFailedTransient(ctx, db, jobID, attempt, "zoom_mp4_download", downErr.Error(), next)
-			updateMirror(models.ProcessingStateFailedTransient)
-			return nil
-		}
-		defer resp.Body.Close()
-
-		log.Printf("R2_UPLOAD_START bucket=%s key=%s", bucket, storageKey)
-		etag, _, putErr := store.Put(ctx, storageKey, resp.Body, "video/mp4")
-		if putErr != nil {
-			log.Printf("R2_UPLOAD_DONE error=%v", putErr)
-			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_put: "+putErr.Error())
-			setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", putErr.Error())
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		log.Printf("R2_UPLOAD_DONE etag=%s", etag)
-
-		exists, size, contentType, headErr := store.Head(ctx, storageKey)
-		if headErr != nil || !exists {
-			_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_head_verify: object missing after put")
-			setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", "object missing after upload")
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		ct := "video/mp4"
-		if contentType != "" {
-			ct = contentType
-		}
-		if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, ct); err != nil {
-			log.Printf("processing job: update artifact ready: %v", err)
-		}
-		if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
-			log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
-		}
-		log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s", artifactID, storageKey)
 	}
 
 	// --- Stage: chunk + embed ---

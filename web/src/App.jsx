@@ -4,11 +4,76 @@ import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
 import { MaterialsList } from './components/MaterialsList'
+import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
 import { getDefaultApiBaseUrl } from './config'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
+
+// Compact import status + Retry when session has Zoom source but no primary video (Artifact View).
+function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry, refetchSession }) {
+  const [processingStatus, setProcessingStatus] = useState(null)
+  const [retrying, setRetrying] = useState(false)
+  const intervalRef = useRef(null)
+  useEffect(() => {
+    if (!sessionId || !apiBaseUrl) return
+    const base = apiBaseUrl.replace(/\/$/, '')
+    const fetchProcessing = () => {
+      fetch(`${base}/api/sessions/${sessionId}/processing`, { headers: { 'X-Creator-Identity': creatorIdentity } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.state != null && data.state !== '') setProcessingStatus(data)
+          else setProcessingStatus(null)
+        })
+        .catch(() => setProcessingStatus(null))
+    }
+    fetchProcessing()
+    const terminal = processingStatus?.state && ['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state)
+    if (terminal) return
+    const ms = processingStatus?.state === 'waiting' ? 15000 : 5000
+    intervalRef.current = setInterval(fetchProcessing, ms)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
+  const handleRetry = () => {
+    setRetrying(true)
+    Promise.resolve(onRetry?.()).finally(() => {
+      setTimeout(() => setRetrying(false), 2000)
+      if (typeof refetchSession === 'function') refetchSession()
+    })
+  }
+  const showRetry = processingStatus?.state === 'failed_transient' || processingStatus?.state === 'failed_permanent' || processingStatus?.state === 'waiting'
+  if (!processingStatus?.state) {
+    return (
+      <div style={{ marginTop: '12px', fontSize: '13px', color: '#666' }}>
+        Import status: checking…
+      </div>
+    )
+  }
+  return (
+    <div style={{ marginTop: '12px', padding: '10px 12px', backgroundColor: '#f0f7ff', borderRadius: '6px', border: '1px solid #b3d9ff', fontSize: '13px' }}>
+      <span style={{ fontWeight: 600, color: '#333' }}>Import status:</span>{' '}
+      <span style={{ color: processingStatus.state === 'ready' ? '#4CAF50' : processingStatus.state.startsWith('failed') ? '#c62828' : '#1976D2' }}>
+        {processingStatus.state === 'ready' ? 'Complete' : processingStatus.state.replace(/_/g, ' ')}
+      </span>
+      {processingStatus.last_error_message && (
+        <span style={{ color: '#666', marginLeft: '8px' }}>— {processingStatus.last_error_message}</span>
+      )}
+      {showRetry && (
+        <button
+          type="button"
+          onClick={handleRetry}
+          disabled={retrying}
+          style={{ marginLeft: '12px', padding: '4px 10px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: retrying ? 'not-allowed' : 'pointer' }}
+        >
+          {retrying ? 'Retrying…' : 'Retry import'}
+        </button>
+      )}
+    </div>
+  )
+}
 
 function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(() => {
@@ -52,7 +117,7 @@ function App() {
   const [sessions, setSessions] = useState([])
   const [currentSession, setCurrentSession] = useState(null)
   const [participantRef, setParticipantRef] = useState('anonymous')
-  const [viewMode, setViewMode] = useState('artifact') // 'artifact' or 'session'
+  const [viewMode, setViewMode] = useState('session')
   const [sessionMode, setSessionMode] = useState('create') // 'create' or 'select'
   const [sessionIdInput, setSessionIdInput] = useState('')
   const [sessionSelectFeedback, setSessionSelectFeedback] = useState({ type: '', message: '' })
@@ -60,6 +125,7 @@ function App() {
   // Creator/Participant Mode states
   const [currentUser, setCurrentUser] = useState('') // User identifier for mode detection
   const [sessionUserMode, setSessionUserMode] = useState(null) // 'creator' or 'participant' - from API
+  const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
 
   // TalkBack auth: logged-in user from GET /api/me (cookie-based)
   const [authUser, setAuthUser] = useState(null) // { id, email, display_name, global_role, status } or null
@@ -500,8 +566,6 @@ function App() {
 
       const data = await response.json()
       setArtifactId(data.id)
-      // Switch to artifact view mode to show upload sections
-      setViewMode('artifact')
       setCreateArtifactFeedback({ type: 'success', message: `Artifact created! ID: ${data.id}` })
       setArtifactTitle('')
       setArtifactDescription('')
@@ -1465,9 +1529,12 @@ function App() {
 
       const data = await response.json()
       setCurrentSession(data)
-      
+      // When session has primary video (R2/local), use that for playback; clear any stale Zoom selection so we don't show 410
+      if (data?.session?.primary_video_artifact_id) {
+        setSelectedVideo(null)
+      }
       // If session has no video_sources yet (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears
-      if (data.session && (!data.video_sources || data.video_sources.length === 0)) {
+      if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
         const loadedId = data.session.id || sessionId
         setTimeout(() => {
           fetch(`${baseUrl}/sessions/${sessionId}`, { headers })
@@ -1477,13 +1544,14 @@ function App() {
               setCurrentSession((prev) => {
                 const prevId = prev?.session?.id || prev?.id
                 if (prevId !== currentId) return prev
-                if (retryData?.video_sources?.length > 0) {
+                if (retryData?.video_sources?.length > 0 && !retryData?.session?.primary_video_artifact_id) {
                   queueMicrotask(() => {
                     setVideoId(retryData.video_sources[0].id)
                     setSelectedVideo(retryData.video_sources[0])
                   })
                   return retryData
                 }
+                if (retryData) return retryData
                 return prev
               })
             })
@@ -1545,17 +1613,7 @@ function App() {
         setVideoId(null)
         setSelectedVideo(null)
       }
-      // Stay in session view when opening after Zoom import or in participant mode; otherwise switch to artifact view
-      if (data.artifacts && data.artifacts.length > 0) {
-        if (stayInSessionView || (forceMode === 'participant') || sessionUserMode === 'participant') {
-          setViewMode('session')
-        } else {
-          setViewMode('artifact')
-        }
-      } else {
-        // No artifacts yet, stay in session view mode
-        setViewMode('session')
-      }
+      setViewMode('session')
       setSessionIdInput('') // Clear input
       
       // Load session questions
@@ -1602,7 +1660,7 @@ function App() {
   const refetchSession = useCallback(async (overrideSessionId) => {
     const id = overrideSessionId ?? currentSession?.session?.id ?? currentSession?.id
     if (!id) return
-    await openSession(id, sessionUserMode)
+    await openSession(id, sessionUserMode, true)
   }, [currentSession?.session?.id, currentSession?.id, sessionUserMode, openSession])
 
   const markMaterialsSeen = useCallback(async (materialIds) => {
@@ -2057,6 +2115,7 @@ function App() {
       const msgSessionId = message.SessionID ?? message.session_id
       if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
         console.log('WebSocket: Session processing ready, refetching session...')
+        setSessionProcessingReadyVersion((v) => v + 1)
         refetchSession()
       }
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
@@ -2324,8 +2383,8 @@ function App() {
         </div>
       )}
 
-      {/* Session Selector - when no session: show picker (all modes). When session and creator: show Active Session bar. Participants only see "Sessions you're part of" list. */}
-      {(!currentSession || !isParticipantMode) && (
+      {/* Session Selector - when no session: show picker. When session open in creator mode, CreatorMode shows the single session header (no duplicate here). */}
+      {(!currentSession || !isParticipantMode) && !(currentSession && viewMode === 'session' && !isParticipantMode) && (
         <>
           <h2>{authUser?.global_role === 'participant' && !currentSession ? "Sessions you're part of" : 'Session Selection (Required)'}</h2>
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
@@ -2719,7 +2778,6 @@ function App() {
               <button 
                 onClick={() => { 
                   setCurrentSession(null)
-                  setViewMode('artifact')
                   setSessionSelectFeedback({ type: '', message: '' })
                 }} 
                 style={{ 
@@ -2760,7 +2818,7 @@ function App() {
       )}
 
       {/* Phase 3: Sessions Section - Hidden when session is selected, shown in artifact view, only when user can create sessions */}
-      {artifactId && viewMode === 'artifact' && !currentSession && !isParticipantMode && canCreateSessions && (
+      {artifactId && !currentSession && !isParticipantMode && canCreateSessions && (
         <div className="section">
           <h2>Phase 3: Sessions</h2>
           
@@ -2830,6 +2888,7 @@ function App() {
           {!isParticipantMode ? (
             <CreatorMode
               currentSession={currentSession}
+              sessionProcessingReadyVersion={sessionProcessingReadyVersion}
               refetchSession={refetchSession}
               artifactId={artifactId}
               setArtifactId={setArtifactId}
@@ -2853,8 +2912,6 @@ function App() {
               loading={loading}
               apiBaseUrl={apiBaseUrl}
               creatorIdentity={creatorIdentity}
-              viewMode={viewMode}
-              setViewMode={setViewMode}
               transcriptText={transcriptText}
               setTranscriptText={setTranscriptText}
               submitTranscript={submitTranscript}
@@ -2865,6 +2922,7 @@ function App() {
               inviteFeedback={inviteFeedback}
               inviteLoading={inviteLoading}
               inviteUserToSession={inviteUserToSession}
+              onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
             />
           ) : (
             <div className="participant-layout-root">
@@ -2923,653 +2981,6 @@ function App() {
               />
             </div>
           )}
-        </>
-      )}
-
-      {/* Artifact View - Only visible in creator mode */}
-      {viewMode === 'artifact' && currentSession && sessionUserMode === 'creator' && (
-        <>
-          {/* Show existing artifacts */}
-          {currentSession.artifacts && currentSession.artifacts.length > 0 && (
-            <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f0f8ff', border: '1px solid #2196F3' }}>
-              <h2>Existing Artifacts ({currentSession.artifacts.length})</h2>
-              {currentSession.artifacts.map((artifact, idx) => (
-                <div key={artifact.id || idx} style={{ 
-                  marginBottom: '15px', 
-                  padding: '15px', 
-                  border: '1px solid #ddd', 
-                  borderRadius: '5px',
-                  backgroundColor: artifact.id === artifactId ? '#e3f2fd' : '#fff'
-                }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' }}>
-                    {artifact.title}
-                  </div>
-                  {artifact.description && (
-                    <div style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
-                      {artifact.description}
-                    </div>
-                  )}
-                  <div style={{ fontSize: '12px', color: '#999' }}>
-                    ID: <code>{artifact.id}</code> | 
-                    Status: <span style={{ 
-                      color: artifact.status === 'ready' ? '#4CAF50' : '#999',
-                      fontWeight: 'bold'
-                    }}>{artifact.status}</span>
-                    {artifact.id === artifactId && (
-                      <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
-                        (Currently Selected)
-                      </span>
-                    )}
-                  </div>
-                  {artifact.id !== artifactId && (
-                    <button 
-                      onClick={() => setArtifactId(artifact.id)}
-                      style={{ marginTop: '10px', fontSize: '12px', padding: '5px 10px' }}
-                    >
-                      Select This Artifact
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Show existing materials (creator mode: show delete) */}
-          {currentSession.materials && currentSession.materials.length > 0 && (
-            <MaterialsList
-              materials={currentSession.materials}
-              sessionId={currentSession.session?.id || currentSession.id}
-              apiBaseUrl={apiBaseUrl}
-              refetchSession={refetchSession}
-            />
-          )}
-
-          {/* Video Player Section (Artifact View) */}
-          {currentSession.video_sources && currentSession.video_sources.length > 0 && (
-            <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fff3e0', border: '1px solid #ff9800' }}>
-              <h2>Video Player</h2>
-              
-              {/* Video Selection */}
-              {currentSession.video_sources.length > 1 && (
-                <div style={{ marginBottom: '15px' }}>
-                  <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Select Video:</label>
-                  <select 
-                    value={selectedVideo?.id || currentSession.video_sources[0].id}
-                    onChange={(e) => {
-                      const video = currentSession.video_sources.find(v => v.id === e.target.value)
-                      setSelectedVideo(video)
-                      setVideoId(video.id)
-                      setCurrentVideoTime(0)
-                      setIsVideoPlaying(false)
-                    }}
-                    style={{ padding: '5px 10px', fontSize: '14px' }}
-                  >
-                    {currentSession.video_sources.map((video, idx) => {
-                      const statusLabel = video.transcript_status === 'missing' ? 'No transcript' :
-                                          video.transcript_status === 'pending' ? 'Processing...' :
-                                          video.transcript_status === 'ready' ? 'Ready' :
-                                          video.transcript_status === 'failed' ? 'Failed' :
-                                          video.transcript_status || 'Unknown'
-                      return (
-                        <option key={video.id} value={video.id}>
-                          Video {idx + 1} - {video.provider} ({statusLabel})
-                        </option>
-                      )
-                    })}
-                  </select>
-                </div>
-              )}
-
-              {/* Video Player */}
-              {(() => {
-                const video = selectedVideo || currentSession.video_sources[0]
-                
-                return (
-                  <div>
-                    <div style={{ marginBottom: '10px' }}>
-                      <strong>Provider:</strong> <span style={{ textTransform: 'capitalize' }}>{video.provider}</span>
-                      {' | '}
-                      <strong>Mode:</strong> <span style={{ 
-                        color: video.playback_mode === 'direct' ? '#4CAF50' : '#ff9800',
-                        fontWeight: 'bold'
-                      }}>
-                        {video.playback_mode === 'direct' ? 'Direct (Full Control)' : 'Embed (Limited Control)'}
-                      </span>
-                      {' | '}
-                      <strong>Transcript Status:</strong>{' '}
-                      <span style={{ 
-                        color: video.transcript_status === 'ready' ? '#4CAF50' : 
-                               video.transcript_status === 'pending' ? '#ff9800' : 
-                               video.transcript_status === 'failed' ? '#f44336' : '#999',
-                        fontWeight: 'bold'
-                      }}>
-                        {video.transcript_status}
-                      </span>
-                      {transcriptJobs[video.id] && (
-                        <>
-                          {' | '}
-                          <strong>Job Status:</strong>{' '}
-                          <span style={{ 
-                            color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' : 
-                                   transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
-                            fontWeight: 'bold'
-                          }}>
-                            {transcriptJobs[video.id].status}
-                          </span>
-                          {transcriptJobs[video.id].error_message && (
-                            <span style={{ color: '#f44336', fontSize: '12px', marginLeft: '10px' }}>
-                              ({transcriptJobs[video.id].error_message})
-                            </span>
-                          )}
-                        </>
-                      )}
-                      {video.provider === 'loom' && (
-                        <>
-                          {' | '}
-                          <button 
-                            onClick={() => regenerateTranscript(video.id)}
-                            disabled={loading}
-                            style={{ 
-                              padding: '4px 8px',
-                              fontSize: '12px',
-                              backgroundColor: '#2196F3',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: loading ? 'not-allowed' : 'pointer'
-                            }}
-                          >
-                            🔄 Regenerate Transcript
-                          </button>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Video Player Component */}
-                    <VideoPlayer
-                      video={video}
-                      onEvent={handleVideoPlayerEvent}
-                      onTimeUpdate={handleVideoTimeUpdate}
-                      currentTime={currentVideoTime}
-                      playing={isVideoPlaying}
-                      sessionId={currentSession?.session?.id || currentSession?.id}
-                      apiBaseUrl={apiBaseUrl}
-                      creatorIdentity={creatorIdentity}
-                    />
-
-                    {/* Transcript Display */}
-                    {video.transcript_text && (
-                      <div style={{ 
-                        marginTop: '20px', 
-                        padding: '15px', 
-                        backgroundColor: '#f5f5f5', 
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        maxHeight: '300px',
-                        overflow: 'auto',
-                        border: '1px solid #e0e0e0'
-                      }}>
-                        <strong style={{ display: 'block', marginBottom: '10px' }}>Transcript:</strong>
-                        <div style={{ 
-                          fontStyle: 'italic', 
-                          color: '#555', 
-                          whiteSpace: 'pre-wrap',
-                          lineHeight: '1.6'
-                        }}>
-                          {video.transcript_text}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-            </div>
-          )}
-
-          <h2>2. Upload Material</h2>
-      <div className="section">
-        <div className="form-group">
-          <label>File:</label>
-          <input
-            ref={materialFileInputRef}
-            type="file"
-            accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
-            multiple
-            onChange={(e) => {
-              const files = Array.from(e.target.files || [])
-              setMaterialFiles(files)
-              clearFeedback(setUploadMaterialFeedback)
-            }}
-          />
-        </div>
-        <button onClick={() => materialFiles.length > 0 && uploadMaterial(materialFiles[0])} disabled={!artifactId || materialFiles.length === 0 || loading}>
-          Upload Material
-        </button>
-        {uploadMaterialFeedback.message && (
-          <div className={uploadMaterialFeedback.type} style={{ marginTop: '10px' }}>
-            {uploadMaterialFeedback.message}
-          </div>
-        )}
-      </div>
-
-      <h2>3. Attach Video URL</h2>
-      <div className="section">
-        <div className="form-group">
-          <label>Provider:</label>
-          <select value={videoProvider} onChange={(e) => setVideoProvider(e.target.value)}>
-            <option value="loom">Loom</option>
-            <option value="zoom">Zoom</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div className="form-group">
-          <label>Video URL:</label>
-          <input
-            type="url"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
-            placeholder="https://www.loom.com/share/..."
-          />
-        </div>
-        <button onClick={attachVideo} disabled={!artifactId || !videoUrl || loading}>
-          Attach Video
-        </button>
-        {attachVideoFeedback.message && (
-          <div className={attachVideoFeedback.type} style={{ marginTop: '10px' }}>
-            {attachVideoFeedback.message}
-          </div>
-        )}
-      </div>
-
-      <h2>4. Submit Transcript</h2>
-      <div className="section">
-        <div className="form-group">
-          <label>Transcript Text:</label>
-          <textarea
-            value={transcriptText}
-            onChange={(e) => setTranscriptText(e.target.value)}
-            placeholder="Paste transcript text here..."
-          />
-        </div>
-        <button onClick={submitTranscript} disabled={!artifactId || !videoId || !transcriptText || loading}>
-          Submit Transcript
-        </button>
-        {submitTranscriptFeedback.message && (
-          <div className={submitTranscriptFeedback.type} style={{ marginTop: '10px' }}>
-            {submitTranscriptFeedback.message}
-          </div>
-        )}
-      </div>
-
-      <h2>5. Ask Question</h2>
-      <div className="section">
-        {currentSession && (
-          <>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
-              <button
-                onClick={toggleVoiceRecording}
-                disabled={loading || voiceUploading}
-                style={{
-                  marginTop: 0,
-                  backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2',
-                  padding: '8px 12px'
-                }}
-              >
-                {voiceRecording ? 'Stop Mic' : (voiceUploading ? 'Processing…' : 'Mic')}
-              </button>
-              <div style={{ fontSize: '13px', color: voiceRecording ? '#d32f2f' : '#666', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {voiceRecording ? (
-                  'Listening…'
-                ) : voiceUploading ? (
-                  <>
-                    <span className="spinner" aria-label="Processing voice to text" />
-                    <span>Processing…</span>
-                  </>
-                ) : (
-                  ''
-                )}
-              </div>
-            </div>
-            {voiceFeedback.message && (
-              <div className={voiceFeedback.type} style={{ marginBottom: '10px' }}>
-                {voiceFeedback.message}
-              </div>
-            )}
-            {showVoiceConfirm && (
-              <div style={{ marginBottom: '15px', padding: '12px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: '#f9f9f9' }}>
-                <div style={{ position: 'relative', marginBottom: '10px' }}>
-                  <textarea
-                    value={voiceTranscribedText}
-                    onChange={(e) => setVoiceTranscribedText(e.target.value)}
-                    rows={3}
-                    style={{ width: '100%', paddingRight: '28px', boxSizing: 'border-box' }}
-                  />
-                  {polishVoiceQuestion && (
-                    <button
-                      type="button"
-                      onClick={() => polishVoiceQuestion(true)}
-                      disabled={!voiceTranscribedText.trim() || loading || voicePolishing}
-                      title="AI polish"
-                      style={{
-                        position: 'absolute',
-                        top: '8px',
-                        right: '8px',
-                        margin: 0,
-                        padding: '4px',
-                        border: '1px solid #e0e0e0',
-                        borderRadius: '4px',
-                        background: voicePolishing && voicePolishMode === 'llm' ? '#e3f2fd' : 'rgba(255,255,255,0.9)',
-                        cursor: (!voiceTranscribedText.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
-                      }}
-                    >
-                      {voicePolishing && voicePolishMode === 'llm' ? (
-                        <span className="spinner" style={{ width: 14, height: 14 }} aria-hidden />
-                      ) : (
-                        <img
-                          src="https://static.thenounproject.com/png/1294-200.png"
-                          alt=""
-                          width={16}
-                          height={16}
-                          style={{ display: 'block' }}
-                          aria-hidden
-                        />
-                      )}
-                    </button>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                  <button
-                    onClick={confirmVoiceQuestion}
-                    disabled={!voiceTranscribedText.trim() || loading || voicePolishing}
-                    style={{ marginTop: 0 }}
-                  >
-                    Confirm & Submit (Session)
-                  </button>
-                  <button
-                    onClick={cancelVoiceReview}
-                    disabled={loading}
-                    style={{ marginTop: 0, backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-        {!showVoiceConfirm && (
-          <>
-            <div className="form-group">
-              <label>Question:</label>
-              <textarea
-                value={questionText}
-                onChange={(e) => setQuestionText(e.target.value)}
-                placeholder="What is the main topic discussed?"
-              />
-            </div>
-            <button onClick={askQuestion} disabled={!artifactId || !questionText || loading}>
-              Ask Question
-            </button>
-          </>
-        )}
-        {askQuestionFeedback.message && (
-          <div className={askQuestionFeedback.type} style={{ marginTop: '10px' }}>
-            {askQuestionFeedback.message}
-          </div>
-        )}
-      </div>
-
-      {currentAnswer && (
-        <div className="section">
-          <h3>Latest Answer</h3>
-          <div className="question-item">
-            <div className="question-text">Q: {currentAnswer.question.question_text}</div>
-            <div>
-              <span className={`answer-status ${currentAnswer.answer.answer_status}`}>
-                {currentAnswer.answer.answer_status}
-              </span>
-              <span className="confidence">Confidence: {(currentAnswer.answer.confidence * 100).toFixed(1)}%</span>
-            </div>
-            <div className="answer-text">{currentAnswer.answer.answer_text}</div>
-            {currentAnswer.answer.citations && currentAnswer.answer.citations.length > 0 && (
-              <div className="citations">
-                <strong>Citations:</strong>
-                {currentAnswer.answer.citations.map((citation, idx) => (
-                  <div key={idx} className="citation">
-                    <div className="citation-source">
-                      {citation.source_type} - {citation.source_id}
-                      {citation.chunk_id && ` [chunk: ${citation.chunk_id}]`}
-                      {citation.locator && ` (${citation.locator})`}
-                    </div>
-                    <div className="citation-snippet">{citation.snippet}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      <h2>6. Question History</h2>
-      <div className="section">
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '15px', flexWrap: 'wrap' }}>
-          <button onClick={fetchQuestions} disabled={!artifactId || loading}>
-            Load Questions
-          </button>
-          {currentSession && (currentSession.session?.id || currentSession.id) && (
-            <button 
-              onClick={async () => {
-                const sessionId = currentSession.session?.id || currentSession.id
-                if (!sessionId) return
-                
-                setMockQuestionLoading(true)
-                try {
-                  const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}/questions/mock`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
-                  })
-
-                  if (!response.ok) {
-                    const text = await response.text()
-                    console.error('Failed to create mock question:', text)
-                    return
-                  }
-
-                  const data = await response.json()
-                  console.log('Mock question created (not persisted, will disappear on refresh):', data)
-                  
-                  // Immediately add mock question to state for instant feedback in creator window
-                  // The WebSocket message will also trigger an update, but this ensures immediate visibility
-                  if (data.question) {
-                    const questionWithAnswer = {
-                      ...data.question,
-                      answer: data.answer || null
-                    }
-                    console.log('Adding mock question to state immediately:', questionWithAnswer)
-                    setMockQuestions(prev => {
-                      // Check if question already exists (avoid duplicates from WebSocket message)
-                      const exists = prev.some(q => q.id === questionWithAnswer.id)
-                      if (exists) {
-                        console.log('Mock question already exists in state, skipping duplicate')
-                        return prev
-                      }
-                      console.log('Adding new mock question to state')
-                      return [...prev, questionWithAnswer]
-                    })
-                  }
-                } catch (err) {
-                  console.error('Error creating mock question:', err)
-                } finally {
-                  setMockQuestionLoading(false)
-                }
-              }}
-              disabled={mockQuestionLoading || loading || !currentSession || (!currentSession.session?.id && !currentSession.id)}
-              style={{ 
-                backgroundColor: (mockQuestionLoading || loading || !currentSession || (!currentSession.session?.id && !currentSession.id)) ? '#ccc' : '#9c27b0', 
-                color: 'white',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                border: 'none',
-                cursor: (mockQuestionLoading || loading || !currentSession || (!currentSession.session?.id && !currentSession.id)) ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                boxShadow: (mockQuestionLoading || loading || !currentSession || (!currentSession.session?.id && !currentSession.id)) ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
-                transition: 'all 0.2s'
-              }}
-              title={!currentSession || (!currentSession.session?.id && !currentSession.id) ? 'Please select a session first' : 'Create a mock question to test WebSocket functionality (not persisted to database)'}
-            >
-              {mockQuestionLoading ? 'Creating...' : '🧪 Test WebSocket'}
-            </button>
-          )}
-        </div>
-        {questionHistoryFeedback.message && (
-          <div className={questionHistoryFeedback.type} style={{ marginTop: '10px' }}>
-            {questionHistoryFeedback.message}
-          </div>
-        )}
-        {(questions.length > 0 || mockQuestions.length > 0) && (
-          <div style={{ marginTop: '20px' }}>
-            {[...questions, ...mockQuestions].map((q) => (
-              <div key={q.id} className="question-item">
-                <div className="question-text">Q: {q.question_text}</div>
-                {q.answer ? (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                      <span className={`answer-status ${q.answer.answer_status}`}>
-                        {q.answer.answer_status}
-                      </span>
-                      <span className="confidence">Confidence: {(q.answer.confidence * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="answer-text">{q.answer.answer_text}</div>
-                    {q.answer.answer_status === 'answered' && !isParticipantMode && (
-                      <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#f0f8ff', borderRadius: '4px', border: '1px solid #2196F3' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer', userSelect: 'none' }}>
-                          <input
-                            type="checkbox"
-                            checked={q.answer.confirmed || false}
-                            disabled={confirmingAnswerId === q.answer.id}
-                            onChange={async (e) => {
-                              // Try multiple ways to get session ID
-                              let sessionId = currentSession?.session?.id || currentSession?.id
-                              
-                              // If still no session ID, try to get it from the question
-                              if (!sessionId && q.session_id) {
-                                sessionId = q.session_id
-                              }
-                              
-                              if (!sessionId) {
-                                console.error('No session ID available for confirmation', { currentSession, question: q })
-                                alert('Session ID not found. Please ensure you are viewing a session.')
-                                e.target.checked = !e.target.checked // Revert checkbox
-                                return
-                              }
-                              
-                              const answerId = q.answer?.id
-                              if (!answerId) {
-                                console.error('No answer ID found', { question: q })
-                                alert('Answer ID not found.')
-                                e.target.checked = !e.target.checked // Revert checkbox
-                                return
-                              }
-                              
-                              const confirmed = e.target.checked
-                              
-                              console.log('Updating answer confirmation:', { answerId, sessionId, confirmed, apiBaseUrl })
-                              
-                              if (!apiBaseUrl) {
-                                console.error('API base URL not set')
-                                alert('API URL not configured. Please check your settings.')
-                                e.target.checked = !e.target.checked // Revert checkbox
-                                return
-                              }
-                              
-                              setConfirmingAnswerId(answerId)
-                              try {
-                                const url = `${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`
-                                console.log('Calling API:', url, { method: 'PATCH', body: { confirmed } })
-                                
-                                const response = await fetch(url, {
-                                  method: 'PATCH',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ confirmed })
-                                })
-                                
-                                console.log('Response status:', response.status, response.statusText)
-                                
-                                if (!response.ok) {
-                                  const text = await response.text()
-                                  console.error('Failed to update answer confirmation:', { status: response.status, statusText: response.statusText, body: text })
-                                  alert(`Failed to update confirmation (${response.status}): ${text || response.statusText}`)
-                                  // Revert checkbox on error
-                                  e.target.checked = !confirmed
-                                  return
-                                }
-                                
-                                const updatedAnswer = await response.json()
-                                console.log('Answer confirmation updated successfully:', updatedAnswer)
-                                
-                                // Refresh questions to get updated confirmation status
-                                if (fetchQuestions) {
-                                  fetchQuestions()
-                                }
-                                // Also refresh session questions if available
-                                if (fetchSessionQuestions && sessionId) {
-                                  fetchSessionQuestions(sessionId)
-                                }
-                              } catch (err) {
-                                console.error('Error updating answer confirmation:', err)
-                                const errorMsg = err.message || (err instanceof TypeError && err.message.includes('fetch') ? 'Network error - check if the API server is running' : 'Unknown error')
-                                alert(`Error updating confirmation: ${errorMsg}`)
-                                // Revert checkbox on error
-                                e.target.checked = !confirmed
-                              } finally {
-                                setConfirmingAnswerId(null)
-                              }
-                            }}
-                            style={{ 
-                              cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer',
-                              width: '18px',
-                              height: '18px',
-                              margin: 0
-                            }}
-                          />
-                          <span style={{ 
-                            fontSize: '13px', 
-                            color: q.answer.confirmed ? '#4CAF50' : '#2196F3', 
-                            fontWeight: q.answer.confirmed ? 'bold' : 'normal' 
-                          }}>
-                            {q.answer.confirmed ? '✓ Confirmed by Creator' : 'Confirm this answer'}
-                          </span>
-                        </label>
-                      </div>
-                    )}
-                    {q.answer.citations && q.answer.citations.length > 0 && (
-                      <div className="citations">
-                        <strong>Citations:</strong>
-                        {q.answer.citations.map((citation, cidx) => (
-                          <div key={cidx} className="citation">
-                            <div className="citation-source">
-                              {citation.source_type} - {citation.source_id}
-                              {citation.locator && ` (${citation.locator})`}
-                            </div>
-                            <div className="citation-snippet">{citation.snippet}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="loading">No answer yet</div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
         </>
       )}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -352,13 +353,28 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// When session has primary_video_artifact_id and storage is configured, add presigned GET URL for playback (R2).
+	// When session has primary_video_artifact_id, set video_access_url: R2 presigned GET or local primary-video URL.
 	var videoAccessURL string
-	if session.PrimaryVideoArtifactID != nil && h.Storage != nil {
+	if session.PrimaryVideoArtifactID != nil {
 		fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
 		if err == nil && fa != nil && fa.Status == models.FileArtifactStatusReady {
-			if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
-				videoAccessURL = url
+			if fa.StorageProvider == "local" {
+				base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("API_PUBLIC_ORIGIN")), "/")
+				if base == "" {
+					scheme := "https"
+					if r.TLS == nil {
+						scheme = "http"
+					}
+					if s := r.Header.Get("X-Forwarded-Proto"); s != "" {
+						scheme = s
+					}
+					base = scheme + "://" + r.Host
+				}
+				videoAccessURL = fmt.Sprintf("%s/api/sessions/%s/primary-video", base, session.ID)
+			} else if h.Storage != nil {
+				if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
+					videoAccessURL = url
+				}
 			}
 		}
 	}
@@ -383,6 +399,66 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 // SetPrimaryVideoArtifactRequest body for POST /api/sessions/:id/primary-video-artifact
 type SetPrimaryVideoArtifactRequest struct {
 	ArtifactID string `json:"artifact_id"`
+}
+
+// SessionPrimaryVideoStream serves the primary video file for a session (local storage only). Used for local debugging when Zoom MP4 is saved to disk.
+// GET /api/sessions/:id/primary-video
+func (h *Handlers) SessionPrimaryVideoStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "primary-video" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[2])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil || session.PrimaryVideoArtifactID == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
+	if err != nil || fa == nil || fa.Status != models.FileArtifactStatusReady {
+		http.Error(w, "Video not found", http.StatusNotFound)
+		return
+	}
+	if fa.StorageProvider != "local" {
+		http.Error(w, "Primary video is not stored locally; use video_access_url from GET session", http.StatusBadRequest)
+		return
+	}
+	absPath := filepath.Join(storage.UploadRoot(), fa.StorageKey)
+	f, err := os.Open(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Video file not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("SessionPrimaryVideoStream open %s: %v", absPath, err)
+		http.Error(w, "Failed to open video", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, "Failed to stat video", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Accept-Ranges", "bytes")
+	if r.Method == http.MethodHead {
+		if info.Size() > 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.ServeContent(w, r, "zoom.mp4", info.ModTime(), f)
 }
 
 // SetSessionPrimaryVideoArtifact sets the session's primary_video_artifact_id (for R2 playback). Called after client completes presign-put flow.
@@ -1497,8 +1573,8 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// ZoomVideoStream proxies the Zoom recording MP4 so it can be played in-app (Zoom blocks iframe embed).
-// Used for legacy Zoom-only sessions; when session has primary_video_artifact_id the frontend uses video_access_url (R2) instead.
+// ZoomVideoStream is deprecated for playback: app uses in-app player only (primary video from R2/local).
+// When session has primary_video_artifact_id this returns 410. Legacy sessions without primary could use it; frontend no longer requests it for playback.
 // GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream
 func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

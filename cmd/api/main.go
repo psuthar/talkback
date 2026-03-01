@@ -124,6 +124,11 @@ func main() {
 	if store != nil {
 		storagePrefix = strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
 	}
+	if store != nil && storagePrefix != "" {
+		log.Printf("Zoom MP4 ingest: R2 enabled (bucket=%s prefix=%s)", os.Getenv("R2_BUCKET"), storagePrefix)
+	} else {
+		log.Printf("Zoom MP4 ingest: local disk (no R2; MP4 saved under sessions/{id}/videos/ for debugging)")
+	}
 	go processing.RunWorker(ctx, db, getZoomToken, store, storagePrefix, 15*time.Second, 15*time.Minute, func(sessionID uuid.UUID) {
 		h.Hub.BroadcastSessionProcessingReady(sessionID)
 	})
@@ -238,7 +243,7 @@ func main() {
 		}
 	}))
 	http.HandleFunc("/sessions/from-zoom", corsWithCredentials(h.RequireAuth(h.CreateSessionFromZoom)))
-	http.HandleFunc("/sessions/", corsMiddleware(logUploadIfMatch(h.SessionsRouter)))
+	http.HandleFunc("/sessions/", corsWithCredentials(logUploadIfMatch(h.SessionsRouter)))
 
 	// WebSocket endpoint for session updates
 	http.HandleFunc("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub)))

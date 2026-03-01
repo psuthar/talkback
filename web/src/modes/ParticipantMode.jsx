@@ -60,8 +60,18 @@ export function ParticipantMode({
 
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
-  const syntheticR2Video = hasPrimaryR2Video ? { provider: 'r2', playback_mode: 'direct', media_url: primaryVideoAccessUrl } : null
-  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]) || syntheticR2Video
+  const syntheticR2Video = hasPrimaryR2Video
+    ? {
+        id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
+        provider: 'r2',
+        playback_mode: 'direct',
+        media_url: primaryVideoAccessUrl,
+        transcript_status: currentSession?.video_sources?.[0]?.transcript_status ?? 'ready',
+        source_type: 'upload'
+      }
+    : null
+  // When we have a downloaded primary video, always use it (never Zoom stream)
+  const video = hasPrimaryR2Video ? syntheticR2Video : (selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]))
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
 
@@ -307,9 +317,9 @@ export function ParticipantMode({
               />
             ) : (currentSession.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id ? (
               <>
-                {currentSession?.video_sources && currentSession.video_sources.length > 1 && (
+                {!hasPrimaryR2Video && currentSession?.video_sources && currentSession.video_sources.length > 1 && (
                   <div style={{ marginBottom: '10px' }}>
-                    <label style={{ fontWeight: 'bold', marginRight: '8px' }}>Video:</label>
+                    <label style={{ fontWeight: 'bold', marginRight: '8px' }}>Session Video:</label>
                     <select
                       value={video?.id || currentSession.video_sources[0]?.id}
                       onChange={(e) => {
@@ -324,7 +334,7 @@ export function ParticipantMode({
                     >
                       {currentSession.video_sources.map((v, idx) => (
                         <option key={v.id} value={v.id}>
-                          Video {idx + 1} – {v.provider}
+                          Video {idx + 1}
                         </option>
                       ))}
                     </select>

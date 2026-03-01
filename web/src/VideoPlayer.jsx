@@ -23,7 +23,9 @@ export function Html5VideoPlayer({
   openUrlLabel = 'Open in new tab',
   /** Optional: when set with apiBaseUrlForRefresh, on error (e.g. expired presigned URL) we re-fetch GET /api/artifacts/{id}/access and set new src, then resume at currentTime */
   artifactIdForRefresh = null,
-  apiBaseUrlForRefresh = ''
+  apiBaseUrlForRefresh = '',
+  /** Optional: called when the video element is in the DOM with a valid src (so parent can keep progress panel visible until then) */
+  onMounted = null
 }) {
   const videoRef = useRef(null)
   const lastKnownTimeRef = useRef(0)
@@ -32,6 +34,10 @@ export function Html5VideoPlayer({
   const [playing, setPlaying] = useState(false)
   const [loadError, setLoadError] = useState(null)
   const [serverStatus, setServerStatus] = useState(null) // after error, fetch stream URL to show real HTTP status
+
+  useEffect(() => {
+    if (onMounted && videoRef.current && mediaUrl) onMounted()
+  }, [onMounted, mediaUrl])
 
   useEffect(() => {
     const video = videoRef.current
@@ -407,7 +413,9 @@ export function VideoPlayer({
   creatorIdentity = '',
   primaryVideoAccessUrl = '',
   /** When using R2 primary video (primaryVideoAccessUrl), pass artifact ID so the player can refresh presigned URL on expiry */
-  primaryVideoArtifactId = null
+  primaryVideoArtifactId = null,
+  /** Called when the primary R2 video player is mounted (so parent can keep progress panel visible until then) */
+  onPrimaryVideoMounted = null
 }) {
   if (!video) return null
 
@@ -423,20 +431,17 @@ export function VideoPlayer({
     embedUrl = convertedUrl || null
   }
   
-  // R2 primary video: use presigned URL when session has primary_video_artifact_id (Zoom import or upload)
-  const zoomStreamUrl = !primaryVideoAccessUrl && video.provider === 'zoom' && sessionId && apiBaseUrl && video.id
-    ? (creatorIdentity
-        ? `${apiBaseUrl.replace(/\/$/, '')}/sessions/${sessionId}/video-sources/${video.id}/stream?creator_identity=${encodeURIComponent(creatorIdentity)}`
-        : `${apiBaseUrl.replace(/\/$/, '')}/sessions/${sessionId}/video-sources/${video.id}/stream`)
-    : null
+  // Playback is in-app only: we never use the Zoom stream URL. Use primary (downloaded) URL or other direct/upload URLs.
   const mediaUrl = primaryVideoAccessUrl ||
     video.media_url ||
-    zoomStreamUrl ||
-    (video.video_url && playbackMode === 'direct' ? video.video_url : null)
+    (video.provider !== 'zoom' && video.video_url && playbackMode === 'direct' ? video.video_url : null)
 
   const openUrl = video.video_url || embedUrl
 
-  if ((playbackMode === 'direct' || zoomStreamUrl) && mediaUrl) {
+  const isRenderingPrimaryVideo = !!(mediaUrl && (playbackMode === 'direct' || video.provider === 'r2') && primaryVideoAccessUrl && mediaUrl === primaryVideoAccessUrl)
+
+  // In-app player: primary video (Zoom import or upload) or other direct/upload sources
+  if (mediaUrl && (playbackMode === 'direct' || video.provider === 'r2')) {
     return (
       <Html5VideoPlayer
         mediaUrl={mediaUrl}
@@ -445,23 +450,29 @@ export function VideoPlayer({
         onTimeUpdate={onTimeUpdate}
         currentTime={externalCurrentTime}
         playing={externalPlaying}
-        openUrl={video.provider === 'zoom' ? openUrl : (openUrl || null)}
-        openUrlLabel={video.provider === 'zoom' ? 'Open in Zoom' : 'Open in new tab'}
+        openUrl={openUrl || null}
+        openUrlLabel="Open in new tab"
         artifactIdForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? primaryVideoArtifactId : null}
         apiBaseUrlForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? apiBaseUrl : ''}
+        onMounted={isRenderingPrimaryVideo ? onPrimaryVideoMounted : undefined}
       />
     )
-  } else if (video.provider === 'zoom' && !zoomStreamUrl && openUrl) {
+  }
+  // Zoom source but no imported video yet: in-app playback only — show placeholder until import completes
+  if (video.provider === 'zoom' && openUrl) {
     return (
       <div style={{
         padding: '24px',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: '#f0f7ff',
         borderRadius: '8px',
         textAlign: 'center',
-        border: '2px solid #ddd'
+        border: '1px solid #b3d9ff'
       }}>
-        <p style={{ margin: '0 0 16px', color: '#666', fontSize: '15px' }}>
-          Zoom recordings cannot be embedded in this page. Open the recording in Zoom to watch.
+        <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
+          Video playback is in-app only. The recording will appear here once it has been imported from Zoom.
+        </p>
+        <p style={{ margin: '0 0 16px', color: '#666', fontSize: '14px' }}>
+          If import is in progress, wait a moment and refresh. You can open the recording in Zoom in the meantime.
         </p>
         <a
           href={openUrl}
@@ -469,53 +480,18 @@ export function VideoPlayer({
           rel="noopener noreferrer"
           style={{
             display: 'inline-block',
-            padding: '12px 24px',
-            backgroundColor: '#2D8CFF',
-            color: '#fff',
-            borderRadius: '6px',
-            textDecoration: 'none',
-            fontWeight: '600',
-            fontSize: '14px'
+            padding: '8px 16px',
+            color: '#2D8CFF',
+            fontSize: '14px',
+            textDecoration: 'none'
           }}
         >
-          Open in Zoom →
+          Open in Zoom (new tab) →
         </a>
-        <div style={{
-          marginTop: '15px',
-          padding: '10px',
-          backgroundColor: '#fff3cd',
-          borderRadius: '4px',
-          fontSize: '13px',
-          color: '#856404',
-          textAlign: 'left'
-        }}>
-          <strong>⚠ Embed Mode (Limited Control):</strong> Use the manual timestamp below to sync with the transcript.
-          <div style={{ marginTop: '10px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Manually enter timestamp (seconds):
-            </label>
-            <input
-              type="number"
-              value={externalCurrentTime ?? 0}
-              onChange={(e) => onTimeUpdate?.(parseInt(e.target.value) || 0)}
-              min="0"
-              placeholder="0"
-              style={{
-                padding: '5px 10px',
-                fontSize: '14px',
-                width: '150px',
-                borderRadius: '4px',
-                border: '1px solid #ddd'
-              }}
-            />
-            <span style={{ marginLeft: '10px', color: '#666' }}>
-              Current: {Math.floor((externalCurrentTime ?? 0) / 60)}:{((externalCurrentTime ?? 0) % 60).toString().padStart(2, '0')}
-            </span>
-          </div>
-        </div>
       </div>
     )
-  } else if (playbackMode === 'embed' && embedUrl) {
+  }
+  if (playbackMode === 'embed' && embedUrl) {
     return (
       <EmbedPlayer
         embedUrl={embedUrl}

@@ -1,11 +1,12 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
-import { SessionMaterialsTab } from '../components/SessionMaterialsTab'
 import { SessionSharing } from '../components/SessionSharing'
 
-const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready']
+const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
+const PROGRESSION_TICK_MS = 200 // Advance displayed step at most one per tick
+const TARGET_STEP_TICK_MS = 500 // Advance target ref at most one per tick so steps don't jump from 0 to all-done
 
 function processingStageToStepIndex(stage) {
   if (!stage) return 0
@@ -15,6 +16,19 @@ function processingStageToStepIndex(stage) {
   if (s === 'parse') return 2
   if (s === 'chunk') return 3
   if (s === 'embed') return 4
+  if (s === 'ready') return 5
+  return 0
+}
+
+// Derive step from state so the UI advances even if stage lags; use max(stage, state) so we never show an earlier step
+function processingStateToStepIndex(state) {
+  if (!state) return 0
+  const s = (state || '').toLowerCase()
+  if (s === 'queued' || s === 'fetching') return 0
+  if (s === 'downloading') return 1
+  if (s === 'parsing') return 2
+  if (s === 'chunking') return 3
+  if (s === 'embedding') return 4
   if (s === 'ready') return 5
   return 0
 }
@@ -35,6 +49,7 @@ function relativeTime(isoString) {
 
 export function CreatorMode({
   currentSession,
+  sessionProcessingReadyVersion = 0,
   refetchSession,
   artifactId,
   setArtifactId,
@@ -58,8 +73,6 @@ export function CreatorMode({
   loading,
   apiBaseUrl,
   creatorIdentity,
-  viewMode,
-  setViewMode,
   transcriptText,
   setTranscriptText,
   submitTranscript,
@@ -69,8 +82,12 @@ export function CreatorMode({
   setInviteEmail,
   inviteFeedback,
   inviteLoading,
-  inviteUserToSession
+  inviteUserToSession,
+  onClearSession
 }) {
+  const [materialUploading, setMaterialUploading] = useState(false)
+  const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
+  const materialFileInputRef = useRef(null)
   const [answeringQuestionId, setAnsweringQuestionId] = useState(null)
   const [answerText, setAnswerText] = useState('')
   const [answerStatus, setAnswerStatus] = useState('answered')
@@ -327,11 +344,24 @@ export function CreatorMode({
     setAnswerVoiceTranscribedText('')
   }
 
-  // Prefer R2 primary video when session has primary_video_artifact_id and video_access_url (Zoom import or upload)
+  // When session has primary_video_artifact_id, playback is ONLY the downloaded MP4 (R2 or local). Never use Zoom stream (410).
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
-  const syntheticR2Video = hasPrimaryR2Video ? { provider: 'r2', playback_mode: 'direct', media_url: primaryVideoAccessUrl } : null
-  const video = selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]) || syntheticR2Video
+  const firstVideoSource = currentSession?.video_sources?.[0]
+  const syntheticR2Video = hasPrimaryR2Video
+    ? {
+        id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
+        provider: 'r2',
+        playback_mode: 'direct',
+        media_url: primaryVideoAccessUrl,
+        transcript_status: firstVideoSource?.transcript_status ?? 'ready',
+        transcript_text: firstVideoSource?.transcript_text ?? null,
+        transcript_segments: firstVideoSource?.transcript_segments ?? null,
+        source_type: 'upload'
+      }
+    : null
+  // When we have a downloaded primary video, always use it; otherwise use dropdown selection or first source
+  const video = hasPrimaryR2Video ? syntheticR2Video : (selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]))
 
   // Fetch questions on mount/change (WebSocket handles real-time updates)
   useEffect(() => {
@@ -359,6 +389,24 @@ export function CreatorMode({
   const [processingStatus, setProcessingStatus] = useState(null) // { state, stage, attempt_count, next_retry_at, last_error_code, last_error_message, updated_at }
   const [processingRetrying, setProcessingRetrying] = useState(false)
   const processingIntervalRef = useRef(null)
+  // Once we've seen a processing job for this session, keep the progression panel visible until video is on screen (so it never "disappears" mid-import)
+  const hasSeenProcessingJobRef = useRef(false)
+
+  // When WebSocket sends session_processing_ready, App bumps sessionProcessingReadyVersion and refetches. Set status to "ready" immediately so the panel shows "Preparing playback" until refetch returns (no disappear).
+  const prevProcessingReadyVersionRef = useRef(sessionProcessingReadyVersion)
+  useEffect(() => {
+    if (sessionProcessingReadyVersion > prevProcessingReadyVersionRef.current && sessionId) {
+      prevProcessingReadyVersionRef.current = sessionProcessingReadyVersion
+      hasSeenProcessingJobRef.current = true
+      setProcessingStatus((prev) => ({
+        ...(prev || {}),
+        state: 'ready',
+        stage: 'ready',
+        updated_at: new Date().toISOString()
+      }))
+      console.log('[ProgressPanel] WebSocket processing ready: set status to ready, panel will show "Preparing playback" until refetch')
+    }
+  }, [sessionProcessingReadyVersion, sessionId])
   useEffect(() => {
     if (!sessionId || !apiBaseUrl) return
     if (processingIntervalRef.current) {
@@ -369,15 +417,23 @@ export function CreatorMode({
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/processing`, { headers: { 'X-Creator-Identity': creatorIdentity } })
         .then((r) => r.json())
         .then((data) => {
-          if (data.state != null && data.state !== '') setProcessingStatus(data)
-          else setProcessingStatus(null)
+          // Only update when we have a state; never clear on empty so the panel doesn't disappear on transient empty/error responses
+          if (data.state != null && data.state !== '') {
+            setProcessingStatus(data)
+            hasSeenProcessingJobRef.current = true
+            console.log('[ProgressPanel] processing fetch: state=', data.state, 'stage=', data.stage)
+          } else {
+            console.log('[ProgressPanel] processing fetch: empty state, keeping previous (data.state=', data.state, ')')
+          }
         })
-        .catch(() => setProcessingStatus(null))
+        .catch((err) => {
+          console.log('[ProgressPanel] processing fetch failed, keeping previous:', err?.message || err)
+        })
     }
     fetchProcessing()
     const terminal = processingStatus?.state && ['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state)
     if (terminal) return
-    const intervalMs = processingStatus?.state === 'waiting' ? 15000 : 4000
+    const intervalMs = processingStatus?.state === 'waiting' ? 15000 : 2000
     processingIntervalRef.current = setInterval(fetchProcessing, intervalMs)
     return () => {
       if (processingIntervalRef.current) {
@@ -386,6 +442,98 @@ export function CreatorMode({
       }
     }
   }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
+
+  const prevSessionIdForResetRef = useRef(null)
+  useEffect(() => {
+    if (prevSessionIdForResetRef.current !== sessionId) {
+      prevSessionIdForResetRef.current = sessionId
+      hasSeenProcessingJobRef.current = false
+    }
+  }, [sessionId])
+
+  // --- Progression panel: timer-driven display step (advance at most one step per PROGRESSION_TICK_MS) ---
+  const [displayStepIndex, setDisplayStepIndex] = useState(0)
+  const lastKnownTargetStepRef = useRef(0)
+  const backendTargetStepRef = useRef(0)
+
+  // Compute target step from backend (or WebSocket optimistic ready)
+  const hasJobForStep = processingStatus?.state != null && processingStatus.state !== ''
+  const readyButNoVideoYetForStep = hasJobForStep && processingStatus?.state === 'ready' && !hasPrimaryR2Video
+  const effectiveStageForStep = hasJobForStep
+    ? (processingStatus.stage || (!['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state) ? 'fetch' : null))
+    : 'fetch'
+  const stageIndexForStep = processingStageToStepIndex(effectiveStageForStep)
+  const stateIndexForStep = processingStateToStepIndex(hasJobForStep ? processingStatus?.state : null)
+  const targetStepIndex = readyButNoVideoYetForStep
+    ? PROCESSING_STEPS.length - 1
+    : Math.max(stageIndexForStep, stateIndexForStep)
+  if (hasJobForStep || readyButNoVideoYetForStep) {
+    backendTargetStepRef.current = targetStepIndex
+  }
+
+  useEffect(() => {
+    setDisplayStepIndex(0)
+    lastKnownTargetStepRef.current = 0
+    backendTargetStepRef.current = 0
+  }, [sessionId])
+
+  // Advance target ref at most one step per TARGET_STEP_TICK_MS toward backend so steps never jump 0 -> all-done
+  useEffect(() => {
+    if (!sessionId) return
+    const id = setInterval(() => {
+      const backendTarget = backendTargetStepRef.current
+      lastKnownTargetStepRef.current = Math.min(lastKnownTargetStepRef.current + 1, backendTarget)
+    }, TARGET_STEP_TICK_MS)
+    return () => clearInterval(id)
+  }, [sessionId])
+
+  // Advance displayed step at most one per PROGRESSION_TICK_MS toward the ref
+  useEffect(() => {
+    if (!sessionId) return
+    const id = setInterval(() => {
+      setDisplayStepIndex((prev) => {
+        const target = lastKnownTargetStepRef.current
+        if (prev < target) return prev + 1
+        if (prev > target) return target
+        return prev
+      })
+    }, PROGRESSION_TICK_MS)
+    return () => clearInterval(id)
+  }, [sessionId])
+
+  // Progress panel: only visible while a video is being processed; hide once the video player is visible (after 2.5s grace)
+  const PROGRESS_PANEL_DELAY_MS = 2500
+  const [hideProgressPanelAfter, setHideProgressPanelAfter] = useState(null)
+  const [primaryVideoMounted, setPrimaryVideoMounted] = useState(false)
+  const handlePrimaryVideoMounted = useCallback(() => {
+    setPrimaryVideoMounted(true)
+    setHideProgressPanelAfter(Date.now() + PROGRESS_PANEL_DELAY_MS)
+  }, [])
+  useEffect(() => {
+    if (hideProgressPanelAfter == null) return
+    const remaining = Math.max(0, hideProgressPanelAfter - Date.now())
+    const t = setTimeout(() => setHideProgressPanelAfter(null), remaining)
+    return () => clearTimeout(t)
+  }, [hideProgressPanelAfter])
+  const prevSessionIdForPanelRef = useRef(null)
+  useEffect(() => {
+    if (prevSessionIdForPanelRef.current !== sessionId) {
+      prevSessionIdForPanelRef.current = sessionId
+      setHideProgressPanelAfter(null)
+      setPrimaryVideoMounted(false)
+    }
+  }, [sessionId])
+  useEffect(() => {
+    if (!hasPrimaryR2Video) setPrimaryVideoMounted(false)
+  }, [hasPrimaryR2Video])
+
+  const runningStatesForPanel = ['queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding']
+  const hasJobForPanel = processingStatus?.state != null && processingStatus.state !== ''
+  const isRunningForPanel = hasJobForPanel && runningStatesForPanel.includes(processingStatus.state)
+  const readyButNoVideoYetForPanel = hasJobForPanel && processingStatus?.state === 'ready' && !hasPrimaryR2Video
+  const processingInProgress = isRunningForPanel || readyButNoVideoYetForPanel
+  // Show panel while processing OR until video player has mounted and the 2.5s grace has elapsed (don't hide the moment we get video URL)
+  const showPanel = processingInProgress || (hasPrimaryR2Video && (!primaryVideoMounted || hideProgressPanelAfter != null))
 
   // Legacy ingestion status (fallback when no processing job)
   const [ingestionStatus, setIngestionStatus] = useState(null)
@@ -421,22 +569,20 @@ export function CreatorMode({
     }
   }, [sessionId, apiBaseUrl, creatorIdentity, processingStatus?.state])
 
-  // When Zoom import completes, refetch session so video_sources/primary_video and transcript appear (video player, etc.)
+  // When Zoom import completes, refetch session until we have a playable video (video_access_url or video_sources). Backend sets video_access_url only when file artifact is Ready, so we must keep refetching.
   const hasRefetchedForIngestionReady = useRef(false)
   const readyState = processingStatus?.state === 'ready' ? 'ready' : ingestionStatus?.state === 'ready' ? 'ready' : null
-  const hasVideoContent = (currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id
+  const hasPlayableVideo = hasPrimaryR2Video || (currentSession?.video_sources && currentSession.video_sources.length > 0)
   useEffect(() => {
     if (readyState !== 'ready' || !refetchSession) return
-    if (hasVideoContent) return
+    if (hasPlayableVideo) return
     if (hasRefetchedForIngestionReady.current) return
     hasRefetchedForIngestionReady.current = true
     refetchSession()
-    // Schedule extra refetches in case the first one raced with backend (Zoom import writes video + transcript async)
     const t1 = setTimeout(() => refetchSession(), 1500)
     const t2 = setTimeout(() => refetchSession(), 3500)
     return () => { clearTimeout(t1); clearTimeout(t2) }
-  }, [readyState, refetchSession, hasVideoContent])
-  // Reset refs when session id changes so a new session can trigger refetch and poll
+  }, [readyState, refetchSession, hasPlayableVideo])
   const prevSessionIdRef = useRef(sessionId)
   const videoPollAttemptsRef = useRef(0)
   useEffect(() => {
@@ -447,12 +593,12 @@ export function CreatorMode({
     }
   }, [sessionId])
 
-  // Poll session until video_sources or primary_video_artifact_id appear (Zoom import is async)
+  // Poll session until we have a playable primary video (video_access_url) or video_sources — backend may set primary_video_artifact_id before file is Ready, so keep refetching until video_access_url appears
   const VIDEO_POLL_MAX_ATTEMPTS = 20
   const VIDEO_POLL_INTERVAL_MS = 2500
   useEffect(() => {
     if (!sessionId || !apiBaseUrl || !refetchSession) return
-    if (hasVideoContent) return
+    if (hasPlayableVideo) return
     if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) return
     const t = setInterval(() => {
       videoPollAttemptsRef.current += 1
@@ -460,7 +606,7 @@ export function CreatorMode({
       refetchSession()
     }, VIDEO_POLL_INTERVAL_MS)
     return () => clearInterval(t)
-  }, [sessionId, apiBaseUrl, refetchSession, hasVideoContent])
+  }, [sessionId, apiBaseUrl, refetchSession, hasPlayableVideo])
 
   // Session transcript (Mission #2: GET /api/sessions/:id/transcript)
   const [transcriptData, setTranscriptData] = useState(null) // { status, source, updated_at, error_message, segments }
@@ -530,6 +676,36 @@ export function CreatorMode({
     }
   }
 
+  const uploadMaterialToSession = async (file) => {
+    if (!sessionId || !apiBaseUrl || !file) return
+    setMaterialUploading(true)
+    setMaterialUploadFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(`${base}/sessions/${sessionId}/materials/upload`, { method: 'POST', body: form, credentials: 'include' })
+      if (!res.ok) {
+        const t = await res.text()
+        setMaterialUploadFeedback({ type: 'error', message: t || res.statusText })
+        return
+      }
+      setMaterialUploadFeedback({ type: 'success', message: `Uploaded ${file.name}` })
+      if (refetchSession) await refetchSession()
+      if (materialFileInputRef.current) materialFileInputRef.current.value = ''
+    } catch (err) {
+      setMaterialUploadFeedback({ type: 'error', message: err?.message || 'Upload failed' })
+    } finally {
+      setMaterialUploading(false)
+      if (materialFileInputRef.current) materialFileInputRef.current.value = ''
+    }
+  }
+
+  const handleMaterialFileChange = (e) => {
+    const files = Array.from(e?.target?.files || [])
+    if (files.length > 0) uploadMaterialToSession(files[0])
+  }
+
   if (!currentSession) {
     return (
       <div style={{ padding: '20px', color: '#666', textAlign: 'center' }}>
@@ -540,40 +716,45 @@ export function CreatorMode({
 
   return (
     <>
-      {/* Session Header for Creator Mode */}
+      {/* Session header: single combined panel (replaces duplicate Active Session panel from App) */}
       {currentSession.session && (
         <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e8f4f8', borderRadius: '5px', border: '2px solid #2196F3' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-            <div style={{ flex: 1 }}>
-              <h2 style={{ margin: '0 0 10px 0', color: '#1976D2' }}>Session: {currentSession.session.title}</h2>
-              <div style={{ fontSize: '14px', color: '#666' }}>
-                {currentSession.artifacts && currentSession.artifacts.length > 0 ? (
-                  <>
-                    <strong>Artifacts:</strong> {currentSession.artifacts.map(a => a.title).join(', ')}
-                    <br />
-                  </>
-                ) : (
-                  <div style={{ color: '#999', fontStyle: 'italic' }}>No artifacts in this session yet</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                <h2 style={{ margin: 0, color: '#1976D2', fontSize: '1.25rem' }}>Session: {currentSession.session.title}</h2>
+                {authUser?.email && (
+                  <span style={{
+                    fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
+                    backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575',
+                    color: '#fff', fontWeight: '600', textTransform: 'capitalize'
+                  }}>
+                    {currentSession.session.created_by === authUser.email ? 'Creator' : 'Participant'}
+                  </span>
                 )}
-                <strong>Status:</strong> <span style={{ 
-                  color: currentSession.session.status === 'open' ? '#4CAF50' : '#999',
-                  fontWeight: 'bold'
-                }}>{currentSession.session.status}</span>
+              </div>
+              <div style={{ fontSize: '13px', color: '#666' }}>
+                ID: <code style={{ fontSize: '11px' }}>{currentSession.session.id}</code>
+                {currentSession.artifacts?.length > 0 && <> | Artifacts: {currentSession.artifacts.map(a => a.title).join(', ')}</>}
+                {' | '}
+                <strong>Status:</strong>{' '}
+                <span style={{ color: currentSession.session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>
+                  {currentSession.session.status}
+                </span>
                 {currentSession.session.created_by && ` | Created by: ${currentSession.session.created_by}`}
-                <br />
+                {' | '}
                 <strong>Created:</strong> {new Date(currentSession.session.created_at).toLocaleString()}
               </div>
             </div>
-            <button 
-              onClick={() => { if (setViewMode) setViewMode('artifact'); }} 
-              style={{ 
-                marginTop: 0,
-                backgroundColor: '#757575',
-                padding: '8px 16px'
-              }}
-            >
-              ← Back to Artifact View
-            </button>
+            {onClearSession && (
+              <button
+                type="button"
+                onClick={onClearSession}
+                style={{ backgroundColor: '#f44336', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+              >
+                Clear Session
+              </button>
+            )}
           </div>
           {authUser && inviteUserToSession && (
             <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
@@ -600,73 +781,80 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Processing status banner (Mission #4A: stepper + state copy + metadata + actions) */}
-      {(processingStatus?.state != null && processingStatus.state !== '') && (() => {
+      {/* Processing progression: show until video is on screen (and delay passed). Once we've seen a job, keep showing until primary video is ready so the panel never disappears mid-import. */}
+      {showPanel && (() => {
         const runningStates = ['queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding']
-        const isRunning = runningStates.includes(processingStatus.state)
-        const isFailed = processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent'
-        const isWaiting = processingStatus.state === 'waiting'
-        const effectiveStage = processingStatus.stage || (processingStatus.state && !['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state) ? 'fetch' : null)
-        const activeStepIndex = processingStageToStepIndex(effectiveStage)
+        const hasJob = processingStatus?.state != null && processingStatus.state !== ''
+        const isRunning = hasJob && runningStates.includes(processingStatus.state)
+        const isFailed = hasJob && (processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent')
+        const isWaiting = hasJob && processingStatus.state === 'waiting'
+        const readyButNoVideoYet = hasJob && processingStatus.state === 'ready' && !hasPrimaryR2Video
+        const allComplete = hasJob && processingStatus.state === 'ready' && hasPrimaryR2Video
+        // Use displayStepIndex so each step is shown for at least STEP_DWELL_MS (step-by-step feel)
+        const activeStepIndex = displayStepIndex
         return (
           <div style={{
             marginBottom: '20px',
-            padding: '16px',
-            borderRadius: '8px',
-            backgroundColor: processingStatus.state === 'ready' ? '#e8f5e9' : processingStatus.state === 'failed_permanent' ? '#ffebee' : isWaiting ? '#e3f2fd' : '#fff8e1',
-            border: processingStatus.state === 'ready' ? '1px solid #4CAF50' : processingStatus.state === 'failed_permanent' ? '1px solid #f44336' : isWaiting ? '1px solid #2196F3' : '1px solid #ff9800'
+            padding: '18px 20px',
+            borderRadius: '10px',
+            backgroundColor: allComplete ? '#e8f5e9' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : isWaiting ? '#e3f2fd' : '#fff8e1',
+            border: allComplete ? '1px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '1px solid #f44336' : isWaiting ? '1px solid #2196F3' : '1px solid #ff9800'
           }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '12px', fontSize: '15px' }}>
                   {PROCESSING_STEPS.map((label, idx) => {
-                    const completed = idx < activeStepIndex || processingStatus.state === 'ready'
+                    const completed = idx < activeStepIndex || allComplete
                     const active = idx === activeStepIndex && !completed
-                    const future = idx > activeStepIndex
-                    const showSpinner = active && isRunning
+                    const showSpinner = active && (isRunning || !hasJob || readyButNoVideoYet || displayStepIndex < lastKnownTargetStepRef.current)
                     const showWaiting = active && isWaiting
                     const showWarning = active && isFailed
+                    const activeWeight = 700
                     return (
                       <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <span style={{
-                          fontSize: '13px',
+                          fontSize: '16px',
                           color: completed ? '#4CAF50' : active ? (showWarning ? '#f44336' : '#1976D2') : '#9e9e9e',
-                          fontWeight: active ? 600 : 400
+                          fontWeight: active ? activeWeight : 400
                         }}>
-                          {completed ? '✓' : showSpinner ? '⏳' : showWaiting ? '⏸' : showWarning ? '⚠' : '○'}
+                          {completed ? '✓' : showSpinner ? '⌛' : showWaiting ? '⏸' : showWarning ? '⚠' : '○'}
                         </span>
-                        <span style={{ color: completed ? '#2e7d32' : active ? '#333' : '#9e9e9e', fontSize: '13px' }}>{label}</span>
-                        {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '4px', marginRight: '4px', color: '#bdbdbd' }}>→</span>}
+                        <span style={{ color: completed ? '#2e7d32' : active ? '#1a1a1a' : '#9e9e9e', fontSize: '15px', fontWeight: active ? activeWeight : 400 }}>{label}</span>
+                        {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '2px', marginRight: '2px', color: '#bdbdbd', fontSize: '14px' }}>→</span>}
                       </div>
                     )
                   })}
                 </div>
-                <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
-                  {isRunning
-                    ? 'Processing this session…'
-                    : isWaiting
-                      ? "Waiting for Zoom to finish processing. We'll keep checking."
-                      : processingStatus.state === 'failed_transient'
-                        ? "Temporary issue. We'll retry automatically. You can retry now."
-                        : processingStatus.state === 'failed_permanent'
-                          ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect Zoom or retry.`
-                          : processingStatus.state === 'ready'
-                            ? 'Zoom import complete'
-                            : processingStatus.state === 'canceled'
-                              ? 'Import canceled.'
-                              : processingStatus.state}
+                <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px', color: '#333' }}>
+                  {!hasJob
+                    ? 'Checking import status…'
+                    : isRunning
+                      ? 'Processing this session…'
+                      : isWaiting
+                        ? "Waiting for Zoom to finish processing. We'll keep checking."
+                        : processingStatus.state === 'failed_transient'
+                          ? "Temporary issue. We'll retry automatically. You can retry now."
+                          : processingStatus.state === 'failed_permanent'
+                            ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect Zoom or retry.`
+                            : readyButNoVideoYet
+                              ? 'Preparing playback — video will appear on screen shortly…'
+                              : processingStatus.state === 'ready'
+                                ? 'Import complete — video and transcript are ready.'
+                                : processingStatus.state === 'canceled'
+                                  ? 'Import canceled.'
+                                  : processingStatus.state}
                 </div>
-                <div style={{ fontSize: '12px', color: '#666', display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                  {processingStatus.updated_at && (
+                <div style={{ fontSize: '13px', color: '#555', display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
+                  {processingStatus?.updated_at && (
                     <span>Last updated: {relativeTime(processingStatus.updated_at)}</span>
                   )}
-                  {processingStatus.next_retry_at && (
+                  {processingStatus?.next_retry_at && (
                     <span>Next retry: {new Date(processingStatus.next_retry_at).toLocaleString()}</span>
                   )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                {(processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent' || processingStatus.state === 'waiting') && (
+                {hasJob && (processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent' || processingStatus.state === 'waiting') && (
                   <button
                     type="button"
                     onClick={retryProcessing}
@@ -684,7 +872,7 @@ export function CreatorMode({
                     {processingRetrying ? 'Retrying…' : 'Retry now'}
                   </button>
                 )}
-                {processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
+                {hasJob && processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
                   <a
                     href={`${window.location.origin}${window.location.pathname}?session=${sessionId}&zoom=connect`}
                     style={{ fontSize: '13px', color: '#1976D2', fontWeight: 500 }}
@@ -751,8 +939,71 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Transcript tab (Mission #2: session transcript status + segments) */}
-      {sessionId && (
+      {/* Session Video: in-app playback only. Placed high so it appears right after progress. */}
+      {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
+        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f8f9fa', border: '1px solid #dee2e6' }}>
+          <h2>Session Video</h2>
+          {hasPrimaryR2Video && (
+            <div style={{ marginBottom: '10px', fontSize: '14px', color: '#495057' }}>
+              <strong>Transcript:</strong>{' '}
+              <span style={{
+                color: video.transcript_status === 'ready' ? '#4CAF50' :
+                       video.transcript_status === 'pending' ? '#ff9800' :
+                       video.transcript_status === 'failed' ? '#f44336' : '#999',
+                fontWeight: 'bold'
+              }}>
+                {video.transcript_status === 'missing' ? 'No transcript' :
+                 video.transcript_status === 'pending' ? 'Pending...' :
+                 video.transcript_status === 'processing' ? 'Processing...' :
+                 video.transcript_status === 'ready' ? 'Ready' :
+                 video.transcript_status === 'failed' ? 'Failed' :
+                 video.transcript_status || 'Unknown'}
+              </span>
+              {transcriptJobs[video?.id] && (
+                <>
+                  {' | '}
+                  <strong>Job:</strong>{' '}
+                  <span style={{
+                    color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' :
+                           transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
+                    fontWeight: 'bold'
+                  }}>
+                    {transcriptJobs[video.id].status}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+
+          {video && (
+            <>
+              <VideoPlayer
+                video={video}
+                onEvent={handleVideoPlayerEvent}
+                onTimeUpdate={handleVideoTimeUpdate}
+                currentTime={currentVideoTime}
+                playing={isVideoPlaying}
+                sessionId={currentSession?.session?.id || currentSession?.id}
+                apiBaseUrl={apiBaseUrl}
+                creatorIdentity={creatorIdentity}
+                primaryVideoAccessUrl={primaryVideoAccessUrl}
+                primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
+                onPrimaryVideoMounted={handlePrimaryVideoMounted}
+              />
+              {(video.transcript_text || (video.transcript_segments && video.transcript_segments.length > 0)) && (
+                <TranscriptViewer
+                  transcriptText={video.transcript_text}
+                  segments={video.transcript_segments}
+                  showTimestamps={true}
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Transcript tab: only show when transcript is not already shown below Session Video (avoids duplication) */}
+      {sessionId && !(hasPrimaryR2Video && (video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0))) && (
         <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px' }}>
           <h2 style={{ marginTop: 0 }}>Transcript</h2>
           {!transcriptData ? (
@@ -829,98 +1080,35 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Mode Indicator */}
-      <div style={{ 
-        marginBottom: '20px', 
-        padding: '12px 20px', 
-        backgroundColor: '#e3f2fd', 
-        borderRadius: '5px', 
-        border: '2px solid #2196F3',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px'
-      }}>
-        <span style={{ 
-          backgroundColor: '#2196F3', 
-          color: 'white', 
-          padding: '4px 12px', 
-          borderRadius: '4px',
-          fontWeight: 'bold',
-          fontSize: '14px'
-        }}>
-          CREATOR MODE
-        </span>
-        <span style={{ color: '#1976D2', fontSize: '14px' }}>
-          You can upload and configure session content
-        </span>
-      </div>
-
-      {/* Session Sharing */}
-      {currentSession?.session && (
-        <SessionSharing 
-          sessionId={currentSession.session.id} 
-          sessionTitle={currentSession.session.title}
-          apiBaseUrl={apiBaseUrl}
-        />
-      )}
-
-      {/* Existing Artifacts */}
-      {currentSession?.artifacts && currentSession.artifacts.length > 0 && (
-        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f0f8ff', border: '1px solid #2196F3' }}>
-          <h2>Existing Artifacts ({currentSession.artifacts.length})</h2>
-          {currentSession.artifacts.map((artifact, idx) => (
-            <div key={artifact.id || idx} style={{ 
-              marginBottom: '15px', 
-              padding: '15px', 
-              border: '1px solid #ddd', 
-              borderRadius: '5px',
-              backgroundColor: artifact.id === artifactId ? '#e3f2fd' : '#fff'
-            }}>
-              <div style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '5px' }}>
-                {artifact.title}
-              </div>
-              {artifact.description && (
-                <div style={{ fontSize: '14px', color: '#666', marginBottom: '10px' }}>
-                  {artifact.description}
-                </div>
-              )}
-              <div style={{ fontSize: '12px', color: '#999' }}>
-                ID: <code>{artifact.id}</code> | 
-                Status: <span style={{ 
-                  color: artifact.status === 'ready' ? '#4CAF50' : '#999',
-                  fontWeight: 'bold'
-                }}>{artifact.status}</span>
-                {artifact.id === artifactId && (
-                  <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
-                    (Currently Selected)
-                  </span>
-                )}
-              </div>
-              {artifact.id !== artifactId && (
-                <button 
-                  onClick={() => setArtifactId(artifact.id)}
-                  style={{ marginTop: '10px', fontSize: '12px', padding: '5px 10px' }}
-                >
-                  Select This Artifact
-                </button>
-              )}
+      {/* Upload Material */}
+      {sessionId && (
+        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Upload Material</h2>
+          <input
+            ref={materialFileInputRef}
+            type="file"
+            accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,video/mp4,.mp4,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
+            onChange={handleMaterialFileChange}
+            disabled={materialUploading}
+            style={{ display: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={() => materialFileInputRef.current?.click()}
+            disabled={materialUploading}
+            style={{ padding: '8px 16px', backgroundColor: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: materialUploading ? 'not-allowed' : 'pointer', fontWeight: 500 }}
+          >
+            {materialUploading ? 'Uploading…' : 'Upload Material'}
+          </button>
+          {materialUploadFeedback.message && (
+            <div className={materialUploadFeedback.type} style={{ marginTop: 10, fontSize: 14 }}>
+              {materialUploadFeedback.message}
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* Materials tab (Mission #6): upload, paste, list, preview, delete */}
-      {sessionId && (
-        <SessionMaterialsTab
-          sessionId={sessionId}
-          materials={currentSession?.materials || []}
-          videoSources={currentSession?.video_sources || []}
-          apiBaseUrl={apiBaseUrl}
-          refetchSession={refetchSession}
-        />
-      )}
-
-      {/* Existing Materials (artifact view legacy list) */}
+      {/* Materials list (above Share Session) */}
       {currentSession?.materials && currentSession.materials.length > 0 && (
         <MaterialsList
           materials={currentSession.materials}
@@ -930,146 +1118,13 @@ export function CreatorMode({
         />
       )}
 
-      {/* Video Player: show when we have video_sources or R2 primary video (Zoom import / upload) */}
-      {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
-        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fff3e0', border: '1px solid #ff9800' }}>
-          <h2>Video Player</h2>
-          
-          {currentSession?.video_sources && currentSession.video_sources.length > 1 && (
-            <div style={{ marginBottom: '15px' }}>
-              <label style={{ fontWeight: 'bold', marginRight: '10px' }}>Select Video:</label>
-              <select 
-                value={selectedVideo?.id || currentSession.video_sources[0].id}
-                onChange={(e) => {
-                  const video = currentSession.video_sources.find(v => v.id === e.target.value)
-                  setSelectedVideo(video)
-                  setVideoId(video.id)
-                  setCurrentVideoTime(0)
-                  setIsVideoPlaying(false)
-                }}
-                style={{ padding: '5px 10px', fontSize: '14px' }}
-              >
-                {currentSession.video_sources.map((video, idx) => {
-                  const statusLabel = video.transcript_status === 'missing' ? 'No transcript' :
-                                      video.transcript_status === 'pending' ? 'Pending...' :
-                                      video.transcript_status === 'processing' ? 'Processing...' :
-                                      video.transcript_status === 'ready' ? 'Ready' :
-                                      video.transcript_status === 'failed' ? 'Failed' :
-                                      video.transcript_status || 'Unknown'
-                  
-                  // Determine source type label
-                  const sourceTypeLabel = video.source_type === 'upload' ? 'Uploaded' :
-                                         video.source_type === 'direct_url' ? 'Direct URL' :
-                                         video.source_type === 'embed_url' ? 'Embed URL' :
-                                         'Unknown'
-                  return (
-                    <option key={video.id} value={video.id}>
-                      Video {idx + 1} - {video.provider} ({statusLabel})
-                    </option>
-                  )
-                })}
-              </select>
-            </div>
-          )}
-
-          {video && (
-            <div>
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Provider:</strong> <span style={{ textTransform: 'capitalize' }}>{video.provider}</span>
-                {' | '}
-                <strong>Mode:</strong> <span style={{ 
-                  color: video.playback_mode === 'direct' ? '#4CAF50' : '#ff9800',
-                  fontWeight: 'bold'
-                }}>
-                  {video.playback_mode === 'direct' ? 'Direct (Full Control)' : 'Embed (Limited Control)'}
-                </span>
-                {' | '}
-                <strong>Transcript Status:</strong>{' '}
-                <span style={{ 
-                  color: video.transcript_status === 'ready' ? '#4CAF50' : 
-                         video.transcript_status === 'pending' ? '#ff9800' : 
-                         video.transcript_status === 'failed' ? '#f44336' : '#999',
-                  fontWeight: 'bold'
-                }}>
-                  {video.transcript_status === 'missing' ? 'No transcript' :
-                   video.transcript_status === 'pending' ? 'Pending...' :
-                   video.transcript_status === 'processing' ? 'Processing...' :
-                   video.transcript_status === 'ready' ? 'Ready' :
-                   video.transcript_status === 'failed' ? 'Failed' :
-                   video.transcript_status || 'Unknown'}
-                  {video.source_type && (
-                    <span style={{ marginLeft: '8px', fontSize: '11px', color: '#666' }}>
-                      ({video.source_type === 'upload' ? 'Uploaded' :
-                        video.source_type === 'direct_url' ? 'Direct URL' :
-                        video.source_type === 'embed_url' ? 'Embed URL' :
-                        'Unknown'})
-                    </span>
-                  )}
-                  {video.transcript_status === 'failed' && video.failure_reason && (
-                    <div style={{ marginTop: '5px', fontSize: '11px', color: '#f44336', fontStyle: 'italic' }}>
-                      Error: {video.failure_reason}
-                    </div>
-                  )}
-                </span>
-                {transcriptJobs[video.id] && (
-                  <>
-                    {' | '}
-                    <strong>Job Status:</strong>{' '}
-                    <span style={{ 
-                      color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' : 
-                             transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
-                      fontWeight: 'bold'
-                    }}>
-                      {transcriptJobs[video.id].status}
-                    </span>
-                    {transcriptJobs[video.id].error_message && (
-                      <span style={{ color: '#f44336', fontSize: '12px', marginLeft: '10px' }}>
-                        ({transcriptJobs[video.id].error_message})
-                      </span>
-                    )}
-                  </>
-                )}
-                {video.provider === 'loom' && (
-                  <>
-                    {' | '}
-                    <button 
-                      onClick={() => regenerateTranscript(video.id)}
-                      disabled={loading}
-                      style={{ 
-                        padding: '4px 8px',
-                        fontSize: '12px',
-                        backgroundColor: '#2196F3',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: loading ? 'not-allowed' : 'pointer'
-                      }}
-                    >
-                      🔄 Regenerate Transcript
-                    </button>
-                  </>
-                )}
-              </div>
-
-              <VideoPlayer
-                video={video}
-                onEvent={handleVideoPlayerEvent}
-                onTimeUpdate={handleVideoTimeUpdate}
-                currentTime={currentVideoTime}
-                playing={isVideoPlaying}
-                sessionId={currentSession?.session?.id || currentSession?.id}
-                apiBaseUrl={apiBaseUrl}
-                creatorIdentity={creatorIdentity}
-                primaryVideoAccessUrl={primaryVideoAccessUrl}
-                primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
-              />
-
-              {video.transcript_text && (
-                <TranscriptViewer transcriptText={video.transcript_text} />
-              )}
-            </div>
-          )}
-        </div>
+      {/* Session Sharing */}
+      {currentSession?.session && (
+        <SessionSharing 
+          sessionId={currentSession.session.id} 
+          sessionTitle={currentSession.session.title}
+          apiBaseUrl={apiBaseUrl}
+        />
       )}
 
       <h2>Submit Transcript</h2>

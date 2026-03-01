@@ -291,10 +291,6 @@ func (h *Handlers) ApiArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 
 // ArtifactAccess handles GET /api/artifacts/{id}/access?ttl_seconds=3600
 func (h *Handlers) ArtifactAccess(w http.ResponseWriter, r *http.Request) {
-	if h.Storage == nil {
-		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
-		return
-	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -326,13 +322,33 @@ func (h *Handlers) ArtifactAccess(w http.ResponseWriter, r *http.Request) {
 			ttl = time.Duration(sec) * time.Second
 		}
 	}
-	url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, ttl)
-	if err != nil {
-		log.Printf("ArtifactAccess PresignGet: %v", err)
-		http.Error(w, "Failed to generate access URL", http.StatusInternalServerError)
+	expiresAt := time.Now().Add(ttl)
+	var accessURL string
+	if fa.StorageProvider == "local" && fa.SessionID != nil {
+		base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("API_PUBLIC_ORIGIN")), "/")
+		if base == "" {
+			scheme := "https"
+			if r.TLS == nil {
+				scheme = "http"
+			}
+			if s := r.Header.Get("X-Forwarded-Proto"); s != "" {
+				scheme = s
+			}
+			base = scheme + "://" + r.Host
+		}
+		accessURL = fmt.Sprintf("%s/api/sessions/%s/primary-video", base, fa.SessionID.String())
+	} else if h.Storage != nil {
+		var err error
+		accessURL, err = h.Storage.PresignGet(r.Context(), fa.StorageKey, ttl)
+		if err != nil {
+			log.Printf("ArtifactAccess PresignGet: %v", err)
+			http.Error(w, "Failed to generate access URL", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		http.Error(w, "Storage not configured", http.StatusServiceUnavailable)
 		return
 	}
-	expiresAt := time.Now().Add(ttl)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ArtifactAccessResponse{URL: url, ExpiresAt: expiresAt})
+	json.NewEncoder(w).Encode(ArtifactAccessResponse{URL: accessURL, ExpiresAt: expiresAt})
 }
