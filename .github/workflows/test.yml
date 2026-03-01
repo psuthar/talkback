@@ -1,0 +1,39 @@
+# Run all tests on push and pull_request. Use branch protection to block merge when this fails.
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: talkback
+          POSTGRES_PASSWORD: talkback
+          POSTGRES_DB: talkback
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+        run: go test ./...
