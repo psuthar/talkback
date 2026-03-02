@@ -54,19 +54,24 @@ export function ParticipantMode({
   sessionLoadError,
   sessionIdFromUrl,
   onRetryLoadSession,
+  replyingToQuestionId,
+  setReplyingToQuestionId,
   onCitationClick
 }) {
   const hasSession = currentSession && currentSession.session
 
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
+  const firstVideoSource = currentSession?.video_sources?.[0]
   const syntheticR2Video = hasPrimaryR2Video
     ? {
         id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
         provider: 'r2',
         playback_mode: 'direct',
         media_url: primaryVideoAccessUrl,
-        transcript_status: currentSession?.video_sources?.[0]?.transcript_status ?? 'ready',
+        transcript_status: firstVideoSource?.transcript_status ?? 'ready',
+        transcript_text: firstVideoSource?.transcript_text ?? null,
+        transcript_segments: firstVideoSource?.transcript_segments ?? null,
         source_type: 'upload'
       }
     : null
@@ -392,6 +397,8 @@ export function ParticipantMode({
             askQuestionFeedback={askQuestionFeedback}
             currentAnswer={currentAnswer}
             onCitationClick={handleCitationClick}
+            replyingToQuestionId={replyingToQuestionId}
+            setReplyingToQuestionId={setReplyingToQuestionId}
             voiceRecording={voiceRecording}
             voiceUploading={voiceUploading}
             toggleVoiceRecording={toggleVoiceRecording}
@@ -400,9 +407,9 @@ export function ParticipantMode({
             setShowVoiceConfirm={setShowVoiceConfirm}
             voiceTranscribedText={voiceTranscribedText}
             setVoiceTranscribedText={setVoiceTranscribedText}
-confirmVoiceQuestion={confirmVoiceQuestion}
-  cancelVoiceReview={cancelVoiceReview}
-  polishVoiceQuestion={polishVoiceQuestion}
+            confirmVoiceQuestion={confirmVoiceQuestion}
+            cancelVoiceReview={cancelVoiceReview}
+            polishVoiceQuestion={polishVoiceQuestion}
             voicePolishing={voicePolishing}
             voicePolishMode={voicePolishMode}
           />

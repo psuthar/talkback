@@ -298,7 +298,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 
 	query := `
 		SELECT 
-			q.id, q.artifact_id, q.session_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
+			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
 			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
@@ -309,7 +309,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 			LIMIT 1
 		) a ON true
 		WHERE q.session_id = $1
-		ORDER BY q.created_at DESC
+		ORDER BY COALESCE(q.parent_question_id, q.id), q.created_at
 		LIMIT $2
 	`
 
@@ -338,6 +338,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 			&q.ID,
 			&q.ArtifactID,
 			&q.SessionID,
+			&q.ParentQuestionID,
 			&q.AskedBy,
 			&q.QuestionText,
 			&q.QuestionSource,

@@ -292,6 +292,45 @@ func TestGetQuestionsBySessionID(t *testing.T) {
 		assert.Len(t, questions, 1)
 		assert.NotEqual(t, otherQuestion.ID, questions[0].ID)
 	})
+
+	t.Run("returns questions in thread order with parent_question_id", func(t *testing.T) {
+		threadSession := createTestSession(t, db, "Thread Session")
+		artifact, err := db.CreateArtifact(ctx, threadSession.ID, "Thread Artifact", nil)
+		require.NoError(t, err)
+
+		rootQ := &models.Question{
+			ID:             uuid.New(),
+			ArtifactID:     artifact.ID,
+			SessionID:      threadSession.ID,
+			QuestionText:   "Root question?",
+			QuestionSource: models.QuestionSourceText,
+		}
+		err = db.CreateQuestion(ctx, rootQ)
+		require.NoError(t, err)
+
+		replyQ := &models.Question{
+			ID:                uuid.New(),
+			ArtifactID:       artifact.ID,
+			SessionID:        threadSession.ID,
+			ParentQuestionID: &rootQ.ID,
+			QuestionText:     "Follow-up question?",
+			QuestionSource:   models.QuestionSourceText,
+		}
+		err = db.CreateQuestion(ctx, replyQ)
+		require.NoError(t, err)
+
+		questions, answers, err := db.GetQuestionsBySessionID(ctx, threadSession.ID, 20)
+		require.NoError(t, err)
+		require.Len(t, questions, 2, "should return root and reply")
+		assert.Len(t, answers, 0, "no answers in this test")
+
+		// Thread order: root first (COALESCE(parent_id, id) = root.ID), then reply
+		assert.Nil(t, questions[0].ParentQuestionID, "first should be root")
+		assert.Equal(t, rootQ.ID, questions[0].ID)
+		require.NotNil(t, questions[1].ParentQuestionID, "second should be reply with parent set")
+		assert.Equal(t, rootQ.ID, *questions[1].ParentQuestionID)
+		assert.Equal(t, replyQ.ID, questions[1].ID)
+	})
 }
 
 func TestUpdateSessionStatus(t *testing.T) {

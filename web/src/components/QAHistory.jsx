@@ -1,3 +1,5 @@
+import { useState, useEffect, useRef } from 'react'
+
 function CitationBadge({ citation, onClick }) {
   const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
   const canNavigate = citation.anchor?.start_ms != null || (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc'))
@@ -22,25 +24,47 @@ function CitationBadge({ citation, onClick }) {
   )
 }
 
-export function QAHistory({ questions, readOnly = false, onCitationClick }) {
-  if (!questions || questions.length === 0) {
-    return (
-      <div className="info">
-        {readOnly ? 'No questions yet in this session.' : 'No questions yet in this session. Ask a question above to get started!'}
-      </div>
-    )
-  }
+// Find the root question ID for any question (itself if root, or walk up via parent_question_id).
+function findRootId(questions, questionId) {
+  const byId = Object.fromEntries((questions || []).map((q) => [q.id, q]))
+  let q = byId[questionId]
+  while (q?.parent_question_id) q = byId[q.parent_question_id]
+  return q?.id ?? questionId
+}
 
+// Build thread tree: roots have no parent_question_id; replies grouped under parent.
+function buildThreadTree(questions) {
+  if (!questions || questions.length === 0) return { roots: [], byParent: {} }
+  const byParent = {}
+  for (const q of questions) {
+    const pid = q.parent_question_id ?? 'root'
+    if (!byParent[pid]) byParent[pid] = []
+    byParent[pid].push(q)
+  }
+  const roots = (byParent.root || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+  for (const k of Object.keys(byParent)) {
+    if (k !== 'root') byParent[k].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+  }
+  return { roots, byParent }
+}
+
+function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
+  const isReply = depth > 0
   return (
-    <div>
-      {questions.map((q) => (
-        <div key={q.id} style={{ 
-          marginBottom: '15px', 
-          padding: '15px', 
-          border: '1px solid #ddd', 
-          borderRadius: '5px',
-          backgroundColor: q.answer ? '#f9f9f9' : '#fff'
-        }}>
+    <div
+      key={q.id}
+      style={{
+        marginBottom: '15px',
+        marginLeft: isReply ? '20px' : 0,
+        padding: isReply ? '10px 12px' : '15px',
+        border: '1px solid #ddd',
+        borderRadius: '5px',
+        backgroundColor: q.answer ? '#f9f9f9' : '#fff',
+        borderLeft: isReply ? '3px solid #90caf9' : undefined
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333' }}>
             Q: {q.question_text}
           </div>
@@ -57,49 +81,178 @@ export function QAHistory({ questions, readOnly = false, onCitationClick }) {
               </span>
             )}
           </div>
-          {q.answer ? (
-            <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
-              <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
-              <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                Status: <span style={{ 
-                  color: q.answer.answer_status === 'answered' ? '#4CAF50' : 
-                         q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
-                  fontWeight: 'bold'
-                }}>{q.answer.answer_status}</span> | 
-                Confidence: {q.answer.confidence ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
-                {q.answer.confirmed && (
-                  <span style={{ 
-                    marginLeft: '10px', 
-                    color: '#4CAF50', 
-                    fontWeight: 'bold',
-                    fontSize: '13px'
-                  }}>
-                    ✓ Confirmed by Creator
-                  </span>
-                )}
+        </div>
+        {onReply && (
+          <button
+            type="button"
+            onClick={() => onReply(q)}
+            style={{ flexShrink: 0, padding: '4px 10px', fontSize: '12px' }}
+          >
+            Reply
+          </button>
+        )}
+      </div>
+      {!collapsed && q.answer ? (
+        <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
+          <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
+          <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+            Status: <span style={{
+              color: q.answer.answer_status === 'answered' ? '#4CAF50' :
+                q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
+              fontWeight: 'bold'
+            }}>{q.answer.answer_status}</span> |
+            Confidence: {q.answer.confidence ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
+            {q.answer.confirmed && (
+              <span style={{
+                marginLeft: '10px',
+                color: '#4CAF50',
+                fontWeight: 'bold',
+                fontSize: '13px'
+              }}>
+                ✓ Confirmed by Creator
+              </span>
+            )}
+          </div>
+          {q.answer.citations && q.answer.citations.length > 0 && (
+            <div className="citations" style={{ marginTop: '10px' }}>
+              <strong>Citations:</strong>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+                {q.answer.citations.map((citation, cidx) => (
+                  <CitationBadge
+                    key={cidx}
+                    citation={citation}
+                    onClick={() => onCitationClick?.(citation)}
+                  />
+                ))}
               </div>
-              {q.answer.citations && q.answer.citations.length > 0 && (
-                <div className="citations" style={{ marginTop: '10px' }}>
-                  <strong>Citations:</strong>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
-                    {q.answer.citations.map((citation, cidx) => (
-                      <CitationBadge
-                        key={cidx}
-                        citation={citation}
-                        onClick={() => onCitationClick?.(citation)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
-              No answer yet
             </div>
           )}
         </div>
-      ))}
+      ) : !collapsed ? (
+        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
+          No answer yet
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function countReplies(byParent, rootId) {
+  let n = 0
+  const direct = byParent[rootId] || []
+  n += direct.length
+  for (const q of direct) n += countReplies(byParent, q.id)
+  return n
+}
+
+function ThreadList({ roots, byParent, onCitationClick, onReply, depth = 0, expandedThreads = {}, onToggleThread }) {
+  const isRootLevel = depth === 0
+  return (
+    <>
+      {roots.map((q) => {
+        const hasReplies = byParent[q.id] && byParent[q.id].length > 0
+        const isExpandable = isRootLevel
+        const isExpanded = !isExpandable || expandedThreads[q.id] === true
+        const showReplies = !isRootLevel || isExpanded
+        const replyCount = hasReplies ? countReplies(byParent, q.id) : 0
+
+        return (
+          <div key={q.id} style={{ marginBottom: isRootLevel ? '8px' : 0 }}>
+            {isRootLevel ? (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => onToggleThread?.(q.id)}
+                  aria-label={isExpanded ? 'Collapse thread' : 'Expand thread'}
+                  style={{
+                    flexShrink: 0,
+                    marginTop: '18px',
+                    padding: '2px 6px',
+                    fontSize: '12px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#666'
+                  }}
+                >
+                  {isExpanded ? '▼' : '▶'}
+                </button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <QACard q={q} onCitationClick={onCitationClick} onReply={onReply} depth={depth} collapsed={!isExpanded} />
+                  {!isExpanded && hasReplies && (
+                    <div style={{ fontSize: '12px', color: '#888', marginTop: '4px', marginLeft: '15px' }}>
+                      {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <QACard q={q} onCitationClick={onCitationClick} onReply={onReply} depth={depth} />
+            )}
+            {showReplies && hasReplies && (
+              <ThreadList
+                roots={byParent[q.id]}
+                byParent={byParent}
+                onCitationClick={onCitationClick}
+                onReply={onReply}
+                depth={depth + 1}
+                expandedThreads={expandedThreads}
+                onToggleThread={onToggleThread}
+              />
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+export function QAHistory({ questions, readOnly = false, onCitationClick, onReply }) {
+  // All threads collapsed by default when page loads
+  const [expandedThreads, setExpandedThreads] = useState({})
+  const prevQuestionIdsRef = useRef(new Set())
+
+  // Auto-expand parent thread when a new reply is added (e.g. user just asked a follow-up)
+  useEffect(() => {
+    if (!questions || questions.length === 0) return
+    const prevIds = prevQuestionIdsRef.current
+    const currentIds = new Set(questions.map((q) => q.id))
+    const newCount = questions.filter((q) => !prevIds.has(q.id)).length
+    // Only auto-expand when we've seen questions before and few new ones (avoids initial load + session switch)
+    if (prevIds.size > 0 && newCount > 0 && newCount <= 3) {
+      for (const q of questions) {
+        if (!prevIds.has(q.id) && q.parent_question_id) {
+          const rootId = findRootId(questions, q.parent_question_id)
+          setExpandedThreads((prev) => ({ ...prev, [rootId]: true }))
+        }
+      }
+    }
+    prevQuestionIdsRef.current = currentIds
+  }, [questions])
+
+  if (!questions || questions.length === 0) {
+    return (
+      <div className="info">
+        {readOnly ? 'No questions yet in this session.' : 'No questions yet in this session. Ask a question above to get started!'}
+      </div>
+    )
+  }
+
+  const { roots, byParent } = buildThreadTree(questions)
+  const handleToggleThread = (rootId) => {
+    setExpandedThreads((prev) => ({ ...prev, [rootId]: !prev[rootId] }))
+  }
+
+  return (
+    <div>
+      <ThreadList
+        roots={roots}
+        byParent={byParent}
+        onCitationClick={onCitationClick}
+        onReply={readOnly ? undefined : onReply}
+        expandedThreads={expandedThreads}
+        onToggleThread={handleToggleThread}
+      />
     </div>
   )
 }

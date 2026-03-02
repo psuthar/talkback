@@ -767,7 +767,7 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing question with same text (repeat-question caching)
-	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), artifact.SessionID, req.QuestionText)
+	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), artifact.SessionID, req.QuestionText, nil)
 	if err != nil {
 		log.Printf("Error checking for existing question: %v", err)
 		// Continue with new question creation on error

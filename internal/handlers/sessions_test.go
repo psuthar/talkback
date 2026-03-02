@@ -638,6 +638,54 @@ func TestGetSessionQuestions(t *testing.T) {
 		assert.Equal(t, answer.ID, response.Answers[0].ID)
 		assert.Equal(t, session.ID, response.Questions[0].SessionID)
 	})
+
+	t.Run("returns questions in thread order with parent_question_id", func(t *testing.T) {
+		rootQ := &models.Question{
+			ID:             uuid.New(),
+			ArtifactID:     artifact.ID,
+			SessionID:      session.ID,
+			QuestionText:   "Root question?",
+			QuestionSource: models.QuestionSourceText,
+		}
+		err := db.CreateQuestion(ctx, rootQ)
+		require.NoError(t, err)
+
+		replyQ := &models.Question{
+			ID:                uuid.New(),
+			ArtifactID:        artifact.ID,
+			SessionID:         session.ID,
+			ParentQuestionID:  &rootQ.ID,
+			QuestionText:      "Reply question?",
+			QuestionSource:    models.QuestionSourceText,
+		}
+		err = db.CreateQuestion(ctx, replyQ)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/questions", nil)
+		w := httptest.NewRecorder()
+		h.GetSessionQuestions(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response GetQuestionsResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Len(t, response.Questions, 3, "previous subtest question + root + reply") // 1 from "returns questions with answers" + root + reply
+		// Last two should be root then reply (thread order)
+		var rootFound, replyFound bool
+		for _, q := range response.Questions {
+			if q.ID == rootQ.ID {
+				rootFound = true
+				assert.Nil(t, q.ParentQuestionID)
+			}
+			if q.ID == replyQ.ID {
+				replyFound = true
+				require.NotNil(t, q.ParentQuestionID)
+				assert.Equal(t, rootQ.ID, *q.ParentQuestionID)
+			}
+		}
+		assert.True(t, rootFound)
+		assert.True(t, replyFound)
+	})
 }
 
 func TestUpdateSessionStatus(t *testing.T) {

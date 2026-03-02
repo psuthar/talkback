@@ -19,8 +19,9 @@ import (
 
 // SessionAskRequest body for POST /api/sessions/:id/ask
 type SessionAskRequest struct {
-	QuestionText string `json:"question_text"`
-	AskedVia     string `json:"asked_via"` // "text" | "voice"
+	QuestionText    string  `json:"question_text"`
+	AskedVia        string  `json:"asked_via"`         // "text" | "voice"
+	ParentQuestionID *string `json:"parent_question_id,omitempty"` // optional; reply in thread
 }
 
 // SessionAskCitation is one citation in the response (actionable citations, Mission #5)
@@ -95,6 +96,31 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		req.AskedVia = "text"
 	}
 
+	var parentQuestionID *uuid.UUID
+	if req.ParentQuestionID != nil && *req.ParentQuestionID != "" {
+		parsed, err := uuid.Parse(*req.ParentQuestionID)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"message": "invalid parent_question_id"})
+			return
+		}
+		parentQ, err := h.DB.GetQuestionByID(ctx, parsed)
+		if err != nil || parentQ == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"message": "parent question not found"})
+			return
+		}
+		if parentQ.SessionID != sessionID {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"message": "parent question must belong to this session"})
+			return
+		}
+		parentQuestionID = &parsed
+	}
+
 	// First artifact for question row (questions require artifact_id)
 	artifacts, err := h.DB.GetArtifactsBySessionID(ctx, sessionID)
 	if err != nil || len(artifacts) == 0 {
@@ -105,8 +131,8 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	artifactID := artifacts[0].ID
 
-	// Optional: repeat-question cache by session
-	existingQ, existingA, _ := h.DB.FindExistingQuestionByText(ctx, sessionID, req.QuestionText)
+	// Optional: repeat-question cache by session and thread
+	existingQ, existingA, _ := h.DB.FindExistingQuestionByText(ctx, sessionID, req.QuestionText, parentQuestionID)
 	if existingQ != nil && existingA != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -173,13 +199,14 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create question
+	// Create question (optionally threaded)
 	question := &models.Question{
-		ID:             uuid.New(),
-		ArtifactID:     artifactID,
-		SessionID:      sessionID,
-		QuestionText:   req.QuestionText,
-		QuestionSource: models.QuestionSourceText,
+		ID:                uuid.New(),
+		ArtifactID:        artifactID,
+		SessionID:         sessionID,
+		ParentQuestionID:  parentQuestionID,
+		QuestionText:      req.QuestionText,
+		QuestionSource:    models.QuestionSourceText,
 	}
 	if err := h.DB.CreateQuestion(ctx, question); err != nil {
 		log.Printf("SessionAsk CreateQuestion: %v", err)
@@ -198,9 +225,10 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Prior Q&A for context
+	// Prior Q&A for context (include parent thread so follow-ups have continuity)
+	priorQA := buildThreadPriorQA(ctx, h.DB, parentQuestionID)
 	priorQuestions, priorAnswers, _ := h.DB.GetQuestionsBySessionID(ctx, sessionID, 10)
-	priorQA := buildPriorQA(priorQuestions, priorAnswers, question.ID)
+	priorQA = append(priorQA, buildPriorQA(priorQuestions, priorAnswers, question.ID)...)
 
 	qaResponse, _, err := utils.GenerateAnswer(ctx, req.QuestionText, chunks, session.Title, priorQA)
 	if emptyChunkMessage != "" && qaResponse != nil {
@@ -288,6 +316,53 @@ func formatAnchorLocator(anchor map[string]interface{}) string {
 	eMin := int(endMs) / 60000
 	eSec := (int(endMs) % 60000) / 1000
 	return fmt.Sprintf("%d:%02d–%d:%02d", sMin, sSec, eMin, eSec)
+}
+
+// buildThreadPriorQA returns prior Q&A pairs for the parent chain (grandparent then parent) so follow-up answers have thread context.
+func buildThreadPriorQA(ctx context.Context, db *database.DB, parentQuestionID *uuid.UUID) []utils.PriorQAPair {
+	if parentQuestionID == nil {
+		return nil
+	}
+	parentQ, err := db.GetQuestionByID(ctx, *parentQuestionID)
+	if err != nil || parentQ == nil {
+		return nil
+	}
+	parentA, err := db.GetLatestAnswerByQuestionID(ctx, parentQ.ID)
+	if err != nil || parentA == nil {
+		return nil
+	}
+	labels := make([]string, 0, len(parentA.Citations))
+	for _, c := range parentA.Citations {
+		if c.CitationID != "" && c.Label != "" {
+			labels = append(labels, c.CitationID+": "+c.Label)
+		}
+	}
+	out := []utils.PriorQAPair{{
+		Question:       parentQ.QuestionText,
+		Answer:         parentA.AnswerText,
+		CitationLabels: labels,
+	}}
+	// Optionally add grandparent for deeper context
+	if parentQ.ParentQuestionID != nil {
+		gpQ, _ := db.GetQuestionByID(ctx, *parentQ.ParentQuestionID)
+		if gpQ != nil {
+			gpA, _ := db.GetLatestAnswerByQuestionID(ctx, gpQ.ID)
+			if gpA != nil {
+				gpLabels := make([]string, 0, len(gpA.Citations))
+				for _, c := range gpA.Citations {
+					if c.CitationID != "" && c.Label != "" {
+						gpLabels = append(gpLabels, c.CitationID+": "+c.Label)
+					}
+				}
+				out = append([]utils.PriorQAPair{{
+					Question:       gpQ.QuestionText,
+					Answer:         gpA.AnswerText,
+					CitationLabels: gpLabels,
+				}}, out...)
+			}
+		}
+	}
+	return out
 }
 
 func buildPriorQA(questions []*models.Question, answers []*models.Answer, excludeQuestionID uuid.UUID) []utils.PriorQAPair {

@@ -12,11 +12,11 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-// CreateQuestion creates a new question
+// CreateQuestion creates a new question (optionally threaded via ParentQuestionID).
 func (db *DB) CreateQuestion(ctx context.Context, question *models.Question) error {
 	query := `
-		INSERT INTO questions (id, artifact_id, session_id, asked_by, question_text, question_source, video_time_seconds)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO questions (id, artifact_id, session_id, parent_question_id, asked_by, question_text, question_source, video_time_seconds)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at
 	`
 
@@ -24,6 +24,7 @@ func (db *DB) CreateQuestion(ctx context.Context, question *models.Question) err
 		question.ID,
 		question.ArtifactID,
 		question.SessionID,
+		question.ParentQuestionID,
 		question.AskedBy,
 		question.QuestionText,
 		question.QuestionSource,
@@ -71,7 +72,7 @@ func (db *DB) CreateAnswer(ctx context.Context, answer *models.Answer) error {
 func (db *DB) GetQuestionByID(ctx context.Context, questionID uuid.UUID) (*models.Question, error) {
 	question := &models.Question{}
 	query := `
-		SELECT id, artifact_id, session_id, asked_by, question_text, question_source, video_time_seconds, created_at
+		SELECT id, artifact_id, session_id, parent_question_id, asked_by, question_text, question_source, video_time_seconds, created_at
 		FROM questions
 		WHERE id = $1
 	`
@@ -80,6 +81,7 @@ func (db *DB) GetQuestionByID(ctx context.Context, questionID uuid.UUID) (*model
 		&question.ID,
 		&question.ArtifactID,
 		&question.SessionID,
+		&question.ParentQuestionID,
 		&question.AskedBy,
 		&question.QuestionText,
 		&question.QuestionSource,
@@ -114,7 +116,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 
 	query := `
 		SELECT 
-			q.id, q.artifact_id, q.session_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
+			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
 			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
@@ -125,7 +127,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 			LIMIT 1
 		) a ON true
 		WHERE q.artifact_id = $1
-		ORDER BY q.created_at DESC
+		ORDER BY COALESCE(q.parent_question_id, q.id), q.created_at
 		LIMIT $2
 	`
 
@@ -154,6 +156,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 			&q.ID,
 			&q.ArtifactID,
 			&q.SessionID,
+			&q.ParentQuestionID,
 			&q.AskedBy,
 			&q.QuestionText,
 			&q.QuestionSource,
@@ -243,16 +246,16 @@ func (db *DB) GetLatestAnswerByQuestionID(ctx context.Context, questionID uuid.U
 	return answer, nil
 }
 
-// FindExistingQuestionByText finds an existing question with the same text for the same session
-// sessionID is required (all questions belong to sessions)
-// Returns the question and its latest answer if found
-func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUID, questionText string) (*models.Question, *models.Answer, error) {
+// FindExistingQuestionByText finds an existing question with the same text in the same session and thread.
+// sessionID is required. parentQuestionID restricts to the same thread: nil = root questions only, set = replies to that parent.
+// Returns the question and its latest answer if found.
+func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUID, questionText string, parentQuestionID *uuid.UUID) (*models.Question, *models.Answer, error) {
 	// Normalize question text (trim and lowercase for comparison)
 	normalizedText := strings.TrimSpace(strings.ToLower(questionText))
-	
+
 	query := `
 		SELECT 
-			q.id, q.artifact_id, q.session_id, q.asked_by, q.question_text, q.question_source, q.created_at,
+			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
 			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
@@ -264,6 +267,7 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 		) a ON true
 		WHERE q.session_id = $1 
 			AND LOWER(TRIM(q.question_text)) = $2
+			AND ((q.parent_question_id IS NULL AND $3::uuid IS NULL) OR (q.parent_question_id = $3))
 		ORDER BY q.created_at DESC
 		LIMIT 1
 	`
@@ -279,13 +283,15 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 	var answerConfirmed *bool
 	var answerCreatedAt *time.Time
 
-	err := db.Pool.QueryRow(ctx, query, sessionID, normalizedText).Scan(
+	err := db.Pool.QueryRow(ctx, query, sessionID, normalizedText, parentQuestionID).Scan(
 		&question.ID,
 		&question.ArtifactID,
 		&question.SessionID,
+		&question.ParentQuestionID,
 		&question.AskedBy,
 		&question.QuestionText,
 		&question.QuestionSource,
+		&question.VideoTimeSeconds,
 		&question.CreatedAt,
 		&answerID,
 		&answerQuestionID,

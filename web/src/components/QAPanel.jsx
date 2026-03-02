@@ -11,6 +11,8 @@ export function QAPanel({
   askQuestionFeedback,
   currentAnswer,
   onCitationClick,
+  replyingToQuestionId,
+  setReplyingToQuestionId,
   voiceRecording,
   voiceUploading,
   toggleVoiceRecording,
@@ -25,6 +27,9 @@ export function QAPanel({
   voicePolishMode
 }) {
   const isThinking = loading && questionText && (!currentAnswer || !currentAnswer.answer)
+  const replyingToQuestion = replyingToQuestionId && Array.isArray(questions)
+    ? questions.find((q) => q.id === replyingToQuestionId)
+    : null
 
   return (
     <>
@@ -57,7 +62,12 @@ export function QAPanel({
             <span>Thinking…</span>
           </div>
         )}
-        <QAHistory questions={questions} readOnly={false} onCitationClick={onCitationClick} />
+        <QAHistory
+          questions={questions}
+          readOnly={false}
+          onCitationClick={onCitationClick}
+          onReply={setReplyingToQuestionId ? (q) => setReplyingToQuestionId(q.id) : undefined}
+        />
       </div>
       <footer className="participant-qa-footer">
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
@@ -87,12 +97,37 @@ export function QAPanel({
             {voiceFeedback.message}
           </div>
         )}
+        {replyingToQuestion && (
+          <div style={{
+            marginBottom: '8px',
+            padding: '8px 10px',
+            backgroundColor: '#e3f2fd',
+            borderRadius: '4px',
+            fontSize: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px'
+          }}>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              Replying to: {(replyingToQuestion.question_text || '').slice(0, 60)}
+              {(replyingToQuestion.question_text || '').length > 60 ? '…' : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() => setReplyingToQuestionId(null)}
+              style={{ flexShrink: 0, padding: '2px 8px', fontSize: '12px' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         {!showVoiceConfirm && (
           <>
             <textarea
               value={questionText}
               onChange={(e) => setQuestionText(e.target.value)}
-              placeholder="Ask a question..."
+              placeholder={replyingToQuestionId ? 'Ask a follow-up...' : 'Ask a question...'}
               rows={2}
               style={{
                 width: '100%',

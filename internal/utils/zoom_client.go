@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 )
 
 // ZoomAPIError is returned when a Zoom API call fails; use for retry/waiting/permanent classification (Mission #4).
@@ -337,6 +339,46 @@ func ListUserRecordings(accessToken, zoomUserID, from, to string) ([]RecordingLi
 			apiURL += "&to=" + to
 		}
 	}
+	return all, nil
+}
+
+// ListUserRecordingsAll fetches all cloud recordings for a user by making multiple API calls
+// in 30-day chunks (Zoom API limit). Covers the last 2 years. Returns items sorted by start_time descending (most recent first).
+func ListUserRecordingsAll(accessToken, zoomUserID string) ([]RecordingListItem, error) {
+	now := time.Now()
+	toDate := now.Format("2006-01-02")
+	fromDate := now.AddDate(-2, 0, 0).Format("2006-01-02") // 2 years ago
+	seen := make(map[string]bool)                          // meeting_uuid+instance_uuid for dedup
+	var all []RecordingListItem
+	from, _ := time.Parse("2006-01-02", fromDate)
+	to, _ := time.Parse("2006-01-02", toDate)
+	for from.Before(to) || from.Equal(to) {
+		chunkEnd := from.AddDate(0, 0, 30)
+		if chunkEnd.After(now) {
+			chunkEnd = now
+		}
+		f := from.Format("2006-01-02")
+		t := chunkEnd.Format("2006-01-02")
+		items, err := ListUserRecordings(accessToken, zoomUserID, f, t)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			key := it.MeetingUUID + "|" + it.InstanceUUID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			all = append(all, it)
+		}
+		from = chunkEnd.AddDate(0, 0, 1)
+	}
+	// Sort by start_time descending (most recent first)
+	sort.Slice(all, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339, all[i].StartTime)
+		tj, _ := time.Parse(time.RFC3339, all[j].StartTime)
+		return ti.After(tj)
+	})
 	return all, nil
 }
 

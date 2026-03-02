@@ -126,6 +126,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState('') // User identifier for mode detection
   const [sessionUserMode, setSessionUserMode] = useState(null) // 'creator' or 'participant' - from API
   const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
+  const [replyingToQuestionId, setReplyingToQuestionId] = useState(null) // Threaded reply: parent question id when user clicked "Reply"
 
   // TalkBack auth: logged-in user from GET /api/me (cookie-based)
   const [authUser, setAuthUser] = useState(null) // { id, email, display_name, global_role, status } or null
@@ -196,8 +197,6 @@ function App() {
   const [zoomRecordings, setZoomRecordings] = useState([])
   const [zoomRecordingsLoading, setZoomRecordingsLoading] = useState(false)
   const [zoomRecordingsError, setZoomRecordingsError] = useState('')
-  const [zoomRecordingsDays, setZoomRecordingsDays] = useState(14) // 7 | 14 | 30
-  const [zoomRecordingsHasTranscript, setZoomRecordingsHasTranscript] = useState(true)
   const [zoomImportToast, setZoomImportToast] = useState(null) // { message } or null
 
   const setCreatorIdentity = (id) => {
@@ -1323,12 +1322,8 @@ function App() {
     setZoomRecordingsLoading(true)
     setZoomRecordingsError('')
     try {
-      const now = new Date()
-      const to = now.toISOString().slice(0, 10)
-      const from = new Date(now.getTime() - zoomRecordingsDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      const params = new URLSearchParams({ from, to })
-      if (zoomRecordingsHasTranscript) params.set('has_transcript', 'true')
-      const res = await fetch(`${apiBaseUrl}/api/zoom/recordings?${params}`, {
+      // No from/to = fetch all recordings for the user (last 2 years, sorted most recent first)
+      const res = await fetch(`${apiBaseUrl}/api/zoom/recordings`, {
         headers: { 'X-Creator-Identity': creatorIdentity }
       })
       const data = await res.json()
@@ -1337,7 +1332,13 @@ function App() {
         setZoomRecordings([])
         return
       }
-      setZoomRecordings(data.items || [])
+      const items = (data.items || []).slice()
+      items.sort((a, b) => {
+        const ta = a.start_time ? new Date(a.start_time).getTime() : 0
+        const tb = b.start_time ? new Date(b.start_time).getTime() : 0
+        return tb - ta // most recent first
+      })
+      setZoomRecordings(items)
     } catch (err) {
       setZoomRecordingsError(err.message || 'Failed to fetch recordings')
       setZoomRecordings([])
@@ -1736,19 +1737,21 @@ function App() {
       return
     }
 
-    await submitSessionQuestion(questionText)
+    await submitSessionQuestion(questionText, 'text', replyingToQuestionId)
   }
 
-  const submitSessionQuestion = async (text, askedVia = 'text') => {
+  const submitSessionQuestion = async (text, askedVia = 'text', parentQuestionId = null) => {
     clearFeedback(setAskQuestionFeedback)
     setLoading(true)
 
     try {
+      const body = { question_text: text, asked_via: askedVia }
+      if (parentQuestionId) body.parent_question_id = parentQuestionId
       // Session-scoped RAG: POST /api/sessions/:id/ask (Mission #3)
       const response = await fetch(`${apiBaseUrl}/api/sessions/${currentSession.session.id}/ask`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question_text: text, asked_via: askedVia })
+        body: JSON.stringify(body)
       })
 
       if (!response.ok) {
@@ -1784,6 +1787,7 @@ function App() {
       })
       setAskQuestionFeedback({ type: 'success', message: isCached ? 'Question answered (cached)!' : 'Question answered!' })
       setQuestionText('')
+      setReplyingToQuestionId(null)
       await fetchSessionQuestions(currentSession.session.id)
     } catch (err) {
       setAskQuestionFeedback({ type: 'error', message: `Failed to ask question: ${err.message}` })
@@ -1962,7 +1966,7 @@ function App() {
     setShowVoiceConfirm(false)
     const text = voiceTranscribedText.trim()
     setVoiceTranscribedText('')
-    await submitSessionQuestion(text, 'voice')
+    await submitSessionQuestion(text, 'voice', replyingToQuestionId)
     // Questions will be refreshed by submitSessionQuestion
   }
 
@@ -2486,33 +2490,6 @@ function App() {
                   <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Import from Zoom recordings</div>
                     <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      <span style={{ fontSize: '13px' }}>Date range:</span>
-                      {[7, 14, 30].map((d) => (
-                        <button
-                          key={d}
-                          type="button"
-                          onClick={() => { setZoomRecordingsDays(d); fetchZoomRecordings(); }}
-                          style={{
-                            padding: '4px 10px',
-                            fontSize: '13px',
-                            backgroundColor: zoomRecordingsDays === d ? '#2196F3' : '#e0e0e0',
-                            color: zoomRecordingsDays === d ? 'white' : 'black',
-                            border: 'none',
-                            borderRadius: '4px',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          Last {d} days
-                        </button>
-                      ))}
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', marginLeft: '10px' }}>
-                        <input
-                          type="checkbox"
-                          checked={zoomRecordingsHasTranscript}
-                          onChange={(e) => { setZoomRecordingsHasTranscript(e.target.checked); fetchZoomRecordings(); }}
-                        />
-                        Only with transcript
-                      </label>
                       <button
                         type="button"
                         onClick={fetchZoomRecordings}
@@ -2533,9 +2510,13 @@ function App() {
                             <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
                               {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
                             </div>
-                            <div style={{ marginBottom: '8px' }}>
-                              {rec.has_video && <span style={{ marginRight: '8px', padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
-                              {rec.has_transcript && <span style={{ marginRight: '8px', padding: '2px 6px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '11px' }}>Transcript</span>}
+                            <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
+                              {rec.has_transcript ? (
+                                <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '11px', fontWeight: 500 }}>Transcript</span>
+                              ) : (
+                                <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '11px' }}>No transcript</span>
+                              )}
                             </div>
                             <button
                               type="button"
@@ -2550,7 +2531,7 @@ function App() {
                       </div>
                     )}
                     {!zoomRecordingsLoading && zoomRecordings.length === 0 && zoomRecordingsError === '' && (
-                      <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click "Load recordings" to fetch Zoom cloud recordings</div>
+                      <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click "Load recordings" to fetch all Zoom cloud recordings (most recent first)</div>
                     )}
                   </div>
                 </div>
@@ -2970,6 +2951,8 @@ function App() {
               sessionLoadError={sessionSelectFeedback.type === 'error' ? sessionSelectFeedback.message : ''}
               sessionIdFromUrl={urlSessionId}
               onRetryLoadSession={urlSessionId ? () => openSession(urlSessionId, 'participant') : null}
+              replyingToQuestionId={replyingToQuestionId}
+              setReplyingToQuestionId={setReplyingToQuestionId}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null
                   ? citation.navigation.seek_ms

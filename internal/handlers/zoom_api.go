@@ -161,17 +161,19 @@ func (h *Handlers) ZoomAPIRecordings(w http.ResponseWriter, r *http.Request) {
 	}
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
-	if from == "" || to == "" {
-		now := time.Now()
-		if to == "" {
-			to = now.Format("2006-01-02")
-		}
+	var items []utils.RecordingListItem
+	if from == "" && to == "" {
+		// Fetch all recordings (chunked; Zoom API has 1-month limit per call)
+		items, err = utils.ListUserRecordingsAll(accessToken, "me")
+	} else {
 		if from == "" {
-			from = now.AddDate(0, 0, -14).Format("2006-01-02")
+			from = time.Now().AddDate(0, 0, -14).Format("2006-01-02")
 		}
+		if to == "" {
+			to = time.Now().Format("2006-01-02")
+		}
+		items, err = utils.ListUserRecordings(accessToken, "me", from, to)
 	}
-	// Use "me" for OAuth-authenticated user; Zoom API supports this
-	items, err := utils.ListUserRecordings(accessToken, "me", from, to)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

@@ -765,7 +765,7 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing question with same text in this session (repeat-question caching)
-	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), sessionID, req.QuestionText)
+	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), sessionID, req.QuestionText, nil)
 	if err != nil {
 		log.Printf("Error checking for existing session question: %v", err)
 		// Continue with new question creation on error

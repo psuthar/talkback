@@ -275,14 +275,15 @@ const (
 )
 
 type Question struct {
-	ID               uuid.UUID      `json:"id"`
-	ArtifactID       uuid.UUID      `json:"artifact_id"` // Still keep for reference, but session_id is primary
-	SessionID        uuid.UUID      `json:"session_id"`  // Questions belong to sessions (required)
-	AskedBy          *string        `json:"asked_by,omitempty"`
-	QuestionText     string         `json:"question_text"`
-	QuestionSource   QuestionSource `json:"question_source"`
-	VideoTimeSeconds *int           `json:"video_time_seconds,omitempty"` // Timestamp when question was asked
-	CreatedAt        time.Time      `json:"created_at"`
+	ID                uuid.UUID      `json:"id"`
+	ArtifactID        uuid.UUID      `json:"artifact_id"` // Still keep for reference, but session_id is primary
+	SessionID         uuid.UUID      `json:"session_id"`  // Questions belong to sessions (required)
+	ParentQuestionID  *uuid.UUID     `json:"parent_question_id,omitempty"` // Threaded reply: parent question (nil = root)
+	AskedBy           *string        `json:"asked_by,omitempty"`
+	QuestionText      string         `json:"question_text"`
+	QuestionSource    QuestionSource `json:"question_source"`
+	VideoTimeSeconds  *int           `json:"video_time_seconds,omitempty"` // Timestamp when question was asked
+	CreatedAt         time.Time      `json:"created_at"`
 }
 
 type AnswerStatus string
