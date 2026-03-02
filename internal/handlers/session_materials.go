@@ -242,6 +242,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		if storageProvider == "local" && filePath != "" {
 			_ = os.Remove(filePath)
 		}
+		log.Printf("SessionUploadMaterial CreateMaterial: %v", err)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}

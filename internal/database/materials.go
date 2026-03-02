@@ -4,10 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 )
+
+func sanitizeTextForPostgres(s string) string {
+	// Postgres TEXT does not allow NUL bytes; also guard against invalid UTF-8.
+	s = strings.ToValidUTF8(s, "")
+	if strings.IndexByte(s, 0) == -1 {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == 0 {
+			return -1
+		}
+		return r
+	}, s)
+}
 
 func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) error {
 	query := `
@@ -17,6 +32,18 @@ func (db *DB) CreateMaterial(ctx context.Context, material *models.Material) err
 	storageProvider := material.StorageProvider
 	if storageProvider == "" {
 		storageProvider = "local"
+	}
+	if material.ExtractedText != nil {
+		t := sanitizeTextForPostgres(*material.ExtractedText)
+		material.ExtractedText = &t
+	}
+	if material.Title != nil {
+		t := sanitizeTextForPostgres(*material.Title)
+		material.Title = &t
+	}
+	if material.ErrorMessage != nil {
+		t := sanitizeTextForPostgres(*material.ErrorMessage)
+		material.ErrorMessage = &t
 	}
 	_, err := db.Pool.Exec(ctx, query,
 		material.ID,
