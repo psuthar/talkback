@@ -4,10 +4,8 @@
 services:
   - type: web
     name: talkback-api
-    runtime: go
-    buildCommand: go build -o app ./cmd/api && go build -o reset-db ./cmd/reset-db
-    preDeployCommand: sh -c 'if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then ./reset-db; fi'
-    startCommand: ./app
+    runtime: docker
+    preDeployCommand: sh -c 'if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then /reset-db; fi'
     healthCheckPath: /health
     envVars:
       - key: ENV

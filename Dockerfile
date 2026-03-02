@@ -6,13 +6,15 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-# Build only the API binary (./... with -o is invalid; use the main package path)
+# Build API and reset-db (for preDeployCommand)
 RUN CGO_ENABLED=0 go build -o /go/bin/app -v ./cmd/api
+RUN CGO_ENABLED=0 go build -o /go/bin/reset-db -v ./cmd/reset-db
 
 #final stage
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates poppler-utils
 COPY --from=builder /go/bin/app /app
+COPY --from=builder /go/bin/reset-db /reset-db
 ENTRYPOINT ["/app"]
 LABEL Name=talkback Version=0.0.1
 EXPOSE 8080

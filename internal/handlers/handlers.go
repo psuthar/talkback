@@ -279,7 +279,8 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 
 	if h.Storage != nil {
 		tmpDir := os.TempDir()
-		tmpFile, err := os.CreateTemp(tmpDir, "talkback-upload-*")
+		tmpPattern := "talkback-upload-*" + ext
+		tmpFile, err := os.CreateTemp(tmpDir, tmpPattern)
 		if err != nil {
 			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
 			return

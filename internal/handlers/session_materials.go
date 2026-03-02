@@ -113,8 +113,10 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 
 	if h.Storage != nil {
 		// R2 path: write to temp file, upload to R2, extract from temp, then remove temp
+		// Temp file MUST have the original extension so ExtractTextFromFile can detect PDF/DOCX/etc.
 		tmpDir := os.TempDir()
-		tmpFile, err := os.CreateTemp(tmpDir, "talkback-upload-*")
+		tmpPattern := "talkback-upload-*" + ext
+		tmpFile, err := os.CreateTemp(tmpDir, tmpPattern)
 		if err != nil {
 			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
 			return
