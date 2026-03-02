@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 go build -o /go/bin/app -v ./cmd/api
 
 #final stage
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates poppler-utils
 COPY --from=builder /go/bin/app /app
 ENTRYPOINT ["/app"]
 LABEL Name=talkback Version=0.0.1

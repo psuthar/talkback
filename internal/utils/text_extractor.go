@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,11 +36,48 @@ func extractTextFile(filePath string) (string, error) {
 }
 
 func extractPDF(filePath string) (string, error) {
+	// Prefer pdftotext (poppler-utils) when available - it works reliably on Linux.
+	// ledongthuc/pdf often returns raw PDF structure on Linux instead of extracted text.
+	if text, err := extractPDFWithPdftotext(filePath); err == nil && strings.TrimSpace(text) != "" {
+		if !looksLikeRawPDF(text) {
+			return text, nil
+		}
+	}
+	// Fall back to Go library (works on Windows; may fail on Linux)
 	pages, err := ExtractPDFPages(filePath)
 	if err != nil {
 		return "", err
 	}
-	return strings.Join(pages, "\n\n"), nil
+	text := strings.Join(pages, "\n\n")
+	if looksLikeRawPDF(text) {
+		return "", fmt.Errorf("pdf text extraction produced raw PDF structure instead of text")
+	}
+	return text, nil
+}
+
+// looksLikeRawPDF returns true if the text looks like raw PDF structure (e.g. %PDF-1.4, obj/endobj).
+func looksLikeRawPDF(text string) bool {
+	t := strings.TrimSpace(text)
+	if len(t) < 20 {
+		return false
+	}
+	if strings.HasPrefix(t, "%PDF") {
+		return true
+	}
+	if strings.Contains(t, " endobj ") || strings.Contains(t, " 0 obj ") {
+		return true
+	}
+	return false
+}
+
+// extractPDFWithPdftotext runs pdftotext (poppler-utils) if available. Returns empty string on exec error.
+func extractPDFWithPdftotext(filePath string) (string, error) {
+	cmd := exec.Command("pdftotext", "-layout", "-enc", "UTF-8", filePath, "-")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // ExtractPDFPages returns text per page; out[i] is the text for page i+1 (1-based). Empty pages are "".
