@@ -3,7 +3,7 @@
   "queries": [
     {
       "name": "throughput",
-      "nrql": "SELECT count(*) FROM Transaction SINCE {{window}} minutes ago"
+      "nrql": "SELECT count(*) FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
     },
     {
       "name": "errors",

@@ -20,7 +20,7 @@ type queriesDoc struct {
 	Queries      []QuerySpec `json:"queries"`
 }
 
-// LoadQueries loads the default queries file, substitutes {{window}} with cfg.WindowMins,
+// LoadQueries loads the default queries file, substitutes {{window}} and {{appFilter}} from cfg,
 // and returns the query specs. Caller should run from repo root so "ops/observability/queries.json" resolves.
 func LoadQueries(cfg Config) ([]QuerySpec, error) {
 	path := "ops/observability/queries.json"
@@ -32,12 +32,13 @@ func LoadQueries(cfg Config) ([]QuerySpec, error) {
 			}
 		}
 	}
-	return LoadQueriesFromPath(path, cfg.WindowMins)
+	return LoadQueriesFromPath(path, cfg.WindowMins, cfg.AppName)
 }
 
-// LoadQueriesFromPath loads queries from the given path and substitutes {{window}} with windowMins.
+// LoadQueriesFromPath loads queries from the given path and substitutes {{window}} and {{appFilter}}.
+// appFilter is "WHERE appName = 'name'" when appName is set and non-empty (appName must not contain single quotes); otherwise "".
 // Used by tests with a custom path (e.g. testdata/queries.json).
-func LoadQueriesFromPath(path string, windowMins int) ([]QuerySpec, error) {
+func LoadQueriesFromPath(path string, windowMins int, appName string) ([]QuerySpec, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -52,13 +53,20 @@ func LoadQueriesFromPath(path string, windowMins int) ([]QuerySpec, error) {
 		return nil, fmt.Errorf("%s: no queries defined", path)
 	}
 
+	appFilter := ""
+	if appName = strings.TrimSpace(appName); appName != "" {
+		if strings.Contains(appName, "'") {
+			return nil, fmt.Errorf("OBS_APP_NAME must not contain single quotes")
+		}
+		appFilter = "WHERE appName = '" + appName + "'"
+	}
+
 	windowStr := fmt.Sprintf("%d", windowMins)
 	out := make([]QuerySpec, len(doc.Queries))
 	for i, q := range doc.Queries {
-		out[i] = QuerySpec{
-			Name: q.Name,
-			NRQL: strings.ReplaceAll(q.NRQL, "{{window}}", windowStr),
-		}
+		nrql := strings.ReplaceAll(q.NRQL, "{{window}}", windowStr)
+		nrql = strings.ReplaceAll(nrql, "{{appFilter}}", appFilter)
+		out[i] = QuerySpec{Name: q.Name, NRQL: nrql}
 	}
 	return out, nil
 }

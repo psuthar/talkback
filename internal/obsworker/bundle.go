@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,6 +35,87 @@ type Bundle struct {
 const maxResultsPreview = 20
 const maxCellLen = 120
 
+// titleCaseQueryName returns a human-readable title for a query section (e.g. "latency_p95" -> "Latency p95").
+func titleCaseQueryName(name string) string {
+	if name == "" {
+		return name
+	}
+	// Replace underscores with spaces and capitalize first letter of each word loosely.
+	s := strings.ReplaceAll(name, "_", " ")
+	parts := strings.Fields(s)
+	for i, p := range parts {
+		if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatResultValue formats a value for markdown: _ms -> "%.2f ms", req_per_min -> "%.2f req/min", counts as int.
+func formatResultValue(key string, v interface{}) string {
+	switch val := v.(type) {
+	case float64:
+		if strings.HasSuffix(key, "_ms") || key == "avg_ms" || key == "p95_ms" || key == "max_ms" {
+			return fmt.Sprintf("%.2f ms", val)
+		}
+		if key == "req_per_min" {
+			return fmt.Sprintf("%.2f req/min", val)
+		}
+		// Counts as integers
+		if key == "n" || key == "errors" || key == "count" || strings.HasSuffix(key, "_count") {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		if val == float64(int64(val)) {
+			return fmt.Sprintf("%d", int64(val))
+		}
+		return fmt.Sprintf("%.2f", val)
+	case int:
+		return strconv.Itoa(val)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	}
+	s := fmt.Sprintf("%v", v)
+	if len(s) > maxCellLen {
+		return s[:maxCellLen] + "..."
+	}
+	return s
+}
+
+// facetLabel returns the preferred display label for a FACET row (name or facet key).
+func facetLabel(row map[string]interface{}) string {
+	if n, ok := row["name"]; ok && n != nil && fmt.Sprint(n) != "" {
+		return fmt.Sprint(n)
+	}
+	if f, ok := row["facet"]; ok && f != nil && fmt.Sprint(f) != "" {
+		return fmt.Sprint(f)
+	}
+	return ""
+}
+
+// renderResultRow formats one result row for markdown: FACET-style (label: k=v) or plain k=v.
+func renderResultRow(row map[string]interface{}) string {
+	label := facetLabel(row)
+	var parts []string
+	for k, v := range row {
+		if k == "name" || k == "facet" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", k, formatResultValue(k, v)))
+	}
+	if label != "" && len(parts) > 0 {
+		return label + ": " + strings.Join(parts, ", ")
+	}
+	if label != "" {
+		return label
+	}
+	// No label: emit all k=v
+	all := make([]string, 0, len(row))
+	for k, v := range row {
+		all = append(all, fmt.Sprintf("%s=%s", k, formatResultValue(k, v)))
+	}
+	return strings.Join(all, ", ")
+}
+
 // RenderMarkdown produces a readable markdown summary of the bundle.
 func (b *Bundle) RenderMarkdown() string {
 	var sb strings.Builder
@@ -53,7 +135,8 @@ func (b *Bundle) RenderMarkdown() string {
 	sb.WriteString("\n---\n\n")
 
 	for _, qr := range b.Results {
-		sb.WriteString(fmt.Sprintf("## %s\n\n", qr.Name))
+		sectionTitle := titleCaseQueryName(qr.Name)
+		sb.WriteString(fmt.Sprintf("## %s\n\n", sectionTitle))
 		sb.WriteString("**NRQL:**\n```\n")
 		sb.WriteString(qr.NRQL)
 		sb.WriteString("\n```\n\n")
@@ -69,17 +152,7 @@ func (b *Bundle) RenderMarkdown() string {
 			preview = preview[:maxResultsPreview]
 		}
 		for i, row := range preview {
-			sb.WriteString(fmt.Sprintf("%d. ", i+1))
-			parts := make([]string, 0, len(row))
-			for k, v := range row {
-				valStr := fmt.Sprintf("%v", v)
-				if len(valStr) > maxCellLen {
-					valStr = valStr[:maxCellLen] + "..."
-				}
-				parts = append(parts, fmt.Sprintf("%s=%s", k, valStr))
-			}
-			sb.WriteString(strings.Join(parts, ", "))
-			sb.WriteString("\n")
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, renderResultRow(row)))
 		}
 		if len(qr.Results) > maxResultsPreview {
 			sb.WriteString(fmt.Sprintf("\n*... and %d more rows.*\n", len(qr.Results)-maxResultsPreview))

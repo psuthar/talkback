@@ -8,7 +8,7 @@ import (
 
 func TestLoadQueriesFromPath_WindowReplaced(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	specs, err := LoadQueriesFromPath(path, 15)
+	specs, err := LoadQueriesFromPath(path, 15, "")
 	if err != nil {
 		t.Fatalf("LoadQueriesFromPath: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestLoadQueriesFromPath_WindowReplaced(t *testing.T) {
 }
 
 func TestLoadQueriesFromPath_MissingFile(t *testing.T) {
-	_, err := LoadQueriesFromPath("testdata/nonexistent.json", 30)
+	_, err := LoadQueriesFromPath("testdata/nonexistent.json", 30, "")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -34,7 +34,7 @@ func TestLoadQueriesFromPath_MissingFile(t *testing.T) {
 
 func TestLoadQueriesFromPath_ExpectedNamesAndNRQL(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	specs, err := LoadQueriesFromPath(path, 30)
+	specs, err := LoadQueriesFromPath(path, 30, "")
 	if err != nil {
 		t.Fatalf("LoadQueriesFromPath: %v", err)
 	}
@@ -50,5 +50,36 @@ func TestLoadQueriesFromPath_ExpectedNamesAndNRQL(t *testing.T) {
 	}
 	if !names["throughput"] || !names["errors"] {
 		t.Errorf("expected names throughput and errors, got %v", names)
+	}
+}
+
+func TestLoadQueriesFromPath_AppFilterInjected(t *testing.T) {
+	path := filepath.Join("testdata", "queries.json")
+	specs, err := LoadQueriesFromPath(path, 30, "talkback-api-prod")
+	if err != nil {
+		t.Fatalf("LoadQueriesFromPath: %v", err)
+	}
+	var foundFilter bool
+	for _, s := range specs {
+		if strings.Contains(s.NRQL, "{{appFilter}}") {
+			t.Errorf("query %q still contains {{appFilter}}", s.Name)
+		}
+		if strings.Contains(s.NRQL, "WHERE appName = 'talkback-api-prod'") {
+			foundFilter = true
+		}
+	}
+	if !foundFilter {
+		t.Error("expected at least one query to contain WHERE appName = 'talkback-api-prod' when appName is set")
+	}
+}
+
+func TestLoadQueriesFromPath_RejectsAppNameWithSingleQuote(t *testing.T) {
+	path := filepath.Join("testdata", "queries.json")
+	_, err := LoadQueriesFromPath(path, 30, "app'name")
+	if err == nil {
+		t.Fatal("expected error when appName contains single quote")
+	}
+	if !strings.Contains(err.Error(), "single quote") {
+		t.Errorf("error should mention single quote, got: %v", err)
 	}
 }

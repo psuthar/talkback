@@ -11,7 +11,7 @@ The workflow **Observability Agent** (`.github/workflows/observability-agent.yml
 3. Creates or updates a **daily GitHub Issue** titled `TalkBack Observability Bundle - YYYY-MM-DD` (inbox): new runs add a comment with the latest bundle; new day creates a new issue with intro + co-engineer prompt + bundle.
 
 **Required repo secrets:** `NEW_RELIC_API_KEY`, `NEW_RELIC_ACCOUNT_ID`.  
-**Optional repo variables:** `OBS_WINDOW_MINUTES` (default 30), `OBS_APP_NAME`, `NEW_RELIC_REGION` (default US).
+**Optional repo variables:** `OBS_WINDOW_MINUTES` (default 30), `OBS_APP_NAME` (filters Transaction queries to this app), `NEW_RELIC_REGION` (default US). To generate smoke traffic before obsworker in CI, set `RUN_OBS_SMOKE` to `true` and `TALKBACK_BASE_URL` to your service URL (e.g. Render).
 
 Create labels `observability` and `agent` in the repo so the workflow can tag the issue (optional; workflow still runs if labels are missing).
 
@@ -28,8 +28,12 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 |----------|---------|-------------|
 | `NEW_RELIC_REGION` | `US` | `US` or `EU` (changes API endpoint) |
 | `OBS_WINDOW_MINUTES` | `30` | NRQL time window in minutes |
-| `OBS_APP_NAME` | (empty) | App name in bundle metadata only |
+| `OBS_APP_NAME` | (empty) | When set, Transaction-based NRQL queries add `WHERE appName = '...'` so results are for one app only (no single quotes in name). |
 | `OBS_BUNDLES_DIR` | `ops/bundles` | Output directory for bundle files (relative to CWD or absolute) |
+
+## Bundle contents
+
+The bundle includes: **txn_summary** (count, avg/p95/max latency in ms), **discover_appnames** (list of app names in the last 60 minutes), **throughput**, **latency_p95**, **top_transactions_p95**, **error_count** and **top_errors** / **top_error_classes** from `TransactionError`. Markdown uses title-case section names and human-friendly units (e.g. `123.45 ms`, `5.80 req/min`).
 
 ## Run (from repo root)
 
@@ -72,6 +76,17 @@ go run ./cmd/obsworker
 ```
 
 Expect two files under `ops/bundles/` and exit code 0.
+
+## Generate representative traffic (obssmoke)
+
+To ensure the observation window includes more than `/health`, run **obssmoke** before obsworker (e.g. locally or in CI with `RUN_OBS_SMOKE=true`):
+
+```bash
+TALKBACK_BASE_URL=http://localhost:8080 go run ./cmd/obssmoke
+```
+
+- Default URL: `http://localhost:8080`. Hits `/health` five times and optionally `GET /api/sessions` (if 401/403, only `/health` is used).
+- Exits non-zero only when all requests fail. Prints a short summary of ok/fail counts.
 
 ## Troubleshooting
 

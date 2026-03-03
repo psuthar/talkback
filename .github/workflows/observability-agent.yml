@@ -70,6 +70,12 @@ jobs:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
         run: go test ./...
 
+      - name: Generate smoke traffic (optional)
+        if: steps.check-secrets.outputs.has_secrets == 'true' && vars.RUN_OBS_SMOKE == 'true'
+        env:
+          TALKBACK_BASE_URL: ${{ vars.TALKBACK_BASE_URL }}
+        run: go run ./cmd/obssmoke
+
       - name: Run obsworker
         if: steps.check-secrets.outputs.has_secrets == 'true'
         env:

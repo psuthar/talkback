@@ -122,11 +122,11 @@ func TestWriteBundle_MarkdownContainsTitleQueryNamesAndNRQL(t *testing.T) {
 	if !strings.Contains(md, "# New Relic Diagnostic Bundle") {
 		t.Error("markdown should contain bundle title")
 	}
-	if !strings.Contains(md, "## throughput") {
-		t.Error("markdown should contain query name throughput")
+	if !strings.Contains(md, "## Throughput") {
+		t.Error("markdown should contain title-case section Throughput")
 	}
-	if !strings.Contains(md, "## errors") {
-		t.Error("markdown should contain query name errors")
+	if !strings.Contains(md, "## Errors") {
+		t.Error("markdown should contain title-case section Errors")
 	}
 	if !strings.Contains(md, "SELECT count(*) FROM Transaction SINCE 30 minutes ago") {
 		t.Error("markdown should contain NRQL string")

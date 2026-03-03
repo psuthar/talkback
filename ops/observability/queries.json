@@ -2,24 +2,36 @@
   "window_minutes": 30,
   "queries": [
     {
+      "name": "txn_summary",
+      "nrql": "SELECT count(*) AS 'n', average(duration)*1000 AS 'avg_ms', percentile(duration,95)*1000 AS 'p95_ms', max(duration)*1000 AS 'max_ms' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "discover_appnames",
+      "nrql": "SELECT uniques(appName) FROM Transaction SINCE 60 minutes ago LIMIT 50"
+    },
+    {
       "name": "throughput",
-      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction SINCE {{window}} minutes ago"
+      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
     },
     {
       "name": "latency_p95",
-      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction SINCE {{window}} minutes ago"
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
     },
     {
       "name": "top_transactions_p95",
-      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction FACET name LIMIT 10 SINCE {{window}} minutes ago"
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appFilter}} FACET name LIMIT 10 SINCE {{window}} minutes ago"
     },
     {
       "name": "error_count",
-      "nrql": "SELECT count(*) AS 'errors' FROM Transaction WHERE error.message IS NOT NULL SINCE {{window}} minutes ago"
+      "nrql": "FROM TransactionError SELECT count(*) AS 'errors' SINCE {{window}} minutes ago"
     },
     {
       "name": "top_errors",
-      "nrql": "SELECT count(*) AS 'count' FROM Transaction FACET error.message LIMIT 10 SINCE {{window}} minutes ago"
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' FACET error.message LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "top_error_classes",
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' FACET error.class LIMIT 10 SINCE {{window}} minutes ago"
     }
   ]
 }
