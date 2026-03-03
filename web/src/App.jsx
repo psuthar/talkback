@@ -1521,7 +1521,8 @@ function App() {
       if (isParticipant && participantRef) {
         headers['X-Participant-Ref'] = participantRef
       }
-      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers })
+      // Always fetch fresh session so video_access_url (presigned) is current; avoid cached response on reload
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store' })
       if (!response.ok) {
         setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${response.status}` })
         // Mode is already set above, so UI will still hide/show correct sections
@@ -1541,7 +1542,7 @@ function App() {
       if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
         const loadedId = data.session.id || sessionId
         setTimeout(() => {
-          fetch(`${baseUrl}/sessions/${sessionId}`, { headers })
+          fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store' })
             .then((r) => r.ok ? r.json() : null)
             .then((retryData) => {
               const currentId = loadedId

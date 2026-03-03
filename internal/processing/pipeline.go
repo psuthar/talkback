@@ -171,8 +171,8 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			}
 		}
 
-		if store != nil && storagePrefix != "" {
-			// R2 path: create artifact pending, Put, HEAD verify, then mark ready with size/etag.
+		if store != nil {
+			// R2 path: create artifact pending, Put, HEAD verify, then mark ready with size/etag. storagePrefix may be "" (keys under sessions/).
 			ingestStart := time.Now()
 			artifactID := uuid.New()
 			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")

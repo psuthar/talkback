@@ -418,6 +418,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store") // video_access_url is presigned and time-limited; do not cache session response
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }

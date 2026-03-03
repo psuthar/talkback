@@ -124,9 +124,11 @@ func main() {
 	storagePrefix := ""
 	if store != nil {
 		storagePrefix = strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
-	}
-	if store != nil && storagePrefix != "" {
-		log.Printf("Zoom MP4 ingest: R2 enabled (bucket=%s prefix=%s)", os.Getenv("R2_BUCKET"), storagePrefix)
+		prefixLog := storagePrefix
+		if prefixLog == "" {
+			prefixLog = "(none)"
+		}
+		log.Printf("Zoom MP4 ingest: R2 enabled (bucket=%s prefix=%s)", os.Getenv("R2_BUCKET"), prefixLog)
 	} else {
 		log.Printf("Zoom MP4 ingest: local disk (no R2; MP4 saved under sessions/{id}/videos/ for debugging)")
 	}
