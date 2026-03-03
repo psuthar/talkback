@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	sharedURL, cleanupDB, err := test.CreateSharedTestDB()
+	if err != nil {
+		log.Fatalf("Create shared test DB: %v", err)
+	}
+	if err := runTestMigrations(sharedURL); err != nil {
+		_ = test.DropTestDatabaseURL(sharedURL)
+		log.Fatalf("Run test migrations: %v", err)
+	}
+	originalURL := os.Getenv("DATABASE_URL")
+	os.Setenv("DATABASE_URL", sharedURL)
+	code := m.Run()
+	if cleanupDB != nil {
+		cleanupDB()
+	}
+	if originalURL != "" {
+		os.Setenv("DATABASE_URL", originalURL)
+	} else {
+		os.Unsetenv("DATABASE_URL")
+	}
+	os.Exit(code)
+}
 
 // runTestMigrations runs migrations for tests using embedded migrations
 func runTestMigrations(databaseURL string) error {
@@ -65,33 +89,37 @@ func runTestMigrations(databaseURL string) error {
 	return nil
 }
 
+// setupTestHandlers uses the shared test DB (created in TestMain). Cleanup truncates using a fresh pool then closes the test's pool so background goroutines (e.g. IndexSessionAsync) still using the test pool cannot block truncation.
 func setupTestHandlers(t *testing.T) (*Handlers, func()) {
 	t.Helper()
-
-	// Setup test database
-	databaseURL, cleanupDB := test.SetupTestDB(t)
-
-	// Run migrations on the test database
-	err := runTestMigrations(databaseURL)
-	require.NoError(t, err, "Failed to run test migrations")
-
-	originalURL := os.Getenv("DATABASE_URL")
-	os.Setenv("DATABASE_URL", databaseURL)
-
 	db, err := database.New()
-	require.NoError(t, err)
-
+	require.NoError(t, err, "DATABASE_URL must be set (TestMain sets it from shared test DB)")
 	cleanup := func() {
-		test.TruncateTables(t, db.Pool)
+		// Truncate with a new pool so we don't block on connections held by IndexSessionAsync or other background work from the test's pool.
+		if truncatePool, err := database.New(); err == nil {
+			test.TruncateTables(t, truncatePool.Pool)
+			truncatePool.Close()
+		}
+		db.Close()
+	}
+	return NewHandlers(db, nil, nil), cleanup
+}
+
+// setupTestHandlersParallel creates a dedicated test database and handlers for this test. Use with t.Parallel() so tests do not share DB state. Cleanup drops the database and closes the pool.
+func setupTestHandlersParallel(t *testing.T) (*Handlers, func()) {
+	t.Helper()
+	databaseURL, cleanupDB := test.SetupTestDB(t)
+	if err := runTestMigrations(databaseURL); err != nil {
+		cleanupDB()
+		t.Fatalf("run test migrations: %v", err)
+	}
+	db, err := database.NewFromURL(databaseURL)
+	require.NoError(t, err, "NewFromURL")
+	cleanup := func() {
 		db.Close()
 		cleanupDB()
-		if originalURL != "" {
-			os.Setenv("DATABASE_URL", originalURL)
-		} else {
-			os.Unsetenv("DATABASE_URL")
-		}
 	}
-	return NewHandlers(db, nil, nil), cleanup // Job processor not needed for these tests
+	return NewHandlers(db, nil, nil), cleanup
 }
 
 // createTestSessionForHandlers is a helper to create a test session for handler tests
@@ -111,7 +139,8 @@ func createTestSessionForHandlers(t *testing.T, db *database.DB, title string) *
 }
 
 func TestCreateArtifact(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	// Create a session first
@@ -199,7 +228,8 @@ func TestCreateArtifact(t *testing.T) {
 }
 
 func TestGetArtifact(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	// Create a session and artifact for testing
@@ -250,7 +280,8 @@ func TestGetArtifact(t *testing.T) {
 }
 
 func TestAttachVideoURL(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	// Create a session and artifact for testing

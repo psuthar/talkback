@@ -41,15 +41,17 @@ type GetSessionsResponse struct {
 }
 
 type GetSessionResponse struct {
-	Session            *models.Session       `json:"session"`
-	Artifacts          []*models.Artifact    `json:"artifacts"`
-	Materials          []*models.Material   `json:"materials"`
-	VideoSources       []*models.VideoSource `json:"video_sources"`
-	RecentQuestions    []*models.Question   `json:"recent_questions"`
-	RecentAnswers      []*models.Answer     `json:"recent_answers"`
-	Mode               string               `json:"mode"` // "creator" or "participant"
-	UnreadMaterialIDs  []string             `json:"unread_material_ids,omitempty"` // only when participant_ref provided
-	VideoAccessURL     string               `json:"video_access_url,omitempty"`    // presigned R2 URL when session has primary_video_artifact_id
+	Session             *models.Session       `json:"session"`
+	Artifacts           []*models.Artifact    `json:"artifacts"`
+	Materials           []*models.Material     `json:"materials"`
+	VideoSources        []*models.VideoSource `json:"video_sources"`
+	RecentQuestions     []*models.Question    `json:"recent_questions"`
+	RecentAnswers       []*models.Answer      `json:"recent_answers"`
+	Mode                string                `json:"mode"` // "creator" or "participant"
+	UnreadMaterialIDs   []string              `json:"unread_material_ids,omitempty"`   // only when participant_ref provided
+	VideoAccessURL      string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
+	PlaybackReasonCode  string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
+	PlaybackMessage     string                `json:"playback_message,omitempty"`      // safe message when video not playable
 }
 
 type JoinParticipantRequest struct {
@@ -89,7 +91,8 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var out []SessionWithRole
 
-	if user.GlobalRole == models.GlobalRoleAdmin {
+	switch user.GlobalRole {
+	case models.GlobalRoleAdmin:
 		all, err := h.DB.ListAllSessions(ctx)
 		if err != nil {
 			log.Printf("ListSessions (admin): %v", err)
@@ -99,7 +102,7 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 		for _, s := range all {
 			out = append(out, SessionWithRole{Session: s, MyRole: "admin"})
 		}
-	} else if user.GlobalRole == models.GlobalRoleParticipant {
+	case models.GlobalRoleParticipant:
 		// Participant role: only sessions they are invited to (no created sessions).
 		invited, err := h.DB.ListSessionsForInvitedUser(ctx, user.ID)
 		if err != nil {
@@ -113,7 +116,7 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 		sort.Slice(out, func(i, j int) bool {
 			return out[i].Session.UpdatedAt.After(out[j].Session.UpdatedAt)
 		})
-	} else {
+	default:
 		// Creator (or legacy user): created + invited
 		created, err := h.DB.ListSessionsByCreatedBy(ctx, user.Email)
 		if err != nil {
@@ -353,47 +356,150 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// When session has primary_video_artifact_id, set video_access_url: R2 presigned GET or local primary-video URL.
-	var videoAccessURL string
+	// R2-only playback: set video_access_url only when primary artifact exists, ready, r2, and content_type is video.
+	var videoAccessURL, playbackReasonCode, playbackMessage string
 	if session.PrimaryVideoArtifactID != nil {
 		fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
-		if err == nil && fa != nil && fa.Status == models.FileArtifactStatusReady {
-			if fa.StorageProvider == "local" {
-				base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("API_PUBLIC_ORIGIN")), "/")
-				if base == "" {
-					scheme := "https"
-					if r.TLS == nil {
-						scheme = "http"
-					}
-					if s := r.Header.Get("X-Forwarded-Proto"); s != "" {
-						scheme = s
-					}
-					base = scheme + "://" + r.Host
-				}
-				videoAccessURL = fmt.Sprintf("%s/api/sessions/%s/primary-video", base, session.ID)
-			} else if h.Storage != nil {
+		if err != nil || fa == nil {
+			playbackReasonCode = "VIDEO_NOT_INGESTED"
+			playbackMessage = "Video not available for this session."
+		} else if fa.Status == models.FileArtifactStatusPending {
+			playbackReasonCode = "VIDEO_INGEST_PENDING"
+			playbackMessage = "Video is still being prepared. Refresh in a moment."
+		} else if fa.Status == models.FileArtifactStatusFailed {
+			playbackReasonCode = "VIDEO_INGEST_FAILED"
+			playbackMessage = "Video ingest failed. Creator can retry import."
+		} else if fa.Status == models.FileArtifactStatusReady {
+			// Only R2 and video content type for playback (no Zoom fallback).
+			ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
+			isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
+			if fa.StorageProvider == "r2" && isVideo && h.Storage != nil {
 				if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
 					videoAccessURL = url
+				} else {
+					playbackReasonCode = "VIDEO_NOT_INGESTED"
+					playbackMessage = "Video not available for this session."
 				}
+			} else {
+				// Local or non-video: do not return URL for demo (R2-only invariant).
+				playbackReasonCode = "VIDEO_NOT_INGESTED"
+				playbackMessage = "Video not available for this session."
 			}
 		}
 	}
 
 	response := GetSessionResponse{
-		Session:           session,
-		Artifacts:         artifacts,
-		Materials:         allMaterials,
-		VideoSources:      allVideoSources,
-		RecentQuestions:   questions,
-		RecentAnswers:     answers,
-		Mode:              mode,
-		UnreadMaterialIDs: unreadMaterialIDs,
-		VideoAccessURL:    videoAccessURL,
+		Session:            session,
+		Artifacts:          artifacts,
+		Materials:          allMaterials,
+		VideoSources:       allVideoSources,
+		RecentQuestions:    questions,
+		RecentAnswers:      answers,
+		Mode:               mode,
+		UnreadMaterialIDs:  unreadMaterialIDs,
+		VideoAccessURL:     videoAccessURL,
+		PlaybackReasonCode: playbackReasonCode,
+		PlaybackMessage:    playbackMessage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// SessionPlaybackResponse is the success response for GET .../playback.
+type SessionPlaybackResponse struct {
+	URL       string    `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// SessionPlaybackErrorResponse is the error body for playback (409/404/422).
+type SessionPlaybackErrorResponse struct {
+	Message    string `json:"message"`
+	ReasonCode string `json:"reason_code"`
+}
+
+// SessionPlayback returns R2 presigned URL only when primary artifact is ready, r2, and video. No Zoom fallback.
+// GET /sessions/:id/playback or GET /api/sessions/:id/playback
+func (h *Handlers) SessionPlayback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var sessionID uuid.UUID
+	var err error
+	if len(pathParts) >= 4 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "playback" {
+		sessionID, err = uuid.Parse(pathParts[2])
+	} else if len(pathParts) >= 3 && pathParts[0] == "sessions" && pathParts[2] == "playback" {
+		sessionID, err = uuid.Parse(pathParts[1])
+	} else {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Session not found", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	if session.PrimaryVideoArtifactID == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
+	if err != nil || fa == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	switch fa.Status {
+	case models.FileArtifactStatusPending:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video is still being prepared. Refresh in a moment.", ReasonCode: "VIDEO_INGEST_PENDING"})
+		return
+	case models.FileArtifactStatusFailed:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video ingest failed. Creator can retry import.", ReasonCode: "VIDEO_INGEST_FAILED"})
+		return
+	}
+	if fa.Status != models.FileArtifactStatusReady {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
+	isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
+	if fa.StorageProvider != "r2" || !isVideo || h.Storage == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	ttl := time.Hour
+	expiresAt := time.Now().Add(ttl)
+	url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, ttl)
+	if err != nil {
+		log.Printf("SessionPlayback PresignGet: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Failed to generate playback URL.", ReasonCode: "VIDEO_NOT_INGESTED"})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(SessionPlaybackResponse{URL: url, ExpiresAt: expiresAt})
 }
 
 // SetPrimaryVideoArtifactRequest body for POST /api/sessions/:id/primary-video-artifact

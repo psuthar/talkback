@@ -14,7 +14,7 @@ import (
 func TestCreateQuestion_WithParent(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 	session := createTestSession(t, db, "Parent Test Session")
@@ -52,7 +52,7 @@ func TestCreateQuestion_WithParent(t *testing.T) {
 func TestFindExistingQuestionByText_ThreadAware(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 	session := createTestSession(t, db, "Find Session")

@@ -17,7 +17,8 @@ import (
 )
 
 func TestSessionInvite_AsCreator_Returns201(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -75,7 +76,8 @@ func TestSessionInvite_AsCreator_Returns201(t *testing.T) {
 }
 
 func TestSessionInvite_AsInvitedUser_Returns201(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -151,7 +153,8 @@ func TestSessionInvite_AsInvitedUser_Returns201(t *testing.T) {
 }
 
 func TestSessionInvite_NotCreatorNorInvited_Returns403(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -213,7 +216,8 @@ func TestSessionInvite_NotCreatorNorInvited_Returns403(t *testing.T) {
 }
 
 func TestSessionInvite_AlreadyInvited_Returns409(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 

@@ -18,7 +18,8 @@ import (
 )
 
 func TestCreateSession(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	t.Run("returns 401 when not authenticated", func(t *testing.T) {
@@ -104,7 +105,8 @@ func TestCreateSession(t *testing.T) {
 }
 
 func TestGetArtifactsBySessionID(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -173,7 +175,8 @@ func TestGetArtifactsBySessionID(t *testing.T) {
 }
 
 func TestGetSession(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -318,7 +321,8 @@ func TestGetSession(t *testing.T) {
 }
 
 func TestUpsertSessionParticipant(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	// Create session
@@ -386,7 +390,8 @@ func TestUpsertSessionParticipant(t *testing.T) {
 }
 
 func TestCreateSessionEvent(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	// Create session
@@ -450,7 +455,8 @@ func TestCreateSessionEvent(t *testing.T) {
 }
 
 func TestAskSessionQuestion(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -534,7 +540,8 @@ func TestAskSessionQuestion(t *testing.T) {
 }
 
 func TestAskSessionQuestion_LimitReached(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -575,7 +582,8 @@ func TestAskSessionQuestion_LimitReached(t *testing.T) {
 }
 
 func TestGetSessionQuestions(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -689,7 +697,8 @@ func TestGetSessionQuestions(t *testing.T) {
 }
 
 func TestUpdateSessionStatus(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -798,7 +807,8 @@ func TestUpdateSessionStatus(t *testing.T) {
 }
 
 func TestGetSessionTimeline(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -1019,6 +1029,118 @@ func TestGetSessionTimeline(t *testing.T) {
 			question := entryMap["question"].(map[string]interface{})
 			assert.NotEqual(t, otherQuestion.ID.String(), question["id"])
 		}
+	})
+}
+
+func TestSessionPlayback(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	db := h.DB
+	ctx := context.Background()
+
+	t.Run("returns 404 and VIDEO_NOT_INGESTED when session has no primary_video_artifact_id", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "No primary video")
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/playback", nil)
+		w := httptest.NewRecorder()
+		h.SessionPlayback(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var body SessionPlaybackErrorResponse
+		err := json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, "VIDEO_NOT_INGESTED", body.ReasonCode)
+	})
+
+	t.Run("returns 409 and VIDEO_INGEST_PENDING when primary artifact is pending", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "Pending video")
+		aid := uuid.New()
+		fn := "zoom.mp4"
+		fa := &models.FileArtifact{
+			ID:              aid,
+			SessionID:       &session.ID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &fn,
+			ContentType:     "video/mp4",
+			StorageProvider: "r2",
+			StorageBucket:   "bucket",
+			StorageKey:      "sessions/" + session.ID.String() + "/" + aid.String() + "/zoom.mp4",
+			Status:          models.FileArtifactStatusPending,
+		}
+		err := db.CreateFileArtifact(ctx, fa)
+		require.NoError(t, err)
+		err = db.SetSessionPrimaryVideoArtifact(ctx, session.ID, &aid)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/playback", nil)
+		w := httptest.NewRecorder()
+		h.SessionPlayback(w, req)
+		assert.Equal(t, http.StatusConflict, w.Code)
+		var body SessionPlaybackErrorResponse
+		err = json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, "VIDEO_INGEST_PENDING", body.ReasonCode)
+	})
+
+	t.Run("returns 422 and VIDEO_INGEST_FAILED when primary artifact is failed", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "Failed video")
+		aid := uuid.New()
+		fn := "zoom.mp4"
+		reason := "r2_put: timeout"
+		fa := &models.FileArtifact{
+			ID:              aid,
+			SessionID:       &session.ID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &fn,
+			ContentType:     "video/mp4",
+			StorageProvider: "r2",
+			StorageBucket:   "bucket",
+			StorageKey:      "sessions/" + session.ID.String() + "/" + aid.String() + "/zoom.mp4",
+			Status:          models.FileArtifactStatusFailed,
+			FailureReason:   &reason,
+		}
+		err := db.CreateFileArtifact(ctx, fa)
+		require.NoError(t, err)
+		err = db.SetSessionPrimaryVideoArtifact(ctx, session.ID, &aid)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/playback", nil)
+		w := httptest.NewRecorder()
+		h.SessionPlayback(w, req)
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var body SessionPlaybackErrorResponse
+		err = json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, "VIDEO_INGEST_FAILED", body.ReasonCode)
+	})
+
+	t.Run("returns 404 when primary artifact is ready but storage not configured (no Zoom fallback)", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "Ready but no storage")
+		aid := uuid.New()
+		fn := "zoom.mp4"
+		fa := &models.FileArtifact{
+			ID:              aid,
+			SessionID:       &session.ID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &fn,
+			ContentType:     "video/mp4",
+			StorageProvider: "r2",
+			StorageBucket:   "bucket",
+			StorageKey:      "sessions/" + session.ID.String() + "/" + aid.String() + "/zoom.mp4",
+			Status:          models.FileArtifactStatusReady,
+		}
+		err := db.CreateFileArtifact(ctx, fa)
+		require.NoError(t, err)
+		err = db.UpdateFileArtifactToReady(ctx, aid, 1024, "video/mp4")
+		require.NoError(t, err)
+		err = db.SetSessionPrimaryVideoArtifact(ctx, session.ID, &aid)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/playback", nil)
+		w := httptest.NewRecorder()
+		h.SessionPlayback(w, req)
+		// Handlers have nil Storage in tests; playback returns 404 (R2-only, no Zoom).
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var body SessionPlaybackErrorResponse
+		err = json.Unmarshal(w.Body.Bytes(), &body)
+		require.NoError(t, err)
+		assert.Equal(t, "VIDEO_NOT_INGESTED", body.ReasonCode)
 	})
 }
 

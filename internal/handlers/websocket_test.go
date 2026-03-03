@@ -5,20 +5,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSessionHub(t *testing.T) {
+	t.Parallel()
 	hub := NewSessionHub()
 	go hub.Run()
 	defer func() {
@@ -272,28 +270,9 @@ func TestSessionHub(t *testing.T) {
 }
 
 func TestHandleWebSocket(t *testing.T) {
-	// Setup test database
-	databaseURL, cleanupDB := test.SetupTestDB(t)
-	defer cleanupDB()
-
-	// Run migrations
-	err := runTestMigrations(databaseURL)
-	require.NoError(t, err)
-
-	// Set DATABASE_URL environment variable
-	originalURL := os.Getenv("DATABASE_URL")
-	os.Setenv("DATABASE_URL", databaseURL)
-	defer func() {
-		if originalURL != "" {
-			os.Setenv("DATABASE_URL", originalURL)
-		} else {
-			os.Unsetenv("DATABASE_URL")
-		}
-	}()
-
-	db, err := database.New()
-	require.NoError(t, err)
-	defer db.Close()
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
 
 	// Create a test session
 	session := &models.Session{
@@ -302,10 +281,9 @@ func TestHandleWebSocket(t *testing.T) {
 		Status:     models.SessionStatusOpen,
 		CreatedBy: stringPtr("test-user"),
 	}
-	err = db.CreateSession(context.Background(), session)
+	err := h.DB.CreateSession(context.Background(), session)
 	require.NoError(t, err)
 
-	h := NewHandlers(db, nil, nil)
 	hub := h.Hub
 
 	t.Run("requires session parameter", func(t *testing.T) {

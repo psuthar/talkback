@@ -7,29 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/psuthar/talkback/internal/database"
-	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestZoomAuthStart_RedirectURI(t *testing.T) {
-	databaseURL, cleanupDB := test.SetupTestDB(t)
-	defer cleanupDB()
-	origDB := os.Getenv("DATABASE_URL")
-	os.Setenv("DATABASE_URL", databaseURL)
-	defer func() {
-		if origDB != "" {
-			os.Setenv("DATABASE_URL", origDB)
-		} else {
-			os.Unsetenv("DATABASE_URL")
-		}
-	}()
-
-	db, err := database.New()
-	require.NoError(t, err)
-	defer db.Close()
-	h := NewHandlers(db, nil, nil)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
 
 	saveEnv := func(key string) (restore func()) {
 		v := os.Getenv(key)

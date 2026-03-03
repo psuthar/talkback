@@ -16,7 +16,8 @@ import (
 )
 
 func TestUploadMaterial(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -150,7 +151,8 @@ func TestUploadMaterial(t *testing.T) {
 }
 
 func TestUploadTranscript(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()

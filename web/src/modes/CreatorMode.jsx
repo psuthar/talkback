@@ -935,6 +935,38 @@ export function CreatorMode({
       {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
         <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f8f9fa', border: '1px solid #dee2e6' }}>
           <h2>Session Video</h2>
+          {/* Explicit non-ready states when primary_video_artifact_id is set but no playable URL (R2-only playback) */}
+          {currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code && (
+            <div style={{
+              padding: '24px',
+              backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? '#ffebee' : '#f5f5f5',
+              borderRadius: '8px',
+              textAlign: 'center',
+              border: '1px solid #e0e0e0'
+            }}>
+              <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
+                {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? 'Video ingest failed. Creator can retry import.' : 'Video not available for this session.')}
+              </p>
+              {currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' && (
+                <button
+                  type="button"
+                  onClick={retryProcessing}
+                  disabled={processingRetrying}
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '14px',
+                    backgroundColor: '#2196F3',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: processingRetrying ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {processingRetrying ? 'Retrying…' : 'Retry ingest'}
+                </button>
+              )}
+            </div>
+          )}
           {hasPrimaryR2Video && (
             <div style={{ marginBottom: '10px', fontSize: '14px', color: '#495057' }}>
               <strong>Transcript:</strong>{' '}
@@ -967,7 +999,7 @@ export function CreatorMode({
             </div>
           )}
 
-          {video && (
+          {video && !(currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code) && (
             <>
               <VideoPlayer
                 video={video}

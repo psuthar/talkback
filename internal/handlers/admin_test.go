@@ -9,37 +9,16 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResetAllData(t *testing.T) {
-	// Setup test database
-	databaseURL, cleanupDB := test.SetupTestDB(t)
-	defer cleanupDB()
-
-	// Run migrations on the test database
-	err := runTestMigrations(databaseURL)
-	require.NoError(t, err, "Failed to run test migrations")
-
-	originalURL := os.Getenv("DATABASE_URL")
-	os.Setenv("DATABASE_URL", databaseURL)
-	defer func() {
-		if originalURL != "" {
-			os.Setenv("DATABASE_URL", originalURL)
-		} else {
-			os.Unsetenv("DATABASE_URL")
-		}
-	}()
-
-	db, err := database.New()
-	require.NoError(t, err)
-	defer db.Close()
-
-	h := NewHandlers(db, nil, nil) // Job processor not needed for these tests
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	db := h.DB
 
 	t.Run("returns 403 when ALLOW_DEV_RESET is not set", func(t *testing.T) {
 		// Ensure flag is not set

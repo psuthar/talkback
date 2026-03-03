@@ -21,7 +21,8 @@ import (
 )
 
 func TestListSessionMaterials(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	session := createTestSessionForHandlers(t, h.DB, "Test Session")
@@ -54,7 +55,8 @@ func TestListSessionMaterials(t *testing.T) {
 }
 
 func TestSessionPasteMaterial(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	session := createTestSessionForHandlers(t, h.DB, "Test Session")
@@ -93,7 +95,8 @@ func TestSessionPasteMaterial(t *testing.T) {
 }
 
 func TestSessionUploadMaterial(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	session := createTestSessionForHandlers(t, h.DB, "Test Session")
@@ -254,7 +257,8 @@ func createMinimalPptx(t *testing.T, path, text string) {
 }
 
 func TestDeleteSessionMaterial(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 

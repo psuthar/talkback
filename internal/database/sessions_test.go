@@ -16,7 +16,7 @@ import (
 func TestCreateSession(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 
@@ -51,7 +51,7 @@ func TestCreateSession(t *testing.T) {
 func TestGetSession(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 
@@ -82,7 +82,7 @@ func TestGetSession(t *testing.T) {
 func TestGetSessionsByArtifactID(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 
@@ -128,7 +128,7 @@ func TestGetSessionsByArtifactID(t *testing.T) {
 func TestUpsertSessionParticipant(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 
@@ -164,7 +164,7 @@ func TestUpsertSessionParticipant(t *testing.T) {
 func TestCreateSessionEvent(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 
@@ -217,7 +217,7 @@ func TestCreateSessionEvent(t *testing.T) {
 func TestGetQuestionsBySessionID(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	test.TruncateTables(t, db.Pool)
+	defer test.TruncateTables(t, db.Pool)
 
 	ctx := context.Background()
 

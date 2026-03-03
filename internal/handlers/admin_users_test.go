@@ -85,7 +85,8 @@ func addParticipantSessionCookie(t *testing.T, h *Handlers, req *http.Request) *
 }
 
 func TestAdminUsers_GET_Unauthorized(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
@@ -97,7 +98,8 @@ func TestAdminUsers_GET_Unauthorized(t *testing.T) {
 }
 
 func TestAdminUsers_GET_ForbiddenWhenNotAdmin(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
@@ -110,7 +112,8 @@ func TestAdminUsers_GET_ForbiddenWhenNotAdmin(t *testing.T) {
 }
 
 func TestAdminUsers_GET_Success(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -149,7 +152,8 @@ func TestAdminUsers_GET_Success(t *testing.T) {
 }
 
 func TestAdminUsers_POST_CreatesUser(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	body := map[string]string{
@@ -179,7 +183,8 @@ func TestAdminUsers_POST_CreatesUser(t *testing.T) {
 }
 
 func TestAdminUsers_POST_ConflictWhenEmailExists(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -209,7 +214,8 @@ func TestAdminUsers_POST_ConflictWhenEmailExists(t *testing.T) {
 }
 
 func TestAdminUsers_DELETE_Success(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -236,7 +242,8 @@ func TestAdminUsers_DELETE_Success(t *testing.T) {
 }
 
 func TestAdminUsers_DELETE_NotFound(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	randomID := uuid.New()
@@ -251,7 +258,8 @@ func TestAdminUsers_DELETE_NotFound(t *testing.T) {
 }
 
 func TestAdminUsers_DELETE_LastAdmin_Forbidden(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -297,7 +305,8 @@ func TestAdminUsers_DELETE_LastAdmin_Forbidden(t *testing.T) {
 }
 
 func TestAdminUsers_POST_WithRoleParticipant(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	body := map[string]interface{}{
@@ -323,7 +332,8 @@ func TestAdminUsers_POST_WithRoleParticipant(t *testing.T) {
 }
 
 func TestAdminUsers_PATCH_UpdateRole(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -358,7 +368,8 @@ func TestAdminUsers_PATCH_UpdateRole(t *testing.T) {
 }
 
 func TestAdminUsers_PATCH_LastAdmin_Forbidden(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 

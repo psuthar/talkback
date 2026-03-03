@@ -89,6 +89,26 @@ func (db *DB) GetFileArtifactByID(ctx context.Context, id uuid.UUID) (*models.Fi
 
 // UpdateFileArtifactToReady sets status=ready and size_bytes (and optionally content_type from head).
 func (db *DB) UpdateFileArtifactToReady(ctx context.Context, id uuid.UUID, sizeBytes int64, contentType string) error {
+	return db.UpdateFileArtifactToReadyWithMetadata(ctx, id, sizeBytes, contentType, nil)
+}
+
+// UpdateFileArtifactToReadyWithMetadata sets status=ready, size_bytes, content_type, and optionally metadata_json (e.g. for etag).
+func (db *DB) UpdateFileArtifactToReadyWithMetadata(ctx context.Context, id uuid.UUID, sizeBytes int64, contentType string, metadataJSON []byte) error {
+	if metadataJSON != nil {
+		query := `
+			UPDATE file_artifacts
+			SET status = 'ready', size_bytes = $1, content_type = $2, metadata_json = $3, updated_at = now()
+			WHERE id = $4
+		`
+		result, err := db.Pool.Exec(ctx, query, sizeBytes, contentType, metadataJSON, id)
+		if err != nil {
+			return fmt.Errorf("update file_artifact to ready: %w", err)
+		}
+		if result.RowsAffected() == 0 {
+			return fmt.Errorf("file_artifact not found: %s", id)
+		}
+		return nil
+	}
 	query := `
 		UPDATE file_artifacts
 		SET status = 'ready', size_bytes = $1, content_type = $2, updated_at = now()

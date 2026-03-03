@@ -71,18 +71,6 @@ func maxUploadBytesVideo() int64 {
 	return n
 }
 
-func maxSessionArtifacts() int {
-	v := os.Getenv("MAX_SESSION_ARTIFACTS")
-	if v == "" {
-		return 50
-	}
-	n, _ := strconv.Atoi(v)
-	if n <= 0 {
-		return 50
-	}
-	return n
-}
-
 // PresignPut handles POST /api/artifacts/presign-put (auth required; creator/admin).
 func (h *Handlers) PresignPut(w http.ResponseWriter, r *http.Request) {
 	if h.Storage == nil {
@@ -111,7 +99,11 @@ func (h *Handlers) PresignPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "content_type is required", http.StatusBadRequest)
 		return
 	}
-	// Size caps
+	// Size caps: require size_bytes for video so we can enforce caps
+	if kind == models.FileArtifactKindVideo && (req.SizeBytes == nil || *req.SizeBytes < 0) {
+		http.Error(w, "size_bytes is required for video uploads", http.StatusBadRequest)
+		return
+	}
 	maxBytes := maxUploadBytesDefault()
 	if kind == models.FileArtifactKindVideo {
 		maxBytes = maxUploadBytesVideo()

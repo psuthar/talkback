@@ -322,6 +322,19 @@ export function ParticipantMode({
               />
             ) : (currentSession.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id ? (
               <>
+                {currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code && (
+                  <div style={{
+                    padding: '24px',
+                    backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : '#f5f5f5',
+                    borderRadius: '8px',
+                    textAlign: 'center',
+                    border: '1px solid #e0e0e0'
+                  }}>
+                    <p style={{ margin: 0, color: '#333', fontSize: '15px' }}>
+                      {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : 'Video not available for this session.')}
+                    </p>
+                  </div>
+                )}
                 {!hasPrimaryR2Video && currentSession?.video_sources && currentSession.video_sources.length > 1 && (
                   <div style={{ marginBottom: '10px' }}>
                     <label style={{ fontWeight: 'bold', marginRight: '8px' }}>Session Video:</label>
@@ -345,7 +358,7 @@ export function ParticipantMode({
                     </select>
                   </div>
                 )}
-                {video && (
+                {video && !(currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code) && (
                   <>
                     <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
                       <VideoPlayer

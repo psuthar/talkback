@@ -83,7 +83,7 @@ func (r *LoomResolver) ResolveMedia(ctx context.Context, loomURL string, passwor
 				log.Printf("MP4/WEBM-only resolution failed for video %s: %v", videoID, err)
 			}
 			// If MP4-only failed, return error immediately since we can't transcribe HLS
-			return info, fmt.Errorf("Loom video %s is only available as HLS playlist (.m3u8), which Whisper API cannot process. Please upload transcript manually", videoID)
+			return info, fmt.Errorf("loom video %s is only available as HLS playlist (.m3u8), which Whisper API cannot process; please upload transcript manually", videoID)
 		}
 		log.Printf("Successfully resolved Loom video %s via GraphQL", videoID)
 		return info, nil
@@ -150,7 +150,7 @@ func (r *LoomResolver) resolveViaAPI(ctx context.Context, videoID, apiKey string
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Loom API returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("loom API returned status %d", resp.StatusCode)
 	}
 
 	// Parse response to extract media URL

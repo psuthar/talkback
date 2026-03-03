@@ -13,7 +13,8 @@ import (
 )
 
 func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -104,7 +105,8 @@ func TestAskQuestion_RepeatQuestionCaching(t *testing.T) {
 }
 
 func TestAskQuestion_NotCovered_NoContent(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -149,7 +151,8 @@ func TestAskQuestion_NotCovered_NoContent(t *testing.T) {
 }
 
 func TestAskQuestion_NotCovered_UnrelatedQuestion(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -217,7 +220,8 @@ func TestAskQuestion_NotCovered_UnrelatedQuestion(t *testing.T) {
 }
 
 func TestAskQuestion_Citations_Valid(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -297,7 +301,8 @@ func TestAskQuestion_Citations_Valid(t *testing.T) {
 }
 
 func TestGetQuestions_ReturnsRecentQuestionsWithAnswers(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -380,7 +385,8 @@ func TestGetQuestions_ReturnsRecentQuestionsWithAnswers(t *testing.T) {
 }
 
 func TestGetQuestions_Negative(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	t.Run("returns 400 for invalid artifact ID", func(t *testing.T) {
@@ -422,7 +428,8 @@ func TestGetQuestions_Negative(t *testing.T) {
 }
 
 func TestAskQuestion_Negative(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	t.Run("returns 400 for invalid artifact ID", func(t *testing.T) {

@@ -12,7 +12,8 @@ import (
 )
 
 func TestSessionPolishQuestion(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	session := createTestSessionForHandlers(t, h.DB, "Polish Session")

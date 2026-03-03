@@ -1,5 +1,26 @@
 import { useState, useRef, useEffect } from 'react'
 
+/**
+ * Fetches a fresh presigned GET URL for an artifact (e.g. after expiry).
+ * @param {string} apiBaseUrl - Base URL for the API (no trailing slash)
+ * @param {string} artifactId - File artifact UUID
+ * @param {number} [ttlSeconds] - Optional TTL for the presigned URL
+ * @returns {Promise<{ url: string, expiresAt: Date | null }>}
+ */
+export async function fetchVideoAccessUrl(apiBaseUrl, artifactId, ttlSeconds) {
+  const base = (apiBaseUrl || '').replace(/\/$/, '')
+  const url = ttlSeconds != null
+    ? `${base}/api/artifacts/${artifactId}/access?ttl_seconds=${ttlSeconds}`
+    : `${base}/api/artifacts/${artifactId}/access`
+  const res = await fetch(url, { credentials: 'include' })
+  if (!res.ok) throw new Error(res.statusText)
+  const data = await res.json()
+  return {
+    url: data?.url ?? '',
+    expiresAt: data?.expires_at ? new Date(data.expires_at) : null
+  }
+}
+
 // Player Adapter Interface
 export const PlayerEvent = {
   READY: 'ready',
@@ -29,11 +50,39 @@ export function Html5VideoPlayer({
 }) {
   const videoRef = useRef(null)
   const lastKnownTimeRef = useRef(0)
+  const isRefreshingUrlRef = useRef(false)
+  const pendingSeekTimeRef = useRef(null) // when refresh in progress, citation seek is queued here and applied on loadedmetadata
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [loadError, setLoadError] = useState(null)
   const [serverStatus, setServerStatus] = useState(null) // after error, fetch stream URL to show real HTTP status
+  const [manualRefreshLoading, setManualRefreshLoading] = useState(false)
+
+  const handleManualRefreshUrl = () => {
+    if (!artifactIdForRefresh || !apiBaseUrlForRefresh || !videoRef.current || manualRefreshLoading) return
+    setManualRefreshLoading(true)
+    fetchVideoAccessUrl(apiBaseUrlForRefresh, artifactIdForRefresh)
+      .then(({ url }) => {
+        if (!videoRef.current) return
+        const v = videoRef.current
+        const lastTime = lastKnownTimeRef.current || 0
+        v.src = url
+        const onMeta = () => {
+          v.currentTime = lastTime
+          lastKnownTimeRef.current = lastTime
+          v.play().catch(() => {})
+          v.removeEventListener('loadedmetadata', onMeta)
+          setLoadError(null)
+          setServerStatus(null)
+          setManualRefreshLoading(false)
+        }
+        v.addEventListener('loadedmetadata', onMeta)
+      })
+      .catch(() => {
+        setManualRefreshLoading(false)
+      })
+  }
 
   useEffect(() => {
     if (onMounted && videoRef.current && mediaUrl) onMounted()
@@ -44,7 +93,12 @@ export function Html5VideoPlayer({
     if (!video) return
 
     const handleLoadedMetadata = () => {
-      lastKnownTimeRef.current = video.currentTime
+      const seekTo = pendingSeekTimeRef.current ?? lastKnownTimeRef.current ?? video.currentTime ?? 0
+      pendingSeekTimeRef.current = null
+      lastKnownTimeRef.current = seekTo
+      if (seekTo > 0 && Math.abs(video.currentTime - seekTo) > 0.5) {
+        video.currentTime = seekTo
+      }
       setDuration(video.duration)
       onEvent?.({ type: PlayerEvent.READY })
     }
@@ -85,24 +139,34 @@ export function Html5VideoPlayer({
       const code = err?.code
       const isExpiredOrNetwork = code === 4 || code === 2 // MEDIA_ERR_SRC_NOT_SUPPORTED, MEDIA_ERR_NETWORK
       if (isExpiredOrNetwork && artifactIdForRefresh && apiBaseUrlForRefresh) {
-        const base = apiBaseUrlForRefresh.replace(/\/$/, '')
+        if (isRefreshingUrlRef.current) return
+        isRefreshingUrlRef.current = true
         const lastTime = lastKnownTimeRef.current || video.currentTime || 0
+        const base = apiBaseUrlForRefresh.replace(/\/$/, '')
         fetch(`${base}/api/artifacts/${artifactIdForRefresh}/access`, { credentials: 'include' })
           .then(res => res.ok ? res.json() : Promise.reject(new Error(res.statusText)))
           .then(data => {
-            if (!data?.url || !videoRef.current) return
+            if (!data?.url || !videoRef.current) {
+              isRefreshingUrlRef.current = false
+              return
+            }
             const v = videoRef.current
             v.src = data.url
             const onMeta = () => {
-              v.currentTime = lastTime
+              const seekTo = pendingSeekTimeRef.current ?? lastTime
+              pendingSeekTimeRef.current = null
+              v.currentTime = seekTo
+              lastKnownTimeRef.current = seekTo
               v.play().catch(() => {})
               v.removeEventListener('loadedmetadata', onMeta)
+              isRefreshingUrlRef.current = false
             }
             v.addEventListener('loadedmetadata', onMeta)
             setLoadError(null)
             setServerStatus(null)
           })
           .catch(() => {
+            isRefreshingUrlRef.current = false
             setLoadError(err?.message || (code === 4 ? 'Video not found or access denied.' : 'Video failed to load.'))
           })
         return
@@ -145,9 +209,13 @@ export function Html5VideoPlayer({
   useEffect(() => {
     const video = videoRef.current
     if (!video || externalCurrentTime === undefined) return
-
+    if (isRefreshingUrlRef.current) {
+      pendingSeekTimeRef.current = externalCurrentTime
+      return
+    }
     if (Math.abs(video.currentTime - externalCurrentTime) > 1) {
       video.currentTime = externalCurrentTime
+      lastKnownTimeRef.current = externalCurrentTime
     }
   }, [externalCurrentTime])
 
@@ -221,6 +289,25 @@ export function Html5VideoPlayer({
         <p style={{ margin: '0 0 16px', color: '#718096', fontSize: '13px' }}>
           If this is a Zoom recording, the creator may need to reconnect Zoom, or the recording may have expired.
         </p>
+        {artifactIdForRefresh && apiBaseUrlForRefresh && (
+          <button
+            type="button"
+            onClick={handleManualRefreshUrl}
+            disabled={manualRefreshLoading}
+            style={{
+              marginBottom: openUrl ? '12px' : 0,
+              padding: '8px 16px',
+              fontSize: '14px',
+              backgroundColor: '#2D8CFF',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: manualRefreshLoading ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {manualRefreshLoading ? 'Refreshing…' : 'Refresh video URL'}
+          </button>
+        )}
         {openUrl && (
           <a
             href={openUrl}

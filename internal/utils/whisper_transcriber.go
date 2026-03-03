@@ -168,9 +168,9 @@ func (w *WhisperTranscriber) TranscribeFile(ctx context.Context, filePath string
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(body, &errorResp); err == nil {
-			return nil, fmt.Errorf("Whisper API error (%s): %s", errorResp.Error.Type, errorResp.Error.Message)
+			return nil, fmt.Errorf("whisper API error (%s): %s", errorResp.Error.Type, errorResp.Error.Message)
 		}
-		return nil, fmt.Errorf("Whisper API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("whisper API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response based on format

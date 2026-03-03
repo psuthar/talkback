@@ -199,6 +199,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "playback" {
+		if r.Method == http.MethodGet {
+			h.SessionPlayback(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "materials" {
 		if len(parts) == 4 {
 			if r.Method == http.MethodGet {
@@ -304,6 +312,12 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			// /sessions/{id}/timeline - GET (session timeline)
 			if r.Method == http.MethodGet {
 				h.GetSessionTimeline(w, r)
+				return
+			}
+		case "playback":
+			// /sessions/{id}/playback - GET (R2 presigned URL only)
+			if r.Method == http.MethodGet {
+				h.SessionPlayback(w, r)
 				return
 			}
 		case "materials":

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,30 @@ import (
 	"github.com/psuthar/talkback/internal/utils"
 	"github.com/psuthar/talkback/internal/zoom"
 )
+
+func zoomMaxVideoDurationSeconds() int64 {
+	v := os.Getenv("ZOOM_MAX_VIDEO_DURATION_SECONDS")
+	if v == "" {
+		return 600
+	}
+	n, _ := strconv.ParseInt(v, 10, 64)
+	if n <= 0 {
+		return 600
+	}
+	return n
+}
+
+func maxUploadBytesVideo() int64 {
+	v := os.Getenv("MAX_UPLOAD_BYTES_VIDEO")
+	if v == "" {
+		return 1024 * 1024 * 1024
+	}
+	n, _ := strconv.ParseInt(v, 10, 64)
+	if n <= 0 {
+		return 1024 * 1024 * 1024
+	}
+	return n
+}
 
 // ZoomTokenFunc returns a valid Zoom access token for the given creator identity (for background workers).
 type ZoomTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
@@ -89,6 +115,21 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 	}
 
 	if doMp4Ingest {
+		// Enforce configurable max Zoom recording duration (default 10 minutes) before download.
+		maxDurationSec := zoomMaxVideoDurationSeconds()
+		durationMinutes := rec.Duration
+		durationSeconds := durationMinutes * 60
+		if durationMinutes > 0 && int64(durationSeconds) > maxDurationSec {
+			msg := fmt.Sprintf("Demo limit: Zoom recordings must be %d minutes or less. This recording is %d minutes.", maxDurationSec/60, durationMinutes)
+			log.Printf("ZOOM_DURATION_REJECTED session_id=%s duration_minutes=%d max_seconds=%d", sessionID, durationMinutes, maxDurationSec)
+			setJobFailedPermanent(ctx, db, jobID, attempt, "zoom_duration_limit", msg)
+			updateMirror(models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		if durationMinutes <= 0 {
+			log.Printf("ZOOM_DURATION_UNKNOWN session_id=%s duration_unknown=true", sessionID)
+		}
+
 		fileTypes := make([]string, 0, len(rec.RecordingFiles))
 		recTypes := make([]string, 0, len(rec.RecordingFiles))
 		for _, f := range rec.RecordingFiles {
@@ -119,8 +160,20 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 		}
 		defer resp.Body.Close()
 
+		// Abort if Zoom response size exceeds video upload cap (avoid streaming large body into R2).
+		if resp.ContentLength > 0 {
+			maxVideoBytes := maxUploadBytesVideo()
+			if resp.ContentLength > maxVideoBytes {
+				log.Printf("ZOOM_DOWNLOAD size_exceeds_cap content_length=%d max=%d", resp.ContentLength, maxVideoBytes)
+				setJobFailedPermanent(ctx, db, jobID, attempt, "zoom_file_too_large", fmt.Sprintf("Recording file size (%d bytes) exceeds maximum allowed (%d bytes).", resp.ContentLength, maxVideoBytes))
+				updateMirror(models.ProcessingStateFailedPermanent)
+				return nil
+			}
+		}
+
 		if store != nil && storagePrefix != "" {
-			// R2 path
+			// R2 path: create artifact pending, Put, HEAD verify, then mark ready with size/etag.
+			ingestStart := time.Now()
 			artifactID := uuid.New()
 			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
 			bucket := os.Getenv("R2_BUCKET")
@@ -160,9 +213,17 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			log.Printf("R2_UPLOAD_DONE etag=%s", etag)
 
 			exists, size, contentType, headErr := store.Head(ctx, storageKey)
-			if headErr != nil || !exists {
-				_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_head_verify: object missing after put")
-				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", "object missing after upload")
+			if headErr != nil || !exists || size <= 0 {
+				stage := "r2_head"
+				if headErr != nil {
+					stage = "r2_head"
+				} else if !exists {
+					stage = "r2_head_verify"
+				} else if size <= 0 {
+					stage = "r2_head_empty"
+				}
+				_ = db.UpdateFileArtifactToFailed(ctx, artifactID, stage+": object missing or empty after put")
+				setJobFailedPermanent(ctx, db, jobID, attempt, "r2_upload", "object missing or empty after upload")
 				updateMirror(models.ProcessingStateFailedPermanent)
 				return nil
 			}
@@ -170,12 +231,16 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			if contentType != "" {
 				ct = contentType
 			}
-			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, ct); err != nil {
+			// Persist size and etag in metadata; mark ready only after successful HEAD.
+			metaWithEtag := mergeEtagIntoMetadata(fa.MetadataJSON, etag)
+			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, metaWithEtag); err != nil {
 				log.Printf("processing job: update artifact ready: %v", err)
 			}
 			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
 				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
 			}
+			durationMs := time.Since(ingestStart).Milliseconds()
+			log.Printf("zoom_ingest_completed session_id=%s artifact_id=%s size_bytes=%d duration_ms=%d outcome=ready", sessionID, artifactID, size, durationMs)
 			log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s storage=r2", artifactID, storageKey)
 		} else {
 			// Local path (for local debugging without R2)
@@ -422,6 +487,22 @@ func zoomArtifactMetadata(meetingUUID string, mp4File *utils.ZoomRecordingFile) 
 	}
 	if mp4File != nil && mp4File.ID != "" {
 		m["zoom_recording_file_id"] = mp4File.ID
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// mergeEtagIntoMetadata merges etag into existing metadata_json; returns new JSON bytes.
+func mergeEtagIntoMetadata(existing []byte, etag string) []byte {
+	m := make(map[string]string)
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &m)
+	}
+	if etag != "" {
+		m["etag"] = etag
 	}
 	if len(m) == 0 {
 		return nil

@@ -1364,7 +1364,10 @@ function App() {
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setZoomImportError(data.message || 'Failed to start import')
+        const msg = res.status === 422 && data.message
+          ? data.message
+          : (data.message || 'Failed to start import')
+        setZoomImportError(msg)
         return
       }
       setZoomImportToast({ message: 'Import started' })

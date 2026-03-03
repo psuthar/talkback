@@ -13,8 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTranscribeSessionQuestionVoice cannot use t.Parallel() because a subtest uses t.Setenv (incompatible with parallel).
 func TestTranscribeSessionQuestionVoice(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	ctx := context.Background()

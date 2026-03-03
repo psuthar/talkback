@@ -14,7 +14,8 @@ import (
 )
 
 func TestGetTranscriptJob(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()
@@ -124,7 +125,8 @@ func TestGetTranscriptJob(t *testing.T) {
 }
 
 func TestRegenerateTranscript(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	db := h.DB
 	ctx := context.Background()

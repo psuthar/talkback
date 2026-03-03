@@ -146,10 +146,7 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	if strings.HasPrefix(job.SourceURL, "sessions/") || strings.HasPrefix(job.SourceURL, "./sessions/") ||
 		strings.HasPrefix(job.SourceURL, "data/") || strings.HasPrefix(job.SourceURL, "./data/") {
 		// Local file - use it directly, no download needed
-		filePath := job.SourceURL
-		if strings.HasPrefix(filePath, "./") {
-			filePath = filePath[2:] // Remove "./" prefix
-		}
+		filePath := strings.TrimPrefix(job.SourceURL, "./")
 		
 		// Verify file exists
 		if _, err := os.Stat(filePath); err != nil {
@@ -161,6 +158,7 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 
 		tempFile = filePath
 		cleanup = func() {} // No cleanup needed for stored files
+		defer cleanup()
 		log.Printf("Using local file: %s", tempFile)
 	} else {
 		// Remote URL - resolve and download (existing Loom logic)

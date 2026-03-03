@@ -59,7 +59,7 @@ func FetchLoomTranscript(ctx context.Context, videoURL string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("Loom API returned status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("loom API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Parse response

@@ -17,7 +17,8 @@ import (
 )
 
 func TestAuthSignup(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	body := map[string]string{
@@ -56,7 +57,8 @@ func TestAuthSignup(t *testing.T) {
 }
 
 func TestAuthLogin_BadPassword(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -88,7 +90,8 @@ func TestAuthLogin_BadPassword(t *testing.T) {
 }
 
 func TestAuthMe_RequiresAuth(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
@@ -100,7 +103,8 @@ func TestAuthMe_RequiresAuth(t *testing.T) {
 }
 
 func TestAuthMe_WithValidSession(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -136,7 +140,8 @@ func TestAuthMe_WithValidSession(t *testing.T) {
 }
 
 func TestAuthMe_DisabledUserBlocked(t *testing.T) {
-	h, cleanup := setupTestHandlers(t)
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 	ctx := context.Background()
 

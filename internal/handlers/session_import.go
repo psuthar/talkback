@@ -4,11 +4,26 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/utils"
 )
+
+func zoomMaxVideoDurationSeconds() int64 {
+	v := os.Getenv("ZOOM_MAX_VIDEO_DURATION_SECONDS")
+	if v == "" {
+		return 600
+	}
+	n, _ := strconv.ParseInt(v, 10, 64)
+	if n <= 0 {
+		return 600
+	}
+	return n
+}
 
 // ZoomImportRequest body for POST /api/zoom/import (create session + start import in one call)
 type ZoomImportRequest struct {
@@ -88,6 +103,32 @@ func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = "Zoom Recording"
+	}
+
+	// Enforce Zoom max duration before creating session (return 422 so UI can show friendly error).
+	accessToken, _, tokenErr := h.GetValidZoomAccessToken(r, creatorIdentity)
+	if tokenErr == nil {
+		rec, recErr := utils.GetMeetingRecordingsWithRetry(accessToken, instanceUUID)
+		if recErr == nil && rec != nil && rec.Duration > 0 {
+			maxSec := zoomMaxVideoDurationSeconds()
+			durationSec := rec.Duration * 60
+			if int64(durationSec) > maxSec {
+				maxMin := maxSec / 60
+				msg := "Demo limit: Zoom recordings must be 10 minutes or less."
+				if maxMin != 10 {
+					msg = "Demo limit: Zoom recordings must be " + strconv.FormatInt(maxMin, 10) + " minutes or less."
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"message":              msg,
+					"reason_code":          "zoom_duration_limit",
+					"duration_minutes":     rec.Duration,
+					"max_duration_seconds": maxSec,
+				})
+				return
+			}
+		}
 	}
 
 	sessionID := uuid.New()
@@ -229,12 +270,37 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	if instanceUUID == "" {
 		instanceUUID = meetingUUID
 	}
-	_, _, err = h.GetValidZoomAccessToken(r, creatorIdentity)
+	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"code": "zoom_not_connected", "message": "Zoom not connected. Connect Zoom first."})
 		return
+	}
+	// Enforce Zoom max duration before creating job (return 422 so UI can show friendly error).
+	maxSec := zoomMaxVideoDurationSeconds()
+	rec, recErr := utils.GetMeetingRecordingsWithRetry(accessToken, instanceUUID)
+	if recErr == nil && rec != nil && rec.Duration > 0 {
+		durationSec := rec.Duration * 60
+		if int64(durationSec) > maxSec {
+			maxMin := maxSec / 60
+			msg := "Demo limit: Zoom recordings must be 10 minutes or less."
+			if maxMin != 10 {
+				msg = "Demo limit: Zoom recordings must be " + strconv.FormatInt(maxMin, 10) + " minutes or less."
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"message":                 msg,
+				"reason_code":             "zoom_duration_limit",
+				"duration_minutes":        rec.Duration,
+				"max_duration_seconds":    maxSec,
+			})
+			return
+		}
+	}
+	if recErr != nil {
+		log.Printf("SessionImportZoom: pre-check recordings failed (will let job run): %v", recErr)
 	}
 	jobID := uuid.New()
 	meetingUUIDPtr := &meetingUUID

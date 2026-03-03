@@ -112,47 +112,6 @@ func ExtractPDFPages(filePath string) ([]string, error) {
 	return out, nil
 }
 
-func ChunkText(text string, chunkSize int, overlap int) []string {
-	if chunkSize <= 0 {
-		chunkSize = 1000 // default chunk size
-	}
-	if overlap < 0 {
-		overlap = 200 // default overlap
-	}
-
-	if len(text) <= chunkSize {
-		return []string{text}
-	}
-
-	var chunks []string
-	start := 0
-
-	for start < len(text) {
-		end := start + chunkSize
-		if end > len(text) {
-			end = len(text)
-		} else {
-			// Try to break at sentence boundary
-			lastPeriod := strings.LastIndex(text[start:end], ".")
-			lastNewline := strings.LastIndex(text[start:end], "\n")
-
-			if lastPeriod > chunkSize/2 {
-				end = start + lastPeriod + 1
-			} else if lastNewline > chunkSize/2 {
-				end = start + lastNewline + 1
-			}
-		}
-
-		chunks = append(chunks, strings.TrimSpace(text[start:end]))
-		start = end - overlap
-		if start >= len(text) {
-			break
-		}
-	}
-
-	return chunks
-}
-
 func SaveFile(content io.Reader, destPath string) error {
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(destPath)
