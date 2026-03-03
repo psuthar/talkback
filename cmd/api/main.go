@@ -210,24 +210,37 @@ func main() {
 		}
 	}
 
-	// New Relic: initialize app from env (optional; skip if NEW_RELIC_LICENSE_KEY not set)
+	// New Relic: initialize app from env (optional; skip if NEW_RELIC_LICENSE_KEY not set).
+	// Use a short timeout so startup never blocks Render's health check if New Relic is slow/unreachable.
 	var nrApp *newrelic.Application
 	if license := os.Getenv("NEW_RELIC_LICENSE_KEY"); license != "" {
 		appName := os.Getenv("NEW_RELIC_APP_NAME")
 		if appName == "" {
 			appName = "Talkback-NewRelic"
 		}
-		var errNR error
-		nrApp, errNR = newrelic.NewApplication(
-			newrelic.ConfigAppName(appName),
-			newrelic.ConfigLicense(license),
-			newrelic.ConfigAppLogForwardingEnabled(true),
-		)
-		if errNR != nil {
-			log.Printf("New Relic: failed to create application: %v", errNR)
-			nrApp = nil
-		} else {
-			log.Printf("New Relic: application %q enabled", appName)
+		type result struct {
+			app *newrelic.Application
+			err error
+		}
+		done := make(chan result, 1)
+		go func() {
+			app, errNR := newrelic.NewApplication(
+				newrelic.ConfigAppName(appName),
+				newrelic.ConfigLicense(license),
+				newrelic.ConfigAppLogForwardingEnabled(true),
+			)
+			done <- result{app: app, err: errNR}
+		}()
+		select {
+		case res := <-done:
+			if res.err != nil {
+				log.Printf("New Relic: failed to create application: %v", res.err)
+			} else if res.app != nil {
+				nrApp = res.app
+				log.Printf("New Relic: application %q enabled", appName)
+			}
+		case <-time.After(5 * time.Second):
+			log.Println("New Relic: init timed out after 5s; starting without APM so health check can pass")
 		}
 	} else {
 		log.Println("New Relic: NEW_RELIC_LICENSE_KEY not set; APM disabled")
@@ -324,12 +337,12 @@ func main() {
 	http.HandleFunc(wrapNR("/api/auth/logout", corsWithCredentials(h.AuthLogout)))
 	http.HandleFunc(wrapNR("/api/me", corsWithCredentials(h.RequireAuth(h.AuthMe))))
 
-	// Local: PORT defaults to 8080 when unset; Render: provides PORT via env
+	// Local: PORT defaults to 8080 when unset; Render: provides PORT via env (e.g. 10000).
+	// Listen on all interfaces (":port") so Render's health check can reach /health. Do not set BIND_ADDRESS=127.0.0.1 on Render.
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
 	bindAddress := os.Getenv("BIND_ADDRESS")
 	addr := ":" + port
 	if bindAddress != "" {

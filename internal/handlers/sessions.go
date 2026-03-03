@@ -370,18 +370,33 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			playbackReasonCode = "VIDEO_INGEST_FAILED"
 			playbackMessage = "Video ingest failed. Creator can retry import."
 		} else if fa.Status == models.FileArtifactStatusReady {
-			// Only R2 and video content type for playback (no Zoom fallback).
+			// R2: presigned URL. Local: same-origin URL to SessionPrimaryVideoStream so playback works when running without R2.
 			ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
 			isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
-			if fa.StorageProvider == "r2" && isVideo && h.Storage != nil {
+			if !isVideo {
+				playbackReasonCode = "VIDEO_NOT_INGESTED"
+				playbackMessage = "Video not available for this session."
+			} else if fa.StorageProvider == "r2" && h.Storage != nil {
 				if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
 					videoAccessURL = url
 				} else {
 					playbackReasonCode = "VIDEO_NOT_INGESTED"
 					playbackMessage = "Video not available for this session."
 				}
+			} else if fa.StorageProvider == "local" {
+				base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("API_PUBLIC_ORIGIN")), "/")
+				if base == "" {
+					scheme := "https"
+					if r.TLS == nil {
+						scheme = "http"
+					}
+					if s := r.Header.Get("X-Forwarded-Proto"); s != "" {
+						scheme = s
+					}
+					base = scheme + "://" + r.Host
+				}
+				videoAccessURL = fmt.Sprintf("%s/api/sessions/%s/primary-video", base, sessionID.String())
 			} else {
-				// Local or non-video: do not return URL for demo (R2-only invariant).
 				playbackReasonCode = "VIDEO_NOT_INGESTED"
 				playbackMessage = "Video not available for this session."
 			}

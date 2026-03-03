@@ -1,0 +1,25 @@
+{
+  "window_minutes": 30,
+  "queries": [
+    {
+      "name": "throughput",
+      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "latency_p95",
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "top_transactions_p95",
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction FACET name LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "error_count",
+      "nrql": "SELECT count(*) AS 'errors' FROM Transaction WHERE error.message IS NOT NULL SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "top_errors",
+      "nrql": "SELECT count(*) AS 'count' FROM Transaction FACET error.message LIMIT 10 SINCE {{window}} minutes ago"
+    }
+  ]
+}

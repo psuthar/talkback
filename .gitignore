@@ -27,6 +27,12 @@ go.work
 *.swo
 *~
 
+# Observability worker output (keep ops/bundles/ via .gitkeep)
+ops/bundles/*
+ops/bundles/*.md
+ops/bundles/*.json
+!ops/bundles/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

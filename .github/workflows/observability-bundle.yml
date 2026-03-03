@@ -1,0 +1,41 @@
+# Observability bundle worker: run on demand (and optionally on schedule).
+# Requires NEW_RELIC_API_KEY and NEW_RELIC_ACCOUNT_ID as repo secrets.
+# Schedule is commented out until confirmed to avoid unnecessary runs.
+
+name: Observability Bundle
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 */6 * * *'   # every 6 hours; uncomment when ready
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run obsworker
+        env:
+          NEW_RELIC_API_KEY: ${{ secrets.NEW_RELIC_API_KEY }}
+          NEW_RELIC_ACCOUNT_ID: ${{ secrets.NEW_RELIC_ACCOUNT_ID }}
+          # Optional: NEW_RELIC_REGION, OBS_WINDOW_MINUTES, OBS_APP_NAME
+        run: go run ./cmd/obsworker
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-bundle
+          path: |
+            ops/bundles/*.md
+            ops/bundles/*.json
+          if-no-files-found: warn

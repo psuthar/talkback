@@ -89,22 +89,6 @@ func runTestMigrations(databaseURL string) error {
 	return nil
 }
 
-// setupTestHandlers uses the shared test DB (created in TestMain). Cleanup truncates using a fresh pool then closes the test's pool so background goroutines (e.g. IndexSessionAsync) still using the test pool cannot block truncation.
-func setupTestHandlers(t *testing.T) (*Handlers, func()) {
-	t.Helper()
-	db, err := database.New()
-	require.NoError(t, err, "DATABASE_URL must be set (TestMain sets it from shared test DB)")
-	cleanup := func() {
-		// Truncate with a new pool so we don't block on connections held by IndexSessionAsync or other background work from the test's pool.
-		if truncatePool, err := database.New(); err == nil {
-			test.TruncateTables(t, truncatePool.Pool)
-			truncatePool.Close()
-		}
-		db.Close()
-	}
-	return NewHandlers(db, nil, nil), cleanup
-}
-
 // setupTestHandlersParallel creates a dedicated test database and handlers for this test. Use with t.Parallel() so tests do not share DB state. Cleanup drops the database and closes the pool.
 func setupTestHandlersParallel(t *testing.T) (*Handlers, func()) {
 	t.Helper()
@@ -126,13 +110,13 @@ func setupTestHandlersParallel(t *testing.T) (*Handlers, func()) {
 func createTestSessionForHandlers(t *testing.T, db *database.DB, title string) *models.Session {
 	t.Helper()
 	ctx := context.Background()
-	
+
 	session := &models.Session{
 		ID:     uuid.New(),
 		Title:  title,
 		Status: models.SessionStatusOpen,
 	}
-	
+
 	err := db.CreateSession(ctx, session)
 	require.NoError(t, err)
 	return session
@@ -313,9 +297,9 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("attaches video URL with embed mode (new format)", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":     "loom",
+			"provider":      "loom",
 			"playback_mode": "embed",
-			"embed_url":    "https://www.loom.com/share/embed-example",
+			"embed_url":     "https://www.loom.com/share/embed-example",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
@@ -335,10 +319,10 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("attaches video URL with direct mode", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":      "other",
-			"playback_mode": "direct",
-			"media_url":     "https://example.com/video.mp4",
-			"poster_url":    "https://example.com/poster.jpg",
+			"provider":         "other",
+			"playback_mode":    "direct",
+			"media_url":        "https://example.com/video.mp4",
+			"poster_url":       "https://example.com/poster.jpg",
 			"duration_seconds": 1234,
 		}
 		body, _ := json.Marshal(reqBody)
@@ -361,7 +345,7 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("returns 400 when embed_url is missing for embed mode", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":     "loom",
+			"provider":      "loom",
 			"playback_mode": "embed",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -376,7 +360,7 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("returns 400 when media_url is missing for direct mode", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":     "other",
+			"provider":      "other",
 			"playback_mode": "direct",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -391,7 +375,7 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("returns 400 when playback_mode is invalid", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":     "other",
+			"provider":      "other",
 			"playback_mode": "invalid",
 			"media_url":     "https://example.com/video.mp4",
 		}

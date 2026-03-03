@@ -1,0 +1,13 @@
+{
+  "data": {
+    "actor": {
+      "account": {
+        "nrql": {
+          "results": [
+            {"req_per_min": 42.5}
+          ]
+        }
+      }
+    }
+  }
+}

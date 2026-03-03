@@ -1,0 +1,13 @@
+{
+  "window_minutes": 30,
+  "queries": [
+    {
+      "name": "throughput",
+      "nrql": "SELECT count(*) FROM Transaction SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "errors",
+      "nrql": "SELECT count(*) FROM Transaction WHERE error IS NOT NULL SINCE {{window}} minutes ago"
+    }
+  ]
+}
