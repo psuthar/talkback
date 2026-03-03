@@ -17,6 +17,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
@@ -181,7 +182,7 @@ func main() {
 	// CORS with credentials for cookie-based auth (/api/auth, /api/me, /api/sessions). Browser requires
 	// a single specific origin and Allow-Credentials. Use request Origin when it's in the allowed list
 	// so cross-origin cookies work (e.g. frontend on talkback-ux, API on talkback-895n on Render).
-	corsWithCredentials := func(next http.HandlerFunc) http.HandlerFunc {
+		corsWithCredentials := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			origin := ""
 			reqOrigin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -209,10 +210,37 @@ func main() {
 		}
 	}
 
-	// Register routes with CORS
-	http.HandleFunc("/health", corsMiddleware(healthHandler))
-	http.HandleFunc("/healthz", corsMiddleware(healthHandler))
-	http.HandleFunc("/db/ping", corsMiddleware(dbPingHandler))
+	// New Relic: initialize app from env (optional; skip if NEW_RELIC_LICENSE_KEY not set)
+	var nrApp *newrelic.Application
+	if license := os.Getenv("NEW_RELIC_LICENSE_KEY"); license != "" {
+		appName := os.Getenv("NEW_RELIC_APP_NAME")
+		if appName == "" {
+			appName = "Talkback-NewRelic"
+		}
+		var errNR error
+		nrApp, errNR = newrelic.NewApplication(
+			newrelic.ConfigAppName(appName),
+			newrelic.ConfigLicense(license),
+			newrelic.ConfigAppLogForwardingEnabled(true),
+		)
+		if errNR != nil {
+			log.Printf("New Relic: failed to create application: %v", errNR)
+			nrApp = nil
+		} else {
+			log.Printf("New Relic: application %q enabled", appName)
+		}
+	} else {
+		log.Println("New Relic: NEW_RELIC_LICENSE_KEY not set; APM disabled")
+	}
+	// wrapNR passes (pattern, handler) to http.HandleFunc; WrapHandleFunc returns (string, HandlerFunc) and is safe when nrApp is nil.
+	wrapNR := func(pattern string, h http.HandlerFunc) (string, http.HandlerFunc) {
+		return newrelic.WrapHandleFunc(nrApp, pattern, h)
+	}
+
+	// Register routes with CORS and optional New Relic
+	http.HandleFunc(wrapNR("/health", corsMiddleware(healthHandler)))
+	http.HandleFunc(wrapNR("/healthz", corsMiddleware(healthHandler)))
+	http.HandleFunc(wrapNR("/db/ping", corsMiddleware(dbPingHandler)))
 
 	// Log upload requests so we can confirm they hit this process (debug: breakpoints not hitting)
 	logUploadIfMatch := func(next http.HandlerFunc) http.HandlerFunc {
@@ -225,50 +253,50 @@ func main() {
 	}
 
 	// Artifact endpoints with CORS
-	http.HandleFunc("/artifacts", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(wrapNR("/artifacts", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/artifacts" && r.Method == http.MethodPost {
 			h.CreateArtifact(w, r)
 		} else {
 			h.ArtifactsRouter(w, r)
 		}
-	}))
-	http.HandleFunc("/artifacts/", corsMiddleware(logUploadIfMatch(h.ArtifactsRouter)))
+	})))
+	http.HandleFunc(wrapNR("/artifacts/", corsMiddleware(logUploadIfMatch(h.ArtifactsRouter))))
 
 	// Session endpoints with CORS (Phase 3). POST create requires auth + admin/creator role.
-	http.HandleFunc("/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(wrapNR("/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/sessions" && r.Method == http.MethodPost {
 			h.RequireAuth(h.CreateSession)(w, r)
 		} else {
 			h.SessionsRouter(w, r)
 		}
-	}))
-	http.HandleFunc("/sessions/from-zoom", corsWithCredentials(h.RequireAuth(h.CreateSessionFromZoom)))
-	http.HandleFunc("/sessions/", corsWithCredentials(logUploadIfMatch(h.SessionsRouter)))
+	})))
+	http.HandleFunc(wrapNR("/sessions/from-zoom", corsWithCredentials(h.RequireAuth(h.CreateSessionFromZoom))))
+	http.HandleFunc(wrapNR("/sessions/", corsWithCredentials(logUploadIfMatch(h.SessionsRouter))))
 
 	// WebSocket endpoint for session updates
-	http.HandleFunc("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub)))
+	http.HandleFunc(wrapNR("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub))))
 
 	// Admin endpoints with CORS
 	// Reset all data: admin only (and ALLOW_DEV_RESET must be set)
-	http.HandleFunc("/admin/reset", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.ResetAllData))))
+	http.HandleFunc(wrapNR("/admin/reset", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.ResetAllData)))))
 
 	// Zoom OAuth endpoints
-	http.HandleFunc("/auth/zoom/start", corsMiddleware(h.ZoomAuthStart))
-	http.HandleFunc("/auth/zoom/callback", corsMiddleware(h.ZoomAuthCallback))
-	http.HandleFunc("/auth/zoom/disconnect", corsMiddleware(h.ZoomAuthDisconnect))
-	http.HandleFunc("/auth/zoom/me", corsMiddleware(h.ZoomAuthMe))
+	http.HandleFunc(wrapNR("/auth/zoom/start", corsMiddleware(h.ZoomAuthStart)))
+	http.HandleFunc(wrapNR("/auth/zoom/callback", corsMiddleware(h.ZoomAuthCallback)))
+	http.HandleFunc(wrapNR("/auth/zoom/disconnect", corsMiddleware(h.ZoomAuthDisconnect)))
+	http.HandleFunc(wrapNR("/auth/zoom/me", corsMiddleware(h.ZoomAuthMe)))
 	// Zoom transcript status (explicit check before creating session)
-	http.HandleFunc("/zoom/transcript-status", corsMiddleware(h.ZoomTranscriptStatus))
+	http.HandleFunc(wrapNR("/zoom/transcript-status", corsMiddleware(h.ZoomTranscriptStatus)))
 
 	// API Zoom endpoints (mission: /api/zoom/*)
-	http.HandleFunc("/api/zoom/status", corsMiddleware(h.ZoomAPIStatus))
-	http.HandleFunc("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect))
-	http.HandleFunc("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect))
-	http.HandleFunc("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings))
-	http.HandleFunc("/api/zoom/import", corsWithCredentials(h.RequireAuth(h.ZoomImport)))
+	http.HandleFunc(wrapNR("/api/zoom/status", corsMiddleware(h.ZoomAPIStatus)))
+	http.HandleFunc(wrapNR("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect)))
+	http.HandleFunc(wrapNR("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect)))
+	http.HandleFunc(wrapNR("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings)))
+	http.HandleFunc(wrapNR("/api/zoom/import", corsWithCredentials(h.RequireAuth(h.ZoomImport))))
 
 	// API Session list (my sessions): GET /api/sessions requires auth
-	http.HandleFunc("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc(wrapNR("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/sessions" {
 			http.NotFound(w, r)
 			return
@@ -278,23 +306,23 @@ func main() {
 			return
 		}
 		h.RequireAuth(h.ListSessions)(w, r)
-	}))
+	})))
 	// API Session import + ingestion status (mission: /api/sessions/:id/import/zoom, /api/sessions/:id/ingestion)
 	// Session invite: POST /api/sessions/:id/invite requires auth; other /api/sessions/ routes unchanged
-	http.HandleFunc("/api/sessions/", corsWithCredentials(h.ApiSessionsRouterWithInvite))
+	http.HandleFunc(wrapNR("/api/sessions/", corsWithCredentials(h.ApiSessionsRouterWithInvite)))
 
 	// Admin user management (RequireAuth + RequireAdmin)
-	http.HandleFunc("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))))
-	http.HandleFunc("/api/admin/users/", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler))))
+	http.HandleFunc(wrapNR("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
+	http.HandleFunc(wrapNR("/api/admin/users/", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
 
 	// API file artifacts (presigned PUT/GET for R2)
-	http.HandleFunc("/api/artifacts/", corsWithCredentials(h.ApiArtifactsRouter))
+	http.HandleFunc(wrapNR("/api/artifacts/", corsWithCredentials(h.ApiArtifactsRouter)))
 
 	// TalkBack auth: signup, login, logout (cookie-based); /api/me requires auth
-	http.HandleFunc("/api/auth/signup", corsWithCredentials(h.AuthSignup))
-	http.HandleFunc("/api/auth/login", corsWithCredentials(h.AuthLogin))
-	http.HandleFunc("/api/auth/logout", corsWithCredentials(h.AuthLogout))
-	http.HandleFunc("/api/me", corsWithCredentials(h.RequireAuth(h.AuthMe)))
+	http.HandleFunc(wrapNR("/api/auth/signup", corsWithCredentials(h.AuthSignup)))
+	http.HandleFunc(wrapNR("/api/auth/login", corsWithCredentials(h.AuthLogin)))
+	http.HandleFunc(wrapNR("/api/auth/logout", corsWithCredentials(h.AuthLogout)))
+	http.HandleFunc(wrapNR("/api/me", corsWithCredentials(h.RequireAuth(h.AuthMe))))
 
 	// Local: PORT defaults to 8080 when unset; Render: provides PORT via env
 	port := os.Getenv("PORT")
