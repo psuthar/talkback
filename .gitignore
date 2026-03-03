@@ -18,6 +18,9 @@ sessions/
 *.out
 go.work
 
+# Cursor MCP config (may contain GitHub PAT)
+.cursor/mcp.json
+
 # IDE
 .idea/
 .vscode/*

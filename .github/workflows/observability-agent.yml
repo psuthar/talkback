@@ -18,6 +18,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug — workflow context
+        run: |
+          echo "event=${{ github.event_name }} ref=${{ github.ref }} run_id=${{ github.run_id }}"
+          echo "actor=${{ github.actor }}"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -36,6 +41,11 @@ jobs:
             echo "has_secrets=false" >> $GITHUB_OUTPUT
             echo "::notice::NEW_RELIC_API_KEY or NEW_RELIC_ACCOUNT_ID not set. Skipping obsworker and issue steps. Add repo secrets to enable."
           fi
+
+      - name: Debug — secrets and next steps
+        run: |
+          echo "has_secrets=${{ steps.check-secrets.outputs.has_secrets }}"
+          [ "${{ steps.check-secrets.outputs.has_secrets }}" = "true" ] && echo "Next: run tests → obsworker → upload → issue" || echo "Next: run tests only (obsworker/upload/issue skipped)"
 
       - name: Run tests
         run: go test ./...
