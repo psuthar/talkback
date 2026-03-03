@@ -14,6 +14,9 @@ on:
 jobs:
   observability:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read   # checkout repo
+      issues: write   # create/update daily issue and add comments
     services:
       postgres:
         image: postgres:16
