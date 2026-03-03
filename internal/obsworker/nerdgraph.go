@@ -44,7 +44,8 @@ type nerdGraphErr struct {
 	Message string `json:"message"`
 }
 
-const nrqlQueryTemplate = `query RunNRQL($accountId: Int!, $nrql: String!) {
+// New Relic NerdGraph uses a custom scalar Nrql! for the query argument, not String!.
+const nrqlQueryTemplate = `query RunNRQL($accountId: Int!, $nrql: Nrql!) {
   actor {
     account(id: $accountId) {
       nrql(query: $nrql) {
