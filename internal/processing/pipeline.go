@@ -202,7 +202,7 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			}
 
 			log.Printf("R2_UPLOAD_START bucket=%s key=%s", bucket, storageKey)
-			etag, _, putErr := store.Put(ctx, storageKey, resp.Body, "video/mp4")
+			etag, _, putErr := store.Put(ctx, storageKey, resp.Body, "video/mp4", resp.ContentLength)
 			if putErr != nil {
 				log.Printf("R2_UPLOAD_DONE error=%v", putErr)
 				_ = db.UpdateFileArtifactToFailed(ctx, artifactID, "r2_put: "+putErr.Error())

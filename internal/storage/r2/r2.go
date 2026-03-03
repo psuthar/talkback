@@ -1,6 +1,7 @@
 package r2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -150,14 +151,25 @@ func (c *Client) PresignGet(ctx context.Context, key string, ttl time.Duration) 
 	return result.URL, nil
 }
 
-// Put uploads from reader (server-side, e.g. Zoom ingest). Returns etag and size.
-func (c *Client) Put(ctx context.Context, key string, reader io.Reader, contentType string) (etag string, size int64, err error) {
+// Put uploads from reader (server-side, e.g. Zoom ingest). contentLength <= 0 means unknown; we buffer to get length (R2 requires Content-Length).
+func (c *Client) Put(ctx context.Context, key string, reader io.Reader, contentType string, contentLength int64) (etag string, size int64, err error) {
 	k := c.key(key)
+	body := reader
+	if contentLength <= 0 {
+		// R2/S3 require Content-Length; buffer so we can set it.
+		buf, bufErr := io.ReadAll(reader)
+		if bufErr != nil {
+			return "", 0, fmt.Errorf("r2 Put read body: %w", bufErr)
+		}
+		contentLength = int64(len(buf))
+		body = bytes.NewReader(buf)
+	}
 	in := &s3.PutObjectInput{
-		Bucket:      aws.String(c.cfg.Bucket),
-		Key:         aws.String(k),
-		Body:        reader,
-		ContentType: aws.String(contentType),
+		Bucket:        aws.String(c.cfg.Bucket),
+		Key:           aws.String(k),
+		Body:          body,
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(contentLength),
 	}
 	out, err := c.client.PutObject(ctx, in)
 	if err != nil {
@@ -166,8 +178,7 @@ func (c *Client) Put(ctx context.Context, key string, reader io.Reader, contentT
 	if out.ETag != nil {
 		etag = strings.Trim(*out.ETag, `"`)
 	}
-	// Size: we don't get it from PutObject output when streaming; caller can use Head after or pass content-length
-	return etag, 0, nil
+	return etag, contentLength, nil
 }
 
 // Get returns a reader for the object body. Caller must close the returned io.ReadCloser.

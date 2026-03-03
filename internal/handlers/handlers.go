@@ -303,7 +303,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to open temp file for upload", http.StatusInternalServerError)
 			return
 		}
-		_, _, err = h.Storage.Put(r.Context(), storageKey, f, contentType)
+		_, _, err = h.Storage.Put(r.Context(), storageKey, f, contentType, 0)
 		_ = f.Close()
 		if err != nil {
 			log.Printf("UploadMaterial R2 Put: %v", err)
