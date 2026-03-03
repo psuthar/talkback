@@ -118,6 +118,15 @@ button:disabled {
   }
 }
 
+@keyframes processing-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.processing-flash {
+  animation: processing-flash 1.2s ease-in-out infinite;
+}
+
 .error {
   background-color: #fee;
   color: #c33;

@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/psuthar/talkback/internal/storage"
 )
 
@@ -221,6 +222,60 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
+
+// DeletePrefix deletes all objects whose keys start with the given prefix (e.g. "sessions/").
+// Prefix is combined with c.cfg.Prefix so the bucket prefix is respected.
+func (c *Client) DeletePrefix(ctx context.Context, prefix string) (deleted int, err error) {
+	return c.deleteByPrefix(ctx, c.key(strings.TrimPrefix(prefix, "/")))
+}
+
+// DeletePrefixLiteral deletes all objects whose keys start with the given prefix, without
+// prepending c.cfg.Prefix. Use when objects were written with no bucket prefix (e.g. "sessions/").
+func (c *Client) DeletePrefixLiteral(ctx context.Context, prefix string) (deleted int, err error) {
+	p := strings.TrimPrefix(prefix, "/")
+	if p != "" && !strings.HasSuffix(p, "/") {
+		p += "/"
+	}
+	return c.deleteByPrefix(ctx, p)
+}
+
+func (c *Client) deleteByPrefix(ctx context.Context, fullPrefix string) (deleted int, err error) {
+	if fullPrefix != "" && !strings.HasSuffix(fullPrefix, "/") {
+		fullPrefix += "/"
+	}
+	paginator := s3.NewListObjectsV2Paginator(c.client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.cfg.Bucket),
+		Prefix: aws.String(fullPrefix),
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return deleted, fmt.Errorf("r2 ListObjectsV2: %w", err)
+		}
+		if len(page.Contents) == 0 {
+			continue
+		}
+		ids := make([]types.ObjectIdentifier, 0, len(page.Contents))
+		for _, obj := range page.Contents {
+			if obj.Key != nil {
+				ids = append(ids, types.ObjectIdentifier{Key: obj.Key})
+			}
+		}
+		_, err = c.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+			Bucket: aws.String(c.cfg.Bucket),
+			Delete: &types.Delete{
+				Objects: ids,
+				Quiet:   aws.Bool(true),
+			},
+		})
+		if err != nil {
+			return deleted, fmt.Errorf("r2 DeleteObjects: %w", err)
+		}
+		deleted += len(ids)
+	}
+	return deleted, nil
+}
+
 
 // Ensure Client implements storage.Interface.
 var _ storage.Interface = (*Client)(nil)

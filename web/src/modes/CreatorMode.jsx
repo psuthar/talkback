@@ -829,7 +829,7 @@ export function CreatorMode({
                   {!hasJob
                     ? 'Checking import status…'
                     : isRunning
-                      ? 'Processing this session…'
+                      ? <span className="processing-flash">Processing this session…</span>
                       : isWaiting
                         ? "Waiting for Zoom to finish processing. We'll keep checking."
                         : processingStatus.state === 'failed_transient'
@@ -843,14 +843,6 @@ export function CreatorMode({
                                 : processingStatus.state === 'canceled'
                                   ? 'Import canceled.'
                                   : processingStatus.state}
-                </div>
-                <div style={{ fontSize: '13px', color: '#555', display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
-                  {processingStatus?.updated_at && (
-                    <span>Last updated: {relativeTime(processingStatus.updated_at)}</span>
-                  )}
-                  {processingStatus?.next_retry_at && (
-                    <span>Next retry: {new Date(processingStatus.next_retry_at).toLocaleString()}</span>
-                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
