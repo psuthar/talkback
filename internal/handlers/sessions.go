@@ -370,20 +370,13 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			playbackReasonCode = "VIDEO_INGEST_FAILED"
 			playbackMessage = "Video ingest failed. Creator can retry import."
 		} else if fa.Status == models.FileArtifactStatusReady {
-			// R2: presigned URL. Local: same-origin URL to SessionPrimaryVideoStream so playback works when running without R2.
+			// Always use same-origin primary-video URL so the browser never hits R2 directly (avoids CORS). API streams from R2 or local.
 			ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
 			isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
 			if !isVideo {
 				playbackReasonCode = "VIDEO_NOT_INGESTED"
 				playbackMessage = "Video not available for this session."
-			} else if fa.StorageProvider == "r2" && h.Storage != nil {
-				if url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, time.Hour); err == nil {
-					videoAccessURL = url
-				} else {
-					playbackReasonCode = "VIDEO_NOT_INGESTED"
-					playbackMessage = "Video not available for this session."
-				}
-			} else if fa.StorageProvider == "local" {
+			} else if fa.StorageProvider == "r2" && h.Storage != nil || fa.StorageProvider == "local" {
 				base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("API_PUBLIC_ORIGIN")), "/")
 				if base == "" {
 					scheme := "https"
@@ -523,8 +516,8 @@ type SetPrimaryVideoArtifactRequest struct {
 	ArtifactID string `json:"artifact_id"`
 }
 
-// SessionPrimaryVideoStream serves the primary video file for a session (local storage only). Used for local debugging when Zoom MP4 is saved to disk.
-// GET /api/sessions/:id/primary-video
+// SessionPrimaryVideoStream serves the primary video file for a session (from local disk or by streaming from R2).
+// GET /api/sessions/:id/primary-video — same-origin so the browser avoids CORS with R2.
 func (h *Handlers) SessionPrimaryVideoStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -550,37 +543,78 @@ func (h *Handlers) SessionPrimaryVideoStream(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Video not found", http.StatusNotFound)
 		return
 	}
-	if fa.StorageProvider != "local" {
-		http.Error(w, "Primary video is not stored locally; use video_access_url from GET session", http.StatusBadRequest)
-		return
+	ct := "video/mp4"
+	if fa.ContentType != "" {
+		ct = strings.TrimSpace(fa.ContentType)
 	}
-	absPath := filepath.Join(storage.UploadRoot(), fa.StorageKey)
-	f, err := os.Open(absPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "Video file not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	switch fa.StorageProvider {
+	case "r2":
+		if h.Storage == nil {
+			http.Error(w, "R2 storage not configured", http.StatusServiceUnavailable)
 			return
 		}
-		log.Printf("SessionPrimaryVideoStream open %s: %v", absPath, err)
-		http.Error(w, "Failed to open video", http.StatusInternalServerError)
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		http.Error(w, "Failed to stat video", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Accept-Ranges", "bytes")
-	if r.Method == http.MethodHead {
-		if info.Size() > 0 {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		exists, size, contentType, headErr := h.Storage.Head(r.Context(), fa.StorageKey)
+		if headErr != nil || !exists {
+			log.Printf("SessionPrimaryVideoStream R2 Head %s: %v", fa.StorageKey, headErr)
+			http.Error(w, "Video not found", http.StatusNotFound)
+			return
+		}
+		if contentType != "" {
+			w.Header().Set("Content-Type", contentType)
+		}
+		if r.Method == http.MethodHead {
+			if size > 0 {
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if size > 0 {
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
 		}
 		w.WriteHeader(http.StatusOK)
+		rc, err := h.Storage.Get(r.Context(), fa.StorageKey)
+		if err != nil {
+			log.Printf("SessionPrimaryVideoStream R2 Get %s: %v", fa.StorageKey, err)
+			return
+		}
+		defer rc.Close()
+		_, _ = io.Copy(w, rc)
+		return
+	case "local":
+		absPath := filepath.Join(storage.UploadRoot(), fa.StorageKey)
+		f, err := os.Open(absPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				http.Error(w, "Video file not found", http.StatusNotFound)
+				return
+			}
+			log.Printf("SessionPrimaryVideoStream open %s: %v", absPath, err)
+			http.Error(w, "Failed to open video", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			http.Error(w, "Failed to stat video", http.StatusInternalServerError)
+			return
+		}
+		if r.Method == http.MethodHead {
+			if info.Size() > 0 {
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.ServeContent(w, r, "zoom.mp4", info.ModTime(), f)
+		return
+	default:
+		http.Error(w, "Primary video storage not supported", http.StatusBadRequest)
 		return
 	}
-	http.ServeContent(w, r, "zoom.mp4", info.ModTime(), f)
 }
 
 // SetSessionPrimaryVideoArtifact sets the session's primary_video_artifact_id (for R2 playback). Called after client completes presign-put flow.
