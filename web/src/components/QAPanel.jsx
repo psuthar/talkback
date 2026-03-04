@@ -13,6 +13,7 @@ export function QAPanel({
   onCitationClick,
   replyingToQuestionId,
   setReplyingToQuestionId,
+  currentAskerName,
   voiceRecording,
   voiceUploading,
   toggleVoiceRecording,
@@ -65,6 +66,7 @@ export function QAPanel({
         <QAHistory
           questions={questions}
           readOnly={false}
+          currentAskerName={currentAskerName}
           onCitationClick={onCitationClick}
           onReply={setReplyingToQuestionId ? (q) => setReplyingToQuestionId(q.id) : undefined}
         />

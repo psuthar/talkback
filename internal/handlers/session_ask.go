@@ -199,12 +199,21 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create question (optionally threaded)
+	// asked_by is the logged-in user's email (everyone must be authenticated to ask).
+	user := UserFromContext(r.Context())
+	var askedByPtr *string
+	if user != nil && user.Email != "" {
+		email := strings.TrimSpace(user.Email)
+		if email != "" {
+			askedByPtr = &email
+		}
+	}
 	question := &models.Question{
 		ID:                uuid.New(),
 		ArtifactID:        artifactID,
 		SessionID:         sessionID,
 		ParentQuestionID:  parentQuestionID,
+		AskedBy:           askedByPtr,
 		QuestionText:      req.QuestionText,
 		QuestionSource:    models.QuestionSourceText,
 	}

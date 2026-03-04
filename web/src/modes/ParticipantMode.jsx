@@ -56,6 +56,7 @@ export function ParticipantMode({
   onRetryLoadSession,
   replyingToQuestionId,
   setReplyingToQuestionId,
+  currentAskerName,
   onCitationClick
 }) {
   const hasSession = currentSession && currentSession.session
@@ -412,6 +413,7 @@ export function ParticipantMode({
             onCitationClick={handleCitationClick}
             replyingToQuestionId={replyingToQuestionId}
             setReplyingToQuestionId={setReplyingToQuestionId}
+            currentAskerName={currentAskerName}
             voiceRecording={voiceRecording}
             voiceUploading={voiceUploading}
             toggleVoiceRecording={toggleVoiceRecording}

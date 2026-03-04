@@ -161,7 +161,7 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 	if parts[3] == "ask" {
 		if r.Method == http.MethodPost {
-			h.SessionAsk(w, r)
+			h.RequireAuth(h.SessionAsk)(w, r)
 			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

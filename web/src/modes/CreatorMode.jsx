@@ -1228,19 +1228,21 @@ export function CreatorMode({
                 borderRadius: '5px',
                 backgroundColor: q.answer ? '#f9f9f9' : '#fff'
               }}>
-                <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333' }}>
-                  Q: {q.question_text}
+                <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span>Q: {q.question_text}</span>
+                  <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
+                    {q.asked_by ? (
+                      <>— asked by <strong>{q.asked_by}</strong></>
+                    ) : (
+                      <>— asked by <span style={{ color: '#999' }}>—</span></>
+                    )}
+                  </span>
                 </div>
                 <div style={{ fontSize: '11px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
                   Asked: {new Date(q.created_at).toLocaleString()}
                   {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
                     <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
                       | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
-                    </span>
-                  )}
-                  {q.asked_by && (
-                    <span style={{ marginLeft: '10px', color: '#666' }}>
-                      | By: {q.asked_by}
                     </span>
                   )}
                 </div>

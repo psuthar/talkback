@@ -65,19 +65,21 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333' }}>
-            Q: {q.question_text}
+          <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span>Q: {q.question_text}</span>
+            <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
+              {q.asked_by ? (
+                <>— asked by <strong>{q.asked_by}</strong></>
+              ) : (
+                <>— asked by <span style={{ color: '#999' }}>—</span></>
+              )}
+            </span>
           </div>
           <div style={{ fontSize: '11px', color: '#999', marginTop: '5px' }}>
             Asked: {new Date(q.created_at).toLocaleString()}
             {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
               <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
                 | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
-              </span>
-            )}
-            {q.asked_by && (
-              <span style={{ marginLeft: '10px', color: '#666' }}>
-                | By: {q.asked_by}
               </span>
             )}
           </div>
@@ -207,28 +209,46 @@ function ThreadList({ roots, byParent, onCitationClick, onReply, depth = 0, expa
   )
 }
 
-export function QAHistory({ questions, readOnly = false, onCitationClick, onReply }) {
-  // All threads collapsed by default when page loads
+export function QAHistory({ questions, readOnly = false, currentAskerName, onCitationClick, onReply }) {
+  // Collapsed by default; only the asker (currentAskerName) sees their own questions auto-expanded.
   const [expandedThreads, setExpandedThreads] = useState({})
   const prevQuestionIdsRef = useRef(new Set())
 
-  // Auto-expand parent thread when a new reply is added (e.g. user just asked a follow-up)
+  // Initial load: expand only threads where the root question was asked by current user. New questions: expand only if asked by current user.
   useEffect(() => {
     if (!questions || questions.length === 0) return
     const prevIds = prevQuestionIdsRef.current
     const currentIds = new Set(questions.map((q) => q.id))
-    const newCount = questions.filter((q) => !prevIds.has(q.id)).length
-    // Only auto-expand when we've seen questions before and few new ones (avoids initial load + session switch)
-    if (prevIds.size > 0 && newCount > 0 && newCount <= 3) {
-      for (const q of questions) {
-        if (!prevIds.has(q.id) && q.parent_question_id) {
-          const rootId = findRootId(questions, q.parent_question_id)
-          setExpandedThreads((prev) => ({ ...prev, [rootId]: true }))
-        }
+    const newIds = questions.filter((q) => !prevIds.has(q.id))
+    const { roots } = buildThreadTree(questions)
+
+    if (prevIds.size === 0) {
+      // Initial load: expand only "my" root questions (asked_by === currentAskerName)
+      if (currentAskerName) {
+        setExpandedThreads((prev) => {
+          const next = { ...prev }
+          for (const r of roots) {
+            if (r.asked_by === currentAskerName) next[r.id] = true
+          }
+          return next
+        })
       }
+    } else if (newIds.length > 0) {
+      // New questions appeared: expand only if the new question was asked by current user
+      setExpandedThreads((prev) => {
+        let next = { ...prev }
+        for (const q of newIds) {
+          if (currentAskerName && q.asked_by === currentAskerName) {
+            const rootId = q.parent_question_id ? findRootId(questions, q.parent_question_id) : q.id
+            next[rootId] = true
+          }
+        }
+        return next
+      })
     }
+
     prevQuestionIdsRef.current = currentIds
-  }, [questions])
+  }, [questions, currentAskerName])
 
   if (!questions || questions.length === 0) {
     return (

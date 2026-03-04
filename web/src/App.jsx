@@ -116,7 +116,7 @@ function App() {
   const [sessionTitle, setSessionTitle] = useState('')
   const [sessions, setSessions] = useState([])
   const [currentSession, setCurrentSession] = useState(null)
-  const [participantRef, setParticipantRef] = useState('anonymous')
+  const [participantRef, setParticipantRef] = useState('')
   const [viewMode, setViewMode] = useState('session')
   const [sessionMode, setSessionMode] = useState('create') // 'create' or 'select'
   const [sessionIdInput, setSessionIdInput] = useState('')
@@ -399,6 +399,13 @@ function App() {
       setSessionMode('select')
     }
   }, [authUser?.global_role])
+
+  // Default participant identity to logged-in user's email (no anonymous users)
+  useEffect(() => {
+    if (authUser?.email && !participantRef) {
+      setParticipantRef(authUser.email)
+    }
+  }, [authUser?.email])
 
   // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session)
   useEffect(() => {
@@ -1695,7 +1702,7 @@ function App() {
       return
     }
     if (!participantRef) {
-      setJoinSessionFeedback({ type: 'error', message: 'Please enter participant name' })
+      setJoinSessionFeedback({ type: 'error', message: authUser ? 'Your email is required to join this session.' : 'Please log in to join this session.' })
       return
     }
 
@@ -1751,9 +1758,10 @@ function App() {
     try {
       const body = { question_text: text, asked_via: askedVia }
       if (parentQuestionId) body.parent_question_id = parentQuestionId
-      // Session-scoped RAG: POST /api/sessions/:id/ask (Mission #3)
+      // Ask requires login; backend sets asked_by from authenticated user email.
       const response = await fetch(`${apiBaseUrl}/api/sessions/${currentSession.session.id}/ask`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
@@ -1761,10 +1769,14 @@ function App() {
       if (!response.ok) {
         const respText = await response.text()
         let msg = `Error ${response.status}: ${respText}`
-        try {
-          const json = JSON.parse(respText)
-          msg = json.message || msg
-        } catch { /* ignore */ }
+        if (response.status === 401) {
+          msg = 'Please log in to ask a question.'
+        } else {
+          try {
+            const json = JSON.parse(respText)
+            msg = json.message || json.error || msg
+          } catch { /* ignore */ }
+        }
         setAskQuestionFeedback({ type: 'error', message: msg })
         return
       }
@@ -2957,6 +2969,7 @@ function App() {
               onRetryLoadSession={urlSessionId ? () => openSession(urlSessionId, 'participant') : null}
               replyingToQuestionId={replyingToQuestionId}
               setReplyingToQuestionId={setReplyingToQuestionId}
+              currentAskerName={authUser?.email ?? undefined}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null
                   ? citation.navigation.seek_ms
