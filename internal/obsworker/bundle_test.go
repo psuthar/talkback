@@ -155,3 +155,35 @@ func TestWriteBundle_OutputInRequestedDir(t *testing.T) {
 		t.Errorf("mdPath should be under %s: %s", sub, mdPath)
 	}
 }
+
+func TestRenderMarkdown_ContainsSummaryWhenDeltaSet(t *testing.T) {
+	dir := t.TempDir()
+	delta := Delta{
+		Status:     "YELLOW",
+		Confidence: "MED",
+		Reasons:    []string{"p95_ms increased +31% (120.0 → 157.2)"},
+	}
+	b := &Bundle{
+		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:    &delta,
+		Results:  []QueryResult{{Name: "txn_summary", NRQL: "SELECT 1", Results: nil}},
+	}
+	_, mdPath, err := WriteBundle(b, dir)
+	if err != nil {
+		t.Fatalf("WriteBundle: %v", err)
+	}
+	content, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	md := string(content)
+	if !strings.Contains(md, "## Summary") {
+		t.Error("markdown should contain ## Summary when Delta is set")
+	}
+	if !strings.Contains(md, "**Status:** YELLOW") {
+		t.Error("markdown should contain Status: YELLOW")
+	}
+	if !strings.Contains(md, "## Key Deltas") {
+		t.Error("markdown should contain ## Key Deltas")
+	}
+}

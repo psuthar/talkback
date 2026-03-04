@@ -29,6 +29,7 @@ type BundleMetadata struct {
 // Bundle is the full diagnostic bundle.
 type Bundle struct {
 	Metadata BundleMetadata `json:"metadata"`
+	Delta    *Delta         `json:"delta,omitempty"`
 	Results  []QueryResult  `json:"results"`
 }
 
@@ -133,6 +134,42 @@ func (b *Bundle) RenderMarkdown() string {
 		sb.WriteString(fmt.Sprintf("- **Git branch:** %s\n", b.Metadata.GitBranch))
 	}
 	sb.WriteString("\n---\n\n")
+
+	// Summary + Key Deltas + Recommended Next Queries (from delta)
+	if b.Delta != nil {
+		d := *b.Delta
+		sb.WriteString("## Summary\n\n")
+		sb.WriteString(fmt.Sprintf("- **Status:** %s\n", d.Status))
+		sb.WriteString(fmt.Sprintf("- **Confidence:** %s\n", d.Confidence))
+		sb.WriteString("- **Reasons:**\n")
+		if len(d.Reasons) == 0 {
+			sb.WriteString("  - (none)\n")
+		} else {
+			for _, r := range d.Reasons {
+				sb.WriteString(fmt.Sprintf("  - %s\n", r))
+			}
+		}
+		sb.WriteString("\n")
+		sb.WriteString("## Key Deltas\n\n")
+		deltaLines := DeltaSummaryLines(d)
+		if len(deltaLines) == 0 {
+			sb.WriteString("N/A (first run or no previous baseline)\n\n")
+		} else {
+			for _, line := range deltaLines {
+				sb.WriteString(fmt.Sprintf("- %s\n", line))
+			}
+			sb.WriteString("\n")
+		}
+		rec := RecommendedNextQueries(d)
+		if len(rec) > 0 {
+			sb.WriteString("## Recommended Next Queries\n\n")
+			for _, q := range rec {
+				sb.WriteString(fmt.Sprintf("- `%s`\n", q))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("---\n\n")
+	}
 
 	for _, qr := range b.Results {
 		sectionTitle := titleCaseQueryName(qr.Name)

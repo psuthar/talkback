@@ -36,6 +36,10 @@ ops/bundles/*.md
 ops/bundles/*.json
 !ops/bundles/.gitkeep
 
+# Baseline storage (keep ops/baselines/ via .gitkeep)
+ops/baselines/*.json
+!ops/baselines/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

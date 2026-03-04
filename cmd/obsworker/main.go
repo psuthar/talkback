@@ -58,6 +58,25 @@ func run() error {
 		})
 	}
 
+	// Extract key metrics and compute delta vs previous baseline
+	currMetrics, err := obsworker.ExtractKeyMetrics(bundle)
+	if err != nil {
+		return fmt.Errorf("extract metrics: %w", err)
+	}
+	baselinePath := obsworker.BaselinePath()
+	if !filepath.IsAbs(baselinePath) {
+		if cwd, err := os.Getwd(); err == nil {
+			baselinePath = filepath.Join(cwd, baselinePath)
+		}
+	}
+	prevBaseline, err := obsworker.LoadBaseline(baselinePath)
+	if err != nil {
+		return fmt.Errorf("load baseline: %w", err)
+	}
+	thresholds := obsworker.DefaultThresholds()
+	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds)
+	bundle.Delta = &delta
+
 	outDir := "ops/bundles"
 	if d := os.Getenv("OBS_BUNDLES_DIR"); d != "" {
 		outDir = d
@@ -74,6 +93,20 @@ func run() error {
 		return err
 	}
 
+	// Write new baseline only after bundle generation succeeded
+	currBaseline := obsworker.Baseline{
+		Timestamp:     ts,
+		WindowMinutes: cfg.WindowMins,
+		GitSHA:        gitSHA,
+		Metrics:       currMetrics,
+	}
+	if err := obsworker.WriteBaseline(baselinePath, currBaseline); err != nil {
+		return fmt.Errorf("write baseline: %w", err)
+	}
+
+	// Status line for scripting / logs
+	reasonsStr := strings.Join(delta.Reasons, " ")
+	fmt.Fprintf(os.Stdout, "STATUS=%s CONFIDENCE=%s REASONS=%q\n", delta.Status, delta.Confidence, reasonsStr)
 	fmt.Fprintf(os.Stdout, "Bundle written:\n  %s\n  %s\n", jsonPath, mdPath)
 	return nil
 }
