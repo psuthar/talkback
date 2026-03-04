@@ -252,12 +252,25 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 			Citations:    []models.Citation{},
 		}
 	}
-	// Normalize citations to canonical form (citation_id, anchor, label, excerpt) before saving
+	// Normalize citations to canonical form (citation_id, anchor, label, excerpt) before saving.
+	// Use material display names so citations show e.g. "Paresh Suthar Resume v5a.docx (block 1)" instead of generic "Slide 1".
 	chunkMap := make(citation.ChunkByID)
 	for _, c := range sessionChunks {
 		chunkMap[c.ID.String()] = c
 	}
-	qaResponse.Citations = citation.NormalizeCitations(qaResponse.Citations, chunkMap)
+	materialLabels := make(citation.MaterialLabels)
+	if materials, _ := h.DB.GetActiveMaterialsBySessionID(ctx, sessionID); materials != nil {
+		for _, m := range materials {
+			name := m.Filename
+			if m.Title != nil && *m.Title != "" {
+				name = *m.Title
+			}
+			if name != "" {
+				materialLabels[m.ID.String()] = name
+			}
+		}
+	}
+	qaResponse.Citations = citation.NormalizeCitations(qaResponse.Citations, chunkMap, materialLabels)
 	answer, err := utils.ConvertQAResponseToAnswer(question.ID, qaResponse, embedder.ModelName())
 	if err != nil {
 		log.Printf("SessionAsk ConvertQAResponseToAnswer: %v", err)
