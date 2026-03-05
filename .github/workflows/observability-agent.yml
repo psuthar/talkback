@@ -223,8 +223,8 @@ jobs:
               }
               core.notice(`Created new issue: ${issueTitle}`);
             }
-          env:
-            SIMULATION_ENABLED: ${{ steps.bundle.outputs.simulation_enabled }}
+        env:
+          SIMULATION_ENABLED: ${{ steps.bundle.outputs.simulation_enabled }}
 
       - name: Skip issue (GREEN)
         if: steps.check-secrets.outputs.has_secrets == 'true' && steps.bundle.outputs.status == 'GREEN'
