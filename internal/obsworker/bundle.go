@@ -28,9 +28,10 @@ type BundleMetadata struct {
 
 // Bundle is the full diagnostic bundle.
 type Bundle struct {
-	Metadata BundleMetadata `json:"metadata"`
-	Delta    *Delta         `json:"delta,omitempty"`
-	Results  []QueryResult  `json:"results"`
+	Metadata        BundleMetadata `json:"metadata"`
+	Delta           *Delta         `json:"delta,omitempty"`
+	Results         []QueryResult  `json:"results"`           // base queries only
+	DeepDiveResults []QueryResult  `json:"deep_dive,omitempty"` // only when status YELLOW/RED or OBS_FORCE_DEEP_DIVE
 }
 
 const maxResultsPreview = 20
@@ -141,6 +142,16 @@ func (b *Bundle) RenderMarkdown() string {
 		sb.WriteString("## Summary\n\n")
 		sb.WriteString(fmt.Sprintf("- **Status:** %s\n", d.Status))
 		sb.WriteString(fmt.Sprintf("- **Confidence:** %s\n", d.Confidence))
+		for i, r := range d.Reasons {
+			if strings.HasPrefix(r, "FORCED STATUS=") {
+				simLine := "- **Simulation:** " + r
+				if i+1 < len(d.Reasons) && !strings.HasPrefix(d.Reasons[i+1], "FORCED STATUS=") && strings.TrimSpace(d.Reasons[i+1]) != "" {
+					simLine += fmt.Sprintf(" (reason=%s)", d.Reasons[i+1])
+				}
+				sb.WriteString(simLine + "\n")
+				break
+			}
+		}
 		sb.WriteString("- **Reasons:**\n")
 		if len(d.Reasons) == 0 {
 			sb.WriteString("  - (none)\n")
@@ -250,6 +261,44 @@ func (b *Bundle) RenderMarkdown() string {
 			sb.WriteString(fmt.Sprintf("\n*... and %d more rows.*\n", len(qr.Results)-maxResultsPreview))
 		}
 		sb.WriteString("\n")
+	}
+
+	if len(b.DeepDiveResults) > 0 {
+		sb.WriteString("## Automatic Deep Dive\n\n")
+		triggerLine := "Triggered by status=YELLOW"
+		if b.Delta != nil {
+			triggerLine = "Triggered by status=" + b.Delta.Status
+			for _, r := range b.Delta.Reasons {
+				if strings.HasPrefix(r, "FORCED STATUS=") {
+					triggerLine = "Triggered by simulation override"
+					break
+				}
+			}
+		}
+		sb.WriteString(triggerLine + "\n\n")
+		for _, qr := range b.DeepDiveResults {
+			sectionTitle := titleCaseQueryName(qr.Name)
+			sb.WriteString(fmt.Sprintf("### %s\n\n", sectionTitle))
+			sb.WriteString("**NRQL:**\n```\n")
+			sb.WriteString(qr.NRQL)
+			sb.WriteString("\n```\n\n")
+			if len(qr.Results) == 0 {
+				sb.WriteString("*No rows.*\n\n")
+				continue
+			}
+			sb.WriteString("**Results:**\n\n")
+			preview := qr.Results
+			if len(preview) > maxResultsPreview {
+				preview = preview[:maxResultsPreview]
+			}
+			for i, row := range preview {
+				sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, renderResultRow(row)))
+			}
+			if len(qr.Results) > maxResultsPreview {
+				sb.WriteString(fmt.Sprintf("\n*... and %d more rows.*\n", len(qr.Results)-maxResultsPreview))
+			}
+			sb.WriteString("\n")
+		}
 	}
 
 	return sb.String()

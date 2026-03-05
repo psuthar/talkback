@@ -335,3 +335,37 @@ func TestComputeDelta_ValidBaselineP95Plus50(t *testing.T) {
 		t.Errorf("p95 line should show +50%% or +51%%, got %q", p95Line)
 	}
 }
+
+func TestApplySimulationOverrides(t *testing.T) {
+	cfg := Config{ForceStatus: "RED", ForceReason: "Simulated for testing"}
+	d := Delta{Status: "GREEN", Reasons: []string{"no change"}}
+	ApplySimulationOverrides(cfg, &d)
+	if d.Status != "RED" {
+		t.Errorf("after override: got status %s, want RED", d.Status)
+	}
+	if len(d.Reasons) != 3 {
+		t.Errorf("expected 3 reasons (original + FORCED + reason), got %d", len(d.Reasons))
+	}
+	found := false
+	for _, r := range d.Reasons {
+		if r == "FORCED STATUS=RED" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected FORCED STATUS=RED in reasons, got %v", d.Reasons)
+	}
+}
+
+func TestApplySimulationOverrides_NoOpWhenEmpty(t *testing.T) {
+	cfg := Config{}
+	d := Delta{Status: "YELLOW", Reasons: []string{"p95 up"}}
+	ApplySimulationOverrides(cfg, &d)
+	if d.Status != "YELLOW" {
+		t.Errorf("status should be unchanged when ForceStatus empty, got %s", d.Status)
+	}
+	if len(d.Reasons) != 1 {
+		t.Errorf("reasons should be unchanged, got %d", len(d.Reasons))
+	}
+}

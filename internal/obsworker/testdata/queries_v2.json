@@ -1,0 +1,23 @@
+{
+  "window_minutes": 30,
+  "base_queries": [
+    {
+      "name": "txn_summary",
+      "nrql": "SELECT count(*) AS 'n', average(duration)*1000 AS 'avg_ms' FROM Transaction {{appNameClause}} SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "throughput",
+      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction {{appNameClause}} SINCE {{window}} minutes ago"
+    }
+  ],
+  "deep_dive_queries": [
+    {
+      "name": "latency_by_txn_p95",
+      "nrql": "SELECT percentile(duration, 95)*1000 AS 'p95_ms' FROM Transaction {{appNameClause}} FACET name LIMIT 20 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "errors_by_txn",
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' {{appNameClause}} FACET transactionName LIMIT 20 SINCE {{window}} minutes ago"
+    }
+  ]
+}

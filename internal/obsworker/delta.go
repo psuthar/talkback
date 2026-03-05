@@ -262,6 +262,19 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bu
 	return d
 }
 
+// ApplySimulationOverrides overrides status and appends simulation reasons when cfg.ForceStatus is set.
+// Does not change computed deltas; only status and reasons. Used for testing/validation.
+func ApplySimulationOverrides(cfg Config, d *Delta) {
+	if cfg.ForceStatus == "" {
+		return
+	}
+	d.Status = cfg.ForceStatus
+	d.Reasons = append(d.Reasons, "FORCED STATUS="+cfg.ForceStatus)
+	if cfg.ForceReason != "" {
+		d.Reasons = append(d.Reasons, cfg.ForceReason)
+	}
+}
+
 func classifyAuth(bundle *Bundle, cfg Config, d *Delta) {
 	rows := getQueryResults(bundle, "auth_failures_by_username")
 	d.AuthHotspots = parseAuthFailuresByUsername(rows)

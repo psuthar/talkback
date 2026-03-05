@@ -227,3 +227,66 @@ func TestRenderMarkdown_ContainsExpectedNoiseAndAuthHotspots(t *testing.T) {
 		t.Error("markdown should show auth hotspot username and count")
 	}
 }
+
+func TestRenderMarkdown_SimulationLineWhenForced(t *testing.T) {
+	delta := Delta{
+		Status:     "GREEN",
+		Confidence: "HIGH",
+		Reasons:    []string{"FORCED STATUS=RED", "Simulated for testing"},
+	}
+	b := &Bundle{
+		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:    &delta,
+		Results:  []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
+	}
+	md := b.RenderMarkdown()
+	if !strings.Contains(md, "**Simulation:**") {
+		t.Error("markdown should contain Simulation line when reasons include FORCED STATUS=")
+	}
+	if !strings.Contains(md, "FORCED STATUS=RED") {
+		t.Error("markdown should contain FORCED STATUS=RED")
+	}
+	if !strings.Contains(md, "reason=Simulated for testing") {
+		t.Error("markdown should include reason= when present")
+	}
+}
+
+func TestRenderMarkdown_AutomaticDeepDiveSection(t *testing.T) {
+	delta := Delta{Status: "RED", Confidence: "HIGH", Reasons: []string{"errors increased"}}
+	b := &Bundle{
+		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:    &delta,
+		Results:  []QueryResult{{Name: "txn_summary", NRQL: "SELECT 1", Results: nil}},
+		DeepDiveResults: []QueryResult{
+			{Name: "latency_by_txn_p95", NRQL: "SELECT p95...", Results: []map[string]interface{}{{"name": "TxA", "p95_ms": 120.0}}},
+		},
+	}
+	md := b.RenderMarkdown()
+	if !strings.Contains(md, "## Automatic Deep Dive") {
+		t.Error("markdown should contain ## Automatic Deep Dive when DeepDiveResults non-empty")
+	}
+	if !strings.Contains(md, "Triggered by status=RED") {
+		t.Error("markdown should contain trigger line Triggered by status=RED")
+	}
+	if !strings.Contains(md, "Latency By Txn P95") {
+		t.Error("markdown should contain deep-dive query section title")
+	}
+}
+
+func TestRenderMarkdown_DeepDiveTriggeredBySimulationOverride(t *testing.T) {
+	delta := Delta{
+		Status:     "GREEN",
+		Confidence: "HIGH",
+		Reasons:    []string{"FORCED STATUS=RED", "Testing deep dive"},
+	}
+	b := &Bundle{
+		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:    &delta,
+		Results:  []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
+		DeepDiveResults: []QueryResult{{Name: "errors_by_txn", NRQL: "SELECT count...", Results: nil}},
+	}
+	md := b.RenderMarkdown()
+	if !strings.Contains(md, "Triggered by simulation override") {
+		t.Error("when reasons contain FORCED STATUS=, deep dive trigger line should say simulation override")
+	}
+}

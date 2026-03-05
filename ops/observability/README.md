@@ -38,10 +38,17 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 | `OBS_AUTH_WINDOW_MINUTES` | (same as `OBS_WINDOW_MINUTES`) | Window used for auth failure counts. |
 | `OBS_AUTH_ERROR_MESSAGE` | `Unauthorized` | Error message treated as expected auth noise when below threshold. |
 | `OBS_AUTH_ERROR_CLASS` | `401` | Error class treated as expected auth noise when below threshold. |
+| `OBS_FORCE_STATUS` | (unset) | **Simulation only.** Override status to `GREEN`, `YELLOW`, or `RED`. Bundle markdown shows **Simulation: FORCED STATUS=...**. |
+| `OBS_FORCE_REASON` | (unset) | **Simulation only.** Optional string shown in the simulation line (e.g. `reason=Simulated for testing`). |
+| `OBS_FORCE_DEEP_DIVE` | (unset) | **Simulation only.** When `true`, run deep-dive queries even when status is GREEN (to test formatting). |
 
 ## Bundle contents
 
-The bundle includes: **txn_summary**, **discover_appnames**, **throughput**, **latency_p95**, **top_transactions_p95**, **avg_transactions**, **max_transactions**, **error_count**, **top_errors**, **top_error_classes**, **errors_by_endpoint** (with request.uri fallback when transactionName is empty), and **auth_failures_by_username**. When app name is resolved (env or discovered), all Transaction and TransactionError queries use `WHERE appName = '...'`. The markdown also has **Expected Noise** (401 counts below threshold), **Unexpected Errors** (non-401), and **Auth Failure Hotspots** (usernames with high 401 attempts).
+**Base queries** (always run): **txn_summary**, **discover_appnames**, **throughput**, **latency_p95**, **top_transactions_p95**, **avg_transactions**, **max_transactions**, **error_count**, **top_errors**, **top_error_classes**, **errors_by_endpoint** (with request.uri fallback when transactionName is empty), and **auth_failures_by_username**. When app name is resolved (env or discovered), all Transaction and TransactionError queries use `WHERE appName = '...'`.
+
+**Deep-dive queries** (run only when status is YELLOW or RED, or when `OBS_FORCE_DEEP_DIVE=true`): **latency_by_txn_p95**, **latency_by_txn_avg**, **throughput_by_txn**, **errors_by_txn**. These appear in an **Automatic Deep Dive** section in the markdown with a trigger line (e.g. “Triggered by status=RED” or “Triggered by simulation override”).
+
+The markdown also has **Expected Noise** (401 counts below threshold), **Unexpected Errors** (non-401), and **Auth Failure Hotspots** (usernames with high 401 attempts).
 
 ## Observability storage (dedicated path)
 
@@ -98,6 +105,38 @@ go run ./cmd/obsworker
 ```
 
 Expect two files under `ops/bundles/` and exit code 0.
+
+## Local validation recipes (simulation)
+
+Use these to validate bundle behavior and markdown formatting without waiting for real incidents. Simulation is clearly labeled in the bundle markdown so it cannot be mistaken for a real status.
+
+### Normal run
+
+```bash
+NEW_RELIC_API_KEY=... NEW_RELIC_ACCOUNT_ID=... OBS_APP_NAME=Talkback-NewRelic go run ./cmd/obsworker
+```
+
+### Force RED (simulate incident)
+
+Runs deep-dive queries and sets status to RED with a reason. Bundle markdown includes **Simulation: FORCED STATUS=RED** and the **Automatic Deep Dive** section.
+
+```bash
+OBS_FORCE_STATUS=RED OBS_FORCE_REASON="Simulated for testing" \
+NEW_RELIC_API_KEY=... NEW_RELIC_ACCOUNT_ID=... OBS_APP_NAME=Talkback-NewRelic \
+go run ./cmd/obsworker
+```
+
+### Force deep dive even if GREEN
+
+Useful to test deep-dive section formatting when the computed status would be GREEN.
+
+```bash
+OBS_FORCE_STATUS=GREEN OBS_FORCE_DEEP_DIVE=true OBS_FORCE_REASON="Testing deep dive formatting" \
+NEW_RELIC_API_KEY=... NEW_RELIC_ACCOUNT_ID=... OBS_APP_NAME=Talkback-NewRelic \
+go run ./cmd/obsworker
+```
+
+**Optional env vars for simulation:** `OBS_FORCE_STATUS` (GREEN | YELLOW | RED), `OBS_FORCE_REASON` (string), `OBS_FORCE_DEEP_DIVE` (true to run deep-dive queries regardless of status). These are ignored by default and only take effect when set explicitly.
 
 ## Generate representative traffic (obssmoke)
 

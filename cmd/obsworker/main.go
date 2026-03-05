@@ -39,7 +39,7 @@ func run() error {
 		log.Printf("App name resolution: %s", appWarning)
 	}
 
-	queries, err := obsworker.LoadQueries(cfg, appName, cfg.RequireAppNameFilter)
+	baseQueries, deepDiveQueries, err := obsworker.LoadQueries(cfg, appName, cfg.RequireAppNameFilter)
 	if err != nil {
 		return err
 	}
@@ -57,10 +57,10 @@ func run() error {
 			GitBranch:  gitBranch,
 			AppName:    appName,
 		},
-		Results: make([]obsworker.QueryResult, 0, len(queries)),
+		Results: make([]obsworker.QueryResult, 0, len(baseQueries)),
 	}
 
-	for _, q := range queries {
+	for _, q := range baseQueries {
 		results, err := client.RunNRQL(q.NRQL)
 		if err != nil {
 			return fmt.Errorf("query %q: %w", q.Name, err)
@@ -158,7 +158,23 @@ func run() error {
 	}
 	thresholds := obsworker.DefaultThresholds()
 	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds, bundle, cfg, appWarning)
+	obsworker.ApplySimulationOverrides(cfg, &delta)
 	bundle.Delta = &delta
+
+	runDeepDive := (delta.Status == "YELLOW" || delta.Status == "RED") || cfg.ForceDeepDive
+	if runDeepDive && len(deepDiveQueries) > 0 {
+		for _, q := range deepDiveQueries {
+			results, err := client.RunNRQL(q.NRQL)
+			if err != nil {
+				return fmt.Errorf("deep-dive query %q: %w", q.Name, err)
+			}
+			bundle.DeepDiveResults = append(bundle.DeepDiveResults, obsworker.QueryResult{
+				Name:    q.Name,
+				NRQL:    q.NRQL,
+				Results: results,
+			})
+		}
+	}
 
 	jsonPath, mdPath, err := obsworker.WriteBundle(bundle, outDir)
 	if err != nil {

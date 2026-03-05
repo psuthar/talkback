@@ -28,6 +28,10 @@ type Config struct {
 	AuthWindowMins     int
 	AuthErrorMessage   string
 	AuthErrorClass     string
+	// Simulation overrides (for testing; no effect unless set explicitly)
+	ForceStatus    string // GREEN | YELLOW | RED
+	ForceReason    string // optional label for markdown
+	ForceDeepDive  bool   // if true, run deep-dive queries regardless of status
 }
 
 // NerdGraphEndpoint returns the GraphQL URL for the configured region.
@@ -96,6 +100,13 @@ func LoadConfig() (Config, error) {
 		authErrorClass = "401"
 	}
 
+	forceStatus := strings.TrimSpace(strings.ToUpper(os.Getenv("OBS_FORCE_STATUS")))
+	if forceStatus != "" && forceStatus != "GREEN" && forceStatus != "YELLOW" && forceStatus != "RED" {
+		return Config{}, fmt.Errorf("OBS_FORCE_STATUS must be GREEN, YELLOW, or RED, got %q", forceStatus)
+	}
+	forceReason := strings.TrimSpace(os.Getenv("OBS_FORCE_REASON"))
+	forceDeepDive := isTruthy(os.Getenv("OBS_FORCE_DEEP_DIVE"))
+
 	return Config{
 		APIKey:               apiKey,
 		AccountID:            accountID,
@@ -107,6 +118,9 @@ func LoadConfig() (Config, error) {
 		AuthWindowMins:        authWindowMins,
 		AuthErrorMessage:      authErrorMessage,
 		AuthErrorClass:        authErrorClass,
+		ForceStatus:           forceStatus,
+		ForceReason:           forceReason,
+		ForceDeepDive:         forceDeepDive,
 	}, nil
 }
 

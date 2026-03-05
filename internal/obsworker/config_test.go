@@ -80,3 +80,46 @@ func TestLoadConfig_RegionEU(t *testing.T) {
 		t.Errorf("EU region endpoint should contain eu.newrelic.com, got %s", endpoint)
 	}
 }
+
+func TestLoadConfig_ForceStatusAndReason(t *testing.T) {
+	t.Setenv("NEW_RELIC_API_KEY", "key")
+	t.Setenv("NEW_RELIC_ACCOUNT_ID", "999")
+	t.Setenv("OBS_FORCE_STATUS", "RED")
+	t.Setenv("OBS_FORCE_REASON", "Simulated for testing")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.ForceStatus != "RED" {
+		t.Errorf("ForceStatus: got %q, want RED", cfg.ForceStatus)
+	}
+	if cfg.ForceReason != "Simulated for testing" {
+		t.Errorf("ForceReason: got %q", cfg.ForceReason)
+	}
+}
+
+func TestLoadConfig_ForceDeepDive(t *testing.T) {
+	t.Setenv("NEW_RELIC_API_KEY", "key")
+	t.Setenv("NEW_RELIC_ACCOUNT_ID", "999")
+	t.Setenv("OBS_FORCE_DEEP_DIVE", "true")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ForceDeepDive {
+		t.Error("ForceDeepDive should be true when OBS_FORCE_DEEP_DIVE=true")
+	}
+}
+
+func TestLoadConfig_InvalidForceStatus(t *testing.T) {
+	t.Setenv("NEW_RELIC_API_KEY", "key")
+	t.Setenv("NEW_RELIC_ACCOUNT_ID", "999")
+	t.Setenv("OBS_FORCE_STATUS", "PURPLE")
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("expected error when OBS_FORCE_STATUS is invalid")
+	}
+	if !strings.Contains(err.Error(), "OBS_FORCE_STATUS") {
+		t.Errorf("error should mention OBS_FORCE_STATUS, got: %v", err)
+	}
+}

@@ -8,11 +8,11 @@ import (
 
 func TestLoadQueriesFromPath_WindowReplaced(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	specs, err := LoadQueriesFromPath(path, 15, "", false)
+	base, _, err := LoadQueriesFromPath(path, 15, "", false)
 	if err != nil {
 		t.Fatalf("LoadQueriesFromPath: %v", err)
 	}
-	for _, s := range specs {
+	for _, s := range base {
 		if strings.Contains(s.NRQL, "{{window}}") {
 			t.Errorf("query %q still contains {{window}}: %s", s.Name, s.NRQL)
 		}
@@ -23,7 +23,7 @@ func TestLoadQueriesFromPath_WindowReplaced(t *testing.T) {
 }
 
 func TestLoadQueriesFromPath_MissingFile(t *testing.T) {
-	_, err := LoadQueriesFromPath("testdata/nonexistent.json", 30, "", false)
+	_, _, err := LoadQueriesFromPath("testdata/nonexistent.json", 30, "", false)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -34,15 +34,18 @@ func TestLoadQueriesFromPath_MissingFile(t *testing.T) {
 
 func TestLoadQueriesFromPath_ExpectedNamesAndNRQL(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	specs, err := LoadQueriesFromPath(path, 30, "", false)
+	base, deepDive, err := LoadQueriesFromPath(path, 30, "", false)
 	if err != nil {
 		t.Fatalf("LoadQueriesFromPath: %v", err)
 	}
-	if len(specs) != 2 {
-		t.Fatalf("expected 2 queries, got %d", len(specs))
+	if len(base) != 2 {
+		t.Fatalf("expected 2 base queries, got %d", len(base))
+	}
+	if len(deepDive) != 0 {
+		t.Fatalf("legacy schema: expected 0 deep-dive queries, got %d", len(deepDive))
 	}
 	names := map[string]bool{}
-	for _, s := range specs {
+	for _, s := range base {
 		names[s.Name] = true
 		if s.NRQL == "" {
 			t.Errorf("query %q has empty NRQL", s.Name)
@@ -55,12 +58,12 @@ func TestLoadQueriesFromPath_ExpectedNamesAndNRQL(t *testing.T) {
 
 func TestLoadQueriesFromPath_AppFilterInjected(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	specs, err := LoadQueriesFromPath(path, 30, "talkback-api-prod", false)
+	base, _, err := LoadQueriesFromPath(path, 30, "talkback-api-prod", false)
 	if err != nil {
 		t.Fatalf("LoadQueriesFromPath: %v", err)
 	}
 	var foundFilter bool
-	for _, s := range specs {
+	for _, s := range base {
 		if strings.Contains(s.NRQL, "{{appNameClause}}") {
 			t.Errorf("query %q still contains {{appNameClause}}", s.Name)
 		}
@@ -75,7 +78,7 @@ func TestLoadQueriesFromPath_AppFilterInjected(t *testing.T) {
 
 func TestLoadQueriesFromPath_RejectsAppNameWithSingleQuote(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	_, err := LoadQueriesFromPath(path, 30, "app'name", false)
+	_, _, err := LoadQueriesFromPath(path, 30, "app'name", false)
 	if err == nil {
 		t.Fatal("expected error when appName contains single quote")
 	}
@@ -86,11 +89,48 @@ func TestLoadQueriesFromPath_RejectsAppNameWithSingleQuote(t *testing.T) {
 
 func TestLoadQueriesFromPath_RequireAppNameFilterFailsWhenEmpty(t *testing.T) {
 	path := filepath.Join("testdata", "queries.json")
-	_, err := LoadQueriesFromPath(path, 30, "", true)
+	_, _, err := LoadQueriesFromPath(path, 30, "", true)
 	if err == nil {
 		t.Fatal("expected error when requireAppNameFilter is true and appName is empty")
 	}
 	if !strings.Contains(err.Error(), "OBS_REQUIRE_APPNAME_FILTER") && !strings.Contains(err.Error(), "empty") {
 		t.Errorf("error should mention require filter or empty app name, got: %v", err)
+	}
+}
+
+func TestLoadQueriesFromPath_V2Schema_BaseAndDeepDive(t *testing.T) {
+	path := filepath.Join("testdata", "queries_v2.json")
+	base, deepDive, err := LoadQueriesFromPath(path, 30, "MyApp", false)
+	if err != nil {
+		t.Fatalf("LoadQueriesFromPath: %v", err)
+	}
+	if len(base) != 2 {
+		t.Fatalf("expected 2 base queries, got %d", len(base))
+	}
+	if len(deepDive) != 2 {
+		t.Fatalf("expected 2 deep-dive queries, got %d", len(deepDive))
+	}
+	baseNames := make(map[string]bool)
+	for _, s := range base {
+		baseNames[s.Name] = true
+		if strings.Contains(s.NRQL, "{{window}}") || strings.Contains(s.NRQL, "{{appNameClause}}") {
+			t.Errorf("base query %q still has template: %s", s.Name, s.NRQL)
+		}
+	}
+	if !baseNames["txn_summary"] || !baseNames["throughput"] {
+		t.Errorf("expected base names txn_summary and throughput, got %v", baseNames)
+	}
+	deepNames := make(map[string]bool)
+	for _, s := range deepDive {
+		deepNames[s.Name] = true
+		if !strings.Contains(s.NRQL, "WHERE appName = 'MyApp'") {
+			t.Errorf("deep-dive query %q should have app filter, got: %s", s.Name, s.NRQL)
+		}
+		if !strings.Contains(s.NRQL, "30") {
+			t.Errorf("deep-dive query %q should have window 30, got: %s", s.Name, s.NRQL)
+		}
+	}
+	if !deepNames["latency_by_txn_p95"] || !deepNames["errors_by_txn"] {
+		t.Errorf("expected deep-dive names latency_by_txn_p95 and errors_by_txn, got %v", deepNames)
 	}
 }
