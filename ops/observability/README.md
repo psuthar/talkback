@@ -7,8 +7,8 @@ CLI that queries New Relic NerdGraph (NRQL), builds a diagnostic bundle (JSON + 
 The workflow **Observability Agent** (`.github/workflows/observability-agent.yml`) runs on **push to main**, **schedule (every 60 min)**, and **workflow_dispatch**:
 
 1. Runs tests, then `go run ./cmd/obsworker`.
-2. Uploads `ops/bundles/*-bundle.md` and `*-bundle.json` as artifacts (`talkback-observability-bundle-<run_id>`).
-3. Creates or updates a **daily GitHub Issue** titled `TalkBack Observability Bundle - YYYY-MM-DD` (inbox): new runs add a comment with the latest bundle; new day creates a new issue with intro + co-engineer prompt + bundle.
+2. **Always** uploads `ops/bundles/*-bundle.md` and `*-bundle.json` as artifacts (`talkback-observability-bundle-<run_id>`) when obsworker runs.
+3. **Routing:** Creates or updates a **daily GitHub Issue** titled `TalkBack Observability - YYYY-MM-DD` **only when status is YELLOW or RED**. GREEN runs do not post to the issue (artifacts are still uploaded for debugging). When status is YELLOW/RED, the workflow appends a comment with the bundle; if the run used simulation (`OBS_FORCE_STATUS`), the comment is prefixed with **SIMULATION MODE — NOT A REAL INCIDENT**.
 
 **Required repo secrets:** `NEW_RELIC_API_KEY`, `NEW_RELIC_ACCOUNT_ID`.  
 **Optional repo secrets (for Key Deltas in CI):** GitHub Actions runners are ephemeral, so the baseline is lost between runs. To get **Key Deltas** (instead of "First run (no baseline)") on the second and later runs, add the same R2 secrets you use for the app: `R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and optionally `R2_PREFIX`. The workflow sets `OBS_BASELINE_R2=1` so obsworker stores the baseline in your R2 bucket.  

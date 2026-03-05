@@ -115,13 +115,30 @@ jobs:
             ops/bundles/*-bundle.json
           if-no-files-found: error
 
-      - name: Post bundle to daily Issue (create or comment)
+      - name: Get bundle status (JSON)
+        id: bundle
         if: steps.check-secrets.outputs.has_secrets == 'true'
+        run: |
+          JSON=$(ls ops/bundles/*-bundle.json 2>/dev/null | sort -r | head -1)
+          if [ -z "$JSON" ]; then
+            echo "status=GREEN" >> $GITHUB_OUTPUT
+            echo "simulation_enabled=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          STATUS=$(jq -r '.summary.status // .delta.status // "GREEN"' "$JSON")
+          SIM=$(jq -r '.simulation.enabled // false' "$JSON")
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "simulation_enabled=$SIM" >> $GITHUB_OUTPUT
+          echo "Parsed status=$STATUS simulation_enabled=$SIM"
+
+      - name: Post bundle to daily Issue (YELLOW/RED only)
+        if: steps.check-secrets.outputs.has_secrets == 'true' && (steps.bundle.outputs.status == 'YELLOW' || steps.bundle.outputs.status == 'RED')
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
+            const simulationEnabled = process.env.SIMULATION_ENABLED === 'true';
 
             const workspace = process.env.GITHUB_WORKSPACE;
             const bundlesDir = path.join(workspace, 'ops/bundles');
@@ -143,7 +160,7 @@ jobs:
             }
 
             const today = new Date().toISOString().slice(0, 10);
-            const issueTitle = `TalkBack Observability Bundle - ${today}`;
+            const issueTitle = `TalkBack Observability - ${today}`;
 
             let promptBody = '';
             try {
@@ -152,7 +169,7 @@ jobs:
               promptBody = '*(COENGINEER_PROMPT.md not found)*';
             }
 
-            const intro = `## How to use this\n\nPaste the **latest comment** (bundle) + the co-engineer prompt below into Cursor or ChatGPT for analysis.\n\n**Loop:** Run → Bundle → Inbox → AI analysis → Fix → Next run verifies.\n\n---\n\n`;
+            const intro = `## How to use this\n\nPaste the **latest comment** (bundle) + the co-engineer prompt below into Cursor or ChatGPT for analysis.\n\n**Loop:** Run → Bundle → Inbox (YELLOW/RED only) → AI analysis → Fix → Next run verifies.\n\n---\n\n`;
             const bundleSection = '\n\n---\n\n### Latest bundle (markdown)\n\n```\n' + bundleMd + '\n```';
             const maxBodyLen = 62000;
             let fullBody = intro + '### Co-engineer prompt template\n\n' + promptBody + bundleSection;
@@ -168,14 +185,20 @@ jobs:
             });
             const existing = issues.find(i => i.title === issueTitle);
 
+            let commentBody = `### Bundle \`${latestMd}\` (run ${context.runId})\n\n`;
+            if (simulationEnabled) {
+              commentBody = `⚠️ **SIMULATION MODE — NOT A REAL INCIDENT**\n\n` + commentBody;
+            }
+            commentBody += `<details>\n<summary>Markdown bundle</summary>\n\n\`\`\`md\n${bundleMd}\n\`\`\`\n\n</details>\n\n*Artifact: \`talkback-observability-bundle-${context.runId}\`*`;
+
             if (existing) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: existing.number,
-                body: `### Bundle \`${latestMd}\` (run ${context.runId})\n\n<details>\n<summary>Markdown bundle</summary>\n\n\`\`\`md\n${bundleMd}\n\`\`\`\n\n</details>\n\n*Artifact: \`talkback-observability-bundle-${context.runId}\`*`
+                body: commentBody
               });
-              core.notice(`Updated issue #${existing.number} with new bundle comment`);
+              core.notice(`Updated issue #${existing.number} with new bundle comment (status was YELLOW/RED)`);
             } else {
               const labels = ['observability', 'agent'];
               try {
@@ -200,3 +223,9 @@ jobs:
               }
               core.notice(`Created new issue: ${issueTitle}`);
             }
+          env:
+            SIMULATION_ENABLED: ${{ steps.bundle.outputs.simulation_enabled }}
+
+      - name: Skip issue (GREEN)
+        if: steps.check-secrets.outputs.has_secrets == 'true' && steps.bundle.outputs.status == 'GREEN'
+        run: echo "Skipping issue update because status=GREEN (artifacts uploaded)"

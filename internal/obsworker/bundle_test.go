@@ -228,6 +228,38 @@ func TestRenderMarkdown_ContainsExpectedNoiseAndAuthHotspots(t *testing.T) {
 	}
 }
 
+func TestWriteBundle_JSONContainsSummaryAndSimulation(t *testing.T) {
+	dir := t.TempDir()
+	b := &Bundle{
+		Metadata:   BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30, AppName: "Test"},
+		Summary:    &BundleSummary{Status: "RED", Confidence: "HIGH"},
+		Simulation: &Simulation{Enabled: true, ForcedStatus: "RED", Reason: "Simulated for testing"},
+		Delta:      &Delta{Status: "RED", Confidence: "HIGH", Reasons: []string{"FORCED STATUS=RED"}},
+		Results:    []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
+	}
+	jsonPath, _, err := WriteBundle(b, dir)
+	if err != nil {
+		t.Fatalf("WriteBundle: %v", err)
+	}
+	raw, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var decoded struct {
+		Summary    *struct { Status string `json:"status"`; Confidence string `json:"confidence"` } `json:"summary"`
+		Simulation *struct { Enabled bool `json:"enabled"`; ForcedStatus string `json:"forced_status"`; Reason string `json:"reason"` } `json:"simulation"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if decoded.Summary == nil || decoded.Summary.Status != "RED" || decoded.Summary.Confidence != "HIGH" {
+		t.Errorf("JSON summary: got %+v", decoded.Summary)
+	}
+	if decoded.Simulation == nil || !decoded.Simulation.Enabled || decoded.Simulation.ForcedStatus != "RED" {
+		t.Errorf("JSON simulation: got %+v", decoded.Simulation)
+	}
+}
+
 func TestRenderMarkdown_SimulationLineWhenForced(t *testing.T) {
 	delta := Delta{
 		Status:     "GREEN",
@@ -235,19 +267,20 @@ func TestRenderMarkdown_SimulationLineWhenForced(t *testing.T) {
 		Reasons:    []string{"FORCED STATUS=RED", "Simulated for testing"},
 	}
 	b := &Bundle{
-		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
-		Delta:    &delta,
-		Results:  []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
+		Metadata:   BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:      &delta,
+		Simulation: &Simulation{Enabled: true, ForcedStatus: "RED", Reason: "Simulated for testing"},
+		Results:    []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
 	}
 	md := b.RenderMarkdown()
-	if !strings.Contains(md, "**Simulation:**") {
-		t.Error("markdown should contain Simulation line when reasons include FORCED STATUS=")
+	if !strings.Contains(md, "## Simulation") {
+		t.Error("markdown should contain ## Simulation section when simulation enabled")
 	}
 	if !strings.Contains(md, "FORCED STATUS=RED") {
 		t.Error("markdown should contain FORCED STATUS=RED")
 	}
-	if !strings.Contains(md, "reason=Simulated for testing") {
-		t.Error("markdown should include reason= when present")
+	if !strings.Contains(md, "**Reason:** Simulated for testing") {
+		t.Error("markdown should include Reason when present")
 	}
 }
 
@@ -280,13 +313,14 @@ func TestRenderMarkdown_DeepDiveTriggeredBySimulationOverride(t *testing.T) {
 		Reasons:    []string{"FORCED STATUS=RED", "Testing deep dive"},
 	}
 	b := &Bundle{
-		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
-		Delta:    &delta,
-		Results:  []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
+		Metadata:        BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:           &delta,
+		Simulation:      &Simulation{Enabled: true, ForcedStatus: "RED", Reason: "Testing deep dive"},
+		Results:         []QueryResult{{Name: "q1", NRQL: "SELECT 1", Results: nil}},
 		DeepDiveResults: []QueryResult{{Name: "errors_by_txn", NRQL: "SELECT count...", Results: nil}},
 	}
 	md := b.RenderMarkdown()
 	if !strings.Contains(md, "Triggered by simulation override") {
-		t.Error("when reasons contain FORCED STATUS=, deep dive trigger line should say simulation override")
+		t.Error("when simulation enabled, deep dive trigger line should say simulation override")
 	}
 }

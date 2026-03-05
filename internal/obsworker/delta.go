@@ -7,13 +7,16 @@ import (
 )
 
 const pctEpsilon = 0.0001
+const smallBaselineP95Threshold = 50.0 // suppress % delta when prev p95_ms < this
 
 // DeltaChanges holds percent or absolute changes for key metrics.
 type DeltaChanges struct {
-	P95Pct      *float64 `json:"p95_pct,omitempty"`
-	ReqPerMinPct *float64 `json:"req_per_min_pct,omitempty"`
-	ErrorsAbs   *int     `json:"errors_abs,omitempty"`
-	TxnNAbs     *int     `json:"txn_n_abs,omitempty"`
+	P95Pct         *float64 `json:"p95_pct,omitempty"`
+	ReqPerMinPct   *float64 `json:"req_per_min_pct,omitempty"`
+	P95PctReason        string `json:"p95_pct_reason,omitempty"`        // when % suppressed, e.g. "small baseline"
+	ReqPerMinPctReason   string `json:"req_per_min_pct_reason,omitempty"`
+	ErrorsAbs       *int    `json:"errors_abs,omitempty"`
+	TxnNAbs         *int    `json:"txn_n_abs,omitempty"`
 }
 
 // AuthHotspot is a username with high 401 count.
@@ -183,10 +186,28 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bu
 		absN := curr.TxnN - prev.Metrics.TxnN
 		d.Changes.TxnNAbs = &absN
 
-		// Percent deltas only when baseline is valid and previous metric > epsilon
-		if baselineValidPrev && prev.Metrics.P95ms > pctEpsilon && curr.P95ms >= 0 {
+		// Percent deltas only when baseline is valid and previous metric above threshold (avoid nonsense %)
+		if baselineValidPrev && prev.Metrics.P95ms >= smallBaselineP95Threshold && curr.P95ms >= 0 {
 			if p := pctChange(curr.P95ms, prev.Metrics.P95ms); p != nil {
 				d.Changes.P95Pct = p
+			}
+		}
+		if prev != nil {
+			if d.Changes.P95Pct == nil && (prev.Metrics.P95ms != 0 || curr.P95ms != 0) {
+				if !baselineValidPrev {
+					d.Changes.P95PctReason = "no meaningful baseline"
+				} else if prev.Metrics.P95ms < smallBaselineP95Threshold {
+					d.Changes.P95PctReason = "small baseline"
+				} else {
+					d.Changes.P95PctReason = "no meaningful baseline"
+				}
+			}
+			if d.Changes.ReqPerMinPct == nil && (prev.Metrics.ReqPerMin != 0 || curr.ReqPerMin != 0) {
+				if !baselineValidPrev {
+					d.Changes.ReqPerMinPctReason = "no meaningful baseline"
+				} else if prev.Metrics.ReqPerMin <= pctEpsilon {
+					d.Changes.ReqPerMinPctReason = "no meaningful baseline"
+				}
 			}
 		}
 		if baselineValidPrev && prev.Metrics.ReqPerMin > pctEpsilon && curr.ReqPerMin >= 0 {
@@ -262,14 +283,15 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bu
 	return d
 }
 
-// ApplySimulationOverrides overrides status and appends simulation reasons when cfg.ForceStatus is set.
-// Does not change computed deltas; only status and reasons. Used for testing/validation.
+// ApplySimulationOverrides overrides status and reasons when cfg.ForceStatus is set.
+// Real-world signals are replaced by simulation-only reasons so the bundle is unambiguous.
+// Does not change computed deltas (Key Deltas, Changes); only status and reasons.
 func ApplySimulationOverrides(cfg Config, d *Delta) {
 	if cfg.ForceStatus == "" {
 		return
 	}
 	d.Status = cfg.ForceStatus
-	d.Reasons = append(d.Reasons, "FORCED STATUS="+cfg.ForceStatus)
+	d.Reasons = []string{"FORCED STATUS=" + cfg.ForceStatus}
 	if cfg.ForceReason != "" {
 		d.Reasons = append(d.Reasons, cfg.ForceReason)
 	}
@@ -319,8 +341,8 @@ func addExpectedNoiseReasons(d *Delta, cfg Config) {
 	}
 }
 
-// DeltaSummaryLines returns a short list of "key deltas" lines for display (e.g. "p95_ms: 120.0 → 157.2 (+31%)").
-// Returns nil when there was no previous baseline (all change fields nil).
+// DeltaSummaryLines returns a short list of "key deltas" lines for display.
+// When % is suppressed, uses format: "p95_ms: 0.1 → 12.0 (Δ +11.9 ms; % N/A — small baseline)".
 func DeltaSummaryLines(d Delta) []string {
 	if d.Changes.P95Pct == nil && d.Changes.ReqPerMinPct == nil && d.Changes.ErrorsAbs == nil && d.Changes.TxnNAbs == nil {
 		return nil
@@ -329,19 +351,25 @@ func DeltaSummaryLines(d Delta) []string {
 	prev := d.Previous
 	curr := d.Current
 
-	naSuffix := " (N/A)"
-	if !d.BaselineValidPrev {
-		naSuffix = " (N/A; baseline invalid)"
-	}
 	if d.Changes.P95Pct != nil {
 		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f (%+.0f%%)", prev.P95ms, curr.P95ms, *d.Changes.P95Pct))
 	} else if prev.P95ms != 0 || curr.P95ms != 0 {
-		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f%s", prev.P95ms, curr.P95ms, naSuffix))
+		absDelta := curr.P95ms - prev.P95ms
+		reason := d.Changes.P95PctReason
+		if reason == "" {
+			reason = "no meaningful baseline"
+		}
+		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f (Δ %+.1f ms; %% N/A — %s)", prev.P95ms, curr.P95ms, absDelta, reason))
 	}
 	if d.Changes.ReqPerMinPct != nil {
 		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f (%+.0f%%)", prev.ReqPerMin, curr.ReqPerMin, *d.Changes.ReqPerMinPct))
 	} else if prev.ReqPerMin != 0 || curr.ReqPerMin != 0 {
-		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f%s", prev.ReqPerMin, curr.ReqPerMin, naSuffix))
+		absDelta := curr.ReqPerMin - prev.ReqPerMin
+		reason := d.Changes.ReqPerMinPctReason
+		if reason == "" {
+			reason = "no meaningful baseline"
+		}
+		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f (Δ %+.2f req/min; %% N/A — %s)", prev.ReqPerMin, curr.ReqPerMin, absDelta, reason))
 	}
 	if d.Changes.ErrorsAbs != nil {
 		lines = append(lines, fmt.Sprintf("errors: %d → %d (%+d)", prev.Errors, curr.Errors, *d.Changes.ErrorsAbs))
@@ -352,22 +380,29 @@ func DeltaSummaryLines(d Delta) []string {
 	return lines
 }
 
-// RecommendedNextQueries returns deterministic recommended NRQL suggestions based on delta status/reasons.
-func RecommendedNextQueries(d Delta) []string {
+// RecommendedNextQueries returns full NRQL strings (with SINCE and optional appName filter) for copy-paste.
+func RecommendedNextQueries(d Delta, windowMins int, appName string) []string {
+	window := fmt.Sprintf("%d", windowMins)
+	appClause := ""
+	if appName != "" && !strings.Contains(appName, "'") {
+		appClause = " WHERE appName = '" + appName + "'"
+	}
+	since := fmt.Sprintf(" SINCE %s minutes ago", window)
+
 	var out []string
 	// RED due to errors
 	if d.Status == "RED" && d.Current.Errors > 0 {
-		out = append(out, "FROM TransactionError SELECT count(*) FACET error.class, error.message")
-		out = append(out, "FROM TransactionError SELECT count(*) FROM Transaction FACET name")
+		out = append(out, "FROM TransactionError SELECT count(*) FACET error.class, error.message"+appClause+since)
+		out = append(out, "FROM TransactionError SELECT count(*) FROM Transaction FACET name"+appClause+since)
 	}
 	// RED/YELLOW due to p95
 	if (d.Status == "RED" || d.Status == "YELLOW") && d.Changes.P95Pct != nil && *d.Changes.P95Pct > 0 {
-		out = append(out, "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction FACET name")
-		out = append(out, "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction FACET request.method")
+		out = append(out, "FROM Transaction SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FACET name"+appClause+since)
+		out = append(out, "FROM Transaction SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FACET request.method"+appClause+since)
 	}
 	// Throughput drop
 	if d.Status == "YELLOW" && d.Changes.ReqPerMinPct != nil && *d.Changes.ReqPerMinPct < 0 {
-		out = append(out, "SELECT count(*) FROM Transaction FACET name TIMESERIES")
+		out = append(out, "FROM Transaction SELECT count(*) FACET name TIMESERIES"+appClause+since)
 	}
 	return out
 }

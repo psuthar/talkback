@@ -160,6 +160,10 @@ func run() error {
 	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds, bundle, cfg, appWarning)
 	obsworker.ApplySimulationOverrides(cfg, &delta)
 	bundle.Delta = &delta
+	bundle.Summary = &obsworker.BundleSummary{Status: delta.Status, Confidence: delta.Confidence}
+	if cfg.ForceStatus != "" {
+		bundle.Simulation = &obsworker.Simulation{Enabled: true, ForcedStatus: cfg.ForceStatus, Reason: cfg.ForceReason}
+	}
 
 	runDeepDive := (delta.Status == "YELLOW" || delta.Status == "RED") || cfg.ForceDeepDive
 	if runDeepDive && len(deepDiveQueries) > 0 {

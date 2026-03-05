@@ -212,14 +212,14 @@ func TestComputeDelta_AuthThresholdExceededRed(t *testing.T) {
 func TestRecommendedNextQueries(t *testing.T) {
 	// RED with errors
 	dErr := Delta{Status: "RED", Current: BaselineMetrics{Errors: 2}}
-	qErr := RecommendedNextQueries(dErr)
+	qErr := RecommendedNextQueries(dErr, 30, "")
 	if len(qErr) == 0 {
 		t.Error("RED with errors should recommend queries")
 	}
 	// YELLOW with p95
 	p95 := 25.0
 	dP95 := Delta{Status: "YELLOW", Changes: DeltaChanges{P95Pct: &p95}}
-	qP95 := RecommendedNextQueries(dP95)
+	qP95 := RecommendedNextQueries(dP95, 30, "")
 	if len(qP95) == 0 {
 		t.Error("YELLOW with p95 increase should recommend queries")
 	}
@@ -258,11 +258,16 @@ func TestComputeDelta_BaselineInvalidPrevTxnZero(t *testing.T) {
 	}
 	lines := DeltaSummaryLines(d)
 	for _, line := range lines {
-		if strings.HasPrefix(line, "p95_ms:") && !strings.Contains(line, "N/A") {
-			t.Errorf("Key Deltas p95 should show N/A when baseline invalid, got %q", line)
-		}
-		if strings.HasPrefix(line, "p95_ms:") && !strings.Contains(line, "baseline invalid") {
-			t.Errorf("Key Deltas p95 should include 'baseline invalid' when baseline invalid, got %q", line)
+		if strings.HasPrefix(line, "p95_ms:") {
+			if !strings.Contains(line, "N/A") {
+				t.Errorf("Key Deltas p95 should show N/A when baseline invalid, got %q", line)
+			}
+			if !strings.Contains(line, "baseline") {
+				t.Errorf("Key Deltas p95 should include baseline reason when baseline invalid, got %q", line)
+			}
+			if !strings.Contains(line, "Δ") {
+				t.Errorf("Key Deltas p95 should show absolute delta when %% suppressed, got %q", line)
+			}
 		}
 	}
 }
@@ -338,23 +343,87 @@ func TestComputeDelta_ValidBaselineP95Plus50(t *testing.T) {
 
 func TestApplySimulationOverrides(t *testing.T) {
 	cfg := Config{ForceStatus: "RED", ForceReason: "Simulated for testing"}
-	d := Delta{Status: "GREEN", Reasons: []string{"no change"}}
+	d := Delta{Status: "GREEN", Reasons: []string{"no change", "High auth failures..."}}
 	ApplySimulationOverrides(cfg, &d)
 	if d.Status != "RED" {
 		t.Errorf("after override: got status %s, want RED", d.Status)
 	}
-	if len(d.Reasons) != 3 {
-		t.Errorf("expected 3 reasons (original + FORCED + reason), got %d", len(d.Reasons))
+	// Simulation replaces real-world reasons with simulation-only
+	if len(d.Reasons) != 2 {
+		t.Errorf("expected 2 reasons (FORCED + reason), got %d: %v", len(d.Reasons), d.Reasons)
+	}
+	if d.Reasons[0] != "FORCED STATUS=RED" {
+		t.Errorf("first reason want FORCED STATUS=RED, got %q", d.Reasons[0])
+	}
+	if d.Reasons[1] != "Simulated for testing" {
+		t.Errorf("second reason want Simulated for testing, got %q", d.Reasons[1])
+	}
+}
+
+func TestDeltaSummaryLines_SmallBaselineP95SuppressesPercent(t *testing.T) {
+	prev := BaselineMetrics{TxnN: 25, P95ms: 10, ReqPerMin: 5, Errors: 0}
+	curr := BaselineMetrics{TxnN: 30, P95ms: 100, ReqPerMin: 6, Errors: 0}
+	d := Delta{
+		Current: curr, Previous: prev,
+		BaselineValidPrev: true,
+		Changes: DeltaChanges{
+			P95PctReason: "small baseline",
+			ReqPerMinPct: func() *float64 { v := 20.0; return &v }(),
+			ErrorsAbs:    func() *int { v := 0; return &v }(),
+			TxnNAbs:      func() *int { v := 5; return &v }(),
+		},
+	}
+	lines := DeltaSummaryLines(d)
+	var p95Line string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "p95_ms:") {
+			p95Line = line
+			break
+		}
+	}
+	if p95Line == "" {
+		t.Fatal("expected p95_ms line")
+	}
+	if strings.Contains(p95Line, "%") && !strings.Contains(p95Line, "N/A") {
+		t.Errorf("small baseline should not show raw %% (use N/A), got %q", p95Line)
+	}
+	if !strings.Contains(p95Line, "Δ") {
+		t.Errorf("should show absolute delta, got %q", p95Line)
+	}
+	if !strings.Contains(p95Line, "small baseline") {
+		t.Errorf("should mention small baseline, got %q", p95Line)
+	}
+}
+
+func TestRecommendedNextQueries_FullNRQLWithSince(t *testing.T) {
+	p95 := 25.0
+	d := Delta{Status: "YELLOW", Changes: DeltaChanges{P95Pct: &p95}}
+	q := RecommendedNextQueries(d, 30, "MyApp")
+	if len(q) == 0 {
+		t.Fatal("expected at least one recommended query")
+	}
+	for _, nrql := range q {
+		if !strings.Contains(nrql, "SINCE") {
+			t.Errorf("recommended query should contain SINCE: %q", nrql)
+		}
+		if !strings.Contains(nrql, "30") {
+			t.Errorf("recommended query should contain window 30: %q", nrql)
+		}
+	}
+	// With app name, should include filter
+	qWithApp := RecommendedNextQueries(d, 15, "Talkback-API")
+	if len(qWithApp) == 0 {
+		t.Fatal("expected queries with app")
 	}
 	found := false
-	for _, r := range d.Reasons {
-		if r == "FORCED STATUS=RED" {
+	for _, nrql := range qWithApp {
+		if strings.Contains(nrql, "appName") && strings.Contains(nrql, "Talkback-API") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected FORCED STATUS=RED in reasons, got %v", d.Reasons)
+		t.Errorf("expected at least one query to include appName filter for Talkback-API, got %v", qWithApp)
 	}
 }
 

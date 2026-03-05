@@ -26,12 +26,27 @@ type BundleMetadata struct {
 	AppName    string `json:"app_name,omitempty"`
 }
 
+// BundleSummary is the JSON-friendly summary for workflow routing (status, confidence).
+type BundleSummary struct {
+	Status     string `json:"status"`
+	Confidence string `json:"confidence"`
+}
+
+// Simulation holds simulation metadata when OBS_FORCE_STATUS (or similar) is set.
+type Simulation struct {
+	Enabled      bool   `json:"enabled"`
+	ForcedStatus string `json:"forced_status,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
 // Bundle is the full diagnostic bundle.
 type Bundle struct {
 	Metadata        BundleMetadata `json:"metadata"`
+	Summary         *BundleSummary `json:"summary,omitempty"`   // for workflow jq; mirrors delta status/confidence
+	Simulation      *Simulation    `json:"simulation,omitempty"` // set when forced status/reason
 	Delta           *Delta         `json:"delta,omitempty"`
-	Results         []QueryResult  `json:"results"`           // base queries only
-	DeepDiveResults []QueryResult  `json:"deep_dive,omitempty"` // only when status YELLOW/RED or OBS_FORCE_DEEP_DIVE
+	Results         []QueryResult  `json:"results"`
+	DeepDiveResults []QueryResult  `json:"deep_dive,omitempty"`
 }
 
 const maxResultsPreview = 20
@@ -136,22 +151,22 @@ func (b *Bundle) RenderMarkdown() string {
 	}
 	sb.WriteString("\n---\n\n")
 
+	// Simulation section (only when simulation enabled)
+	if b.Simulation != nil && b.Simulation.Enabled {
+		sb.WriteString("## Simulation\n\n")
+		sb.WriteString(fmt.Sprintf("- **Mode:** FORCED STATUS=%s\n", b.Simulation.ForcedStatus))
+		if b.Simulation.Reason != "" {
+			sb.WriteString(fmt.Sprintf("- **Reason:** %s\n", b.Simulation.Reason))
+		}
+		sb.WriteString("\n")
+	}
+
 	// Summary + Key Deltas + Recommended Next Queries (from delta)
 	if b.Delta != nil {
 		d := *b.Delta
 		sb.WriteString("## Summary\n\n")
 		sb.WriteString(fmt.Sprintf("- **Status:** %s\n", d.Status))
 		sb.WriteString(fmt.Sprintf("- **Confidence:** %s\n", d.Confidence))
-		for i, r := range d.Reasons {
-			if strings.HasPrefix(r, "FORCED STATUS=") {
-				simLine := "- **Simulation:** " + r
-				if i+1 < len(d.Reasons) && !strings.HasPrefix(d.Reasons[i+1], "FORCED STATUS=") && strings.TrimSpace(d.Reasons[i+1]) != "" {
-					simLine += fmt.Sprintf(" (reason=%s)", d.Reasons[i+1])
-				}
-				sb.WriteString(simLine + "\n")
-				break
-			}
-		}
 		sb.WriteString("- **Reasons:**\n")
 		if len(d.Reasons) == 0 {
 			sb.WriteString("  - (none)\n")
@@ -201,7 +216,7 @@ func (b *Bundle) RenderMarkdown() string {
 			}
 			sb.WriteString("\n")
 		}
-		rec := RecommendedNextQueries(d)
+		rec := RecommendedNextQueries(d, b.Metadata.WindowMins, b.Metadata.AppName)
 		if len(rec) > 0 {
 			sb.WriteString("## Recommended Next Queries\n\n")
 			for _, q := range rec {
@@ -266,14 +281,10 @@ func (b *Bundle) RenderMarkdown() string {
 	if len(b.DeepDiveResults) > 0 {
 		sb.WriteString("## Automatic Deep Dive\n\n")
 		triggerLine := "Triggered by status=YELLOW"
-		if b.Delta != nil {
+		if b.Simulation != nil && b.Simulation.Enabled {
+			triggerLine = "Triggered by simulation override"
+		} else if b.Delta != nil {
 			triggerLine = "Triggered by status=" + b.Delta.Status
-			for _, r := range b.Delta.Reasons {
-				if strings.HasPrefix(r, "FORCED STATUS=") {
-					triggerLine = "Triggered by simulation override"
-					break
-				}
-			}
 		}
 		sb.WriteString(triggerLine + "\n\n")
 		for _, qr := range b.DeepDiveResults {
