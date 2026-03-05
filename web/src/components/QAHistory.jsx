@@ -133,8 +133,9 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
           )}
         </div>
       ) : !collapsed ? (
-        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
-          No answer yet
+        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: q._pending ? '#e3f2fd' : '#f5f5f5', borderRadius: '3px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span className="spinner" style={{ width: 16, height: 16, flexShrink: 0 }} aria-hidden />
+          <span>{q._pending ? 'Getting an answer…' : 'Processing…'}</span>
         </div>
       ) : null}
     </div>

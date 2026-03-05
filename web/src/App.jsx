@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { VideoPlayer, PlayerEvent } from './VideoPlayer'
 import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
@@ -154,6 +154,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [currentAnswer, setCurrentAnswer] = useState(null)
   const [questions, setQuestions] = useState([])
+  const [pendingSessionQuestions, setPendingSessionQuestions] = useState([]) // Optimistic: show question immediately while waiting for /ask response
   const [mockQuestions, setMockQuestions] = useState([]) // In-memory mock questions (not persisted)
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
@@ -1761,6 +1762,18 @@ function App() {
 
   const submitSessionQuestion = async (text, askedVia = 'text', parentQuestionId = null) => {
     clearFeedback(setAskQuestionFeedback)
+    // Show question immediately in the list (optimistic) with a "processing" state until the API returns.
+    const pendingId = `pending-${Date.now()}`
+    const optimisticQuestion = {
+      id: pendingId,
+      question_text: text,
+      created_at: new Date().toISOString(),
+      parent_question_id: parentQuestionId || null,
+      answer: null,
+      _pending: true,
+      asked_by: authUser?.email || null
+    }
+    setPendingSessionQuestions((prev) => [...prev, optimisticQuestion])
     setLoading(true)
 
     try {
@@ -1786,6 +1799,7 @@ function App() {
           } catch { /* ignore */ }
         }
         setAskQuestionFeedback({ type: 'error', message: msg })
+        setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
         return
       }
 
@@ -1812,9 +1826,11 @@ function App() {
       setAskQuestionFeedback({ type: 'success', message: isCached ? 'Question answered (cached)!' : 'Question answered!' })
       setQuestionText('')
       setReplyingToQuestionId(null)
+      setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
       await fetchSessionQuestions(currentSession.session.id)
     } catch (err) {
       setAskQuestionFeedback({ type: 'error', message: `Failed to ask question: ${err.message}` })
+      setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
     } finally {
       setLoading(false)
     }
@@ -2183,10 +2199,18 @@ function App() {
     }
   }, [effectiveSessionId, fetchSessionQuestions, refetchSession, currentSession?.session?.id, currentSession?.id])
 
-  // Clear mock questions when session changes
+  // Clear mock questions and pending (optimistic) questions when session changes
   useEffect(() => {
     setMockQuestions([])
+    setPendingSessionQuestions([])
   }, [effectiveSessionId])
+
+  // Merge pending + server questions + mock, sorted by created_at so new question appears in order
+  const displayQuestions = useMemo(() => {
+    const combined = [...pendingSessionQuestions, ...questions, ...mockQuestions]
+    combined.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+    return combined
+  }, [pendingSessionQuestions, questions, mockQuestions])
 
   // Keep selectedVideo/videoId in sync with currentSession.video_sources so the media player
   // shows in both edit and participant mode (fixes launch from edit, refresh, and view mode)
@@ -2923,7 +2947,7 @@ function App() {
               getVideoEmbedUrl={getVideoEmbedUrl}
               transcriptJobs={transcriptJobs}
               regenerateTranscript={regenerateTranscript}
-              questions={[...questions, ...mockQuestions]}
+              questions={displayQuestions}
               fetchSessionQuestions={fetchSessionQuestions}
               loading={loading}
               apiBaseUrl={apiBaseUrl}
@@ -2958,7 +2982,7 @@ function App() {
                 handleVideoTimeUpdate={handleVideoTimeUpdate}
                 getVideoEmbedUrl={getVideoEmbedUrl}
                 transcriptJobs={transcriptJobs}
-                questions={[...questions, ...mockQuestions]}
+                questions={displayQuestions}
                 fetchSessionQuestions={fetchSessionQuestions}
                 loading={loading}
                 apiBaseUrl={apiBaseUrl}

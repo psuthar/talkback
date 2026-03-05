@@ -31,9 +31,10 @@ type Delta struct {
 	Confidence         string          `json:"confidence"` // LOW | MED | HIGH
 	Reasons            []string        `json:"reasons"`
 	ExpectedAuth401    int             `json:"expected_auth_401,omitempty"` // 401 count treated as expected noise
-	AuthHotspots       []AuthHotspot   `json:"auth_hotspots,omitempty"`    // usernames exceeding threshold
-	AuthThresholdExceeded bool         `json:"auth_threshold_exceeded,omitempty"`
-	UnexpectedErrorSummary string      `json:"unexpected_error_summary,omitempty"` // one-line summary of non-401 errors
+	BaselineValidPrev     bool            `json:"baseline_valid_prev,omitempty"` // true only when prev != nil && prev.Metrics.TxnN >= 20
+	AuthHotspots          []AuthHotspot   `json:"auth_hotspots,omitempty"`
+	AuthThresholdExceeded bool            `json:"auth_threshold_exceeded,omitempty"`
+	UnexpectedErrorSummary string         `json:"unexpected_error_summary,omitempty"`
 }
 
 // Thresholds for status rules (editable).
@@ -171,30 +172,40 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bu
 		d.Reasons = append(d.Reasons, appWarning)
 	}
 
+	baselineValidPrev := prev != nil && prev.Metrics.TxnN >= 20
+	d.BaselineValidPrev = baselineValidPrev
+
 	if prev != nil {
 		d.Previous = prev.Metrics
-		if prev.Metrics.P95ms > 0 || curr.P95ms != 0 {
-			if p := pctChange(curr.P95ms, prev.Metrics.P95ms); p != nil {
-				d.Changes.P95Pct = p
-			}
-		}
-		if prev.Metrics.ReqPerMin > 0 || curr.ReqPerMin != 0 {
-			if p := pctChange(curr.ReqPerMin, prev.Metrics.ReqPerMin); p != nil {
-				d.Changes.ReqPerMinPct = p
-			}
-		}
+		// Absolute deltas always shown when we have a previous baseline
 		absErr := curr.Errors - prev.Metrics.Errors
 		d.Changes.ErrorsAbs = &absErr
 		absN := curr.TxnN - prev.Metrics.TxnN
 		d.Changes.TxnNAbs = &absN
+
+		// Percent deltas only when baseline is valid and previous metric > epsilon
+		if baselineValidPrev && prev.Metrics.P95ms > pctEpsilon && curr.P95ms >= 0 {
+			if p := pctChange(curr.P95ms, prev.Metrics.P95ms); p != nil {
+				d.Changes.P95Pct = p
+			}
+		}
+		if baselineValidPrev && prev.Metrics.ReqPerMin > pctEpsilon && curr.ReqPerMin >= 0 {
+			if p := pctChange(curr.ReqPerMin, prev.Metrics.ReqPerMin); p != nil {
+				d.Changes.ReqPerMinPct = p
+			}
+		}
 	}
 
 	if prev == nil {
 		d.Reasons = append(d.Reasons, "First run (no baseline)")
-		// Still compute auth classification for summary
 		classifyAuth(bundle, cfg, &d)
 		addExpectedNoiseReasons(&d, cfg)
 		return d
+	}
+
+	if !baselineValidPrev {
+		d.Reasons = append(d.Reasons, fmt.Sprintf("Baseline building (prev txn_n=%d)", prev.Metrics.TxnN))
+		d.Reasons = append(d.Reasons, "Percent deltas suppressed (no meaningful baseline)")
 	}
 
 	if d.Confidence == "LOW" {
@@ -232,17 +243,17 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bu
 		d.Reasons = append(d.Reasons, fmt.Sprintf("errors increased (%d → %d)", prevM.Errors, curr.Errors))
 	}
 
-	if d.Confidence != "LOW" && prevM.P95ms > 0 && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95RedPct {
+	if d.BaselineValidPrev && d.Confidence != "LOW" && prevM.P95ms > pctEpsilon && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95RedPct {
 		d.Status = "RED"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("p95_ms increased +%.0f%% (%.1f → %.1f)", *d.Changes.P95Pct, prevM.P95ms, curr.P95ms))
 	}
 
-	if d.Status == "GREEN" && d.Confidence != "LOW" && prevM.P95ms > 0 && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95YellowPct {
+	if d.Status == "GREEN" && d.BaselineValidPrev && d.Confidence != "LOW" && prevM.P95ms > pctEpsilon && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95YellowPct {
 		d.Status = "YELLOW"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("p95_ms increased +%.0f%% (%.1f → %.1f)", *d.Changes.P95Pct, prevM.P95ms, curr.P95ms))
 	}
 
-	if d.Status == "GREEN" && d.Confidence != "LOW" && prevM.ReqPerMin > 0 && d.Changes.ReqPerMinPct != nil && *d.Changes.ReqPerMinPct < -t.ThroughputDropPct {
+	if d.Status == "GREEN" && d.BaselineValidPrev && d.Confidence != "LOW" && prevM.ReqPerMin > pctEpsilon && d.Changes.ReqPerMinPct != nil && *d.Changes.ReqPerMinPct < -t.ThroughputDropPct {
 		d.Status = "YELLOW"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("req/min dropped %.0f%% (%.2f → %.2f)", *d.Changes.ReqPerMinPct, prevM.ReqPerMin, curr.ReqPerMin))
 	}
@@ -305,15 +316,19 @@ func DeltaSummaryLines(d Delta) []string {
 	prev := d.Previous
 	curr := d.Current
 
+	naSuffix := " (N/A)"
+	if !d.BaselineValidPrev {
+		naSuffix = " (N/A; baseline invalid)"
+	}
 	if d.Changes.P95Pct != nil {
 		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f (%+.0f%%)", prev.P95ms, curr.P95ms, *d.Changes.P95Pct))
 	} else if prev.P95ms != 0 || curr.P95ms != 0 {
-		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f (N/A)", prev.P95ms, curr.P95ms))
+		lines = append(lines, fmt.Sprintf("p95_ms: %.1f → %.1f%s", prev.P95ms, curr.P95ms, naSuffix))
 	}
 	if d.Changes.ReqPerMinPct != nil {
 		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f (%+.0f%%)", prev.ReqPerMin, curr.ReqPerMin, *d.Changes.ReqPerMinPct))
 	} else if prev.ReqPerMin != 0 || curr.ReqPerMin != 0 {
-		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f (N/A)", prev.ReqPerMin, curr.ReqPerMin))
+		lines = append(lines, fmt.Sprintf("req/min: %.2f → %.2f%s", prev.ReqPerMin, curr.ReqPerMin, naSuffix))
 	}
 	if d.Changes.ErrorsAbs != nil {
 		lines = append(lines, fmt.Sprintf("errors: %d → %d (%+d)", prev.Errors, curr.Errors, *d.Changes.ErrorsAbs))

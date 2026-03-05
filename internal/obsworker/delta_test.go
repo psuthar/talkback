@@ -224,3 +224,114 @@ func TestRecommendedNextQueries(t *testing.T) {
 		t.Error("YELLOW with p95 increase should recommend queries")
 	}
 }
+
+// Baseline validity: prev txn_n = 0 -> pct deltas nil, reason includes "Baseline building"
+func TestComputeDelta_BaselineInvalidPrevTxnZero(t *testing.T) {
+	th := DefaultThresholds()
+	prev := &Baseline{Metrics: BaselineMetrics{TxnN: 0, P95ms: 0, ReqPerMin: 0, Errors: 0}}
+	curr := BaselineMetrics{TxnN: 244, P95ms: 238.3, ReqPerMin: 8.13, Errors: 0}
+	d := ComputeDelta(prev, curr, th, nil, Config{}, "")
+	if d.BaselineValidPrev {
+		t.Error("BaselineValidPrev should be false when prev txn_n=0")
+	}
+	if d.Changes.P95Pct != nil {
+		t.Errorf("P95Pct should be nil when baseline invalid, got %v", *d.Changes.P95Pct)
+	}
+	if d.Changes.ReqPerMinPct != nil {
+		t.Errorf("ReqPerMinPct should be nil when baseline invalid, got %v", *d.Changes.ReqPerMinPct)
+	}
+	if d.Changes.ErrorsAbs == nil || d.Changes.TxnNAbs == nil {
+		t.Error("absolute deltas (errors, txn_n) should still be set when baseline invalid")
+	}
+	if *d.Changes.TxnNAbs != 244 {
+		t.Errorf("txn_n abs: got %d, want 244", *d.Changes.TxnNAbs)
+	}
+	found := false
+	for _, r := range d.Reasons {
+		if strings.Contains(r, "Baseline building") && strings.Contains(r, "prev txn_n=0") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected reason containing 'Baseline building' and 'prev txn_n=0', got %v", d.Reasons)
+	}
+	lines := DeltaSummaryLines(d)
+	for _, line := range lines {
+		if strings.HasPrefix(line, "p95_ms:") && !strings.Contains(line, "N/A") {
+			t.Errorf("Key Deltas p95 should show N/A when baseline invalid, got %q", line)
+		}
+		if strings.HasPrefix(line, "p95_ms:") && !strings.Contains(line, "baseline invalid") {
+			t.Errorf("Key Deltas p95 should include 'baseline invalid' when baseline invalid, got %q", line)
+		}
+	}
+}
+
+// prev txn_n = 10 -> pct deltas nil (baseline invalid)
+func TestComputeDelta_BaselineInvalidPrevTxn10(t *testing.T) {
+	th := DefaultThresholds()
+	prev := &Baseline{Metrics: BaselineMetrics{TxnN: 10, P95ms: 100, ReqPerMin: 5, Errors: 0}}
+	curr := BaselineMetrics{TxnN: 50, P95ms: 150, ReqPerMin: 8, Errors: 0}
+	d := ComputeDelta(prev, curr, th, nil, Config{}, "")
+	if d.BaselineValidPrev {
+		t.Error("BaselineValidPrev should be false when prev txn_n=10")
+	}
+	if d.Changes.P95Pct != nil {
+		t.Errorf("P95Pct should be nil when baseline invalid (txn_n=10), got %v", *d.Changes.P95Pct)
+	}
+	if d.Changes.ReqPerMinPct != nil {
+		t.Errorf("ReqPerMinPct should be nil when baseline invalid, got %v", *d.Changes.ReqPerMinPct)
+	}
+	if d.Changes.TxnNAbs == nil || *d.Changes.TxnNAbs != 40 {
+		t.Errorf("txn_n abs should be 40 when baseline invalid, got %v", d.Changes.TxnNAbs)
+	}
+}
+
+// prev txn_n = 25 and prev p95 = 0 -> pct nil (prev metric too small)
+func TestComputeDelta_ValidBaselinePrevP95Zero(t *testing.T) {
+	th := DefaultThresholds()
+	prev := &Baseline{Metrics: BaselineMetrics{TxnN: 25, P95ms: 0, ReqPerMin: 5, Errors: 0}}
+	curr := BaselineMetrics{TxnN: 30, P95ms: 238.3, ReqPerMin: 6, Errors: 0}
+	d := ComputeDelta(prev, curr, th, nil, Config{}, "")
+	if !d.BaselineValidPrev {
+		t.Error("BaselineValidPrev should be true when prev txn_n=25")
+	}
+	if d.Changes.P95Pct != nil {
+		t.Errorf("P95Pct should be nil when prev p95=0 (too small), got %v", *d.Changes.P95Pct)
+	}
+	// req/min prev 5 > epsilon, so ReqPerMinPct should be set
+	if d.Changes.ReqPerMinPct == nil {
+		t.Error("ReqPerMinPct should be set when prev req/min=5 and baseline valid")
+	}
+}
+
+// prev txn_n = 25 and prev p95 = 100, curr p95 = 150 -> pct = +50%
+func TestComputeDelta_ValidBaselineP95Plus50(t *testing.T) {
+	th := DefaultThresholds()
+	prev := &Baseline{Metrics: BaselineMetrics{TxnN: 25, P95ms: 100, ReqPerMin: 10, Errors: 0}}
+	curr := BaselineMetrics{TxnN: 30, P95ms: 150, ReqPerMin: 10, Errors: 0}
+	d := ComputeDelta(prev, curr, th, nil, Config{}, "")
+	if !d.BaselineValidPrev {
+		t.Error("BaselineValidPrev should be true when prev txn_n=25")
+	}
+	if d.Changes.P95Pct == nil {
+		t.Fatal("P95Pct should be set when baseline valid and prev p95 > epsilon")
+	}
+	if *d.Changes.P95Pct < 49 || *d.Changes.P95Pct > 51 {
+		t.Errorf("p95 100 -> 150: got pct %.1f, want ~50", *d.Changes.P95Pct)
+	}
+	lines := DeltaSummaryLines(d)
+	var p95Line string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "p95_ms:") {
+			p95Line = line
+			break
+		}
+	}
+	if p95Line == "" {
+		t.Fatal("expected p95_ms line in Key Deltas")
+	}
+	if !strings.Contains(p95Line, "+50%") && !strings.Contains(p95Line, "+51%") {
+		t.Errorf("p95 line should show +50%% or +51%%, got %q", p95Line)
+	}
+}
