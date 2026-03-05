@@ -58,24 +58,11 @@ func run() error {
 		})
 	}
 
-	// Extract key metrics and compute delta vs previous baseline
+	// Extract key metrics for delta and baseline
 	currMetrics, err := obsworker.ExtractKeyMetrics(bundle)
 	if err != nil {
 		return fmt.Errorf("extract metrics: %w", err)
 	}
-	baselinePath := obsworker.BaselinePath()
-	if !filepath.IsAbs(baselinePath) {
-		if cwd, err := os.Getwd(); err == nil {
-			baselinePath = filepath.Join(cwd, baselinePath)
-		}
-	}
-	prevBaseline, err := obsworker.LoadBaseline(baselinePath)
-	if err != nil {
-		return fmt.Errorf("load baseline: %w", err)
-	}
-	thresholds := obsworker.DefaultThresholds()
-	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds)
-	bundle.Delta = &delta
 
 	outDir := "ops/bundles"
 	if d := os.Getenv("OBS_BUNDLES_DIR"); d != "" {
@@ -87,6 +74,28 @@ func run() error {
 			outDir = filepath.Join(cwd, outDir)
 		}
 	}
+
+	// Baseline path: use OBS_BASELINE_PATH if set, else sibling of bundles dir so both persist together (e.g. CI)
+	baselinePath := obsworker.BaselinePath()
+	if baselinePath == obsworker.DefaultBaselinePath {
+		baselinePath = filepath.Join(filepath.Dir(outDir), "baselines", "latest.json")
+	} else if !filepath.IsAbs(baselinePath) {
+		if cwd, err := os.Getwd(); err == nil {
+			baselinePath = filepath.Join(cwd, baselinePath)
+		}
+	}
+	prevBaseline, err := obsworker.LoadBaseline(baselinePath)
+	if err != nil {
+		return fmt.Errorf("load baseline: %w", err)
+	}
+	if prevBaseline == nil {
+		log.Printf("No baseline at %s (first run)", baselinePath)
+	} else {
+		log.Printf("Loaded baseline from %s (timestamp %s)", baselinePath, prevBaseline.Timestamp)
+	}
+	thresholds := obsworker.DefaultThresholds()
+	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds)
+	bundle.Delta = &delta
 
 	jsonPath, mdPath, err := obsworker.WriteBundle(bundle, outDir)
 	if err != nil {
@@ -103,6 +112,7 @@ func run() error {
 	if err := obsworker.WriteBaseline(baselinePath, currBaseline); err != nil {
 		return fmt.Errorf("write baseline: %w", err)
 	}
+	log.Printf("Wrote baseline to %s", baselinePath)
 
 	// Status line for scripting / logs
 	reasonsStr := strings.Join(delta.Reasons, " ")
