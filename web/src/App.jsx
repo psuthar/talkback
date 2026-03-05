@@ -2223,7 +2223,12 @@ function App() {
     return (
       <LoginPage
         apiBaseUrl={apiBaseUrl}
-        onLoginSuccess={(user) => setAuthUser(user)}
+        onLoginSuccess={(user) => {
+          // Clear any stale query params (e.g. ?session=... from history) so the auth effect
+          // sees a clean URL and shows the default role-based page, not the last viewed session.
+          window.history.replaceState(null, '', window.location.pathname)
+          setAuthUser(user)
+        }}
       />
     )
   }
