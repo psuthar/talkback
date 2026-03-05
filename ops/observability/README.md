@@ -11,6 +11,7 @@ The workflow **Observability Agent** (`.github/workflows/observability-agent.yml
 3. Creates or updates a **daily GitHub Issue** titled `TalkBack Observability Bundle - YYYY-MM-DD` (inbox): new runs add a comment with the latest bundle; new day creates a new issue with intro + co-engineer prompt + bundle.
 
 **Required repo secrets:** `NEW_RELIC_API_KEY`, `NEW_RELIC_ACCOUNT_ID`.  
+**Optional repo secrets (for Key Deltas in CI):** GitHub Actions runners are ephemeral, so the baseline is lost between runs. To get **Key Deltas** (instead of "First run (no baseline)") on the second and later runs, add the same R2 secrets you use for the app: `R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and optionally `R2_PREFIX`. The workflow sets `OBS_BASELINE_R2=1` so obsworker stores the baseline in your R2 bucket.  
 **Optional repo variables:** `OBS_WINDOW_MINUTES` (default 30), `OBS_APP_NAME` (filters Transaction queries to this app), `NEW_RELIC_REGION` (default US). To generate smoke traffic before obsworker in CI, set `RUN_OBS_SMOKE` to `true` and `TALKBACK_BASE_URL` to your service URL (e.g. Render).
 
 Create labels `observability` and `agent` in the repo so the workflow can tag the issue (optional; workflow still runs if labels are missing).
@@ -31,18 +32,25 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 | `OBS_APP_NAME` | (empty) | When set, Transaction-based NRQL queries add `WHERE appName = '...'` so results are for one app only (no single quotes in name). |
 | `OBS_BUNDLES_DIR` | `ops/bundles` | Output directory for bundle files (relative to CWD or absolute) |
 | `OBS_BASELINE_PATH` | (derived) | Path to `latest.json` baseline file; default is sibling of bundles dir: `ops/baselines/latest.json`. Set to an absolute path for a fixed location. |
-| `OBS_BASELINE_R2` | (unset) | When set to `1` or `true`, load and save the baseline from **R2** (same bucket as app). Use on **Render** or any ephemeral filesystem so the second run sees the first run’s baseline and shows **Key Deltas** instead of “First run (no baseline)”. Requires the same `R2_*` env vars as the API (`R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and optionally `R2_PREFIX`). Baseline object key: `ops/baselines/latest.json` (with prefix if set). |
+| `OBS_BASELINE_R2` | (unset) | When set to `1` or `true`, load and save the baseline from **R2** (same bucket as app). Use on **Render** or any ephemeral filesystem so the second run sees the first run’s baseline and shows **Key Deltas** instead of “First run (no baseline)”. Requires the same `R2_*` env vars as the API. All observability data in R2 lives under a **dedicated path** so it never mixes with application data: object key `observability/baselines/latest.json` (with `R2_PREFIX` if set, e.g. `talkback/observability/baselines/latest.json`). |
 
 ## Bundle contents
 
 The bundle includes: **txn_summary** (count, avg/p95/max latency in ms), **discover_appnames** (list of app names in the last 60 minutes), **throughput**, **latency_p95**, **top_transactions_p95**, **error_count** and **top_errors** / **top_error_classes** from `TransactionError`. Markdown uses title-case section names and human-friendly units (e.g. `123.45 ms`, `5.80 req/min`).
+
+## Observability storage (dedicated path)
+
+All observability data is kept separate from application data:
+
+- **Local / file:** Baseline file lives at `ops/baselines/latest.json` (or `OBS_BASELINE_PATH`). Bundle output goes to `ops/bundles/` (or `OBS_BUNDLES_DIR`). These are under the repo’s `ops/` tree and are not used by the app.
+- **R2:** When `OBS_BASELINE_R2=1`, the baseline is stored at object key **`observability/baselines/latest.json`** (with `R2_PREFIX` if set, e.g. `talkback/observability/baselines/latest.json`). Application data uses paths like `sessions/...`, so observability never shares the same path prefix.
 
 ## Baseline and Key Deltas
 
 obsworker stores a **baseline** (metrics from the previous run) to compute **Key Deltas** and status (e.g. GREEN/AMBER). The first run has no baseline, so the bundle shows “First run (no baseline)” and “Key Deltas: N/A”. On the second run, if the baseline is still available, the bundle shows deltas (e.g. “P95 +12 ms”) and a more confident status.
 
 - **Local / CI with persistent disk:** The baseline is written to `ops/baselines/latest.json` (or `OBS_BASELINE_PATH`). As long as you run from the same repo and don’t delete that file, the second run will use it.
-- **Render or other ephemeral filesystem:** The container’s filesystem is wiped between runs, so the baseline is lost. Set **`OBS_BASELINE_R2=1`** and the same **R2_*** env vars as your app so the baseline is stored in your R2 bucket. The next run will load it and show deltas.
+- **Render or GitHub Actions (ephemeral):** The filesystem is wiped between runs, so the baseline is lost. Set **`OBS_BASELINE_R2=1`** and the same **R2_*** env vars as your app so the baseline is stored in your R2 bucket under the **dedicated path** `observability/baselines/` (no mixing with app data such as `sessions/`). In GitHub Actions, add repo secrets `R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (and optionally `R2_PREFIX`); the workflow already passes them to obsworker. The next run will load the baseline and show deltas.
 
 ## Run (from repo root)
 

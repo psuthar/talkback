@@ -1,6 +1,7 @@
 # Observability agent loop: run tests, obsworker, upload bundles, post to daily GitHub Issue.
 # Requires: NEW_RELIC_API_KEY, NEW_RELIC_ACCOUNT_ID (repo secrets).
 # Optional: OBS_WINDOW_MINUTES (default 30), NEW_RELIC_REGION (US), OBS_APP_NAME.
+# For "Key Deltas" (not "First run (no baseline)"): add R2_* repo secrets so baseline persists in R2. Observability uses a dedicated path (observability/baselines/) so it does not mix with application data (sessions/).
 
 name: Observability Agent
 
@@ -84,6 +85,14 @@ jobs:
           NEW_RELIC_REGION: ${{ vars.NEW_RELIC_REGION || 'US' }}
           OBS_WINDOW_MINUTES: ${{ vars.OBS_WINDOW_MINUTES || '30' }}
           OBS_APP_NAME: ${{ vars.OBS_APP_NAME || '' }}
+          # Persist baseline in R2 so next run shows Key Deltas (not "First run (no baseline)"). Optional: add repo secrets to enable.
+          OBS_BASELINE_R2: '1'
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_PREFIX: ${{ secrets.R2_PREFIX }}
+          R2_REGION: auto
         run: go run ./cmd/obsworker
 
       - name: Upload bundle artifacts

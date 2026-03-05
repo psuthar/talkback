@@ -1452,9 +1452,8 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [debugMode, apiBaseUrl])
 
-  // On mount (and when auth loads): apply api from URL and load session from URL in one pass so the first request
-  // uses the correct API base (avoids flash of "Unable to load" in private window when link has ?api=).
-  // When mode is missing, participants always open in view mode; others default to creator.
+  // On mount (and when auth loads): apply api from URL; only open a session when URL has ?session= (user chose that link).
+  // With no session in URL, show default view: creator/admin = session selection; participant = sessions you're part of.
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
@@ -1471,12 +1470,12 @@ function App() {
     }
 
     if (sessionId) {
+      // URL contains a session: go to that session (deep link or user navigated here)
       if (mode === 'view') {
         setSessionUserMode('participant')
         setCurrentUser('participant')
         setViewMode('session')
       } else if (mode !== 'edit') {
-        // No mode in URL: participants default to view, others to creator
         if (authUser?.global_role === 'participant') {
           setSessionUserMode('participant')
           setCurrentUser('participant')
@@ -1488,15 +1487,24 @@ function App() {
         setSessionUserMode('creator')
       }
 
-      // Use api from URL for this load so we don't depend on state (prevents race in private window)
       if (mode === 'edit') {
         openSession(sessionId, 'creator', false, apiOriginForSession)
       } else if (mode === 'view') {
         openSession(sessionId, 'participant', false, apiOriginForSession)
       } else {
-        // No mode: participants go to view, everyone else to edit
         const defaultMode = authUser?.global_role === 'participant' ? 'participant' : 'creator'
         openSession(sessionId, defaultMode, false, apiOriginForSession)
+      }
+    } else {
+      // No session in URL: default view — no session selected; creators/admins see session list, participants see "sessions you're part of"
+      setCurrentSession(null)
+      setViewMode('session')
+      if (authUser?.global_role === 'participant') {
+        setSessionUserMode('participant')
+        setCurrentUser('participant')
+      } else {
+        setSessionUserMode(null)
+        setCurrentUser('')
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2257,7 +2265,13 @@ function App() {
                 await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
               } catch (_) { /* ignore */ }
               setAuthUser(null)
-              // Clear query params for all roles (creator, participant, admin) so they don't carry forward on next login (e.g. no ?mode=admin or ?session=...)
+              // Clear session and view state so next login always lands on default (no session selected)
+              setCurrentSession(null)
+              setViewMode('session')
+              setSessionUserMode(null)
+              setCurrentUser('')
+              setSessionSelectFeedback({ type: '', message: '' })
+              // Clear query params so they don't carry forward on next login (e.g. no ?mode=admin or ?session=...)
               window.history.replaceState(null, '', window.location.pathname)
               setUrlKey(k => k + 1)
             }}

@@ -95,7 +95,8 @@ func run() error {
 	baselinePath, _ = filepath.Abs(baselinePath) // best-effort absolute for consistent read/write
 
 	// When OBS_BASELINE_R2=1 (e.g. Render ephemeral fs), load/save baseline from R2 so it persists across runs.
-	const baselineR2Key = "ops/baselines/latest.json"
+	// Dedicated path so observability data never mixes with application data (e.g. sessions/).
+	const baselineR2Key = "observability/baselines/latest.json"
 	useR2Baseline := isTruthy(os.Getenv("OBS_BASELINE_R2"))
 	var r2Store storage.Interface
 	if useR2Baseline {
