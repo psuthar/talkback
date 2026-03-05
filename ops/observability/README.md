@@ -30,10 +30,19 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 | `OBS_WINDOW_MINUTES` | `30` | NRQL time window in minutes |
 | `OBS_APP_NAME` | (empty) | When set, Transaction-based NRQL queries add `WHERE appName = '...'` so results are for one app only (no single quotes in name). |
 | `OBS_BUNDLES_DIR` | `ops/bundles` | Output directory for bundle files (relative to CWD or absolute) |
+| `OBS_BASELINE_PATH` | (derived) | Path to `latest.json` baseline file; default is sibling of bundles dir: `ops/baselines/latest.json`. Set to an absolute path for a fixed location. |
+| `OBS_BASELINE_R2` | (unset) | When set to `1` or `true`, load and save the baseline from **R2** (same bucket as app). Use on **Render** or any ephemeral filesystem so the second run sees the first run’s baseline and shows **Key Deltas** instead of “First run (no baseline)”. Requires the same `R2_*` env vars as the API (`R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and optionally `R2_PREFIX`). Baseline object key: `ops/baselines/latest.json` (with prefix if set). |
 
 ## Bundle contents
 
 The bundle includes: **txn_summary** (count, avg/p95/max latency in ms), **discover_appnames** (list of app names in the last 60 minutes), **throughput**, **latency_p95**, **top_transactions_p95**, **error_count** and **top_errors** / **top_error_classes** from `TransactionError`. Markdown uses title-case section names and human-friendly units (e.g. `123.45 ms`, `5.80 req/min`).
+
+## Baseline and Key Deltas
+
+obsworker stores a **baseline** (metrics from the previous run) to compute **Key Deltas** and status (e.g. GREEN/AMBER). The first run has no baseline, so the bundle shows “First run (no baseline)” and “Key Deltas: N/A”. On the second run, if the baseline is still available, the bundle shows deltas (e.g. “P95 +12 ms”) and a more confident status.
+
+- **Local / CI with persistent disk:** The baseline is written to `ops/baselines/latest.json` (or `OBS_BASELINE_PATH`). As long as you run from the same repo and don’t delete that file, the second run will use it.
+- **Render or other ephemeral filesystem:** The container’s filesystem is wiped between runs, so the baseline is lost. Set **`OBS_BASELINE_R2=1`** and the same **R2_*** env vars as your app so the baseline is stored in your R2 bucket. The next run will load it and show deltas.
 
 ## Run (from repo root)
 
@@ -98,3 +107,4 @@ TALKBACK_BASE_URL=http://localhost:8080 go run ./cmd/obssmoke
 | **Queries file not found** | Run from the repository root so `ops/observability/queries.json` exists. |
 | **Workflow fails on “Validate required secrets”** | Add `NEW_RELIC_API_KEY` and `NEW_RELIC_ACCOUNT_ID` as repo secrets. |
 | **Empty or sparse NRQL results** | Increase `OBS_WINDOW_MINUTES` (e.g. 30). Ensure the app name in New Relic matches; set `OBS_APP_NAME` if needed. |
+| **Always “First run (no baseline)” / “Key Deltas: N/A” on Render** | Render’s filesystem is ephemeral; the baseline file is lost between runs. Set `OBS_BASELINE_R2=1` and the same `R2_BUCKET`, `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (and optionally `R2_PREFIX`) as your app so the baseline is stored in R2. The second run will then load it and show deltas. |

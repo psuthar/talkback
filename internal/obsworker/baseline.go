@@ -45,9 +45,14 @@ func LoadBaseline(path string) (*Baseline, error) {
 		}
 		return nil, fmt.Errorf("read baseline %s: %w", path, err)
 	}
+	return LoadBaselineFromBytes(data)
+}
+
+// LoadBaselineFromBytes parses baseline JSON from bytes (e.g. from R2 Get). Returns (nil, error) on parse error.
+func LoadBaselineFromBytes(data []byte) (*Baseline, error) {
 	var b Baseline
 	if err := json.Unmarshal(data, &b); err != nil {
-		return nil, fmt.Errorf("parse baseline %s: %w", path, err)
+		return nil, fmt.Errorf("parse baseline: %w", err)
 	}
 	return &b, nil
 }
