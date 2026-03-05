@@ -1,6 +1,7 @@
 # Observability agent loop: run tests, obsworker, upload bundles, post to daily GitHub Issue.
 # Requires: NEW_RELIC_API_KEY, NEW_RELIC_ACCOUNT_ID (repo secrets).
 # Optional: OBS_WINDOW_MINUTES (default 30), NEW_RELIC_REGION (US), OBS_APP_NAME.
+# Simulation (repo variables): set OBS_FORCE_STATUS=RED|YELLOW|GREEN to override status and run deep-dive; OBS_FORCE_REASON (optional); OBS_FORCE_DEEP_DIVE=true to force deep-dive when GREEN. Leave unset for normal runs.
 # For "Key Deltas" (not "First run (no baseline)"): add R2_* repo secrets so baseline persists in R2. Observability uses a dedicated path (observability/baselines/) so it does not mix with application data (sessions/).
 
 name: Observability Agent
@@ -90,6 +91,10 @@ jobs:
           OBS_AUTH_WINDOW_MINUTES: ${{ vars.OBS_AUTH_WINDOW_MINUTES || '' }}
           OBS_AUTH_ERROR_MESSAGE: ${{ vars.OBS_AUTH_ERROR_MESSAGE || 'Unauthorized' }}
           OBS_AUTH_ERROR_CLASS: ${{ vars.OBS_AUTH_ERROR_CLASS || '401' }}
+          # Simulation (toggle via repo variables; leave unset for normal runs)
+          OBS_FORCE_STATUS: ${{ vars.OBS_FORCE_STATUS || '' }}
+          OBS_FORCE_REASON: ${{ vars.OBS_FORCE_REASON || '' }}
+          OBS_FORCE_DEEP_DIVE: ${{ vars.OBS_FORCE_DEEP_DIVE || 'false' }}
           # Persist baseline in R2 so next run shows Key Deltas (not "First run (no baseline)"). Optional: add repo secrets to enable.
           OBS_BASELINE_R2: '1'
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
