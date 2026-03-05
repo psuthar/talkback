@@ -327,6 +327,34 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		questions = []*models.Question{}
 		answers = []*models.Answer{}
 	}
+	// Enrich answer citations with source_id from chunks so doc citations open correctly in participant view
+	chunks, _ := h.DB.ListSessionChunksBySessionID(r.Context(), sessionID)
+	chunkSourceByID := make(map[string]struct{ SourceID, SourceType string })
+	for _, c := range chunks {
+		if c.SourceID != nil {
+			chunkSourceByID[c.ID.String()] = struct{ SourceID, SourceType string }{
+				SourceID:   c.SourceID.String(),
+				SourceType: c.SourceType,
+			}
+		}
+	}
+	for _, a := range answers {
+		if a == nil {
+			continue
+		}
+		for i := range a.Citations {
+			c := &a.Citations[i]
+			if c.SourceID != "" {
+				continue
+			}
+			if info, ok := chunkSourceByID[c.ChunkID]; ok {
+				c.SourceID = info.SourceID
+				if c.SourceType == "" {
+					c.SourceType = info.SourceType
+				}
+			}
+		}
+	}
 
 	// Determine mode: creator if current_user matches session.created_by, otherwise participant
 	mode := "participant"

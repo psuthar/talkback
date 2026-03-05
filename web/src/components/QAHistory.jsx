@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 
 function CitationBadge({ citation, onClick }) {
   const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
-  const canNavigate = citation.anchor?.start_ms != null || (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc'))
+  const canNavigate = citation.anchor?.start_ms != null ||
+    citation?.source_type === 'material' ||
+    (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc'))
   return (
     <button
       type="button"

@@ -199,13 +199,26 @@ export function ParticipantMode({
 
     const sourceId = citation?.source_id ?? citation?.sourceId ?? citation?.navigation?.source_id
     const isMaterialCitation = citation?.source_type === 'material' || citation?.navigation?.type === 'pdf' || citation?.navigation?.type === 'doc'
-    const labelSuggestsDoc = citation?.label && /slide|document|p\.\s*\d|page\s*\d/i.test(String(citation.label))
+    const labelSuggestsDoc = citation?.label && /slide|document|p\.\s*\d|page\s*\d|\.(docx?|pdf)\s*(\(|$)/i.test(String(citation.label))
 
     let mat = sourceId ? materials.find(m => String(m?.id) === String(sourceId)) : null
     if (!mat && (isMaterialCitation || labelSuggestsDoc)) {
       const pdfs = materials.filter(m => (m?.content_type || m?.filename || '').toLowerCase().includes('pdf'))
       if (pdfs.length === 1) mat = pdfs[0]
       else if (materials.length === 1) mat = materials[0]
+      // Fallback: match by filename from label (e.g. "Paresh Suthar Resume v5a.docx (block 4)" -> find material with that filename)
+      else if (citation?.label && typeof citation.label === 'string') {
+        const beforeBlock = citation.label.split(/\s*\(\s*block\s+\d+\s*\)/i)[0]?.trim()
+        const beforePage = beforeBlock.split(/\s+p\.\s*\d+/i)[0]?.trim()
+        const filenameFromLabel = beforePage || beforeBlock
+        if (filenameFromLabel) {
+          const byFilename = materials.find(m => {
+            const f = (m?.filename || '').trim()
+            return f && (f === filenameFromLabel || filenameFromLabel.endsWith(f) || f.endsWith(filenameFromLabel))
+          })
+          if (byFilename) mat = byFilename
+        }
+      }
     }
     if (mat) {
       setMaterialsCollapsed(false)
