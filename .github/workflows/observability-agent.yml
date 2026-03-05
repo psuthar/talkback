@@ -85,6 +85,11 @@ jobs:
           NEW_RELIC_REGION: ${{ vars.NEW_RELIC_REGION || 'US' }}
           OBS_WINDOW_MINUTES: ${{ vars.OBS_WINDOW_MINUTES || '30' }}
           OBS_APP_NAME: ${{ vars.OBS_APP_NAME || '' }}
+          OBS_REQUIRE_APPNAME_FILTER: ${{ vars.OBS_REQUIRE_APPNAME_FILTER || 'false' }}
+          OBS_AUTH_USER_THRESHOLD: ${{ vars.OBS_AUTH_USER_THRESHOLD || '5' }}
+          OBS_AUTH_WINDOW_MINUTES: ${{ vars.OBS_AUTH_WINDOW_MINUTES || '' }}
+          OBS_AUTH_ERROR_MESSAGE: ${{ vars.OBS_AUTH_ERROR_MESSAGE || 'Unauthorized' }}
+          OBS_AUTH_ERROR_CLASS: ${{ vars.OBS_AUTH_ERROR_CLASS || '401' }}
           # Persist baseline in R2 so next run shows Key Deltas (not "First run (no baseline)"). Optional: add repo secrets to enable.
           OBS_BASELINE_R2: '1'
           R2_BUCKET: ${{ secrets.R2_BUCKET }}

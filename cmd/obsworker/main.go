@@ -30,12 +30,20 @@ func run() error {
 		return err
 	}
 
-	queries, err := obsworker.LoadQueries(cfg)
+	client := obsworker.NewNerdGraphClient(cfg)
+	appName, _, appWarning, err := obsworker.ResolveAppName(cfg, client)
+	if err != nil {
+		return err
+	}
+	if appWarning != "" {
+		log.Printf("App name resolution: %s", appWarning)
+	}
+
+	queries, err := obsworker.LoadQueries(cfg, appName, cfg.RequireAppNameFilter)
 	if err != nil {
 		return err
 	}
 
-	client := obsworker.NewNerdGraphClient(cfg)
 	now := time.Now()
 	ts := obsworker.Timestamp(now)
 
@@ -47,7 +55,7 @@ func run() error {
 			WindowMins: cfg.WindowMins,
 			GitSHA:     gitSHA,
 			GitBranch:  gitBranch,
-			AppName:    cfg.AppName,
+			AppName:    appName,
 		},
 		Results: make([]obsworker.QueryResult, 0, len(queries)),
 	}
@@ -149,7 +157,7 @@ func run() error {
 		log.Printf("Loaded baseline from %s (timestamp %s)", baselinePath, prevBaseline.Timestamp)
 	}
 	thresholds := obsworker.DefaultThresholds()
-	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds)
+	delta := obsworker.ComputeDelta(prevBaseline, currMetrics, thresholds, bundle, cfg, appWarning)
 	bundle.Delta = &delta
 
 	jsonPath, mdPath, err := obsworker.WriteBundle(bundle, outDir)

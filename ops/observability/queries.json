@@ -3,7 +3,7 @@
   "queries": [
     {
       "name": "txn_summary",
-      "nrql": "SELECT count(*) AS 'n', average(duration)*1000 AS 'avg_ms', percentile(duration,95)*1000 AS 'p95_ms', max(duration)*1000 AS 'max_ms' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
+      "nrql": "SELECT count(*) AS 'n', average(duration)*1000 AS 'avg_ms', percentile(duration,95)*1000 AS 'p95_ms', max(duration)*1000 AS 'max_ms' FROM Transaction {{appNameClause}} SINCE {{window}} minutes ago"
     },
     {
       "name": "discover_appnames",
@@ -11,27 +11,47 @@
     },
     {
       "name": "throughput",
-      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
+      "nrql": "SELECT rate(count(*), 1 minute) AS 'req_per_min' FROM Transaction {{appNameClause}} SINCE {{window}} minutes ago"
     },
     {
       "name": "latency_p95",
-      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appFilter}} SINCE {{window}} minutes ago"
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appNameClause}} SINCE {{window}} minutes ago"
     },
     {
       "name": "top_transactions_p95",
-      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appFilter}} FACET name LIMIT 10 SINCE {{window}} minutes ago"
+      "nrql": "SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FROM Transaction {{appNameClause}} FACET name LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "avg_transactions",
+      "nrql": "FROM Transaction SELECT average(duration)*1000 AS 'avg_ms' {{appNameClause}} FACET name LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "max_transactions",
+      "nrql": "FROM Transaction SELECT max(duration)*1000 AS 'max_ms' {{appNameClause}} FACET name LIMIT 10 SINCE {{window}} minutes ago"
     },
     {
       "name": "error_count",
-      "nrql": "FROM TransactionError SELECT count(*) AS 'errors' SINCE {{window}} minutes ago"
+      "nrql": "FROM TransactionError SELECT count(*) AS 'errors' {{appNameClause}} SINCE {{window}} minutes ago"
     },
     {
       "name": "top_errors",
-      "nrql": "FROM TransactionError SELECT count(*) AS 'count' FACET error.message LIMIT 10 SINCE {{window}} minutes ago"
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' {{appNameClause}} FACET error.message LIMIT 10 SINCE {{window}} minutes ago"
     },
     {
       "name": "top_error_classes",
-      "nrql": "FROM TransactionError SELECT count(*) AS 'count' FACET error.class LIMIT 10 SINCE {{window}} minutes ago"
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' {{appNameClause}} FACET error.class LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "errors_by_endpoint",
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' {{appNameClause}} FACET transactionName LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "errors_by_endpoint_uri",
+      "nrql": "FROM TransactionError SELECT count(*) AS 'count' {{appNameClause}} FACET request.uri LIMIT 10 SINCE {{window}} minutes ago"
+    },
+    {
+      "name": "auth_failures_by_username",
+      "nrql": "FROM Transaction SELECT count(*) AS 'count' {{appNameWhereAnd}} name LIKE 'WebTransaction/%/POST /api/auth/login' AND auth.outcome = 'failure' FACET auth.username LIMIT 10 SINCE {{window}} minutes ago"
     }
   ]
 }

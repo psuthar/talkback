@@ -150,6 +150,36 @@ func (b *Bundle) RenderMarkdown() string {
 			}
 		}
 		sb.WriteString("\n")
+
+		// Expected Noise (401 treated as expected when below threshold)
+		sb.WriteString("## Expected Noise\n\n")
+		if d.ExpectedAuth401 > 0 {
+			sb.WriteString(fmt.Sprintf("- Unauthorized (401): %d\n", d.ExpectedAuth401))
+		} else {
+			sb.WriteString("- (none)\n")
+		}
+		sb.WriteString("\n")
+
+		// Unexpected Errors (non-401)
+		sb.WriteString("## Unexpected Errors\n\n")
+		if d.UnexpectedErrorSummary != "" {
+			sb.WriteString(fmt.Sprintf("- %s\n", d.UnexpectedErrorSummary))
+		} else {
+			sb.WriteString("- (none)\n")
+		}
+		sb.WriteString("\n")
+
+		// Auth Failure Hotspots (usernames with high 401 attempts)
+		sb.WriteString("## Auth Failure Hotspots\n\n")
+		if len(d.AuthHotspots) > 0 {
+			for _, h := range d.AuthHotspots {
+				sb.WriteString(fmt.Sprintf("- %s: %d\n", h.Username, h.Count))
+			}
+		} else {
+			sb.WriteString("- (none)\n")
+		}
+		sb.WriteString("\n")
+
 		sb.WriteString("## Key Deltas\n\n")
 		deltaLines := DeltaSummaryLines(d)
 		if len(deltaLines) == 0 {
@@ -179,6 +209,31 @@ func (b *Bundle) RenderMarkdown() string {
 		sb.WriteString("\n```\n\n")
 
 		if len(qr.Results) == 0 {
+			// When errors_by_endpoint (transactionName) is empty but we have errors, show request.uri fallback with a note
+			if qr.Name == "errors_by_endpoint" {
+				var uriResults []map[string]interface{}
+				for _, r := range b.Results {
+					if r.Name == "errors_by_endpoint_uri" && len(r.Results) > 0 {
+						uriResults = r.Results
+						break
+					}
+				}
+				if len(uriResults) > 0 {
+					sb.WriteString("*transactionName facet empty; showing request.uri facet:*\n\n")
+					preview := uriResults
+					if len(preview) > maxResultsPreview {
+						preview = preview[:maxResultsPreview]
+					}
+					for i, row := range preview {
+						sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, renderResultRow(row)))
+					}
+					if len(uriResults) > maxResultsPreview {
+						sb.WriteString(fmt.Sprintf("\n*... and %d more rows.*\n", len(uriResults)-maxResultsPreview))
+					}
+					sb.WriteString("\n")
+					continue
+				}
+			}
 			sb.WriteString("*No rows.*\n\n")
 			continue
 		}

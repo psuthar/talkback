@@ -17,11 +17,17 @@ const (
 
 // Config holds env-derived settings for the observability worker.
 type Config struct {
-	APIKey     string
-	AccountID  int
-	Region     Region
-	WindowMins int
-	AppName    string
+	APIKey               string
+	AccountID            int
+	Region               Region
+	WindowMins            int
+	AppName              string
+	RequireAppNameFilter bool
+	// Auth error gating
+	AuthUserThreshold  int
+	AuthWindowMins     int
+	AuthErrorMessage   string
+	AuthErrorClass     string
 }
 
 // NerdGraphEndpoint returns the GraphQL URL for the configured region.
@@ -67,12 +73,44 @@ func LoadConfig() (Config, error) {
 	}
 
 	appName := strings.TrimSpace(os.Getenv("OBS_APP_NAME"))
+	requireAppNameFilter := isTruthy(os.Getenv("OBS_REQUIRE_APPNAME_FILTER"))
+
+	authUserThreshold := 5
+	if s := strings.TrimSpace(os.Getenv("OBS_AUTH_USER_THRESHOLD")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			authUserThreshold = n
+		}
+	}
+	authWindowMins := windowMins
+	if s := strings.TrimSpace(os.Getenv("OBS_AUTH_WINDOW_MINUTES")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			authWindowMins = n
+		}
+	}
+	authErrorMessage := strings.TrimSpace(os.Getenv("OBS_AUTH_ERROR_MESSAGE"))
+	if authErrorMessage == "" {
+		authErrorMessage = "Unauthorized"
+	}
+	authErrorClass := strings.TrimSpace(os.Getenv("OBS_AUTH_ERROR_CLASS"))
+	if authErrorClass == "" {
+		authErrorClass = "401"
+	}
 
 	return Config{
-		APIKey:     apiKey,
-		AccountID:  accountID,
-		Region:     region,
-		WindowMins: windowMins,
-		AppName:    appName,
+		APIKey:               apiKey,
+		AccountID:            accountID,
+		Region:               region,
+		WindowMins:            windowMins,
+		AppName:              appName,
+		RequireAppNameFilter:  requireAppNameFilter,
+		AuthUserThreshold:     authUserThreshold,
+		AuthWindowMins:        authWindowMins,
+		AuthErrorMessage:      authErrorMessage,
+		AuthErrorClass:        authErrorClass,
 	}, nil
+}
+
+func isTruthy(s string) bool {
+	s = strings.TrimSpace(strings.ToLower(s))
+	return s == "1" || s == "true" || s == "yes" || s == "on"
 }

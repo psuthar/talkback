@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 )
@@ -166,6 +167,22 @@ func (h *Handlers) AuthSignup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// setAuthFailureAttributes sets New Relic custom attributes on the transaction for failed login (observability gating).
+// Only the attempted username (email) is set; never passwords or tokens.
+func setAuthFailureAttributes(r *http.Request, email string) {
+	txn := newrelic.FromContext(r.Context())
+	if txn == nil {
+		return
+	}
+	user := strings.TrimSpace(strings.ToLower(email))
+	if user != "" {
+		txn.AddAttribute("auth.username", user)
+	}
+	txn.AddAttribute("auth.outcome", "failure")
+	txn.AddAttribute("auth.reason", "unauthorized")
+	txn.AddAttribute("auth.endpoint", "POST /api/auth/login")
+}
+
 // AuthLogin handles POST /api/auth/login
 func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -189,19 +206,23 @@ func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, err := h.DB.GetUserByEmail(ctx, email)
 	if err != nil || user == nil {
+		setAuthFailureAttributes(r, email)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 	if user.Status != models.UserStatusActive {
+		setAuthFailureAttributes(r, email)
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "invalid credentials"})
 		return
 	}
 	cred, err := h.DB.GetPasswordCredentialByUserID(ctx, user.ID)
 	if err != nil || cred == nil {
+		setAuthFailureAttributes(r, email)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
 	if !auth.CheckPassword(cred.PasswordHash, req.Password) {
+		setAuthFailureAttributes(r, email)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}

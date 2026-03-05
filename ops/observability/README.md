@@ -33,10 +33,15 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 | `OBS_BUNDLES_DIR` | `ops/bundles` | Output directory for bundle files (relative to CWD or absolute) |
 | `OBS_BASELINE_PATH` | (derived) | Path to `latest.json` baseline file; default is sibling of bundles dir: `ops/baselines/latest.json`. Set to an absolute path for a fixed location. |
 | `OBS_BASELINE_R2` | (unset) | When set to `1` or `true`, load and save the baseline from **R2** (same bucket as app). Use on **Render** or any ephemeral filesystem so the second run sees the first run’s baseline and shows **Key Deltas** instead of “First run (no baseline)”. Requires the same `R2_*` env vars as the API. All observability data in R2 lives under a **dedicated path** so it never mixes with application data: object key `observability/baselines/latest.json` (with `R2_PREFIX` if set, e.g. `talkback/observability/baselines/latest.json`). |
+| `OBS_REQUIRE_APPNAME_FILTER` | (false) | When `true`, obsworker fails if app name cannot be determined (no `OBS_APP_NAME` and no single discovered app). |
+| `OBS_AUTH_USER_THRESHOLD` | `5` | If any username has ≥ this many 401 attempts in the window, status becomes at least YELLOW; ≥ 3× threshold → RED. |
+| `OBS_AUTH_WINDOW_MINUTES` | (same as `OBS_WINDOW_MINUTES`) | Window used for auth failure counts. |
+| `OBS_AUTH_ERROR_MESSAGE` | `Unauthorized` | Error message treated as expected auth noise when below threshold. |
+| `OBS_AUTH_ERROR_CLASS` | `401` | Error class treated as expected auth noise when below threshold. |
 
 ## Bundle contents
 
-The bundle includes: **txn_summary** (count, avg/p95/max latency in ms), **discover_appnames** (list of app names in the last 60 minutes), **throughput**, **latency_p95**, **top_transactions_p95**, **error_count** and **top_errors** / **top_error_classes** from `TransactionError`. Markdown uses title-case section names and human-friendly units (e.g. `123.45 ms`, `5.80 req/min`).
+The bundle includes: **txn_summary**, **discover_appnames**, **throughput**, **latency_p95**, **top_transactions_p95**, **avg_transactions**, **max_transactions**, **error_count**, **top_errors**, **top_error_classes**, **errors_by_endpoint** (with request.uri fallback when transactionName is empty), and **auth_failures_by_username**. When app name is resolved (env or discovered), all Transaction and TransactionError queries use `WHERE appName = '...'`. The markdown also has **Expected Noise** (401 counts below threshold), **Unexpected Errors** (non-401), and **Auth Failure Hotspots** (usernames with high 401 attempts).
 
 ## Observability storage (dedicated path)
 

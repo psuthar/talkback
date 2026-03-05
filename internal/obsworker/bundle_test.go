@@ -187,3 +187,43 @@ func TestRenderMarkdown_ContainsSummaryWhenDeltaSet(t *testing.T) {
 		t.Error("markdown should contain ## Key Deltas")
 	}
 }
+
+func TestRenderMarkdown_ContainsExpectedNoiseAndAuthHotspots(t *testing.T) {
+	dir := t.TempDir()
+	delta := Delta{
+		Status:          "GREEN",
+		Confidence:      "HIGH",
+		Reasons:         []string{"Expected auth failures (Unauthorized 401): 3"},
+		ExpectedAuth401: 3,
+		AuthHotspots:    []AuthHotspot{{Username: "user@example.com", Count: 2}},
+	}
+	b := &Bundle{
+		Metadata: BundleMetadata{Timestamp: "20260304-101500", WindowMins: 30},
+		Delta:    &delta,
+		Results:  []QueryResult{{Name: "txn_summary", NRQL: "SELECT 1", Results: nil}},
+	}
+	_, mdPath, err := WriteBundle(b, dir)
+	if err != nil {
+		t.Fatalf("WriteBundle: %v", err)
+	}
+	content, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	md := string(content)
+	if !strings.Contains(md, "## Expected Noise") {
+		t.Error("markdown should contain ## Expected Noise")
+	}
+	if !strings.Contains(md, "## Unexpected Errors") {
+		t.Error("markdown should contain ## Unexpected Errors")
+	}
+	if !strings.Contains(md, "## Auth Failure Hotspots") {
+		t.Error("markdown should contain ## Auth Failure Hotspots")
+	}
+	if !strings.Contains(md, "Unauthorized (401): 3") {
+		t.Error("markdown should show expected 401 count")
+	}
+	if !strings.Contains(md, "user@example.com: 2") {
+		t.Error("markdown should show auth hotspot username and count")
+	}
+}

@@ -3,6 +3,7 @@ package obsworker
 import (
 	"fmt"
 	"math"
+	"strings"
 )
 
 const pctEpsilon = 0.0001
@@ -15,14 +16,24 @@ type DeltaChanges struct {
 	TxnNAbs     *int     `json:"txn_n_abs,omitempty"`
 }
 
-// Delta holds current, previous, computed changes, status, confidence, and reasons.
+// AuthHotspot is a username with high 401 count.
+type AuthHotspot struct {
+	Username string `json:"username"`
+	Count    int    `json:"count"`
+}
+
+// Delta holds current, previous, computed changes, status, confidence, reasons, and auth classification.
 type Delta struct {
-	Current    BaselineMetrics `json:"current"`
-	Previous   BaselineMetrics `json:"previous,omitempty"`
-	Changes    DeltaChanges    `json:"changes,omitempty"`
-	Status     string          `json:"status"`     // GREEN | YELLOW | RED
-	Confidence string          `json:"confidence"` // LOW | MED | HIGH
-	Reasons    []string        `json:"reasons"`
+	Current            BaselineMetrics `json:"current"`
+	Previous           BaselineMetrics `json:"previous,omitempty"`
+	Changes            DeltaChanges    `json:"changes,omitempty"`
+	Status             string          `json:"status"`     // GREEN | YELLOW | RED
+	Confidence         string          `json:"confidence"` // LOW | MED | HIGH
+	Reasons            []string        `json:"reasons"`
+	ExpectedAuth401    int             `json:"expected_auth_401,omitempty"` // 401 count treated as expected noise
+	AuthHotspots       []AuthHotspot   `json:"auth_hotspots,omitempty"`    // usernames exceeding threshold
+	AuthThresholdExceeded bool         `json:"auth_threshold_exceeded,omitempty"`
+	UnexpectedErrorSummary string      `json:"unexpected_error_summary,omitempty"` // one-line summary of non-401 errors
 }
 
 // Thresholds for status rules (editable).
@@ -66,8 +77,88 @@ func pctChange(current, previous float64) *float64 {
 	return &pct
 }
 
-// ComputeDelta builds Delta from previous baseline and current metrics using the given thresholds.
-func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds) Delta {
+// getQueryResults returns results for a query by name from the bundle.
+func getQueryResults(bundle *Bundle, name string) []map[string]interface{} {
+	if bundle == nil {
+		return nil
+	}
+	for _, qr := range bundle.Results {
+		if qr.Name == name {
+			return qr.Results
+		}
+	}
+	return nil
+}
+
+// count401FromBundle returns approximate 401/Unauthorized count from top_error_classes and top_errors.
+func count401FromBundle(bundle *Bundle, errorClass, errorMessage string) int {
+	var n int
+	for _, row := range getQueryResults(bundle, "top_error_classes") {
+		if fmt.Sprint(row["facet"]) == errorClass || fmt.Sprint(row["name"]) == errorClass {
+			if c, ok := row["count"].(float64); ok {
+				n += int(c)
+			}
+			break
+		}
+	}
+	if n > 0 {
+		return n
+	}
+	for _, row := range getQueryResults(bundle, "top_errors") {
+		if fmt.Sprint(row["facet"]) == errorMessage || fmt.Sprint(row["name"]) == errorMessage {
+			if c, ok := row["count"].(float64); ok {
+				n += int(c)
+			}
+			break
+		}
+	}
+	return n
+}
+
+// parseAuthFailuresByUsername returns username -> count from auth_failures_by_username result rows.
+func parseAuthFailuresByUsername(rows []map[string]interface{}) []AuthHotspot {
+	var out []AuthHotspot
+	for _, row := range rows {
+		user := ""
+		if u, ok := row["auth.username"]; ok && u != nil {
+			user = fmt.Sprint(u)
+		}
+		if user == "" {
+			if u, ok := row["facet"]; ok && u != nil {
+				user = fmt.Sprint(u)
+			}
+		}
+		if user == "" {
+			if u, ok := row["name"]; ok && u != nil {
+				user = fmt.Sprint(u)
+			}
+		}
+		user = strings.TrimSpace(user)
+		count := 0
+		if c, ok := row["count"].(float64); ok {
+			count = int(c)
+		}
+		if user != "" || count > 0 {
+			out = append(out, AuthHotspot{Username: user, Count: count})
+		}
+	}
+	return out
+}
+
+func parseInt(v interface{}) int {
+	switch x := v.(type) {
+	case float64:
+		return int(x)
+	case int:
+		return x
+	case int64:
+		return int(x)
+	}
+	return 0
+}
+
+// ComputeDelta builds Delta from previous baseline, current metrics, bundle (for auth/errors), and thresholds.
+func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds, bundle *Bundle, cfg Config, appWarning string) Delta {
 	d := Delta{
 		Current:    curr,
 		Previous:   BaselineMetrics{},
@@ -76,9 +167,12 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds) Delta {
 		Reasons:    nil,
 	}
 
+	if appWarning != "" {
+		d.Reasons = append(d.Reasons, appWarning)
+	}
+
 	if prev != nil {
 		d.Previous = prev.Metrics
-		// Populate changes
 		if prev.Metrics.P95ms > 0 || curr.P95ms != 0 {
 			if p := pctChange(curr.P95ms, prev.Metrics.P95ms); p != nil {
 				d.Changes.P95Pct = p
@@ -95,44 +189,110 @@ func ComputeDelta(prev *Baseline, curr BaselineMetrics, t Thresholds) Delta {
 		d.Changes.TxnNAbs = &absN
 	}
 
-	// No previous baseline
 	if prev == nil {
 		d.Reasons = append(d.Reasons, "First run (no baseline)")
+		// Still compute auth classification for summary
+		classifyAuth(bundle, cfg, &d)
+		addExpectedNoiseReasons(&d, cfg)
 		return d
 	}
 
-	// LOW confidence reason
 	if d.Confidence == "LOW" {
 		d.Reasons = append(d.Reasons, fmt.Sprintf("LOW CONFIDENCE: txn count n=%d", curr.TxnN))
 	}
 
 	prevM := prev.Metrics
+	threshold := cfg.AuthUserThreshold
+	if threshold <= 0 {
+		threshold = 5
+	}
 
-	// RED: errors > 0 AND (previous errors == 0 OR errors increased)
-	if curr.Errors > 0 && (prevM.Errors == 0 || curr.Errors > prevM.Errors) {
+	// Auth: parse auth_failures_by_username and flag if any user >= threshold
+	classifyAuth(bundle, cfg, &d)
+	redThreshold := threshold * 3
+
+	if d.AuthThresholdExceeded {
+		for _, h := range d.AuthHotspots {
+			if h.Count >= redThreshold {
+				d.Status = "RED"
+				d.Reasons = append(d.Reasons, fmt.Sprintf("High auth failures for username=%s: %d in window (threshold %d, RED at %d)", h.Username, h.Count, threshold, redThreshold))
+				break
+			}
+		}
+		if d.Status != "RED" {
+			d.Status = "YELLOW"
+			d.Reasons = append(d.Reasons, fmt.Sprintf("High auth failures for username(s) above threshold %d", threshold))
+		}
+	}
+
+	// RED for errors: only when NOT all 401 expected noise (i.e. when we have unexpected errors or auth threshold exceeded)
+	allErrorsAre401Expected := curr.Errors > 0 && d.ExpectedAuth401 >= curr.Errors && !d.AuthThresholdExceeded
+	if curr.Errors > 0 && (prevM.Errors == 0 || curr.Errors > prevM.Errors) && !allErrorsAre401Expected {
 		d.Status = "RED"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("errors increased (%d → %d)", prevM.Errors, curr.Errors))
 	}
 
-	// RED: p95 increased > 50% (only if prev p95 exists and confidence not LOW)
 	if d.Confidence != "LOW" && prevM.P95ms > 0 && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95RedPct {
 		d.Status = "RED"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("p95_ms increased +%.0f%% (%.1f → %.1f)", *d.Changes.P95Pct, prevM.P95ms, curr.P95ms))
 	}
 
-	// YELLOW: p95 increased > 20% (confidence not LOW) — only if not already RED
 	if d.Status == "GREEN" && d.Confidence != "LOW" && prevM.P95ms > 0 && d.Changes.P95Pct != nil && *d.Changes.P95Pct > t.P95YellowPct {
 		d.Status = "YELLOW"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("p95_ms increased +%.0f%% (%.1f → %.1f)", *d.Changes.P95Pct, prevM.P95ms, curr.P95ms))
 	}
 
-	// YELLOW: req_per_min dropped > 30% (confidence not LOW)
 	if d.Status == "GREEN" && d.Confidence != "LOW" && prevM.ReqPerMin > 0 && d.Changes.ReqPerMinPct != nil && *d.Changes.ReqPerMinPct < -t.ThroughputDropPct {
 		d.Status = "YELLOW"
 		d.Reasons = append(d.Reasons, fmt.Sprintf("req/min dropped %.0f%% (%.2f → %.2f)", *d.Changes.ReqPerMinPct, prevM.ReqPerMin, curr.ReqPerMin))
 	}
 
+	addExpectedNoiseReasons(&d, cfg)
 	return d
+}
+
+func classifyAuth(bundle *Bundle, cfg Config, d *Delta) {
+	rows := getQueryResults(bundle, "auth_failures_by_username")
+	d.AuthHotspots = parseAuthFailuresByUsername(rows)
+	threshold := cfg.AuthUserThreshold
+	if threshold <= 0 {
+		threshold = 5
+	}
+	for _, h := range d.AuthHotspots {
+		if h.Count >= threshold {
+			d.AuthThresholdExceeded = true
+			break
+		}
+	}
+	d.ExpectedAuth401 = count401FromBundle(bundle, cfg.AuthErrorClass, cfg.AuthErrorMessage)
+	// If threshold exceeded, don't treat 401 as expected for summary; otherwise expected = min(401 count, total errors)
+	if !d.AuthThresholdExceeded && d.ExpectedAuth401 > 0 {
+		if d.Current.Errors > 0 && d.ExpectedAuth401 > d.Current.Errors {
+			d.ExpectedAuth401 = d.Current.Errors
+		}
+	} else if d.AuthThresholdExceeded {
+		d.ExpectedAuth401 = 0
+	}
+	// Build unexpected error summary from top_error_classes excluding 401
+	for _, row := range getQueryResults(bundle, "top_error_classes") {
+		facet := fmt.Sprint(row["facet"])
+		if facet == cfg.AuthErrorClass {
+			continue
+		}
+		c := parseInt(row["count"])
+		if c > 0 {
+			if d.UnexpectedErrorSummary != "" {
+				d.UnexpectedErrorSummary += "; "
+			}
+			d.UnexpectedErrorSummary += fmt.Sprintf("%s=%d", facet, c)
+		}
+	}
+}
+
+func addExpectedNoiseReasons(d *Delta, cfg Config) {
+	if d.ExpectedAuth401 > 0 {
+		d.Reasons = append(d.Reasons, fmt.Sprintf("Expected auth failures (%s %s): %d", cfg.AuthErrorMessage, cfg.AuthErrorClass, d.ExpectedAuth401))
+	}
 }
 
 // DeltaSummaryLines returns a short list of "key deltas" lines for display (e.g. "p95_ms: 120.0 → 157.2 (+31%)").
