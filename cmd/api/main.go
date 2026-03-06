@@ -21,6 +21,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/debugfault"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/migrations"
 	"github.com/psuthar/talkback/internal/models"
@@ -171,7 +172,7 @@ func main() {
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref, X-Obs-Test-Token")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusOK)
@@ -200,7 +201,7 @@ func main() {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Creator-Identity, X-Participant-Ref, X-Obs-Test-Token")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 			if r.Method == http.MethodOptions {
@@ -290,6 +291,10 @@ func main() {
 
 	// WebSocket endpoint for session updates
 	http.HandleFunc(wrapNR("/ws/session", corsMiddleware(h.HandleWebSocket(h.Hub))))
+
+	// Debug fault injection (OBS_TEST_MODE=true required; /debug/fault/*)
+	http.HandleFunc(wrapNR("/debug/fault", corsMiddleware(debugfault.FaultRouter)))
+	http.HandleFunc(wrapNR("/debug/fault/", corsMiddleware(debugfault.FaultRouter)))
 
 	// Admin endpoints with CORS
 	// Reset all data: admin only (and ALLOW_DEV_RESET must be set)

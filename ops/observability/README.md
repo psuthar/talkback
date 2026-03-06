@@ -155,6 +155,15 @@ Expected: bundle JSON and markdown include an `analysis` section; markdown shows
 
 **Optional env vars for simulation:** `OBS_FORCE_STATUS` (GREEN | YELLOW | RED), `OBS_FORCE_REASON` (string), `OBS_FORCE_DEEP_DIVE` (true to run deep-dive queries regardless of status). These are ignored by default and only take effect when set explicitly.
 
+## Fault injection for observability testing
+
+To generate **real** observability signals (500s, latency spikes, R2 failures) for validating obsworker and AI analysis, use the fault-injection harness. See **[FAULT_TESTING.md](FAULT_TESTING.md)** for:
+
+- Enabling test mode (`OBS_TEST_MODE=true`)
+- Fault routes: `/debug/fault/error`, `/debug/fault/latency`, `/debug/fault/r2`
+- `obsfault` CLI for repeatable traffic
+- Testing matrix and validation sequence
+
 ## Generate representative traffic (obssmoke)
 
 To ensure the observation window includes more than `/health`, run **obssmoke** before obsworker (e.g. locally or in CI with `RUN_OBS_SMOKE=true`):
