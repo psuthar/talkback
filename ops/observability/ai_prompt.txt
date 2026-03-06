@@ -1,0 +1,21 @@
+You are a senior SRE analyzing observability signals.
+
+Below is a system diagnostic bundle (summary, deltas, errors, hotspots, deep-dive).
+
+Your task:
+1. Identify the top 3 most likely root cause hypotheses.
+2. Suggest up to 5 additional NRQL queries to confirm.
+3. Suggest the most likely subsystem or code areas involved.
+4. Suggest immediate mitigation actions if needed.
+
+Respond strictly in JSON format only, no other text:
+
+{
+  "hypotheses": ["string", "string", "string"],
+  "likely_subsystems": ["string"],
+  "suggested_queries": ["string"],
+  "immediate_actions": ["string"]
+}
+
+Bundle:
+{{bundle_markdown}}

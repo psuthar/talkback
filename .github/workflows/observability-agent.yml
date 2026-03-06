@@ -95,6 +95,11 @@ jobs:
           OBS_FORCE_STATUS: ${{ vars.OBS_FORCE_STATUS || secrets.OBS_FORCE_STATUS || '' }}
           OBS_FORCE_REASON: ${{ vars.OBS_FORCE_REASON || secrets.OBS_FORCE_REASON || '' }}
           OBS_FORCE_DEEP_DIVE: ${{ vars.OBS_FORCE_DEEP_DIVE || secrets.OBS_FORCE_DEEP_DIVE || 'false' }}
+          # AI analysis (YELLOW/RED only, one call per run). Optional: set OBS_ENABLE_AI_ANALYSIS=true and OBS_AI_API_KEY (and optionally OBS_AI_PROVIDER, OBS_AI_MODEL).
+          OBS_ENABLE_AI_ANALYSIS: ${{ vars.OBS_ENABLE_AI_ANALYSIS || secrets.OBS_ENABLE_AI_ANALYSIS || 'false' }}
+          OBS_AI_API_KEY: ${{ secrets.OBS_AI_API_KEY }}
+          OBS_AI_PROVIDER: ${{ vars.OBS_AI_PROVIDER || secrets.OBS_AI_PROVIDER || 'openai' }}
+          OBS_AI_MODEL: ${{ vars.OBS_AI_MODEL || secrets.OBS_AI_MODEL || '' }}
           # Persist baseline in R2 so next run shows Key Deltas (not "First run (no baseline)"). Optional: add repo secrets to enable.
           OBS_BASELINE_R2: '1'
           R2_BUCKET: ${{ secrets.R2_BUCKET }}

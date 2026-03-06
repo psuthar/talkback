@@ -1,0 +1,166 @@
+package obsworker
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestExtractAIContext_ReturnsTrimmedBundleText(t *testing.T) {
+	b := &Bundle{
+		Delta: &Delta{
+			Status:     "RED",
+			Confidence: "high",
+			Reasons:    []string{"error_rate_high", "latency_spike"},
+		},
+		DeepDiveResults: []QueryResult{
+			{Name: "Errors", NRQL: "SELECT count(*) FROM Transaction", Results: []map[string]interface{}{
+				{"count": float64(100)},
+			}},
+		},
+	}
+	out := ExtractAIContext(b)
+	out = strings.TrimSpace(out)
+	if out == "" {
+		t.Fatal("ExtractAIContext returned empty string")
+	}
+	if !strings.Contains(out, "## Summary") {
+		t.Error("expected ## Summary in output")
+	}
+	if !strings.Contains(out, "## Key Deltas") {
+		t.Error("expected ## Key Deltas in output")
+	}
+	if !strings.Contains(out, "## Automatic Deep Dive") {
+		t.Error("expected ## Automatic Deep Dive in output")
+	}
+	if len(out) > maxAIContextChars+50 {
+		t.Errorf("output should be capped near %d chars, got len=%d", maxAIContextChars, len(out))
+	}
+}
+
+func TestGenerateAIAnalysis_ValidJSON(t *testing.T) {
+	// Use temp prompt file so test works from any cwd
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "ai_prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("{{bundle_markdown}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("OBS_AI_PROMPT_PATH", promptPath)
+	defer os.Unsetenv("OBS_AI_PROMPT_PATH")
+
+	validJSON := `{"hypotheses":["h1"],"likely_subsystems":["s1"],"suggested_queries":["SELECT 1"],"immediate_actions":["scale up"]}`
+	mock := &mockLLM{response: validJSON}
+	bundle := Bundle{Delta: &Delta{Status: "RED"}}
+	ctx := context.Background()
+	got, err := GenerateAIAnalysis(ctx, bundle, mock)
+	if err != nil {
+		t.Fatalf("GenerateAIAnalysis: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil AIAnalysis")
+	}
+	if len(got.Hypotheses) != 1 || got.Hypotheses[0] != "h1" {
+		t.Errorf("hypotheses: got %v", got.Hypotheses)
+	}
+	if len(got.LikelySubsystems) != 1 || got.LikelySubsystems[0] != "s1" {
+		t.Errorf("likely_subsystems: got %v", got.LikelySubsystems)
+	}
+	if len(got.ImmediateActions) != 1 || got.ImmediateActions[0] != "scale up" {
+		t.Errorf("immediate_actions: got %v", got.ImmediateActions)
+	}
+}
+
+func TestGenerateAIAnalysis_MalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "ai_prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("{{bundle_markdown}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("OBS_AI_PROMPT_PATH", promptPath)
+	defer os.Unsetenv("OBS_AI_PROMPT_PATH")
+
+	mock := &mockLLM{response: "not valid json at all"}
+	bundle := Bundle{Delta: &Delta{Status: "RED"}}
+	ctx := context.Background()
+	got, err := GenerateAIAnalysis(ctx, bundle, mock)
+	if err == nil {
+		t.Fatal("expected error for malformed JSON")
+	}
+	if got != nil {
+		t.Errorf("expected nil analysis on error, got %v", got)
+	}
+}
+
+func TestGenerateAIAnalysis_StripsMarkdownCodeBlock(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "ai_prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("{{bundle_markdown}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	os.Setenv("OBS_AI_PROMPT_PATH", promptPath)
+	defer os.Unsetenv("OBS_AI_PROMPT_PATH")
+
+	validJSON := `{"hypotheses":["h1"],"likely_subsystems":[],"suggested_queries":[],"immediate_actions":[]}`
+	mock := &mockLLM{response: "```json\n" + validJSON + "\n```"}
+	bundle := Bundle{Delta: &Delta{Status: "YELLOW"}}
+	ctx := context.Background()
+	got, err := GenerateAIAnalysis(ctx, bundle, mock)
+	if err != nil {
+		t.Fatalf("GenerateAIAnalysis: %v", err)
+	}
+	if got == nil || len(got.Hypotheses) != 1 || got.Hypotheses[0] != "h1" {
+		t.Errorf("expected parsed analysis with one hypothesis, got %v", got)
+	}
+}
+
+func TestSimulationBundlesIncludeSimulationWarning(t *testing.T) {
+	b := &Bundle{
+		Summary:    &BundleSummary{Status: "RED"},
+		Simulation: &Simulation{Enabled: true, ForcedStatus: "RED", Reason: "test"},
+		Analysis: &AIAnalysis{
+			Hypotheses:       []string{"test hypothesis"},
+			LikelySubsystems: []string{"api"},
+			SuggestedQueries: []string{"SELECT 1"},
+			ImmediateActions: []string{"check logs"},
+		},
+	}
+	md := b.RenderMarkdown()
+	if !strings.Contains(md, "AI ANALYSIS GENERATED UNDER SIMULATION") {
+		t.Error("expected simulation warning banner in markdown when Simulation.Enabled and Analysis set")
+	}
+	if !strings.Contains(md, "🤖 AI Incident Analysis") {
+		t.Error("expected AI Incident Analysis section in markdown")
+	}
+}
+
+func TestAIDisabledWhenEnvFlagNotSet(t *testing.T) {
+	// Ensure AI is disabled when OBS_ENABLE_AI_ANALYSIS is not true
+	os.Setenv("OBS_ENABLE_AI_ANALYSIS", "false")
+	defer os.Unsetenv("OBS_ENABLE_AI_ANALYSIS")
+	cfg := LoadAIConfig()
+	if cfg.Enabled {
+		t.Error("expected Enabled false when OBS_ENABLE_AI_ANALYSIS=false")
+	}
+}
+
+func TestAIDisabledWhenEnvUnset(t *testing.T) {
+	os.Unsetenv("OBS_ENABLE_AI_ANALYSIS")
+	cfg := LoadAIConfig()
+	if cfg.Enabled {
+		t.Error("expected Enabled false when OBS_ENABLE_AI_ANALYSIS is unset")
+	}
+}
+
+type mockLLM struct {
+	response string
+	err      error
+}
+
+func (m *mockLLM) Complete(ctx context.Context, prompt string, maxTokens int) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.response, nil
+}

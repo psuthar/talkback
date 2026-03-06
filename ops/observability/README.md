@@ -41,6 +41,10 @@ Create labels `observability` and `agent` in the repo so the workflow can tag th
 | `OBS_FORCE_STATUS` | (unset) | **Simulation only.** Override status to `GREEN`, `YELLOW`, or `RED`. Bundle markdown shows **Simulation: FORCED STATUS=...**. |
 | `OBS_FORCE_REASON` | (unset) | **Simulation only.** Optional string shown in the simulation line (e.g. `reason=Simulated for testing`). |
 | `OBS_FORCE_DEEP_DIVE` | (unset) | **Simulation only.** When `true`, run deep-dive queries even when status is GREEN (to test formatting). |
+| `OBS_ENABLE_AI_ANALYSIS` | `false` | When `true`, **YELLOW/RED only**, obsworker runs one AI analysis and adds it to the bundle and (in CI) to the issue comment. **GREEN runs never call the LLM.** Requires `OBS_AI_API_KEY`. |
+| `OBS_AI_API_KEY` | (unset) | API key for the LLM provider (required when AI analysis is enabled). Use a repo secret in CI. |
+| `OBS_AI_PROVIDER` | `openai` | LLM provider: `openai` or `anthropic`. |
+| `OBS_AI_MODEL` | (see below) | Model name. Default: `gpt-4o-mini` (OpenAI), `claude-3-haiku-20240307` (Anthropic). Small models to control cost. |
 
 ## Bundle contents
 
@@ -135,6 +139,19 @@ OBS_FORCE_STATUS=GREEN OBS_FORCE_DEEP_DIVE=true OBS_FORCE_REASON="Testing deep d
 NEW_RELIC_API_KEY=... NEW_RELIC_ACCOUNT_ID=... OBS_APP_NAME=Talkback-NewRelic \
 go run ./cmd/obsworker
 ```
+
+### Simulated incident with AI
+
+When status is YELLOW or RED and `OBS_ENABLE_AI_ANALYSIS=true`, obsworker runs one LLM call and appends **🤖 AI Incident Analysis** (hypotheses, subsystems, suggested queries, immediate actions) to the bundle. To test this locally without a real incident:
+
+```bash
+OBS_FORCE_STATUS=RED OBS_FORCE_REASON="AI testing" \
+OBS_ENABLE_AI_ANALYSIS=true OBS_AI_PROVIDER=openai OBS_AI_API_KEY=sk-... \
+NEW_RELIC_API_KEY=... NEW_RELIC_ACCOUNT_ID=... OBS_APP_NAME=Talkback-NewRelic \
+go run ./cmd/obsworker
+```
+
+Expected: bundle JSON and markdown include an `analysis` section; markdown shows **⚠️ AI ANALYSIS GENERATED UNDER SIMULATION**. In CI, set repo variable `OBS_ENABLE_AI_ANALYSIS=true` and secret `OBS_AI_API_KEY` so YELLOW/RED runs post the AI analysis to the issue.
 
 **Optional env vars for simulation:** `OBS_FORCE_STATUS` (GREEN | YELLOW | RED), `OBS_FORCE_REASON` (string), `OBS_FORCE_DEEP_DIVE` (true to run deep-dive queries regardless of status). These are ignored by default and only take effect when set explicitly.
 

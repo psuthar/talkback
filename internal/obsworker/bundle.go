@@ -42,9 +42,10 @@ type Simulation struct {
 // Bundle is the full diagnostic bundle.
 type Bundle struct {
 	Metadata        BundleMetadata `json:"metadata"`
-	Summary         *BundleSummary `json:"summary,omitempty"`   // for workflow jq; mirrors delta status/confidence
-	Simulation      *Simulation    `json:"simulation,omitempty"` // set when forced status/reason
+	Summary         *BundleSummary `json:"summary,omitempty"`
+	Simulation      *Simulation    `json:"simulation,omitempty"`
 	Delta           *Delta         `json:"delta,omitempty"`
+	Analysis        *AIAnalysis    `json:"analysis,omitempty"` // AI analysis when status YELLOW/RED and OBS_ENABLE_AI_ANALYSIS=true
 	Results         []QueryResult  `json:"results"`
 	DeepDiveResults []QueryResult  `json:"deep_dive,omitempty"`
 }
@@ -221,6 +222,44 @@ func (b *Bundle) RenderMarkdown() string {
 			sb.WriteString("## Recommended Next Queries\n\n")
 			for _, q := range rec {
 				sb.WriteString(fmt.Sprintf("- `%s`\n", q))
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("---\n\n")
+	}
+
+	// AI Analysis (when present)
+	if b.Analysis != nil {
+		sb.WriteString("## 🤖 AI Incident Analysis\n\n")
+		if b.Simulation != nil && b.Simulation.Enabled {
+			sb.WriteString("⚠️ **AI ANALYSIS GENERATED UNDER SIMULATION**\n\n")
+		}
+		a := *b.Analysis
+		if len(a.Hypotheses) > 0 {
+			sb.WriteString("### Likely Causes\n\n")
+			for _, h := range a.Hypotheses {
+				sb.WriteString("- " + h + "\n")
+			}
+			sb.WriteString("\n")
+		}
+		if len(a.LikelySubsystems) > 0 {
+			sb.WriteString("### Likely Subsystems\n\n")
+			for _, s := range a.LikelySubsystems {
+				sb.WriteString("- " + s + "\n")
+			}
+			sb.WriteString("\n")
+		}
+		if len(a.SuggestedQueries) > 0 {
+			sb.WriteString("### Suggested Queries\n\n")
+			for _, q := range a.SuggestedQueries {
+				sb.WriteString("- `" + q + "`\n")
+			}
+			sb.WriteString("\n")
+		}
+		if len(a.ImmediateActions) > 0 {
+			sb.WriteString("### Immediate Actions\n\n")
+			for _, act := range a.ImmediateActions {
+				sb.WriteString("- " + act + "\n")
 			}
 			sb.WriteString("\n")
 		}

@@ -180,6 +180,18 @@ func run() error {
 		}
 	}
 
+	// AI analysis only when YELLOW/RED and explicitly enabled (one call per run, cost-controlled)
+	if (delta.Status == "YELLOW" || delta.Status == "RED") && obsworker.LoadAIConfig().Enabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		analysis, err := obsworker.GenerateAIAnalysis(ctx, *bundle, nil)
+		if err != nil {
+			log.Printf("AI analysis skipped (non-fatal): %v", err)
+		} else {
+			bundle.Analysis = analysis
+		}
+	}
+
 	jsonPath, mdPath, err := obsworker.WriteBundle(bundle, outDir)
 	if err != nil {
 		return err
