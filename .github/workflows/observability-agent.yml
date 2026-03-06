@@ -91,10 +91,10 @@ jobs:
           OBS_AUTH_WINDOW_MINUTES: ${{ vars.OBS_AUTH_WINDOW_MINUTES || '' }}
           OBS_AUTH_ERROR_MESSAGE: ${{ vars.OBS_AUTH_ERROR_MESSAGE || 'Unauthorized' }}
           OBS_AUTH_ERROR_CLASS: ${{ vars.OBS_AUTH_ERROR_CLASS || '401' }}
-          # Simulation (toggle via repo variables; leave unset for normal runs)
-          OBS_FORCE_STATUS: ${{ vars.OBS_FORCE_STATUS || '' }}
-          OBS_FORCE_REASON: ${{ vars.OBS_FORCE_REASON || '' }}
-          OBS_FORCE_DEEP_DIVE: ${{ vars.OBS_FORCE_DEEP_DIVE || 'false' }}
+          # Simulation: use Variables or Secrets (leave unset for normal runs)
+          OBS_FORCE_STATUS: ${{ vars.OBS_FORCE_STATUS || secrets.OBS_FORCE_STATUS || '' }}
+          OBS_FORCE_REASON: ${{ vars.OBS_FORCE_REASON || secrets.OBS_FORCE_REASON || '' }}
+          OBS_FORCE_DEEP_DIVE: ${{ vars.OBS_FORCE_DEEP_DIVE || secrets.OBS_FORCE_DEEP_DIVE || 'false' }}
           # Persist baseline in R2 so next run shows Key Deltas (not "First run (no baseline)"). Optional: add repo secrets to enable.
           OBS_BASELINE_R2: '1'
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
