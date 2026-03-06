@@ -269,9 +269,7 @@ func (b *Bundle) RenderMarkdown() string {
 	for _, qr := range b.Results {
 		sectionTitle := titleCaseQueryName(qr.Name)
 		sb.WriteString(fmt.Sprintf("## %s\n\n", sectionTitle))
-		sb.WriteString("**NRQL:**\n```\n")
-		sb.WriteString(qr.NRQL)
-		sb.WriteString("\n```\n\n")
+		sb.WriteString(fmt.Sprintf("**NRQL:** `%s`\n\n", qr.NRQL))
 
 		if len(qr.Results) == 0 {
 			// When errors_by_endpoint (transactionName) is empty but we have errors, show request.uri fallback with a note
@@ -329,9 +327,7 @@ func (b *Bundle) RenderMarkdown() string {
 		for _, qr := range b.DeepDiveResults {
 			sectionTitle := titleCaseQueryName(qr.Name)
 			sb.WriteString(fmt.Sprintf("### %s\n\n", sectionTitle))
-			sb.WriteString("**NRQL:**\n```\n")
-			sb.WriteString(qr.NRQL)
-			sb.WriteString("\n```\n\n")
+			sb.WriteString(fmt.Sprintf("**NRQL:** `%s`\n\n", qr.NRQL))
 			if len(qr.Results) == 0 {
 				sb.WriteString("*No rows.*\n\n")
 				continue
