@@ -330,6 +330,10 @@ func (h *Handlers) RegisterAndAcceptInvitation(w http.ResponseWriter, r *http.Re
 	if user != nil {
 		me["user"] = map[string]interface{}{"id": user.ID.String(), "email": user.Email, "display_name": user.DisplayName, "global_role": string(user.GlobalRole), "status": string(user.Status)}
 	}
+	// Issue short-lived accept token so frontend can stay "logged in" in incognito (cookie may not be sent cross-origin)
+	if acceptTok, err := auth.IssueAcceptToken(newUserID); err == nil {
+		me["accept_token"] = acceptTok
+	}
 	writeJSON(w, http.StatusOK, me)
 }
 

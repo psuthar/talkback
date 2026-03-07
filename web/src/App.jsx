@@ -132,9 +132,12 @@ function App() {
   const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
   const [replyingToQuestionId, setReplyingToQuestionId] = useState(null) // Threaded reply: parent question id when user clicked "Reply"
 
-  // TalkBack auth: logged-in user from GET /api/me (cookie-based)
+  // TalkBack auth: logged-in user from GET /api/me (cookie or Bearer accept_token for incognito)
   const [authUser, setAuthUser] = useState(null) // { id, email, display_name, global_role, status } or null
   const [authChecked, setAuthChecked] = useState(false) // true after first /api/me request completes
+  const [acceptToken, setAcceptToken] = useState(() => {
+    try { return sessionStorage.getItem('talkback.accept_token') || null } catch { return null }
+  })
 
   // My sessions (creator): list of sessions created by current user, for session selection
   const [mySessions, setMySessions] = useState([])
@@ -369,7 +372,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl])
 
-  // Fetch /api/me (TalkBack auth) when API URL changes — cookie-based, credentials: include
+  // Fetch /api/me (TalkBack auth) when API URL or acceptToken changes — cookie or Bearer token (incognito)
   useEffect(() => {
     if (!apiBaseUrl) {
       setAuthUser(null)
@@ -378,7 +381,9 @@ function App() {
     }
     setAuthChecked(false)
     let cancelled = false
-    fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/me`, { credentials: 'include' })
+    const headers = {}
+    if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+    fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/me`, { credentials: 'include', headers })
       .then(res => {
         if (cancelled) return
         if (res.ok) return res.json()
@@ -399,7 +404,7 @@ function App() {
         }
       })
     return () => { cancelled = true }
-  }, [apiBaseUrl])
+  }, [apiBaseUrl, acceptToken])
 
   // When user is participant (join-only), default to "Use Existing Session" and keep them there
   useEffect(() => {
@@ -415,14 +420,15 @@ function App() {
     }
   }, [authUser?.email])
 
-  // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session)
+  // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session).
+  // Only preserve api= when it was already in the URL (e.g. from a shared link); don't add it during internal navigation.
   useEffect(() => {
     if (authUser?.global_role !== 'participant') return
     if (window.location.pathname.replace(/\/$/, '') === '/accept-invite') return // do not overwrite accept-invite URL (would drop token)
     const params = new URLSearchParams(window.location.search)
     if (params.get('mode') === 'view') return
     const sessionId = params.get('session')
-    const apiPart = params.get('api') || (apiBaseUrl ? encodeURIComponent(apiBaseUrl) : '')
+    const apiPart = params.get('api') // preserve only when already in URL (shared link); don't inject for internal nav
     const parts = ['mode=view']
     if (sessionId) parts.unshift(`session=${sessionId}`)
     if (apiPart) parts.push(`api=${apiPart}`)
@@ -452,7 +458,7 @@ function App() {
     if (!sessionId) return
     setSessionUserMode('participant')
     setCurrentUser('participant')
-    const apiParam = params.get('api') ? `&api=${params.get('api')}` : (apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : '')
+    const apiParam = params.get('api') ? `&api=${params.get('api')}` : '' // preserve only when already in URL
     window.history.replaceState(null, '', `${window.location.pathname}?session=${sessionId}&mode=view${apiParam}`)
     setUrlKey(k => k + 1)
   }, [authUser?.global_role, apiBaseUrl])
@@ -470,7 +476,9 @@ function App() {
     setMySessionsLoading(true)
     setMySessionsError('')
     const url = apiBaseUrl.replace(/\/$/, '') + '/api/sessions'
-    fetch(url, { credentials: 'include' })
+    const headers = {}
+    if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+    fetch(url, { credentials: 'include', headers })
       .then(res => {
         if (cancelled) return
         if (res.status === 401) {
@@ -499,7 +507,7 @@ function App() {
         if (!cancelled) setMySessionsLoading(false)
       })
     return () => { cancelled = true }
-  }, [authUser, apiBaseUrl, currentSession])
+  }, [authUser, apiBaseUrl, currentSession, acceptToken])
 
   // Sync creator identity to logged-in user email so new sessions (e.g. from Zoom) show in "Your sessions"
   useEffect(() => {
@@ -1607,8 +1615,10 @@ function App() {
         // Set currentUser to something that won't match created_by
         setCurrentUser('participant')
         setSessionUserMode('participant')
-        // Update URL to reflect participant mode (include api so refresh/new window works)
-        window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
+        // Update URL to reflect participant mode (preserve api= only if already in URL, e.g. from shared link)
+        const apiQ = new URLSearchParams(window.location.search).get('api')
+        const apiSuffix = apiQ ? `&api=${apiQ}` : ''
+        window.history.replaceState({}, '', `?session=${sessionId}&mode=view${apiSuffix}`)
       } else {
         // No explicit mode, determine from URL or default to creator (unless user is participant role)
         const urlParams = new URLSearchParams(window.location.search)
@@ -1618,7 +1628,9 @@ function App() {
         if (urlMode === 'view' || mustBeParticipant) {
           setCurrentUser('participant')
           setSessionUserMode('participant')
-          window.history.replaceState({}, '', `?session=${sessionId}&mode=view&api=${encodeURIComponent(baseUrl)}`)
+          const apiQ = urlParams.get('api')
+          const apiSuffix = apiQ ? `&api=${apiQ}` : ''
+          window.history.replaceState({}, '', `?session=${sessionId}&mode=view${apiSuffix}`)
         } else {
           // Default to creator mode
           if (data.session && data.session.created_by) {
@@ -2293,11 +2305,21 @@ function App() {
           window.history.replaceState(null, '', window.location.pathname + (acceptInviteToken ? `?token=${encodeURIComponent(acceptInviteToken)}` : ''))
           setAuthUser(user)
         }}
+        onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
+          if (!user || !sessionId) return
+          window.history.replaceState(null, '', `/?session=${sessionId}`)
+          setAuthUser(user)
+          setAcceptToken(tok || null)
+          try { if (tok) sessionStorage.setItem('talkback.accept_token', tok) } catch (_) {}
+          openSession(sessionId, 'participant')
+        }}
         onSignOut={async () => {
           try {
             await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
           } catch (_) { /* ignore */ }
           setAuthUser(null)
+          setAcceptToken(null)
+          try { sessionStorage.removeItem('talkback.accept_token') } catch (_) {}
         }}
       />
     )

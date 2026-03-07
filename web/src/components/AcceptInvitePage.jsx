@@ -4,7 +4,7 @@ function normalizeEmail(e) {
   return (e || '').trim().toLowerCase()
 }
 
-export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onLoginSuccess, onSignOut }) {
+export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onLoginSuccess, onRegisterSuccess, onSignOut }) {
   const [resolveResult, setResolveResult] = useState(null)
   const [resolveError, setResolveError] = useState(null)
   const [resolveLoading, setResolveLoading] = useState(true)
@@ -64,6 +64,10 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setSignupError(data.error || 'Registration failed')
+        return
+      }
+      if (onRegisterSuccess && data.user && data.session_id) {
+        onRegisterSuccess({ user: data.user, sessionId: data.session_id, acceptToken: data.accept_token || null })
         return
       }
       const redirectTo = data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/')

@@ -24,20 +24,27 @@ func UserFromContext(ctx context.Context) *models.User {
 }
 
 // RequireAuth wraps a handler and ensures a valid session and active user are in context; otherwise returns 401.
+// Supports session cookie or Authorization: Bearer <accept_token> (for incognito / cross-origin when cookie is not sent).
 func (h *Handlers) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var user *models.User
 		sessionID := auth.SessionIDFromRequest(r)
-		if sessionID == nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
+		if sessionID != nil {
+			session, err := h.DB.GetLoginSessionByID(r.Context(), *sessionID)
+			if err == nil && session != nil {
+				user, _ = h.DB.GetUserByID(r.Context(), session.UserID)
+			}
 		}
-		session, err := h.DB.GetLoginSessionByID(r.Context(), *sessionID)
-		if err != nil || session == nil {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
+		if user == nil {
+			// Try Bearer token (short-lived accept token from login or register-and-accept for incognito)
+			if bearer := r.Header.Get("Authorization"); len(bearer) > 7 && (bearer[:7] == "Bearer " || bearer[:7] == "bearer ") {
+				tok := strings.TrimSpace(bearer[7:])
+				if userID, err := auth.ValidateAcceptToken(tok); err == nil {
+					user, _ = h.DB.GetUserByID(r.Context(), userID)
+				}
+			}
 		}
-		user, err := h.DB.GetUserByID(r.Context(), session.UserID)
-		if err != nil || user == nil {
+		if user == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
