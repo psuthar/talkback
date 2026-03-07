@@ -10,10 +10,11 @@ import (
 )
 
 // CreateUser inserts a new user. Email should already be normalized (trimmed, lowercased).
+// EmailVerifiedAt can be set for invite-based signup.
 func (db *DB) CreateUser(ctx context.Context, user *models.User) error {
 	query := `
-		INSERT INTO users (id, email, display_name, status, global_role)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO users (id, email, display_name, status, global_role, email_verified_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at
 	`
 	err := db.Pool.QueryRow(ctx, query,
@@ -22,6 +23,7 @@ func (db *DB) CreateUser(ctx context.Context, user *models.User) error {
 		user.DisplayName,
 		string(user.Status),
 		string(user.GlobalRole),
+		user.EmailVerifiedAt,
 	).Scan(&user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
@@ -40,11 +42,11 @@ func (db *DB) GetUserByEmail(ctx context.Context, email string) (*models.User, e
 }
 
 func (db *DB) getUserBy(ctx context.Context, where string, arg interface{}) (*models.User, error) {
-	query := `SELECT id, email, display_name, status, global_role, created_at, updated_at, last_login_at FROM users WHERE ` + where
+	query := `SELECT id, email, display_name, status, global_role, email_verified_at, created_at, updated_at, last_login_at FROM users WHERE ` + where
 	u := &models.User{}
 	err := db.Pool.QueryRow(ctx, query, arg).Scan(
 		&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.GlobalRole,
-		&u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
+		&u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -83,7 +85,7 @@ func (db *DB) CountAdmins(ctx context.Context) (int, error) {
 
 // ListUsers returns all users (for admin list).
 func (db *DB) ListUsers(ctx context.Context) ([]*models.User, error) {
-	query := `SELECT id, email, display_name, status, global_role, created_at, updated_at, last_login_at FROM users ORDER BY created_at`
+	query := `SELECT id, email, display_name, status, global_role, email_verified_at, created_at, updated_at, last_login_at FROM users ORDER BY created_at`
 	rows, err := db.Pool.Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list users: %w", err)
@@ -92,7 +94,7 @@ func (db *DB) ListUsers(ctx context.Context) ([]*models.User, error) {
 	var out []*models.User
 	for rows.Next() {
 		u := &models.User{}
-		err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.GlobalRole, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
+		err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.GlobalRole, &u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt)
 		if err != nil {
 			return nil, err
 		}

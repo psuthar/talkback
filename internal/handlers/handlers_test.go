@@ -18,12 +18,40 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/invitations"
 	"github.com/psuthar/talkback/internal/migrations"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// testInvitationLookup implements invitations.SessionInviterLookup for handler tests.
+type testInvitationLookup struct{ db *database.DB }
+
+func (l *testInvitationLookup) GetSessionTitle(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	s, err := l.db.GetSession(ctx, sessionID)
+	if err != nil || s == nil {
+		return "", err
+	}
+	return s.Title, nil
+}
+
+func (l *testInvitationLookup) GetUserDisplayName(ctx context.Context, userID uuid.UUID) (string, error) {
+	u, err := l.db.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", err
+	}
+	return u.DisplayName, nil
+}
+
+func (l *testInvitationLookup) GetUserEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	u, err := l.db.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", err
+	}
+	return u.Email, nil
+}
 
 func TestMain(m *testing.M) {
 	sharedURL, cleanupDB, err := test.CreateSharedTestDB()
@@ -103,7 +131,32 @@ func setupTestHandlersParallel(t *testing.T) (*Handlers, func()) {
 		db.Close()
 		cleanupDB()
 	}
-	return NewHandlers(db, nil, nil), cleanup
+	return NewHandlers(db, nil, nil, nil), cleanup
+}
+
+// setupTestHandlersWithInvitations is like setupTestHandlersParallel but with InvitationService set (for invitation handler tests).
+func setupTestHandlersWithInvitations(t *testing.T) (*Handlers, func()) {
+	t.Helper()
+	databaseURL, cleanupDB := test.SetupTestDB(t)
+	if err := runTestMigrations(databaseURL); err != nil {
+		cleanupDB()
+		t.Fatalf("run test migrations: %v", err)
+	}
+	db, err := database.NewFromURL(databaseURL)
+	require.NoError(t, err, "NewFromURL")
+	invRepo := invitations.NewRepository(db.Pool)
+	lookup := &testInvitationLookup{db: db}
+	invSvc := &invitations.Service{
+		Repo:   invRepo,
+		Lookup: lookup,
+		Config: invitations.Config{AppBaseURL: "http://test.example", ExpiryHours: 168},
+		Send:   nil,
+	}
+	cleanup := func() {
+		db.Close()
+		cleanupDB()
+	}
+	return NewHandlers(db, nil, nil, invSvc), cleanup
 }
 
 // createTestSessionForHandlers is a helper to create a test session for handler tests

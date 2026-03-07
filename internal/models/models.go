@@ -473,14 +473,15 @@ func (r GlobalRole) CanCreateSessions() bool {
 }
 
 type User struct {
-	ID          uuid.UUID  `json:"id"`
-	Email       string     `json:"email"`
-	DisplayName string     `json:"display_name"`
-	Status      UserStatus `json:"status"`
-	GlobalRole  GlobalRole `json:"global_role"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	ID               uuid.UUID  `json:"id"`
+	Email            string     `json:"email"`
+	DisplayName      string     `json:"display_name"`
+	Status           UserStatus `json:"status"`
+	GlobalRole       GlobalRole `json:"global_role"`
+	EmailVerifiedAt  *time.Time `json:"email_verified_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	LastLoginAt      *time.Time `json:"last_login_at,omitempty"`
 }
 
 type PasswordCredential struct {

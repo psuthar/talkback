@@ -50,7 +50,7 @@ func (h *Handlers) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]AdminUserPayload, 0, len(users))
 	for _, u := range users {
-		sessionIDs, _ := h.DB.GetSessionIDsForUser(ctx, u.ID)
+		sessionIDs, _ := h.DB.ListSessionIDsForUser(ctx, u.ID)
 		ss := make([]string, 0, len(sessionIDs))
 		for _, id := range sessionIDs {
 			ss = append(ss, id.String())

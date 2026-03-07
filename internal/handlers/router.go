@@ -234,13 +234,60 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
-// ApiSessionsRouterWithInvite wraps APISessionsRouter: if path is .../invite and POST, runs RequireAuth(SessionInvite); otherwise APISessionsRouter.
+// ApiSessionsRouterWithInvite wraps APISessionsRouter: .../invitations (POST/GET) use new invite flow; .../invite POST legacy; else APISessionsRouter.
 func (h *Handlers) ApiSessionsRouterWithInvite(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost && strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/invite") {
-		h.RequireAuth(h.SessionInvite)(w, r)
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	if strings.HasSuffix(path, "/invitations") {
+		if r.Method == http.MethodPost {
+			h.RequireAuth(h.CreateInvitation)(w, r)
+			return
+		}
+		if r.Method == http.MethodGet {
+			h.RequireAuth(h.ListInvitations)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/invite") {
+		writeJSON(w, http.StatusGone, map[string]string{"error": "use POST /api/sessions/:id/invitations with email and role"})
 		return
 	}
 	h.APISessionsRouter(w, r)
+}
+
+// ApiInvitationsRouter handles /api/invitations/resolve, /api/invitations/accept, /api/invitations/register-and-accept, /api/invitations/:id/resend, /api/invitations/:id/revoke.
+func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[0] != "api" || parts[1] != "invitations" {
+		http.Error(w, "Invalid path", http.StatusNotFound)
+		return
+	}
+	if parts[2] == "resolve" {
+		h.ResolveInvitation(w, r)
+		return
+	}
+	if parts[2] == "accept" {
+		h.RequireAuth(h.AcceptInvitation)(w, r)
+		return
+	}
+	if parts[2] == "register-and-accept" {
+		h.RegisterAndAcceptInvitation(w, r)
+		return
+	}
+	// parts[2] is UUID, parts[3] is resend or revoke
+	if len(parts) >= 4 {
+		if parts[3] == "resend" {
+			h.RequireAuth(h.ResendInvitation)(w, r)
+			return
+		}
+		if parts[3] == "revoke" {
+			h.RequireAuth(h.RevokeInvitation)(w, r)
+			return
+		}
+	}
+	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
 // SessionsRouter handles session-related routes

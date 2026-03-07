@@ -1,0 +1,304 @@
+import { useState, useEffect } from 'react'
+
+function normalizeEmail(e) {
+  return (e || '').trim().toLowerCase()
+}
+
+export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onLoginSuccess, onSignOut }) {
+  const [resolveResult, setResolveResult] = useState(null)
+  const [resolveError, setResolveError] = useState(null)
+  const [resolveLoading, setResolveLoading] = useState(true)
+  const [signupName, setSignupName] = useState('')
+  const [signupPassword, setSignupPassword] = useState('')
+  const [signupSubmitting, setSignupSubmitting] = useState(false)
+  const [signupError, setSignupError] = useState('')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPassword, setLoginPassword] = useState('')
+  const [loginSubmitting, setLoginSubmitting] = useState(false)
+  const [loginError, setLoginError] = useState('')
+  const [acceptLoading, setAcceptLoading] = useState(false)
+  const [acceptError, setAcceptError] = useState('')
+
+  const base = (apiBaseUrl || '').replace(/\/$/, '')
+
+  useEffect(() => {
+    if (!token || !base) {
+      setResolveLoading(false)
+      if (!token) setResolveError('invalid link: missing token')
+      return
+    }
+    setResolveLoading(true)
+    setResolveError(null)
+    fetch(`${base}/api/invitations/resolve?token=${encodeURIComponent(token)}`, { credentials: 'include' })
+      .then((res) => res.json().catch(() => ({})))
+      .then((data) => {
+        if (data.invitation) {
+          setResolveResult(data.invitation)
+          setLoginEmail(data.invitation.invited_email || '')
+        } else {
+          setResolveError(data.error || 'Invalid or expired link')
+        }
+      })
+      .catch(() => setResolveError('Failed to load invitation'))
+      .finally(() => setResolveLoading(false))
+  }, [token, base])
+
+  const invitedEmail = resolveResult?.invited_email ? normalizeEmail(resolveResult.invited_email) : ''
+  const currentEmail = authUser?.email ? normalizeEmail(authUser.email) : ''
+  const isCorrectUser = invitedEmail && currentEmail && invitedEmail === currentEmail
+  const accountExists = resolveResult?.account_exists === true
+
+  const handleRegisterAndAccept = async (e) => {
+    e.preventDefault()
+    if (!token || !signupName.trim() || !signupPassword) return
+    setSignupSubmitting(true)
+    setSignupError('')
+    try {
+      const res = await fetch(`${base}/api/invitations/register-and-accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token, name: signupName.trim(), password: signupPassword })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSignupError(data.error || 'Registration failed')
+        return
+      }
+      const redirectTo = data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/')
+      window.location.href = redirectTo
+    } catch (err) {
+      setSignupError(err.message || 'Network error')
+    } finally {
+      setSignupSubmitting(false)
+    }
+  }
+
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    setLoginError('')
+    setLoginSubmitting(true)
+    try {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: loginEmail.trim().toLowerCase(), password: loginPassword })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setLoginError(data.error || 'Login failed')
+        return
+      }
+      onLoginSuccess(data)
+    } catch (err) {
+      setLoginError(err.message || 'Network error')
+    } finally {
+      setLoginSubmitting(false)
+    }
+  }
+
+  const handleAccept = async () => {
+    if (!token) return
+    setAcceptLoading(true)
+    setAcceptError('')
+    try {
+      const res = await fetch(`${base}/api/invitations/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setAcceptError(data.error || 'Failed to join')
+        return
+      }
+      const redirectTo = data.redirect_to?.startsWith('/sessions/')
+        ? `/?session=${data.session_id || data.redirect_to.replace(/^\/sessions\//, '')}`
+        : (data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/'))
+      window.location.href = redirectTo
+    } catch (err) {
+      setAcceptError(err.message || 'Network error')
+    } finally {
+      setAcceptLoading(false)
+    }
+  }
+
+  const containerStyle = { maxWidth: '440px', margin: '48px auto', padding: '24px' }
+  const cardStyle = { border: '1px solid #ddd', borderRadius: '8px', padding: '24px', backgroundColor: '#fafafa', marginTop: '16px' }
+  const headingStyle = { marginBottom: '8px', textAlign: 'center' }
+  const subStyle = { color: '#666', textAlign: 'center', marginBottom: '16px', fontSize: '14px' }
+  const errorStyle = { marginBottom: '16px', padding: '10px', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffebee', color: '#c62828' }
+  const btnPrimary = { padding: '10px 20px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }
+  const btnSecondary = { padding: '8px 14px', backgroundColor: '#757575', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', marginLeft: '8px' }
+
+  if (!authChecked) {
+    return (
+      <div style={containerStyle}>
+        <p style={{ textAlign: 'center', color: '#666' }}>Loading…</p>
+      </div>
+    )
+  }
+
+  if (!token) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Invitation</h1>
+        <div style={{ ...cardStyle, ...errorStyle }}>Invalid link: missing token.</div>
+      </div>
+    )
+  }
+
+  if (resolveLoading) {
+    return (
+      <div style={containerStyle}>
+        <p style={{ textAlign: 'center', color: '#666' }}>Loading invitation…</p>
+      </div>
+    )
+  }
+
+  if (resolveError || !resolveResult) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Invitation</h1>
+        <div style={{ ...cardStyle, ...errorStyle }}>
+          {resolveError || 'Invalid or expired invitation link.'}
+        </div>
+      </div>
+    )
+  }
+
+  // A – No account: signup form
+  if (!accountExists) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Join session</h1>
+        <p style={subStyle}>
+          You’re invited to <strong>{resolveResult.session_title || 'a session'}</strong>
+          {resolveResult.inviter_name && ` by ${resolveResult.inviter_name}`}.
+        </p>
+        <div style={cardStyle}>
+          <p style={{ marginBottom: '16px', fontSize: '14px' }}>Create an account to join (email is fixed from your invitation):</p>
+          <form onSubmit={handleRegisterAndAccept}>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Email</label>
+              <input
+                type="email"
+                value={resolveResult.invited_email || ''}
+                readOnly
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box', backgroundColor: '#eee' }}
+              />
+            </div>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Display name</label>
+              <input
+                type="text"
+                value={signupName}
+                onChange={(e) => setSignupName(e.target.value)}
+                required
+                placeholder="Your name"
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Password</label>
+              <input
+                type="password"
+                value={signupPassword}
+                onChange={(e) => setSignupPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            {signupError && <div style={errorStyle}>{signupError}</div>}
+            <button type="submit" disabled={signupSubmitting} style={{ ...btnPrimary, width: '100%' }}>
+              {signupSubmitting ? 'Creating account…' : 'Create account & join'}
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  // B – Account exists, not signed in: sign-in form
+  if (!authUser) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Join session</h1>
+        <p style={subStyle}>
+          You’re invited to <strong>{resolveResult.session_title || 'a session'}</strong>
+          {resolveResult.inviter_name && ` by ${resolveResult.inviter_name}`}. Sign in to continue.
+        </p>
+        <div style={cardStyle}>
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Email</label>
+              <input
+                type="email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                required
+                placeholder="you@example.com"
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Password</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            {loginError && <div style={errorStyle}>{loginError}</div>}
+            <button type="submit" disabled={loginSubmitting} style={{ ...btnPrimary, width: '100%' }}>
+              {loginSubmitting ? 'Signing in…' : 'Sign in'}
+            </button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  // D – Signed in as wrong user
+  if (!isCorrectUser) {
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Wrong account</h1>
+        <div style={cardStyle}>
+          <p style={{ marginBottom: '16px', fontSize: '14px' }}>
+            This invitation was sent to <strong>{resolveResult.invited_email}</strong>, but you’re signed in as <strong>{authUser.email}</strong>.
+          </p>
+          <p style={{ marginBottom: '16px', fontSize: '14px' }}>Sign out and open the invitation link again using the correct account.</p>
+          {onSignOut && (
+            <button type="button" onClick={onSignOut} style={btnPrimary}>
+              Sign out
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // C – Signed in as correct user: Join session
+  return (
+    <div style={containerStyle}>
+      <h1 style={headingStyle}>Join session</h1>
+      <p style={subStyle}>
+        You’re invited to <strong>{resolveResult.session_title || 'a session'}</strong>
+        {resolveResult.inviter_name && ` by ${resolveResult.inviter_name}`}.
+      </p>
+      <div style={cardStyle}>
+        <p style={{ marginBottom: '16px', fontSize: '14px' }}>You’re signed in as {authUser.email}. Click below to join.</p>
+        {acceptError && <div style={errorStyle}>{acceptError}</div>}
+        <button type="button" onClick={handleAccept} disabled={acceptLoading} style={btnPrimary}>
+          {acceptLoading ? 'Joining…' : 'Join session'}
+        </button>
+      </div>
+    </div>
+  )
+}

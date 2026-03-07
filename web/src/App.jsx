@@ -7,7 +7,9 @@ import { MaterialsList } from './components/MaterialsList'
 import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
+import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { getDefaultApiBaseUrl } from './config'
+import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -119,6 +121,8 @@ function App() {
   const [participantRef, setParticipantRef] = useState('')
   const [viewMode, setViewMode] = useState('session')
   const [sessionMode, setSessionMode] = useState('create') // 'create' or 'select'
+  const [createSource, setCreateSource] = useState('empty') // 'empty' | 'zoom' when sessionMode === 'create'
+  const [zoomPasteUrlExpanded, setZoomPasteUrlExpanded] = useState(false) // collapsible "Or paste Zoom recording URL"
   const [sessionIdInput, setSessionIdInput] = useState('')
   const [sessionSelectFeedback, setSessionSelectFeedback] = useState({ type: '', message: '' })
   
@@ -147,8 +151,11 @@ function App() {
   const [createSessionFeedback, setCreateSessionFeedback] = useState({ type: '', message: '' })
   const [joinSessionFeedback, setJoinSessionFeedback] = useState({ type: '', message: '' })
   const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState('participant')
   const [inviteFeedback, setInviteFeedback] = useState({ type: '', message: '' })
   const [inviteLoading, setInviteLoading] = useState(false)
+  const [sessionInvitations, setSessionInvitations] = useState([])
+  const [lastInvitationDraft, setLastInvitationDraft] = useState(null) // for mailto fallback (copy link / copy message)
 
   // Global states
   const [loading, setLoading] = useState(false)
@@ -1650,24 +1657,37 @@ function App() {
   const inviteUserToSession = async () => {
     const email = inviteEmail?.trim()?.toLowerCase()
     if (!email || !currentSession?.session?.id) return
+    if (!isValidEmailFormat(email)) {
+      setInviteFeedback({ type: 'error', message: 'Please enter a valid email address.' })
+      return
+    }
     setInviteLoading(true)
     setInviteFeedback({ type: '', message: '' })
+    setLastInvitationDraft(null)
     try {
-      const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/sessions/${currentSession.session.id}/invite`, {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const response = await fetch(`${base}/api/sessions/${currentSession.session.id}/invitations`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, role: inviteRole || 'participant' })
       })
       const data = response.ok ? await response.json().catch(() => ({})) : await response.json().catch(() => ({}))
       if (response.status === 201) {
         setInviteEmail('')
-        setInviteFeedback({ type: 'success', message: 'Invitation sent.' })
-        setTimeout(() => setInviteFeedback({ type: '', message: '' }), 3000)
-      } else if (response.status === 404) {
-        setInviteFeedback({ type: 'error', message: 'No user with that email address. They need an account in the system first.' })
+        const inv = data?.invitation
+        setLastInvitationDraft(inv || null)
+        const mailtoUrl = inv ? buildInviteMailto(inv) : null
+        if (mailtoUrl) {
+          try {
+            window.location.href = mailtoUrl
+          } catch (_) { /* mailto may be blocked */ }
+        }
+        setInviteFeedback({ type: 'success', message: 'Invitation created. Your email app has been opened with a draft invitation.' })
+        setTimeout(() => setInviteFeedback({ type: '', message: '' }), 5000)
+        fetchSessionInvitations(currentSession.session.id)
       } else if (response.status === 409) {
-        setInviteFeedback({ type: 'error', message: 'That user is already invited.' })
+        setInviteFeedback({ type: 'error', message: (data && data.error) || 'That user is already a member of this session.' })
       } else {
         setInviteFeedback({ type: 'error', message: (data && data.error) || 'Failed to send invitation.' })
       }
@@ -1677,6 +1697,28 @@ function App() {
       setInviteLoading(false)
     }
   }
+
+  const fetchSessionInvitations = useCallback(async (sessionId) => {
+    if (!sessionId || !authUser) return
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const res = await fetch(`${base}/api/sessions/${sessionId}/invitations`, { credentials: 'include' })
+      if (res.ok) {
+        const json = await res.json()
+        setSessionInvitations(json.invitations || [])
+      } else {
+        setSessionInvitations([])
+      }
+    } catch (_) {
+      setSessionInvitations([])
+    }
+  }, [apiBaseUrl, authUser])
+
+  useEffect(() => {
+    const id = currentSession?.session?.id ?? currentSession?.id
+    if (id && authUser) fetchSessionInvitations(id)
+    else setSessionInvitations([])
+  }, [currentSession?.session?.id, currentSession?.id, authUser, fetchSessionInvitations])
 
   const refetchSession = useCallback(async (overrideSessionId) => {
     const id = overrideSessionId ?? currentSession?.session?.id ?? currentSession?.id
@@ -2235,6 +2277,30 @@ function App() {
     }
   }, [wsConnected, effectiveSessionId, wsUrl])
 
+  // Accept-invite page: /accept-invite?token=... (SPA route; server must serve index.html for this path)
+  const acceptInvitePath = window.location.pathname.replace(/\/$/, '') === '/accept-invite'
+  const acceptInviteToken = acceptInvitePath ? new URLSearchParams(window.location.search).get('token') : null
+  if (acceptInvitePath) {
+    return (
+      <AcceptInvitePage
+        apiBaseUrl={apiBaseUrl}
+        token={acceptInviteToken}
+        authUser={authUser}
+        authChecked={authChecked}
+        onLoginSuccess={(user) => {
+          window.history.replaceState(null, '', window.location.pathname + (acceptInviteToken ? `?token=${encodeURIComponent(acceptInviteToken)}` : ''))
+          setAuthUser(user)
+        }}
+        onSignOut={async () => {
+          try {
+            await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+          } catch (_) { /* ignore */ }
+          setAuthUser(null)
+        }}
+      />
+    )
+  }
+
   // Require login: show login page until auth is checked and user is logged in
   if (!authChecked) {
     return (
@@ -2453,157 +2519,10 @@ function App() {
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
-            {/* Zoom: Connect / Disconnect and Create session from Zoom (hidden for participant role) */}
-            {canCreateSessions && (
-            <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
-              <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
-              {zoomConnection ? (
-                <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ color: '#2e7d32', fontSize: '14px' }}>
-                    Connected as {zoomConnection.zoom_user_email || zoomConnection.zoom_user_id || 'Zoom user'}
-                  </span>
-                  <button type="button" onClick={disconnectZoom} style={{ padding: '4px 10px', fontSize: '13px' }}>
-                    Disconnect
-                  </button>
-                </div>
-              ) : (
-                <div style={{ marginBottom: '10px' }}>
-                  <a
-                    href={`${apiBaseUrl}/auth/zoom/start?creator_identity=${encodeURIComponent(creatorIdentity)}`}
-                    style={{ padding: '6px 12px', backgroundColor: '#2D8CFF', color: 'white', textDecoration: 'none', borderRadius: '4px', fontSize: '14px', display: 'inline-block' }}
-                  >
-                    Connect Zoom
-                  </a>
-                </div>
-              )}
-              {zoomConnection && (
-                <div style={{ marginTop: '10px' }}>
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px' }}>Zoom recording URL (paste link):</label>
-                  <input
-                    type="text"
-                    value={zoomUrl}
-                    onChange={(e) => {
-                      setZoomUrl(e.target.value)
-                      setZoomImportError('')
-                      setZoomTranscriptStatus(null)
-                      setZoomTranscriptMessage('')
-                      setZoomTranscriptTopic(null)
-                    }}
-                    placeholder="https://zoom.us/rec/play/... or zoom.us/recording/detail?meeting_id=..."
-                    style={{ width: '100%', marginBottom: '6px', padding: '8px' }}
-                  />
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                    <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript || !zoomUrl?.trim()}>
-                      {zoomCheckingTranscript ? 'Checking…' : 'Check transcript'}
-                    </button>
-                    <button type="button" onClick={createSessionFromZoom} disabled={zoomImporting}>
-                      {zoomImporting ? 'Importing…' : 'Create session / Import transcript'}
-                    </button>
-                  </div>
-                  {zoomTranscriptStatus === 'ready' && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '13px', color: '#2e7d32' }}>
-                      ✓ {zoomTranscriptMessage}
-                      {zoomTranscriptTopic && <span style={{ display: 'block', marginTop: '4px', opacity: 0.9 }}>Recording: {zoomTranscriptTopic}</span>}
-                    </div>
-                  )}
-                  {zoomTranscriptStatus === 'processing' && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
-                      ⏳ {zoomTranscriptMessage}
-                      <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>
-                        Try again
-                      </button>
-                    </div>
-                  )}
-                  {zoomTranscriptStatus === 'not_available' && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
-                      Transcript not available: {zoomTranscriptMessage}
-                    </div>
-                  )}
-                  {zoomTranscriptStatus === 'recording_not_found' && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
-                      {zoomTranscriptMessage}
-                    </div>
-                  )}
-                  {zoomTranscriptStatus === 'zoom_share_link' && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
-                      {zoomTranscriptMessage}
-                    </div>
-                  )}
-                  {(zoomTranscriptStatus === 'error' || zoomTranscriptStatus === 'api_error') && zoomTranscriptMessage && (
-                    <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
-                      {zoomTranscriptMessage}
-                    </div>
-                  )}
-                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', marginTop: '8px' }}>Session title (optional):</label>
-                  <input
-                    type="text"
-                    value={zoomTitle}
-                    onChange={(e) => setZoomTitle(e.target.value)}
-                    placeholder="e.g., Weekly review"
-                    style={{ width: '100%', marginBottom: '8px', padding: '8px' }}
-                  />
-                  {zoomImportError && (
-                    <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{zoomImportError}</div>
-                  )}
-                  {/* Import from Zoom: Recordings list (mission) */}
-                  <div style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #e0e0e0' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Import from Zoom recordings</div>
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={fetchZoomRecordings}
-                        disabled={zoomRecordingsLoading}
-                        style={{ padding: '4px 12px', fontSize: '13px' }}
-                      >
-                        {zoomRecordingsLoading ? 'Loading…' : 'Load recordings'}
-                      </button>
-                    </div>
-                    {zoomRecordingsError && (
-                      <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{zoomRecordingsError}</div>
-                    )}
-                    {zoomRecordings.length > 0 && (
-                      <div style={{ maxHeight: '280px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '8px', backgroundColor: '#fafafa' }}>
-                        {zoomRecordings.map((rec, idx) => (
-                          <div key={idx} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
-                            <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.meeting_topic || 'Untitled'}</div>
-                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
-                              {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
-                            </div>
-                            <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                              {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
-                              {rec.has_transcript ? (
-                                <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '11px', fontWeight: 500 }}>Transcript</span>
-                              ) : (
-                                <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '11px' }}>No transcript</span>
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => importFromZoomRecording(rec)}
-                              disabled={zoomImporting || !rec.has_transcript}
-                              style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
-                            >
-                              {zoomImporting ? 'Importing…' : 'Import'}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {!zoomRecordingsLoading && zoomRecordings.length === 0 && zoomRecordingsError === '' && (
-                      <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click "Load recordings" to fetch all Zoom cloud recordings (most recent first)</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-            )}
-
-            {/* Select Mode: only show toggle when user can create sessions; participants see only "Use Existing Session" */}
+            {/* Select Mode first: Create New Session | Use Existing Session */}
             {canCreateSessions && (
             <div style={{ marginBottom: '15px' }}>
-              <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>
-                Select Mode:
-              </label>
+              <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Select Mode:</label>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
                 <button
                   onClick={() => setSessionMode('create')}
@@ -2635,31 +2554,8 @@ function App() {
             </div>
             )}
 
-            {sessionMode === 'create' && canCreateSessions ? (
-              <div>
-                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Create New Session</div>
-                  <div className="form-group">
-                    <label>Session Title:</label>
-                    <input
-                      type="text"
-                      value={sessionTitle}
-                      onChange={(e) => setSessionTitle(e.target.value)}
-                      placeholder="e.g., Weekly review - Jan 2026"
-                      style={{ marginBottom: '10px' }}
-                    />
-                  </div>
-                  <button onClick={createSession} disabled={!sessionTitle || loading}>
-                    Create Session
-                  </button>
-                  {createSessionFeedback.message && (
-                    <div className={createSessionFeedback.type} style={{ marginTop: '10px' }}>
-                      {createSessionFeedback.message}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
+            {/* Use Existing Session: session list only */}
+            {(sessionMode === 'select' || !canCreateSessions) && (
               <div>
                 {authUser && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
@@ -2670,7 +2566,7 @@ function App() {
                       <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{mySessionsError}</div>
                     ) : mySessions.length === 0 ? (
                       <div className="info" style={{ marginTop: '8px' }}>
-                        {canCreateSessions ? 'No sessions. Create one via Zoom above, or get invited to a session.' : 'There are no sessions to which you have been invited.'}
+                        {canCreateSessions ? 'No sessions. Switch to Create New Session above to create one, or get invited to a session.' : 'There are no sessions to which you have been invited.'}
                       </div>
                     ) : (
                       <div style={{ maxHeight: '280px', overflowY: 'auto', marginTop: '8px' }}>
@@ -2779,6 +2675,225 @@ function App() {
                 )}
               </div>
             )}
+
+            {/* Create New Session: sub-choice From Zoom | Empty session */}
+            {sessionMode === 'create' && canCreateSessions && (
+              <div>
+                <div style={{ marginBottom: '15px' }}>
+                  <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>How to create:</label>
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                    <button
+                      onClick={() => setCreateSource('zoom')}
+                      style={{
+                        backgroundColor: createSource === 'zoom' ? '#2196F3' : '#e0e0e0',
+                        color: createSource === 'zoom' ? 'white' : 'black',
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      From Zoom
+                    </button>
+                    <button
+                      onClick={() => setCreateSource('empty')}
+                      style={{
+                        backgroundColor: createSource === 'empty' ? '#2196F3' : '#e0e0e0',
+                        color: createSource === 'empty' ? 'white' : 'black',
+                        padding: '8px 16px',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Empty session
+                    </button>
+                  </div>
+                </div>
+
+                {createSource === 'empty' && (
+                  <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Create New Session</div>
+                    <div className="form-group">
+                      <label>Session Title:</label>
+                      <input
+                        type="text"
+                        value={sessionTitle}
+                        onChange={(e) => setSessionTitle(e.target.value)}
+                        placeholder="e.g., Weekly review - Jan 2026"
+                        style={{ marginBottom: '10px' }}
+                      />
+                    </div>
+                    <button onClick={createSession} disabled={!sessionTitle || loading}>
+                      Create Session
+                    </button>
+                    {createSessionFeedback.message && (
+                      <div className={createSessionFeedback.type} style={{ marginTop: '10px' }}>
+                        {createSessionFeedback.message}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {createSource === 'zoom' && (
+                  <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
+                    {zoomConnection ? (
+                      <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#2e7d32', fontSize: '14px' }}>
+                          Connected as {zoomConnection.zoom_user_email || zoomConnection.zoom_user_id || 'Zoom user'}
+                        </span>
+                        <button type="button" onClick={disconnectZoom} style={{ padding: '4px 10px', fontSize: '13px' }}>
+                          Disconnect
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ marginBottom: '10px' }}>
+                        <a
+                          href={`${apiBaseUrl}/auth/zoom/start?creator_identity=${encodeURIComponent(creatorIdentity)}`}
+                          style={{ padding: '6px 12px', backgroundColor: '#2D8CFF', color: 'white', textDecoration: 'none', borderRadius: '4px', fontSize: '14px', display: 'inline-block' }}
+                        >
+                          Connect Zoom
+                        </a>
+                      </div>
+                    )}
+                    {zoomConnection && (
+                      <div style={{ marginTop: '10px' }}>
+                        {/* Primary: Load recordings */}
+                        <div style={{ marginBottom: '15px', paddingBottom: '15px', borderBottom: '1px solid #e0e0e0' }}>
+                          <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Your Zoom recordings</div>
+                          <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={fetchZoomRecordings}
+                              disabled={zoomRecordingsLoading}
+                              style={{ padding: '4px 12px', fontSize: '13px' }}
+                            >
+                              {zoomRecordingsLoading ? 'Loading…' : 'Load recordings'}
+                            </button>
+                          </div>
+                          {zoomRecordingsError && (
+                            <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{zoomRecordingsError}</div>
+                          )}
+                          {zoomRecordings.length > 0 && (
+                            <div style={{ maxHeight: '280px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '8px', backgroundColor: '#fafafa' }}>
+                              {zoomRecordings.map((rec, idx) => (
+                                <div key={idx} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
+                                  <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.meeting_topic || 'Untitled'}</div>
+                                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
+                                    {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
+                                  </div>
+                                  <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                    {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
+                                    {rec.has_transcript ? (
+                                      <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '11px', fontWeight: 500 }}>Transcript</span>
+                                    ) : (
+                                      <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '11px' }}>No transcript</span>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => importFromZoomRecording(rec)}
+                                    disabled={zoomImporting || !rec.has_transcript}
+                                    style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
+                                  >
+                                    {zoomImporting ? 'Importing…' : 'Import'}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {!zoomRecordingsLoading && zoomRecordings.length === 0 && zoomRecordingsError === '' && (
+                            <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click "Load recordings" to fetch Zoom cloud recordings (most recent first)</div>
+                          )}
+                        </div>
+
+                        {/* Secondary: collapsible paste URL */}
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setZoomPasteUrlExpanded((v) => !v)}
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '13px', color: '#2196F3', textDecoration: 'underline', marginBottom: '8px' }}
+                          >
+                            {zoomPasteUrlExpanded ? '▼' : '▶'} Or paste a Zoom recording URL
+                          </button>
+                          {zoomPasteUrlExpanded && (
+                            <div style={{ marginTop: '8px' }}>
+                              <input
+                                type="text"
+                                value={zoomUrl}
+                                onChange={(e) => {
+                                  setZoomUrl(e.target.value)
+                                  setZoomImportError('')
+                                  setZoomTranscriptStatus(null)
+                                  setZoomTranscriptMessage('')
+                                  setZoomTranscriptTopic(null)
+                                }}
+                                placeholder="https://zoom.us/rec/play/... or zoom.us/recording/detail?meeting_id=..."
+                                style={{ width: '100%', marginBottom: '6px', padding: '8px' }}
+                              />
+                              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript || !zoomUrl?.trim()} style={{ padding: '4px 10px', fontSize: '12px' }}>
+                                  {zoomCheckingTranscript ? 'Checking…' : 'Check transcript'}
+                                </button>
+                                <button type="button" onClick={createSessionFromZoom} disabled={zoomImporting}>
+                                  {zoomImporting ? 'Importing…' : 'Create session / Import transcript'}
+                                </button>
+                              </div>
+                              {zoomTranscriptStatus === 'ready' && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '13px', color: '#2e7d32' }}>
+                                  ✓ {zoomTranscriptMessage}
+                                  {zoomTranscriptTopic && <span style={{ display: 'block', marginTop: '4px', opacity: 0.9 }}>Recording: {zoomTranscriptTopic}</span>}
+                                </div>
+                              )}
+                              {zoomTranscriptStatus === 'processing' && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
+                                  ⏳ {zoomTranscriptMessage}
+                                  <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>
+                                    Try again
+                                  </button>
+                                </div>
+                              )}
+                              {zoomTranscriptStatus === 'not_available' && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                  Transcript not available: {zoomTranscriptMessage}
+                                </div>
+                              )}
+                              {zoomTranscriptStatus === 'recording_not_found' && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                  {zoomTranscriptMessage}
+                                </div>
+                              )}
+                              {zoomTranscriptStatus === 'zoom_share_link' && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#fff8e1', borderRadius: '4px', fontSize: '13px', color: '#f57c00' }}>
+                                  {zoomTranscriptMessage}
+                                </div>
+                              )}
+                              {(zoomTranscriptStatus === 'error' || zoomTranscriptStatus === 'api_error') && zoomTranscriptMessage && (
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                  {zoomTranscriptMessage}
+                                </div>
+                              )}
+                              <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', marginTop: '8px' }}>Session title (optional):</label>
+                              <input
+                                type="text"
+                                value={zoomTitle}
+                                onChange={(e) => setZoomTitle(e.target.value)}
+                                placeholder="e.g., Weekly review"
+                                style={{ width: '100%', marginBottom: '8px', padding: '8px' }}
+                              />
+                              {zoomImportError && (
+                                <div className="error" style={{ marginTop: '8px', fontSize: '13px' }}>{zoomImportError}</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <div style={{ padding: '15px', backgroundColor: '#fff', borderRadius: '5px' }}>
@@ -2840,13 +2955,61 @@ function App() {
                     placeholder="user@example.com"
                     style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
                   />
-                  <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || inviteLoading}>
+                  <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
+                    <option value="participant">Participant</option>
+                    <option value="creator">Creator</option>
+                  </select>
+                  <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                     {inviteLoading ? 'Sending…' : 'Invite'}
                   </button>
                 </div>
                 {inviteFeedback.message && (
                   <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
                     {inviteFeedback.message}
+                  </div>
+                )}
+                {lastInvitationDraft && (
+                  <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '12px' }}>
+                    <p style={{ margin: '0 0 8px 0', color: '#555' }}>If your email app did not open, copy the invitation link below and send it manually.</p>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (lastInvitationDraft) {
+                            navigator.clipboard.writeText(buildInviteMessageBody(lastInvitationDraft)).catch(() => {})
+                            setInviteFeedback({ type: 'success', message: 'Invitation message copied to clipboard.' })
+                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
+                          }
+                        }}
+                        style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        Copy invitation message
+                      </button>
+                      <button type="button" onClick={() => setLastInvitationDraft(null)} style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}>
+                        Dismiss
+                      </button>
+                    </div>
+                    {lastInvitationDraft?.accept_url && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ddd' }}>
+                        <input
+                          type="text"
+                          readOnly
+                          value={lastInvitationDraft.accept_url}
+                          style={{ flex: '1', minWidth: '120px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace' }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(lastInvitationDraft.accept_url).catch(() => {})
+                            setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
+                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
+                          }}
+                          style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
+                        >
+                          Copy link
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2959,9 +3122,17 @@ function App() {
               authUser={authUser}
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
+              inviteRole={inviteRole}
+              setInviteRole={setInviteRole}
               inviteFeedback={inviteFeedback}
+              setInviteFeedback={setInviteFeedback}
               inviteLoading={inviteLoading}
               inviteUserToSession={inviteUserToSession}
+              sessionInvitations={sessionInvitations}
+              fetchSessionInvitations={fetchSessionInvitations}
+              apiBaseUrl={apiBaseUrl}
+              lastInvitationDraft={lastInvitationDraft}
+              setLastInvitationDraft={setLastInvitationDraft}
               onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
             />
           ) : (

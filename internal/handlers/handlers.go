@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/invitations"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
@@ -20,20 +21,22 @@ import (
 )
 
 type Handlers struct {
-	DB           *database.DB
-	JobProcessor *utils.JobProcessor
-	Hub          *SessionHub
-	Storage      storage.Interface // R2 for file_artifacts (presigned PUT/GET)
+	DB                *database.DB
+	JobProcessor      *utils.JobProcessor
+	Hub               *SessionHub
+	Storage           storage.Interface
+	InvitationService *invitations.Service
 }
 
-func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor, store storage.Interface) *Handlers {
+func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor, store storage.Interface, invSvc *invitations.Service) *Handlers {
 	hub := NewSessionHub()
 	go hub.Run()
 	return &Handlers{
-		DB:           db,
-		JobProcessor: jobProcessor,
-		Hub:          hub,
-		Storage:      store,
+		DB:                db,
+		JobProcessor:      jobProcessor,
+		Hub:               hub,
+		Storage:           store,
+		InvitationService: invSvc,
 	}
 }
 

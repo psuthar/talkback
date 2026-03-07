@@ -103,20 +103,20 @@ func (db *DB) ListSessionsByCreatedBy(ctx context.Context, createdBy string) ([]
 	return scanSessionRows(rows)
 }
 
-// ListSessionsForInvitedUser returns sessions the user is invited to (via session_invitations), ordered by updated_at DESC.
+// ListSessionsForInvitedUser returns sessions the user is a member of (via session_memberships), ordered by updated_at DESC.
 func (db *DB) ListSessionsForInvitedUser(ctx context.Context, userID uuid.UUID) ([]*models.Session, error) {
 	query := `
 		SELECT s.id, s.title, s.created_by, s.status, s.source_provider, s.source_reference_url, s.primary_video_artifact_id,
 			COALESCE(s.index_status, 'none'), s.index_updated_at, s.processing_state, s.processing_updated_at,
 			s.created_at, s.updated_at
 		FROM sessions s
-		INNER JOIN session_invitations si ON s.id = si.session_id
-		WHERE si.user_id = $1
+		INNER JOIN session_memberships sm ON s.id = sm.session_id
+		WHERE sm.user_id = $1
 		ORDER BY s.updated_at DESC
 	`
 	rows, err := db.Pool.Query(ctx, query, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list sessions for invited user: %w", err)
+		return nil, fmt.Errorf("failed to list sessions for member: %w", err)
 	}
 	defer rows.Close()
 	return scanSessionRows(rows)

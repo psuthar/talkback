@@ -22,7 +22,9 @@ import (
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/debugfault"
+	"github.com/psuthar/talkback/internal/email"
 	"github.com/psuthar/talkback/internal/handlers"
+	"github.com/psuthar/talkback/internal/invitations"
 	"github.com/psuthar/talkback/internal/migrations"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/processing"
@@ -115,7 +117,38 @@ func main() {
 	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
 
 	// Initialize handlers
-	h := handlers.NewHandlers(db, jobProcessor, store)
+	// Invitation service: creates secure invite records and returns accept_url for mailto or Resend.
+	// APP_BASE_URL defaults to http://localhost:3000 so invite flow works locally without config.
+	appBaseURL := os.Getenv("APP_BASE_URL")
+	if appBaseURL == "" {
+		appBaseURL = "http://localhost:3000"
+		log.Println("Invitation service: APP_BASE_URL unset, using http://localhost:3000 (set APP_BASE_URL for production)")
+	}
+	invRepo := invitations.NewRepository(db.Pool)
+	lookup := &invitationLookup{db: db}
+	var sendFn invitations.SendInviteFunc
+	if resendKey := os.Getenv("RESEND_API_KEY"); resendKey != "" {
+		fromAddr := os.Getenv("EMAIL_FROM_ADDRESS")
+		if fromAddr == "" {
+			fromAddr = "invites@talkback.app"
+		}
+		resend := email.NewResendSender(resendKey, fromAddr, os.Getenv("EMAIL_FROM_NAME"))
+		sendFn = func(ctx context.Context, to, inviterName, sessionTitle, role, acceptURL, expNote string) error {
+			return resend.SendInviteEmail(ctx, email.SendInviteParams{ToEmail: to, InviterName: inviterName, SessionTitle: sessionTitle, InvitedRole: role, AcceptURL: acceptURL, ExpirationNote: expNote})
+		}
+		log.Println("Invitation service: Resend email sending enabled")
+	}
+	expiryHours := 168
+	if h := os.Getenv("INVITE_EXPIRY_HOURS"); h != "" {
+		if n, _ := fmt.Sscanf(h, "%d", &expiryHours); n == 1 && expiryHours > 0 {
+			// use expiryHours
+		} else {
+			expiryHours = 168
+		}
+	}
+	invSvc := &invitations.Service{Repo: invRepo, Lookup: lookup, Config: invitations.Config{AppBaseURL: appBaseURL, ExpiryHours: expiryHours}, Send: sendFn}
+	log.Println("Invitation service enabled (mailto delivery; set RESEND_API_KEY for email sending)")
+	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
 
 	// Mission #4: processing worker and reconciler for Zoom import pipeline
 	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {
@@ -328,8 +361,10 @@ func main() {
 		h.RequireAuth(h.ListSessions)(w, r)
 	})))
 	// API Session import + ingestion status (mission: /api/sessions/:id/import/zoom, /api/sessions/:id/ingestion)
-	// Session invite: POST /api/sessions/:id/invite requires auth; other /api/sessions/ routes unchanged
+	// Session invitations: POST/GET /api/sessions/:id/invitations; legacy /invite returns 410
 	http.HandleFunc(wrapNR("/api/sessions/", corsWithCredentials(h.ApiSessionsRouterWithInvite)))
+	// Invitation resolve, accept, register-and-accept, resend, revoke
+	http.HandleFunc(wrapNR("/api/invitations/", corsWithCredentials(h.ApiInvitationsRouter)))
 
 	// Admin user management (RequireAuth + RequireAdmin)
 	http.HandleFunc(wrapNR("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
@@ -518,4 +553,33 @@ func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 	}
 	log.Printf("Bootstrap admin: created admin account for %s", email)
 	return nil
+}
+
+// invitationLookup implements invitations.SessionInviterLookup using the database.
+type invitationLookup struct {
+	db *database.DB
+}
+
+func (l *invitationLookup) GetSessionTitle(ctx context.Context, sessionID uuid.UUID) (string, error) {
+	s, err := l.db.GetSession(ctx, sessionID)
+	if err != nil || s == nil {
+		return "", err
+	}
+	return s.Title, nil
+}
+
+func (l *invitationLookup) GetUserDisplayName(ctx context.Context, userID uuid.UUID) (string, error) {
+	u, err := l.db.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", err
+	}
+	return u.DisplayName, nil
+}
+
+func (l *invitationLookup) GetUserEmail(ctx context.Context, userID uuid.UUID) (string, error) {
+	u, err := l.db.GetUserByID(ctx, userID)
+	if err != nil || u == nil {
+		return "", err
+	}
+	return u.Email, nil
 }
