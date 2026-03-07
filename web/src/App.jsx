@@ -2301,9 +2301,13 @@ function App() {
         token={acceptInviteToken}
         authUser={authUser}
         authChecked={authChecked}
-        onLoginSuccess={(user) => {
+        onLoginSuccess={(data) => {
           window.history.replaceState(null, '', window.location.pathname + (acceptInviteToken ? `?token=${encodeURIComponent(acceptInviteToken)}` : ''))
-          setAuthUser(user)
+          setAuthUser(data)
+          if (data.accept_token) {
+            setAcceptToken(data.accept_token)
+            try { sessionStorage.setItem('talkback.accept_token', data.accept_token) } catch (_) {}
+          }
         }}
         onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
           if (!user || !sessionId) return
@@ -2337,11 +2341,13 @@ function App() {
     return (
       <LoginPage
         apiBaseUrl={apiBaseUrl}
-        onLoginSuccess={(user) => {
-          // Clear any stale query params (e.g. ?session=... from history) so the auth effect
-          // sees a clean URL and shows the default role-based page, not the last viewed session.
+        onLoginSuccess={(data) => {
           window.history.replaceState(null, '', window.location.pathname)
-          setAuthUser(user)
+          setAuthUser(data)
+          if (data.accept_token) {
+            setAcceptToken(data.accept_token)
+            try { sessionStorage.setItem('talkback.accept_token', data.accept_token) } catch (_) {}
+          }
         }}
       />
     )

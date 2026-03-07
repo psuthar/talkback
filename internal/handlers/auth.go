@@ -286,10 +286,9 @@ func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		GlobalRole:  string(user.GlobalRole),
 		Status:      string(user.Status),
 	}
-	if req.ForAcceptInvite {
-		if tok, err := auth.IssueAcceptToken(user.ID); err == nil {
-			resp.AcceptToken = tok
-		}
+	// Always issue accept_token so incognito/cross-origin can use Bearer auth when cookie isn't sent (e.g. after re-login).
+	if tok, err := auth.IssueAcceptToken(user.ID); err == nil {
+		resp.AcceptToken = tok
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
