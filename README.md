@@ -398,7 +398,7 @@ Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is no
 - Cookie name and TTL: `TB_SESSION_COOKIE_NAME` (default `tb_login`), `TB_SESSION_TTL_HOURS` (default 168). For cross-origin cookies set `TB_COOKIE_SECURE=true` and optionally `TB_COOKIE_DOMAIN`.
 - First-user admin bootstrap: set `TALKBACK_BOOTSTRAP_ADMIN_EMAIL`; the first signup or login with that email gets `global_role=admin`.
 - Origin check: for mutating auth routes (signup/login/logout), if the request sends an `Origin` header it must be in `TB_ALLOWED_ORIGINS` (comma-separated). Omit to allow any origin (e.g. local dev).
-- Frontend: call `GET /api/me` with `credentials: 'include'`; the app shows "Logged in as …" when the cookie is valid. For cross-site (e.g. Render frontend + API), set `CORS_ALLOWED_ORIGINS` to the frontend URL and use `corsWithCredentials` (already wired for `/api/auth/*` and `/api/me`).
+- Frontend: call `GET /api/me` with `credentials: 'include'`; the app shows "Logged in as …" when the cookie is valid. For cross-site (e.g. Render frontend + API), set `CORS_ALLOWED_ORIGINS` to the frontend URL and use `corsWithCredentials` (already wired for `/api/auth/*`, `/api/me`, and `/api/invitations/*`). Without this, "Join session" on the accept-invite page can return 401 because the login cookie is not sent cross-origin. **Incognito/private windows** often block that cookie; the app supports them by using a short-lived **accept token** (issued when the user signs in on the accept-invite page). Ensure `ENCRYPTION_KEY` or `ACCEPT_TOKEN_SECRET` is set on the API so the token can be issued.
 
 ### Environment Variables
 

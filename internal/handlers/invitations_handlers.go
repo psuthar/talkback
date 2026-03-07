@@ -190,10 +190,11 @@ func (h *Handlers) ResolveInvitation(w http.ResponseWriter, r *http.Request) {
 
 // AcceptInvitationRequest is the body for POST /api/invitations/accept.
 type AcceptInvitationRequest struct {
-	Token string `json:"token"`
+	Token          string `json:"token"`
+	AcceptAuthToken string `json:"accept_auth_token,omitempty"`
 }
 
-// AcceptInvitation handles POST /api/invitations/accept (RequireAuth). Authenticated user must match invited email.
+// AcceptInvitation handles POST /api/invitations/accept. User may be authenticated via session cookie or accept_auth_token (short-lived token from login with for_accept_invite).
 func (h *Handlers) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if h.InvitationService == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "invitation service not configured"})
@@ -203,14 +204,20 @@ func (h *Handlers) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
-	user := UserFromContext(r.Context())
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
 	var req AcceptInvitationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "token required"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil && req.AcceptAuthToken != "" {
+		userID, err := auth.ValidateAcceptToken(req.AcceptAuthToken)
+		if err == nil {
+			user, _ = h.DB.GetUserByID(r.Context(), userID)
+		}
+	}
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 	ctx := r.Context()

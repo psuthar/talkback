@@ -66,6 +66,24 @@ func (h *Handlers) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// OptionalAuthForAccept runs session lookup and, if valid, sets user in context. Does not return 401 if no session.
+// Used for POST /api/invitations/accept so the handler can also try accept_auth_token from the body.
+func (h *Handlers) OptionalAuthForAccept(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionID := auth.SessionIDFromRequest(r)
+		if sessionID != nil {
+			if session, err := h.DB.GetLoginSessionByID(r.Context(), *sessionID); err == nil && session != nil {
+				if user, err := h.DB.GetUserByID(r.Context(), session.UserID); err == nil && user != nil && user.Status == models.UserStatusActive {
+					ctx := context.WithValue(r.Context(), userContextKey, user)
+					next(w, r.WithContext(ctx))
+					return
+				}
+			}
+		}
+		next(w, r)
+	}
+}
+
 // --- Auth request/response DTOs ---
 
 type signupRequest struct {
@@ -75,8 +93,9 @@ type signupRequest struct {
 }
 
 type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email           string `json:"email"`
+	Password        string `json:"password"`
+	ForAcceptInvite bool   `json:"for_accept_invite"`
 }
 
 type meResponse struct {
@@ -85,6 +104,7 @@ type meResponse struct {
 	DisplayName string `json:"display_name"`
 	GlobalRole  string `json:"global_role"`
 	Status      string `json:"status"`
+	AcceptToken string `json:"accept_token,omitempty"`
 }
 
 // --- Handlers ---
@@ -252,13 +272,19 @@ func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auth.SetSessionCookie(w, session.ID, expiresAt)
-	writeJSON(w, http.StatusOK, meResponse{
+	resp := meResponse{
 		ID:          user.ID.String(),
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
 		GlobalRole:  string(user.GlobalRole),
 		Status:      string(user.Status),
-	})
+	}
+	if req.ForAcceptInvite {
+		if tok, err := auth.IssueAcceptToken(user.ID); err == nil {
+			resp.AcceptToken = tok
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // AuthLogout handles POST /api/auth/logout

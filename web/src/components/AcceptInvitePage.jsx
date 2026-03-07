@@ -18,6 +18,7 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
   const [loginError, setLoginError] = useState('')
   const [acceptLoading, setAcceptLoading] = useState(false)
   const [acceptError, setAcceptError] = useState('')
+  const [acceptAuthToken, setAcceptAuthToken] = useState(null) // short-lived token from login (for_accept_invite) so accept works in incognito
 
   const base = (apiBaseUrl || '').replace(/\/$/, '')
 
@@ -78,18 +79,24 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
     e.preventDefault()
     setLoginError('')
     setLoginSubmitting(true)
+    setAcceptAuthToken(null)
     try {
       const res = await fetch(`${base}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email: loginEmail.trim().toLowerCase(), password: loginPassword })
+        body: JSON.stringify({
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+          for_accept_invite: true
+        })
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setLoginError(data.error || 'Login failed')
         return
       }
+      if (data.accept_token) setAcceptAuthToken(data.accept_token)
       onLoginSuccess(data)
     } catch (err) {
       setLoginError(err.message || 'Network error')
@@ -103,17 +110,20 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
     setAcceptLoading(true)
     setAcceptError('')
     try {
+      const body = { token }
+      if (acceptAuthToken) body.accept_auth_token = acceptAuthToken
       const res = await fetch(`${base}/api/invitations/accept`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ token })
+        body: JSON.stringify(body)
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
         setAcceptError(data.error || 'Failed to join')
         return
       }
+      setAcceptAuthToken(null)
       const redirectTo = data.redirect_to?.startsWith('/sessions/')
         ? `/?session=${data.session_id || data.redirect_to.replace(/^\/sessions\//, '')}`
         : (data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/'))
@@ -287,6 +297,7 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
   }
 
   // C – Signed in as correct user: Join session
+  const isUnauthorized = acceptError && (acceptError.toLowerCase() === 'unauthorized' || acceptError.toLowerCase().includes('unauthorized'))
   return (
     <div style={containerStyle}>
       <h1 style={headingStyle}>Join session</h1>
@@ -296,7 +307,24 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
       </p>
       <div style={cardStyle}>
         <p style={{ marginBottom: '16px', fontSize: '14px' }}>You’re signed in as {authUser.email}. Click below to join.</p>
-        {acceptError && <div style={errorStyle}>{acceptError}</div>}
+        {acceptError && (
+          <div style={errorStyle}>
+            {isUnauthorized ? (
+              <>
+                The server didn’t recognize your session. This often happens when the app and API are on different domains and the login cookie wasn’t sent, or when using a private/incognito window (browsers may block the cookie there). Try signing out and signing in again on this page, or use a normal browser window instead of private/incognito.
+                {onSignOut && (
+                  <div style={{ marginTop: '12px' }}>
+                    <button type="button" onClick={onSignOut} style={{ ...btnSecondary, marginLeft: 0 }}>
+                      Sign out and try again
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              acceptError
+            )}
+          </div>
+        )}
         <button type="button" onClick={handleAccept} disabled={acceptLoading} style={btnPrimary}>
           {acceptLoading ? 'Joining…' : 'Join session'}
         </button>

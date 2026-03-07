@@ -269,7 +269,7 @@ func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if parts[2] == "accept" {
-		h.RequireAuth(h.AcceptInvitation)(w, r)
+		h.OptionalAuthForAccept(h.AcceptInvitation)(w, r)
 		return
 	}
 	if parts[2] == "register-and-accept" {
