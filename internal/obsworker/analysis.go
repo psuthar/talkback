@@ -120,7 +120,12 @@ func GenerateAIAnalysis(ctx context.Context, bundle Bundle, client LLMClient) (*
 		}
 		client = c
 	}
-	contextStr := ExtractAIContext(&bundle)
+	incidentSummary := ComputeIncidentSummary(&bundle)
+	bundleContext := ExtractAIContext(&bundle)
+	contextStr := FormatIncidentSummaryForAI(incidentSummary) + "\n\n" + bundleContext
+	if len(contextStr) > maxAIContextChars {
+		contextStr = contextStr[:maxAIContextChars] + "\n...(truncated)"
+	}
 	prompt, err := LoadAIPrompt(contextStr)
 	if err != nil {
 		return nil, err

@@ -40,6 +40,39 @@ func TestExtractAIContext_ReturnsTrimmedBundleText(t *testing.T) {
 	}
 }
 
+func TestAIContext_ContainsIncidentSummaryAndDominantTransaction(t *testing.T) {
+	// Build the same context string as GenerateAIAnalysis for a localized-incident bundle.
+	b := &Bundle{
+		Summary: &BundleSummary{Status: "RED", Confidence: "HIGH"},
+		Delta: &Delta{
+			Status:          "RED",
+			Current:         BaselineMetrics{Errors: 8, P95ms: 0.1, ReqPerMin: 15},
+			ExpectedAuth401: 0,
+		},
+		Results: []QueryResult{
+			{
+				Name: "errors_by_endpoint",
+				Results: []map[string]interface{}{
+					{"facet": "WebTransaction/Go/POST /debug/fault/error", "count": float64(8)},
+				},
+			},
+		},
+	}
+	incidentSummary := ComputeIncidentSummary(b)
+	bundleContext := ExtractAIContext(b)
+	contextStr := FormatIncidentSummaryForAI(incidentSummary) + "\n\n" + bundleContext
+	if !strings.Contains(contextStr, "likely_isolated_incident") {
+		t.Error("expected context to contain likely_isolated_incident (from incident summary)")
+	}
+	dominantTxn := "WebTransaction/Go/POST /debug/fault/error"
+	if !strings.Contains(contextStr, dominantTxn) {
+		t.Errorf("expected context to contain dominant_transaction %q", dominantTxn)
+	}
+	if !strings.Contains(contextStr, "Incident summary (deterministic)") {
+		t.Error("expected context to contain Incident summary (deterministic) header")
+	}
+}
+
 func TestGenerateAIAnalysis_ValidJSON(t *testing.T) {
 	// Use temp prompt file so test works from any cwd
 	dir := t.TempDir()
