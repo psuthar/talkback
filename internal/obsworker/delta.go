@@ -380,29 +380,3 @@ func DeltaSummaryLines(d Delta) []string {
 	return lines
 }
 
-// RecommendedNextQueries returns full NRQL strings (with SINCE and optional appName filter) for copy-paste.
-func RecommendedNextQueries(d Delta, windowMins int, appName string) []string {
-	window := fmt.Sprintf("%d", windowMins)
-	appClause := ""
-	if appName != "" && !strings.Contains(appName, "'") {
-		appClause = " WHERE appName = '" + appName + "'"
-	}
-	since := fmt.Sprintf(" SINCE %s minutes ago", window)
-
-	var out []string
-	// RED due to errors
-	if d.Status == "RED" && d.Current.Errors > 0 {
-		out = append(out, "FROM TransactionError SELECT count(*) FACET error.class, error.message"+appClause+since)
-		out = append(out, "FROM TransactionError SELECT count(*) FROM Transaction FACET name"+appClause+since)
-	}
-	// RED/YELLOW due to p95
-	if (d.Status == "RED" || d.Status == "YELLOW") && d.Changes.P95Pct != nil && *d.Changes.P95Pct > 0 {
-		out = append(out, "FROM Transaction SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FACET name"+appClause+since)
-		out = append(out, "FROM Transaction SELECT percentile(duration, 95) * 1000 AS 'p95_ms' FACET request.method"+appClause+since)
-	}
-	// Throughput drop
-	if d.Status == "YELLOW" && d.Changes.ReqPerMinPct != nil && *d.Changes.ReqPerMinPct < 0 {
-		out = append(out, "FROM Transaction SELECT count(*) FACET name TIMESERIES"+appClause+since)
-	}
-	return out
-}

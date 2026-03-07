@@ -209,22 +209,6 @@ func TestComputeDelta_AuthThresholdExceededRed(t *testing.T) {
 	}
 }
 
-func TestRecommendedNextQueries(t *testing.T) {
-	// RED with errors
-	dErr := Delta{Status: "RED", Current: BaselineMetrics{Errors: 2}}
-	qErr := RecommendedNextQueries(dErr, 30, "")
-	if len(qErr) == 0 {
-		t.Error("RED with errors should recommend queries")
-	}
-	// YELLOW with p95
-	p95 := 25.0
-	dP95 := Delta{Status: "YELLOW", Changes: DeltaChanges{P95Pct: &p95}}
-	qP95 := RecommendedNextQueries(dP95, 30, "")
-	if len(qP95) == 0 {
-		t.Error("YELLOW with p95 increase should recommend queries")
-	}
-}
-
 // Baseline validity: prev txn_n = 0 -> pct deltas nil, reason includes "Baseline building"
 func TestComputeDelta_BaselineInvalidPrevTxnZero(t *testing.T) {
 	th := DefaultThresholds()
@@ -395,37 +379,6 @@ func TestDeltaSummaryLines_SmallBaselineP95SuppressesPercent(t *testing.T) {
 	}
 }
 
-func TestRecommendedNextQueries_FullNRQLWithSince(t *testing.T) {
-	p95 := 25.0
-	d := Delta{Status: "YELLOW", Changes: DeltaChanges{P95Pct: &p95}}
-	q := RecommendedNextQueries(d, 30, "MyApp")
-	if len(q) == 0 {
-		t.Fatal("expected at least one recommended query")
-	}
-	for _, nrql := range q {
-		if !strings.Contains(nrql, "SINCE") {
-			t.Errorf("recommended query should contain SINCE: %q", nrql)
-		}
-		if !strings.Contains(nrql, "30") {
-			t.Errorf("recommended query should contain window 30: %q", nrql)
-		}
-	}
-	// With app name, should include filter
-	qWithApp := RecommendedNextQueries(d, 15, "Talkback-API")
-	if len(qWithApp) == 0 {
-		t.Fatal("expected queries with app")
-	}
-	found := false
-	for _, nrql := range qWithApp {
-		if strings.Contains(nrql, "appName") && strings.Contains(nrql, "Talkback-API") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected at least one query to include appName filter for Talkback-API, got %v", qWithApp)
-	}
-}
 
 func TestApplySimulationOverrides_NoOpWhenEmpty(t *testing.T) {
 	cfg := Config{}

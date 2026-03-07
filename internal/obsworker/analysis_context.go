@@ -270,3 +270,57 @@ func SanitizeLikelySubsystems(summary IncidentSummary, subsystems []string) []st
 	}
 	return out
 }
+
+// IncidentNote returns a single-line deterministic summary for the bundle (improves scanability).
+func IncidentNote(s IncidentSummary) string {
+	if s.ExpectedNoiseOnly {
+		return "Expected noise only (e.g. auth 401); no unexpected errors."
+	}
+	if s.IsSimulation {
+		return "Simulation mode: status forced for testing."
+	}
+	if s.RecommendedDiagnosisMode == "synthetic_fault" {
+		return "Isolated failure on debug/test/fault-injection route; overall latency stable. Likely intentional or test traffic."
+	}
+	if s.LikelyIsolatedIncident && s.DominantTransaction != "" {
+		route := s.DominantTransaction
+		if len(route) > 60 {
+			route = route[:57] + "..."
+		}
+		if s.OverallLatencyStable {
+			return fmt.Sprintf("Isolated failure on one route (%s); overall latency stable.", route)
+		}
+		return fmt.Sprintf("Isolated failure on one route (%s).", route)
+	}
+	if s.BroadErrorDistribution || s.BroadLatencyRegression {
+		return "Broad degradation: errors or latency spread across multiple routes."
+	}
+	if s.Status == "GREEN" {
+		return "No incident; status green."
+	}
+	if s.TotalErrors > 0 {
+		return fmt.Sprintf("%d errors; review dominant route and key deltas below.", s.TotalErrors)
+	}
+	return "Review key deltas and evidence below."
+}
+
+// LikelyCodeArea returns a short deterministic hint for where to look (code area / likely owner).
+func LikelyCodeArea(s IncidentSummary) string {
+	switch s.RecommendedDiagnosisMode {
+	case "synthetic_fault":
+		return "Debug/Fault injection route handler"
+	case "isolated_route_failure":
+		return "Route handler for dominant failing transaction"
+	case "expected_auth_noise":
+		return "Auth / login or credential handling"
+	case "broad_service_issue":
+		return "Shared infrastructure or multiple services"
+	}
+	if s.DominantURIDebugLike || s.DominantTransactionDebugLike {
+		return "Debug/Fault injection or test endpoint"
+	}
+	if s.DominantTransaction != "" {
+		return "Route handler for dominant transaction"
+	}
+	return "General application / request path"
+}

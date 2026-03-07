@@ -162,7 +162,7 @@ func (b *Bundle) RenderMarkdown() string {
 		sb.WriteString("\n")
 	}
 
-	// Summary + Key Deltas + Recommended Next Queries (from delta)
+	// Summary + Key Deltas (from delta)
 	if b.Delta != nil {
 		d := *b.Delta
 		sb.WriteString("## Summary\n\n")
@@ -217,14 +217,12 @@ func (b *Bundle) RenderMarkdown() string {
 			}
 			sb.WriteString("\n")
 		}
-		rec := RecommendedNextQueries(d, b.Metadata.WindowMins, b.Metadata.AppName)
-		if len(rec) > 0 {
-			sb.WriteString("## Recommended Next Queries\n\n")
-			for _, q := range rec {
-				sb.WriteString(fmt.Sprintf("- `%s`\n", q))
-			}
-			sb.WriteString("\n")
-		}
+		// Deterministic incident note and likely code area (one authoritative hint each)
+		summary := ComputeIncidentSummary(b)
+		sb.WriteString("## Incident note\n\n")
+		sb.WriteString("- " + IncidentNote(summary) + "\n\n")
+		sb.WriteString("## Likely code area\n\n")
+		sb.WriteString("- " + LikelyCodeArea(summary) + "\n\n")
 		sb.WriteString("---\n\n")
 	}
 

@@ -131,4 +131,23 @@ func TestSanitizeLikelySubsystems_SyntheticFaultDropsSpeculative(t *testing.T) {
 	}
 }
 
+func TestIncidentNote_SyntheticFault(t *testing.T) {
+	s := IncidentSummary{RecommendedDiagnosisMode: "synthetic_fault"}
+	note := IncidentNote(s)
+	if note == "" {
+		t.Fatal("expected non-empty incident note")
+	}
+	if !strings.Contains(note, "debug") && !strings.Contains(note, "fault") {
+		t.Errorf("synthetic_fault note should mention debug/fault: %q", note)
+	}
+}
+
+func TestLikelyCodeArea_SyntheticFault(t *testing.T) {
+	s := IncidentSummary{RecommendedDiagnosisMode: "synthetic_fault"}
+	area := LikelyCodeArea(s)
+	if area != "Debug/Fault injection route handler" {
+		t.Errorf("expected Debug/Fault injection route handler, got %q", area)
+	}
+}
+
 func floatPtr(f float64) *float64 { return &f }

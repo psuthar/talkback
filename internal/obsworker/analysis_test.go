@@ -124,6 +124,23 @@ func TestRenderMarkdown_IncidentShapeAndFollowUpDiagnostics(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdown_OneDiagnosticsSection_NoStaticQueries(t *testing.T) {
+	b := &Bundle{
+		Delta:    &Delta{Status: "RED", Current: BaselineMetrics{Errors: 3}},
+		Metadata: BundleMetadata{WindowMins: 30},
+	}
+	md := b.RenderMarkdown()
+	if strings.Contains(md, "Recommended Next Queries") {
+		t.Error("bundle must not contain static Recommended Next Queries section")
+	}
+	if !strings.Contains(md, "## Incident note") {
+		t.Error("bundle must contain deterministic Incident note section")
+	}
+	if !strings.Contains(md, "## Likely code area") {
+		t.Error("bundle must contain Likely code area section")
+	}
+}
+
 func TestGenerateAIAnalysis_ValidJSON(t *testing.T) {
 	// Use temp prompt file so test works from any cwd
 	dir := t.TempDir()
