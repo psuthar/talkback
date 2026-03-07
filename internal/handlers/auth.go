@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -289,6 +290,8 @@ func (h *Handlers) AuthLogin(w http.ResponseWriter, r *http.Request) {
 	// Always issue accept_token so incognito/cross-origin can use Bearer auth when cookie isn't sent (e.g. after re-login).
 	if tok, err := auth.IssueAcceptToken(user.ID); err == nil {
 		resp.AcceptToken = tok
+	} else {
+		log.Printf("Login: accept_token not issued (set ACCEPT_TOKEN_SECRET or ENCRYPTION_KEY): %v", err)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -311,7 +314,7 @@ func (h *Handlers) AuthLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }
 
-// AuthMe handles GET /api/me (requires auth)
+// AuthMe handles GET /api/me (requires auth). Returns accept_token so the client can use Bearer auth when cookie isn't sent (e.g. incognito).
 func (h *Handlers) AuthMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -322,13 +325,17 @@ func (h *Handlers) AuthMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	writeJSON(w, http.StatusOK, meResponse{
+	resp := meResponse{
 		ID:          user.ID.String(),
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
 		GlobalRole:  string(user.GlobalRole),
 		Status:      string(user.Status),
-	})
+	}
+	if tok, err := auth.IssueAcceptToken(user.ID); err == nil {
+		resp.AcceptToken = tok
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {

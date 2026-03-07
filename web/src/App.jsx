@@ -392,8 +392,13 @@ function App() {
       })
       .then(data => {
         if (!cancelled) {
-          if (data) setAuthUser(data)
-          else setAuthUser(null)
+          if (data) {
+            setAuthUser(data)
+            if (data.accept_token) {
+              setAcceptToken(data.accept_token)
+              try { sessionStorage.setItem('talkback.accept_token', data.accept_token) } catch (_) {}
+            }
+          } else setAuthUser(null)
           setAuthChecked(true)
         }
       })
@@ -2307,6 +2312,16 @@ function App() {
           if (data.accept_token) {
             setAcceptToken(data.accept_token)
             try { sessionStorage.setItem('talkback.accept_token', data.accept_token) } catch (_) {}
+          } else {
+            fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/me`, { credentials: 'include' })
+              .then((r) => r.ok ? r.json() : null)
+              .then((me) => {
+                if (me?.accept_token) {
+                  setAcceptToken(me.accept_token)
+                  try { sessionStorage.setItem('talkback.accept_token', me.accept_token) } catch (_) {}
+                }
+              })
+              .catch(() => {})
           }
         }}
         onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
@@ -2347,6 +2362,17 @@ function App() {
           if (data.accept_token) {
             setAcceptToken(data.accept_token)
             try { sessionStorage.setItem('talkback.accept_token', data.accept_token) } catch (_) {}
+          } else {
+            // Cookie may be set; fetch /api/me to get accept_token (needed for /api/sessions in incognito)
+            fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/me`, { credentials: 'include' })
+              .then((r) => r.ok ? r.json() : null)
+              .then((me) => {
+                if (me?.accept_token) {
+                  setAcceptToken(me.accept_token)
+                  try { sessionStorage.setItem('talkback.accept_token', me.accept_token) } catch (_) {}
+                }
+              })
+              .catch(() => {})
           }
         }}
       />
