@@ -418,6 +418,7 @@ function App() {
   // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session)
   useEffect(() => {
     if (authUser?.global_role !== 'participant') return
+    if (window.location.pathname.replace(/\/$/, '') === '/accept-invite') return // do not overwrite accept-invite URL (would drop token)
     const params = new URLSearchParams(window.location.search)
     if (params.get('mode') === 'view') return
     const sessionId = params.get('session')
@@ -444,6 +445,7 @@ function App() {
   // Participants must never see edit mode: if auth just loaded and user is participant but we're in creator mode (e.g. opened via ?mode=edit before auth loaded), force participant mode and URL
   useEffect(() => {
     if (authUser?.global_role !== 'participant') return
+    if (window.location.pathname.replace(/\/$/, '') === '/accept-invite') return // do not overwrite accept-invite URL (would drop token)
     const params = new URLSearchParams(window.location.search)
     if (params.get('mode') !== 'edit') return
     const sessionId = params.get('session')
@@ -2666,11 +2668,6 @@ function App() {
                     >
                       Refresh List
                     </button>
-                  </div>
-                )}
-                {!artifactId && canCreateSessions && (
-                  <div className="info" style={{ marginTop: '10px' }}>
-                    Create an artifact below to see its sessions, or enter a session ID directly above.
                   </div>
                 )}
               </div>

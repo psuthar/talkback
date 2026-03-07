@@ -145,7 +145,9 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
     return (
       <div style={containerStyle}>
         <h1 style={headingStyle}>Invitation</h1>
-        <div style={{ ...cardStyle, ...errorStyle }}>Invalid link: missing token.</div>
+        <div style={{ ...cardStyle, ...errorStyle }}>
+          This link does not contain an invitation token. Please use the full link from your invitation email (it should include <code>?token=...</code> in the address bar). If you copied a different link (e.g. a session view link), open the invitation email and click the “Accept your invitation” link instead.
+        </div>
       </div>
     )
   }

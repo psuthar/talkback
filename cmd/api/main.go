@@ -118,11 +118,14 @@ func main() {
 
 	// Initialize handlers
 	// Invitation service: creates secure invite records and returns accept_url for mailto or Resend.
-	// APP_BASE_URL defaults to http://localhost:3000 so invite flow works locally without config.
-	appBaseURL := os.Getenv("APP_BASE_URL")
+	// APP_BASE_URL must be the frontend (web app) origin where /accept-invite is served, NOT the API URL.
+	// On Render: set APP_BASE_URL on the API service to your web service URL (e.g. https://talkback-ux.onrender.com).
+	appBaseURL := strings.TrimSpace(os.Getenv("APP_BASE_URL"))
 	if appBaseURL == "" {
 		appBaseURL = "http://localhost:3000"
-		log.Println("Invitation service: APP_BASE_URL unset, using http://localhost:3000 (set APP_BASE_URL for production)")
+		log.Println("Invitation service: APP_BASE_URL unset, using http://localhost:3000 (set APP_BASE_URL to your frontend URL for production)")
+	} else {
+		log.Println("Invitation service: accept-invite links will use base:", appBaseURL)
 	}
 	invRepo := invitations.NewRepository(db.Pool)
 	lookup := &invitationLookup{db: db}

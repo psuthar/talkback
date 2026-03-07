@@ -334,6 +334,7 @@ To run the API on [Render.com](https://render.com) as a Web Service.
    | `ZOOM_CLIENT_ID` | If using Zoom | From Zoom Marketplace app |
    | `ZOOM_CLIENT_SECRET` | If using Zoom | From Zoom Marketplace app |
    | `APP_REDIRECT_URL` | If using Zoom | Frontend URL for post-OAuth redirect, e.g. `https://your-frontend.onrender.com` |
+   | `APP_BASE_URL` | If using invitations | **Frontend (web app)** URL where `/accept-invite` is served, e.g. `https://talkback-ux.onrender.com`. Set this on the **API** service. Do **not** use the API URL here — invite links must point to the web app. |
    | `ENCRYPTION_KEY` | If using Zoom | 32-byte key for token encryption (production value) |
    | `TRANSCRIPT_WORKERS` | No | Default 2 |
    | `ALLOW_DEV_RESET` | No | Set to `false` in production |
@@ -389,6 +390,7 @@ Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is no
 **Render checklist (recent changes)**  
 - **Backend:** Migrations run on startup from embedded files (`internal/migrations/migrations/`). New migrations (e.g. 000021) run automatically when `RUN_MIGRATIONS=true`. No new env vars required.  
 - **Frontend:** Ensure `VITE_API_BASE_URL` is set to your API URL so the app and docx viewer (mammoth) fetch from the API. `mammoth` is in `dependencies` and is installed by `npm ci`; commit `package-lock.json` so Render installs it.  
+- **Invitations:** On the **API** service, set `APP_BASE_URL` to your **frontend** URL (e.g. `https://talkback-ux.onrender.com`), not the API URL. Invite links and emails use this for the accept-invite page.  
 - **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
 
 **TalkBack Auth (users + login sessions)**  
