@@ -73,6 +73,57 @@ func TestAIContext_ContainsIncidentSummaryAndDominantTransaction(t *testing.T) {
 	}
 }
 
+func TestExtractAIContext_ExcludesNoisySections(t *testing.T) {
+	// Only curated sections (Summary, Key Deltas, Errors by endpoint/uri, Top Errors, throughput/latency deep dive) are included.
+	// Discover Appnames and other unrelated deep-dive sections must not appear.
+	b := &Bundle{
+		Delta: &Delta{Status: "RED", Confidence: "HIGH"},
+		DeepDiveResults: []QueryResult{
+			{Name: "discover_appnames", Results: []map[string]interface{}{{"appName": "Foo"}}},
+			{Name: "throughput_by_txn", Results: []map[string]interface{}{{"name": "T1", "count": float64(10)}}},
+		},
+	}
+	out := ExtractAIContext(b)
+	if strings.Contains(out, "discover_appnames") || strings.Contains(out, "Discover Appnames") {
+		t.Error("expected ExtractAIContext to exclude discover_appnames / Discover Appnames")
+	}
+	if !strings.Contains(out, "throughput_by_txn") {
+		t.Error("expected curated deep-dive section throughput_by_txn to be included")
+	}
+}
+
+func TestRenderMarkdown_IncidentShapeAndFollowUpDiagnostics(t *testing.T) {
+	b := &Bundle{
+		Summary:  &BundleSummary{Status: "RED"},
+		Delta:    &Delta{Status: "RED", Current: BaselineMetrics{Errors: 5}},
+		Metadata: BundleMetadata{AppName: "TestApp", WindowMins: 30},
+		Results: []QueryResult{
+			{Name: "errors_by_endpoint", Results: []map[string]interface{}{
+				{"facet": "WebTransaction/Go/POST /debug/fault/error", "count": float64(5)},
+			}},
+		},
+		Analysis: &AIAnalysis{
+			Hypotheses:       []string{"Fault injection route."},
+			DiagnosticIntents: []string{"inspect_failing_transaction_by_name", "inspect_top_error_messages"},
+			ImmediateActions:  []string{"Verify if debug traffic is intentional."},
+		},
+	}
+	md := b.RenderMarkdown()
+	if !strings.Contains(md, "### Incident Shape") {
+		t.Error("expected ### Incident Shape in AI section")
+	}
+	if !strings.Contains(md, "### Follow-up Diagnostics") {
+		t.Error("expected ### Follow-up Diagnostics in AI section")
+	}
+	if !strings.Contains(md, "intent: inspect_failing_transaction_by_name") {
+		t.Error("expected intent label in Follow-up Diagnostics")
+	}
+	// Deterministic NRQL should appear in blockquote
+	if !strings.Contains(md, "> `") {
+		t.Error("expected blockquoted NRQL (e.g. > `...`) in Follow-up Diagnostics")
+	}
+}
+
 func TestGenerateAIAnalysis_ValidJSON(t *testing.T) {
 	// Use temp prompt file so test works from any cwd
 	dir := t.TempDir()

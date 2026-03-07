@@ -235,6 +235,25 @@ func (b *Bundle) RenderMarkdown() string {
 			sb.WriteString("⚠️ **AI ANALYSIS GENERATED UNDER SIMULATION**\n\n")
 		}
 		a := *b.Analysis
+		summary := ComputeIncidentSummary(b)
+		// Incident Shape (deterministic)
+		sb.WriteString("### Incident Shape\n\n")
+		if summary.LikelyIsolatedIncident {
+			sb.WriteString("- Isolated route failure\n")
+		}
+		if summary.DominantURIDebugLike || summary.DominantTransactionDebugLike {
+			sb.WriteString("- Debug/Test-like dominant URI detected\n")
+		}
+		if summary.OverallLatencyStable {
+			sb.WriteString("- Overall latency stable\n")
+		}
+		if summary.RecommendedDiagnosisMode != "" {
+			sb.WriteString(fmt.Sprintf("- Recommended diagnosis: %s\n", summary.RecommendedDiagnosisMode))
+		}
+		if !summary.LikelyIsolatedIncident && !summary.DominantURIDebugLike && !summary.DominantTransactionDebugLike && !summary.OverallLatencyStable && summary.RecommendedDiagnosisMode == "" {
+			sb.WriteString("- (computed from bundle)\n")
+		}
+		sb.WriteString("\n")
 		if len(a.Hypotheses) > 0 {
 			sb.WriteString("### Likely Causes\n\n")
 			for _, h := range a.Hypotheses {
@@ -249,12 +268,21 @@ func (b *Bundle) RenderMarkdown() string {
 			}
 			sb.WriteString("\n")
 		}
-		if len(a.SuggestedQueries) > 0 {
+		// Follow-up Diagnostics: deterministic NRQL from intents (preferred) or legacy suggested_queries
+		if len(a.DiagnosticIntents) > 0 {
+			generated := BuildQueriesFromIntents(summary, a.DiagnosticIntents, b.Metadata.AppName, b.Metadata.WindowMins)
+			if len(generated) > 0 {
+				sb.WriteString("### Follow-up Diagnostics\n\n")
+				for _, iq := range generated {
+					sb.WriteString(fmt.Sprintf("- intent: %s\n", iq.Intent))
+					sb.WriteString(fmt.Sprintf("  > `%s`\n\n", iq.NRQL))
+				}
+			}
+		} else if len(a.SuggestedQueries) > 0 {
 			sb.WriteString("### Suggested Queries\n\n")
 			for _, q := range a.SuggestedQueries {
-				sb.WriteString("- `" + q + "`\n")
+				sb.WriteString("> `" + q + "`\n\n")
 			}
-			sb.WriteString("\n")
 		}
 		if len(a.ImmediateActions) > 0 {
 			sb.WriteString("### Immediate Actions\n\n")

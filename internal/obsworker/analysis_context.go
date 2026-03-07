@@ -24,7 +24,19 @@ type IncidentSummary struct {
 	BroadErrorDistribution    bool   `json:"broad_error_distribution"`
 	LikelyIsolatedIncident    bool   `json:"likely_isolated_incident"`
 	ExpectedNoiseOnly         bool   `json:"expected_noise_only"`
+
+	// Route classification for debug/test/synthetic fault detection
+	DominantURIDebugLike         bool   `json:"dominant_uri_debug_like"`
+	DominantTransactionDebugLike bool   `json:"dominant_transaction_debug_like"`
+	OverallLatencyStable         bool   `json:"overall_latency_stable"`
+	RecommendedDiagnosisMode    string `json:"recommended_diagnosis_mode,omitempty"`
 }
+
+// Debug-like path substrings (any match sets DominantURIDebugLike / DominantTransactionDebugLike).
+var debugLikePathSubstrings = []string{"/debug/", "/fault/", "/test/", "/synthetic/", "/chaos/"}
+
+// overallLatencyStableThresholdMs: p95 below this is considered "stable" for diagnosis mode.
+const overallLatencyStableThresholdMs = 500.0
 
 // isolatedIncidentDominancePct is the minimum share of errors from the top endpoint
 // for the incident to be considered "likely isolated" (narrow fault path).
@@ -106,6 +118,14 @@ func ComputeIncidentSummary(b *Bundle) IncidentSummary {
 		if s.DominantErrorSharePct < isolatedIncidentDominancePct {
 			s.BroadErrorDistribution = true
 		}
+		// Debug-like route classification
+		s.DominantURIDebugLike = isDebugLikePath(s.DominantErrorURI)
+		s.DominantTransactionDebugLike = isDebugLikePath(s.DominantTransaction)
+	}
+
+	// Overall latency stable: low p95 and no broad regression
+	if s.OverallP95ms > 0 && s.OverallP95ms < overallLatencyStableThresholdMs && !s.BroadLatencyRegression {
+		s.OverallLatencyStable = true
 	}
 
 	// Likely isolated: one endpoint dominates errors, and we don't have broad latency regression
@@ -118,7 +138,34 @@ func ComputeIncidentSummary(b *Bundle) IncidentSummary {
 	if s.Status == "GREEN" && s.UnexpectedErrors == 0 {
 		s.ExpectedNoiseOnly = true
 	}
+
+	// Recommended diagnosis mode
+	if s.ExpectedNoiseOnly {
+		s.RecommendedDiagnosisMode = "expected_auth_noise"
+	} else if s.DominantURIDebugLike || s.DominantTransactionDebugLike {
+		if s.LikelyIsolatedIncident && s.OverallLatencyStable {
+			s.RecommendedDiagnosisMode = "synthetic_fault"
+		} else {
+			s.RecommendedDiagnosisMode = "isolated_route_failure"
+		}
+	} else if s.LikelyIsolatedIncident {
+		s.RecommendedDiagnosisMode = "isolated_route_failure"
+	} else if s.BroadLatencyRegression || s.BroadErrorDistribution {
+		s.RecommendedDiagnosisMode = "broad_service_issue"
+	} else {
+		s.RecommendedDiagnosisMode = "unknown"
+	}
 	return s
+}
+
+func isDebugLikePath(s string) bool {
+	lower := strings.ToLower(s)
+	for _, sub := range debugLikePathSubstrings {
+		if strings.Contains(lower, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatIncidentSummaryForAI returns a short markdown block for the AI prompt.
@@ -162,8 +209,64 @@ func FormatIncidentSummaryForAI(s IncidentSummary) string {
 	lines = append(lines, fmt.Sprintf("- broad_latency_regression: %t", s.BroadLatencyRegression))
 	lines = append(lines, fmt.Sprintf("- broad_error_distribution: %t", s.BroadErrorDistribution))
 	lines = append(lines, fmt.Sprintf("- likely_isolated_incident: %t", s.LikelyIsolatedIncident))
+	if s.DominantURIDebugLike {
+		lines = append(lines, "- dominant_uri_debug_like: true")
+	}
+	if s.DominantTransactionDebugLike {
+		lines = append(lines, "- dominant_transaction_debug_like: true")
+	}
+	if s.OverallLatencyStable {
+		lines = append(lines, "- overall_latency_stable: true")
+	}
+	if s.RecommendedDiagnosisMode != "" {
+		lines = append(lines, fmt.Sprintf("- recommended_diagnosis_mode: %s", s.RecommendedDiagnosisMode))
+	}
 	if s.ExpectedNoiseOnly {
 		lines = append(lines, "- expected_noise_only: true")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// Speculative subsystem labels to drop when diagnosis suggests synthetic/debug fault.
+var speculativeSubsystemLabels = []string{
+	"database", "storage", "backend service", "backend", "infrastructure",
+	"downstream", "cache", "message queue", "external api",
+}
+
+// SanitizeLikelySubsystems filters AI-suggested subsystems to keep only evidence-based ones
+// when the incident looks like a synthetic/debug fault.
+func SanitizeLikelySubsystems(summary IncidentSummary, subsystems []string) []string {
+	if len(subsystems) == 0 {
+		return subsystems
+	}
+	// When synthetic_fault or debug-like dominant URI, drop speculative labels.
+	if summary.RecommendedDiagnosisMode != "synthetic_fault" && !summary.DominantURIDebugLike {
+		return subsystems
+	}
+	var out []string
+	lowerSpeculative := make([]string, len(speculativeSubsystemLabels))
+	for i, s := range speculativeSubsystemLabels {
+		lowerSpeculative[i] = strings.ToLower(s)
+	}
+	for _, sub := range subsystems {
+		subLower := strings.ToLower(strings.TrimSpace(sub))
+		if subLower == "" {
+			continue
+		}
+		dropped := false
+		for _, spec := range lowerSpeculative {
+			if strings.Contains(subLower, spec) || strings.Contains(spec, subLower) {
+				dropped = true
+				break
+			}
+		}
+		if !dropped {
+			out = append(out, sub)
+		}
+	}
+	// If we dropped everything, prefer a minimal evidence-based label
+	if len(out) == 0 && (summary.DominantURIDebugLike || summary.DominantTransactionDebugLike) {
+		out = append(out, "Debug/Fault Injection Route Handler")
+	}
+	return out
 }

@@ -13,10 +13,12 @@ const maxAIContextChars = 3000
 const maxAIResponseTokens = 500
 
 // AIAnalysis holds the structured output from the LLM.
+// DiagnosticIntents are converted to NRQL at render time via BuildQueriesFromIntents.
 type AIAnalysis struct {
 	Hypotheses        []string `json:"hypotheses"`
 	LikelySubsystems  []string `json:"likely_subsystems"`
-	SuggestedQueries  []string `json:"suggested_queries"`
+	SuggestedQueries  []string `json:"suggested_queries,omitempty"`  // legacy; prefer DiagnosticIntents
+	DiagnosticIntents []string `json:"diagnostic_intents,omitempty"`
 	ImmediateActions  []string `json:"immediate_actions"`
 }
 
@@ -62,9 +64,60 @@ func ExtractAIContext(b *Bundle) string {
 			sb.WriteString("- (none)\n")
 		}
 	}
+	// Errors by endpoint URI (evidence for localized incidents)
+	if rows := getQueryResults(b, "errors_by_endpoint_uri"); len(rows) > 0 {
+		sb.WriteString("\n## Errors By Endpoint Uri\n\n")
+		for i, row := range rows {
+			if i >= 10 {
+				sb.WriteString("...\n")
+				break
+			}
+			sb.WriteString(formatRowForAI(row) + "\n")
+		}
+	}
+	// Errors by endpoint / transaction (from base or deep dive)
+	if rows := getQueryResults(b, "errors_by_endpoint"); len(rows) > 0 {
+		sb.WriteString("\n## Errors By Txn\n\n")
+		for i, row := range rows {
+			if i >= 10 {
+				sb.WriteString("...\n")
+				break
+			}
+			sb.WriteString(formatRowForAI(row) + "\n")
+		}
+	} else if len(b.DeepDiveResults) > 0 {
+		for _, qr := range b.DeepDiveResults {
+			if qr.Name == "errors_by_txn" && len(qr.Results) > 0 {
+				sb.WriteString("\n## Errors By Txn\n\n")
+				for i, row := range qr.Results {
+					if i >= 10 {
+						sb.WriteString("...\n")
+						break
+					}
+					sb.WriteString(formatRowForAI(row) + "\n")
+				}
+				break
+			}
+		}
+	}
+	// Top errors (class/message)
+	if rows := getQueryResults(b, "top_errors"); len(rows) > 0 {
+		sb.WriteString("\n## Top Errors\n\n")
+		for i, row := range rows {
+			if i >= 10 {
+				sb.WriteString("...\n")
+				break
+			}
+			sb.WriteString(formatRowForAI(row) + "\n")
+		}
+	}
+	// Deep dive: only throughput and latency by txn (curated)
 	if len(b.DeepDiveResults) > 0 {
 		sb.WriteString("\n## Automatic Deep Dive\n\n")
 		for _, qr := range b.DeepDiveResults {
+			if qr.Name != "throughput_by_txn" && qr.Name != "latency_by_txn_p95" {
+				continue
+			}
 			sb.WriteString("### " + qr.Name + "\n")
 			if len(qr.Results) > 0 {
 				for i, row := range qr.Results {
@@ -134,7 +187,12 @@ func GenerateAIAnalysis(ctx context.Context, bundle Bundle, client LLMClient) (*
 	if err != nil {
 		return nil, err
 	}
-	return parseAIAnalysisResponse(response)
+	out, err := parseAIAnalysisResponse(response)
+	if err != nil {
+		return nil, err
+	}
+	out.LikelySubsystems = SanitizeLikelySubsystems(incidentSummary, out.LikelySubsystems)
+	return out, nil
 }
 
 // parseAIAnalysisResponse extracts JSON from the response and unmarshals into AIAnalysis.

@@ -1,6 +1,7 @@
 package obsworker
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -37,6 +38,19 @@ func TestComputeIncidentSummary_LikelyIsolatedIncident(t *testing.T) {
 	}
 	if s.BroadErrorDistribution {
 		t.Error("expected BroadErrorDistribution=false when one endpoint dominates")
+	}
+	// Debug/fault route classification
+	if !s.DominantURIDebugLike {
+		t.Error("expected DominantURIDebugLike=true for /debug/fault/error")
+	}
+	if !s.DominantTransactionDebugLike {
+		t.Error("expected DominantTransactionDebugLike=true for transaction containing /debug/fault/error")
+	}
+	if s.RecommendedDiagnosisMode != "synthetic_fault" {
+		t.Errorf("expected RecommendedDiagnosisMode=synthetic_fault when isolated debug route, got %q", s.RecommendedDiagnosisMode)
+	}
+	if !s.OverallLatencyStable {
+		t.Error("expected OverallLatencyStable=true when p95 is low and no broad regression")
 	}
 }
 
@@ -87,6 +101,33 @@ func TestComputeIncidentSummary_ExpectedNoiseOnly(t *testing.T) {
 	s := ComputeIncidentSummary(b)
 	if !s.ExpectedNoiseOnly {
 		t.Error("expected ExpectedNoiseOnly=true when GREEN and unexpected_errors=0")
+	}
+}
+
+func TestSanitizeLikelySubsystems_SyntheticFaultDropsSpeculative(t *testing.T) {
+	summary := IncidentSummary{
+		RecommendedDiagnosisMode: "synthetic_fault",
+		DominantURIDebugLike:     true,
+	}
+	subsystems := []string{"database", "backend service", "Debug/Fault Injection Route Handler"}
+	got := SanitizeLikelySubsystems(summary, subsystems)
+	for _, s := range got {
+		if s == "database" || s == "backend service" {
+			t.Errorf("synthetic_fault should drop speculative subsystems like %q, got %v", s, got)
+		}
+	}
+	if len(got) == 0 {
+		t.Error("expected at least one evidence-based label kept")
+	}
+	found := false
+	for _, s := range got {
+		if strings.Contains(s, "Debug") || strings.Contains(s, "Fault") || strings.Contains(s, "Route") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected route/handler-level label kept, got %v", got)
 	}
 }
 
