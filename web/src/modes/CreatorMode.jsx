@@ -111,6 +111,7 @@ export function CreatorMode({
   videoId,
   setVideoId,
   selectedVideo,
+  selectedVideoIdRef,
   setSelectedVideo,
   videoPlayerKey,
   setVideoPlayerKey,
@@ -141,6 +142,7 @@ export function CreatorMode({
   fetchSessionInvitations,
   lastInvitationDraft,
   setLastInvitationDraft,
+  setPrimaryVideoSource,
   onClearSession
 }) {
   const [materialUploading, setMaterialUploading] = useState(false)
@@ -419,8 +421,15 @@ export function CreatorMode({
         source_type: 'upload'
       }
     : null
-  // When we have a downloaded primary video, always use it; otherwise use dropdown selection or first source
-  const video = hasPrimaryR2Video ? syntheticR2Video : (selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]))
+  // Resolve displayed video from session using ref (so selection survives refetches); fallback to primary
+  const sources = currentSession?.video_sources ?? []
+  const primary = currentSession?.primary_video ?? sources[0]
+  const primarySourceId = currentSession?.primary_video?.id ?? sources[0]?.id
+  const preferredId = selectedVideoIdRef?.current ?? selectedVideo?.id
+  const resolvedFromSession = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
+  // When primary is selected and we have R2 primary, use syntheticR2Video so VideoPlayer gets primaryVideoAccessUrl (artifact id); otherwise it would get the raw VideoSource and miss the stream URL
+  const useR2Primary = hasPrimaryR2Video && syntheticR2Video && (!resolvedFromSession || String(resolvedFromSession.id) === String(primarySourceId))
+  const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
   // Fetch questions on mount/change (WebSocket handles real-time updates)
   useEffect(() => {
@@ -1177,13 +1186,19 @@ export function CreatorMode({
                 primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
                 onPrimaryVideoMounted={handlePrimaryVideoMounted}
               />
-              {(video.transcript_text || (video.transcript_segments && video.transcript_segments.length > 0)) && (
-                <TranscriptViewer
-                  transcriptText={video.transcript_text}
-                  segments={video.transcript_segments}
-                  showTimestamps={true}
-                />
-              )}
+              <div style={{ flexShrink: 0, marginTop: '6px' }}>
+                {video.transcript_text || (video.transcript_segments && video.transcript_segments.length > 0) ? (
+                  <TranscriptViewer
+                    transcriptText={video.transcript_text}
+                    segments={video.transcript_segments}
+                    showTimestamps={true}
+                  />
+                ) : (
+                  <div style={{ padding: '12px', color: '#666', fontSize: '14px', fontStyle: 'italic' }}>
+                    Transcript: {video.transcript_status === 'pending' || video.transcript_status === 'processing' ? 'Processing…' : 'No transcript yet.'}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -1292,6 +1307,49 @@ export function CreatorMode({
               {materialUploadFeedback.message}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Session videos: primary + additional with "Set as Primary" for creator */}
+      {(currentSession?.primary_video || (currentSession?.additional_videos?.length > 0) || (currentSession?.video_sources?.length > 1)) && setPrimaryVideoSource && (
+        <div className="section" style={{ marginBottom: 16 }}>
+          <h3 style={{ margin: '0 0 8px 0', fontSize: 14 }}>Presentation video</h3>
+          <div style={{ fontSize: 13 }}>
+            {(() => {
+              const primary = currentSession?.primary_video ?? currentSession?.video_sources?.[0]
+              const additional = currentSession?.additional_videos ?? (currentSession?.video_sources?.length > 1 ? currentSession.video_sources.slice(1) : [])
+              const videoDisplayName = (v) => {
+                try { if (v?.original_url) return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() || v.provider || 'Video' } catch (_) {}
+                if (v?.stored_video_object_key) return v.stored_video_object_key.split('/').filter(Boolean).pop() || v.provider || 'Video'
+                return v?.provider || 'Video'
+              }
+              return (
+                <>
+                  {primary && (
+                    <div style={{ marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600 }}>Primary:</span> {videoDisplayName(primary)} {primary.transcript_status === 'ready' ? '(Ready)' : ''}
+                    </div>
+                  )}
+                  {additional?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      {additional.map((v) => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span>{videoDisplayName(v)} {v.transcript_status === 'ready' ? '(Ready)' : ''}</span>
+                          <button
+                            type="button"
+                            onClick={() => setPrimaryVideoSource(v.id)}
+                            style={{ padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}
+                          >
+                            Set as Primary
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+          </div>
         </div>
       )}
 

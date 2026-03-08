@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +46,8 @@ type GetSessionResponse struct {
 	Artifacts           []*models.Artifact    `json:"artifacts"`
 	Materials           []*models.Material     `json:"materials"`
 	VideoSources        []*models.VideoSource `json:"video_sources"`
+	PrimaryVideo        *models.VideoSource   `json:"primary_video,omitempty"`   // effective primary (explicit primary, else first ready, else first)
+	AdditionalVideos    []*models.VideoSource `json:"additional_videos,omitempty"` // all other session videos
 	RecentQuestions     []*models.Question    `json:"recent_questions"`
 	RecentAnswers       []*models.Answer      `json:"recent_answers"`
 	Mode                string                `json:"mode"` // "creator" or "participant"
@@ -52,6 +55,56 @@ type GetSessionResponse struct {
 	VideoAccessURL      string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
 	PlaybackReasonCode  string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
 	PlaybackMessage     string                `json:"playback_message,omitempty"`      // safe message when video not playable
+}
+
+// resolveEffectivePrimaryAndAdditional returns the session's effective primary video (explicit primary, else first ready, else first) and all other videos as additional. Backward compatible when video_role is nil.
+func resolveEffectivePrimaryAndAdditional(videoSources []*models.VideoSource) (primary *models.VideoSource, additional []*models.VideoSource) {
+	if len(videoSources) == 0 {
+		return nil, nil
+	}
+	// 1) Explicit primary
+	for _, vs := range videoSources {
+		if vs != nil && vs.VideoRole != nil && *vs.VideoRole == models.VideoRolePrimary {
+			primary = vs
+			break
+		}
+	}
+	// 2) First ready
+	if primary == nil {
+		for _, vs := range videoSources {
+			if vs != nil && vs.TranscriptStatus == models.VideoTranscriptStatusReady {
+				primary = vs
+				break
+			}
+		}
+	}
+	// 3) First video
+	if primary == nil {
+		primary = videoSources[0]
+	}
+	// Additional = all except primary (by ID)
+	for _, vs := range videoSources {
+		if vs != nil && (primary == nil || vs.ID != primary.ID) {
+			additional = append(additional, vs)
+		}
+	}
+	return primary, additional
+}
+
+// ensurePrimaryVideoIfNone sets the given video as primary for the session when no video in the session is yet marked primary (e.g. first video uploaded or Zoom import).
+func (h *Handlers) ensurePrimaryVideoIfNone(ctx context.Context, sessionID, videoSourceID uuid.UUID) {
+	sources, err := h.DB.GetVideoSourcesBySessionID(ctx, sessionID)
+	if err != nil || len(sources) == 0 {
+		return
+	}
+	for _, vs := range sources {
+		if vs != nil && vs.VideoRole != nil && *vs.VideoRole == models.VideoRolePrimary {
+			return // already have a primary
+		}
+	}
+	if err := h.DB.SetVideoSourceVideoRole(ctx, sessionID, videoSourceID, models.VideoRolePrimary); err != nil {
+		log.Printf("Warning: set first video as primary: %v", err)
+	}
 }
 
 type JoinParticipantRequest struct {
@@ -424,11 +477,14 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	primaryVideo, additionalVideos := resolveEffectivePrimaryAndAdditional(allVideoSources)
 	response := GetSessionResponse{
 		Session:            session,
 		Artifacts:          artifacts,
 		Materials:          allMaterials,
 		VideoSources:       allVideoSources,
+		PrimaryVideo:       primaryVideo,
+		AdditionalVideos:   additionalVideos,
 		RecentQuestions:    questions,
 		RecentAnswers:      answers,
 		Mode:               mode,
@@ -701,6 +757,69 @@ func (h *Handlers) SetSessionPrimaryVideoArtifact(w http.ResponseWriter, r *http
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video artifact set"})
+}
+
+// SetPrimaryVideoSourceRequest body for POST /api/sessions/:id/set-primary-video (creator: mark a video source as the session's primary presentation).
+type SetPrimaryVideoSourceRequest struct {
+	VideoSourceID string `json:"video_source_id"`
+}
+
+// SetSessionPrimaryVideoSource sets the given video source as primary (video_role=primary) and demotes any existing primary. Creator or admin only.
+func (h *Handlers) SetSessionPrimaryVideoSource(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "set-primary-video" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[2])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	var req SetPrimaryVideoSourceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	videoSourceID, err := uuid.Parse(strings.TrimSpace(req.VideoSourceID))
+	if err != nil {
+		http.Error(w, "Invalid video_source_id", http.StatusBadRequest)
+		return
+	}
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
+	if err != nil || vs == nil || vs.SessionID != sessionID {
+		http.Error(w, "Video source not found", http.StatusNotFound)
+		return
+	}
+	// Creator or admin only (same as other session mutations)
+	currentUser := r.Header.Get("X-Current-User")
+	if currentUser == "" {
+		currentUser = r.URL.Query().Get("user")
+	}
+	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
+		// Allow admin
+		if u := UserFromContext(r.Context()); u == nil || u.GlobalRole != models.GlobalRoleAdmin {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+	if err := h.DB.SetVideoSourceVideoRole(r.Context(), sessionID, videoSourceID, models.VideoRolePrimary); err != nil {
+		log.Printf("SetSessionPrimaryVideoSource: %v", err)
+		http.Error(w, "Failed to set primary video", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video set"})
 }
 
 // MarkSessionMaterialsSeenRequest body for POST /sessions/:id/materials/seen
@@ -1012,11 +1131,9 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 		allVideoSources = []*models.VideoSource{}
 	}
 
-	// Use first video source for RAG (or aggregate)
-	var videoSource *models.VideoSource
-	if len(allVideoSources) > 0 {
-		videoSource = allVideoSources[0]
-	}
+	// Use effective primary video for RAG so retrieval prefers primary transcript
+	primaryVideo, _ := resolveEffectivePrimaryAndAdditional(allVideoSources)
+	videoSource := primaryVideo
 
 	// Perform retrieval
 	chunks := utils.RetrieveChunks(req.QuestionText, allMaterials, videoSource, 5)
@@ -1761,7 +1878,7 @@ func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
 // When session has primary_video_artifact_id this returns 410. Legacy sessions without primary could use it; frontend no longer requests it for playback.
 // GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream
 func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1785,6 +1902,76 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
+	if err != nil || vs == nil {
+		http.Error(w, "Video source not found", http.StatusNotFound)
+		return
+	}
+	if vs.SessionID != sessionID {
+		http.Error(w, "Video source does not belong to this session", http.StatusBadRequest)
+		return
+	}
+	// Upload sources (e.g. video files from materials): stream from StoredVideoObjectKey (local or R2).
+	if vs.SourceType == models.VideoSourceTypeUpload && vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
+		key := *vs.StoredVideoObjectKey
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Accept-Ranges", "bytes")
+		if strings.HasPrefix(key, "sessions/") || strings.HasPrefix(key, "data/") {
+			absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(key))
+			f, err := os.Open(absPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					http.Error(w, "Video file not found", http.StatusNotFound)
+					return
+				}
+				log.Printf("ZoomVideoStream open %s: %v", absPath, err)
+				http.Error(w, "Failed to open video", http.StatusInternalServerError)
+				return
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil {
+				http.Error(w, "Failed to stat video", http.StatusInternalServerError)
+				return
+			}
+			modTime := info.ModTime()
+			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			http.ServeContent(w, r, "video.mp4", modTime, f)
+			return
+		}
+		if h.Storage != nil {
+			exists, size, contentType, headErr := h.Storage.Head(r.Context(), key)
+			if headErr != nil || !exists {
+				log.Printf("ZoomVideoStream R2 Head %s: %v", key, headErr)
+				http.Error(w, "Video not found", http.StatusNotFound)
+				return
+			}
+			if contentType != "" {
+				w.Header().Set("Content-Type", contentType)
+			}
+			if size > 0 {
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+			}
+			w.WriteHeader(http.StatusOK)
+			if r.Method == http.MethodHead {
+				return
+			}
+			rc, err := h.Storage.Get(r.Context(), key)
+			if err != nil {
+				log.Printf("ZoomVideoStream R2 Get %s: %v", key, err)
+				return
+			}
+			defer rc.Close()
+			_, _ = io.Copy(w, rc)
+			return
+		}
+		http.Error(w, "Video storage not configured", http.StatusServiceUnavailable)
+		return
+	}
 	// Playback is only from R2 when primary_video_artifact_id is set; do not proxy Zoom.
 	if session.PrimaryVideoArtifactID != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -1805,15 +1992,6 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 	}
 	if creatorIdentity == "" {
 		http.Error(w, "Session has no creator. Reconnect Zoom and create a new session from Zoom, or append ?creator_identity=your_id to the stream URL.", http.StatusForbidden)
-		return
-	}
-	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
-	if err != nil || vs == nil {
-		http.Error(w, "Video source not found", http.StatusNotFound)
-		return
-	}
-	if vs.SessionID != sessionID {
-		http.Error(w, "Video source does not belong to this session", http.StatusBadRequest)
 		return
 	}
 	if vs.Provider != "zoom" {

@@ -11,20 +11,23 @@ import (
 
 func (db *DB) CreateVideoSource(ctx context.Context, videoSource *models.VideoSource) error {
 	query := `
-		INSERT INTO video_sources (id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, auto_transcribe_enabled, transcription_source, transcription_job_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		INSERT INTO video_sources (id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, auto_transcribe_enabled, transcription_source, transcription_job_id, video_role)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 		RETURNING created_at
 	`
-
 	// Set defaults if not provided
 	playbackMode := videoSource.PlaybackMode
 	if playbackMode == "" {
 		playbackMode = "embed"
 	}
-	
 	sourceType := string(videoSource.SourceType)
 	if sourceType == "" {
 		sourceType = "embed_url" // Default for backward compatibility
+	}
+	var videoRole *string
+	if videoSource.VideoRole != nil {
+		s := string(*videoSource.VideoRole)
+		videoRole = &s
 	}
 
 	err := db.Pool.QueryRow(ctx, query,
@@ -32,7 +35,7 @@ func (db *DB) CreateVideoSource(ctx context.Context, videoSource *models.VideoSo
 		videoSource.ArtifactID,
 		videoSource.SessionID,
 		videoSource.Provider,
-		videoSource.VideoURL, // Keep for backward compatibility
+		videoSource.VideoURL,
 		playbackMode,
 		videoSource.EmbedURL,
 		videoSource.MediaURL,
@@ -46,6 +49,7 @@ func (db *DB) CreateVideoSource(ctx context.Context, videoSource *models.VideoSo
 		videoSource.AutoTranscribeEnabled,
 		videoSource.TranscriptionSource,
 		videoSource.TranscriptionJobID,
+		videoRole,
 	).Scan(&videoSource.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create video source: %w", err)
@@ -124,11 +128,11 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 	var sourceTypeStr string
 	var segmentsRaw []byte
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
 		FROM video_sources
 		WHERE artifact_id = $1
 	`
-
+	var videoRolePtr *string
 	err := db.Pool.QueryRow(ctx, query, artifactID).Scan(
 		&videoSource.ID,
 		&videoSource.ArtifactID,
@@ -151,12 +155,17 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 		&videoSource.TranscriptionJobID,
 		&videoSource.RawVTT,
 		&segmentsRaw,
+		&videoRolePtr,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video source: %w", err)
 	}
 	videoSource.SourceType = models.VideoSourceType(sourceTypeStr)
+	if videoRolePtr != nil {
+		r := models.VideoRole(*videoRolePtr)
+		videoSource.VideoRole = &r
+	}
 	if len(segmentsRaw) > 0 {
 		_ = json.Unmarshal(segmentsRaw, &videoSource.TranscriptSegments)
 	}
@@ -166,7 +175,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 // GetVideoSourcesBySessionID retrieves all video sources for a session
 func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.VideoSource, error) {
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
 		FROM video_sources
 		WHERE session_id = $1
 		ORDER BY created_at
@@ -183,6 +192,7 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 		vs := &models.VideoSource{}
 		var sourceTypeStr string
 		var segmentsRaw []byte
+		var videoRolePtr *string
 		err := rows.Scan(
 			&vs.ID,
 			&vs.ArtifactID,
@@ -205,12 +215,17 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 			&vs.TranscriptionJobID,
 			&vs.RawVTT,
 			&segmentsRaw,
+			&videoRolePtr,
 			&vs.CreatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan video source: %w", err)
 		}
 		vs.SourceType = models.VideoSourceType(sourceTypeStr)
+		if videoRolePtr != nil {
+			r := models.VideoRole(*videoRolePtr)
+			vs.VideoRole = &r
+		}
 		if len(segmentsRaw) > 0 {
 			_ = json.Unmarshal(segmentsRaw, &vs.TranscriptSegments)
 		}
@@ -232,8 +247,9 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 	videoSource := &models.VideoSource{}
 	var sourceTypeStr string
 	var segmentsRaw []byte
+	var videoRolePtr *string
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
 		FROM video_sources
 		WHERE id = $1
 	`
@@ -260,12 +276,17 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 		&videoSource.TranscriptionJobID,
 		&videoSource.RawVTT,
 		&segmentsRaw,
+		&videoRolePtr,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video source: %w", err)
 	}
 	videoSource.SourceType = models.VideoSourceType(sourceTypeStr)
+	if videoRolePtr != nil {
+		r := models.VideoRole(*videoRolePtr)
+		videoSource.VideoRole = &r
+	}
 	if len(segmentsRaw) > 0 {
 		_ = json.Unmarshal(segmentsRaw, &videoSource.TranscriptSegments)
 	}
@@ -310,4 +331,42 @@ func (db *DB) UpdateVideoSourceStoredFile(ctx context.Context, videoID uuid.UUID
 	}
 
 	return nil
+}
+
+// DeleteVideoSourceByID removes a video source by ID. Used when a material (uploaded video file) is deleted.
+func (db *DB) DeleteVideoSourceByID(ctx context.Context, videoSourceID uuid.UUID) error {
+	result, err := db.Pool.Exec(ctx, `DELETE FROM video_sources WHERE id = $1`, videoSourceID)
+	if err != nil {
+		return fmt.Errorf("failed to delete video source: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("video source not found")
+	}
+	return nil
+}
+
+// SetVideoSourceVideoRole sets the video_role for a video source. When setting primary, any other
+// primary in the same session is demoted to secondary. The video must belong to the given session.
+func (db *DB) SetVideoSourceVideoRole(ctx context.Context, sessionID, videoSourceID uuid.UUID, role models.VideoRole) error {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if role == models.VideoRolePrimary {
+		_, err = tx.Exec(ctx, `UPDATE video_sources SET video_role = 'secondary' WHERE session_id = $1 AND video_role = 'primary'`, sessionID)
+		if err != nil {
+			return fmt.Errorf("demote existing primary: %w", err)
+		}
+	}
+	roleStr := string(role)
+	result, err := tx.Exec(ctx, `UPDATE video_sources SET video_role = $1 WHERE id = $2 AND session_id = $3`, roleStr, videoSourceID, sessionID)
+	if err != nil {
+		return fmt.Errorf("update video role: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("video source not found or wrong session")
+	}
+	return tx.Commit(ctx)
 }

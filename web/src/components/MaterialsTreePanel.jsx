@@ -78,9 +78,14 @@ export function MaterialsTreePanel({
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], unread_material_ids = [] } = session
+  const { video_sources = [], materials = [], unread_material_ids = [], primary_video, additional_videos = [] } = session
   const unreadSet = new Set(unread_material_ids || [])
-  const documents = materials.filter(m => (m.kind || '').toLowerCase() === 'document')
+  const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
+  const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
+  const documents = materials.filter(m => {
+    const k = (m.kind || '').toLowerCase()
+    return (k === 'document' || k === 'other') && k !== 'video' // exclude video: they appear in Additional Videos via video_sources
+  })
   const slidesImages = materials.filter(m => {
     const k = (m.kind || '').toLowerCase()
     return k === 'slides' || k === 'diagram'
@@ -93,6 +98,11 @@ export function MaterialsTreePanel({
   }
   const materialStatusMeta = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : (m.content_type || '')))
   const materialStatusMetaSlides = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : ''))
+  const videoDisplayTitle = (v) => {
+    try { if (v?.original_url) return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() || v.provider || 'Video' } catch (_) {}
+    if (v?.stored_video_object_key) return v.stored_video_object_key.split('/').filter(Boolean).pop() || v.provider || 'Video'
+    return v?.provider || 'Video'
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
@@ -149,17 +159,37 @@ export function MaterialsTreePanel({
         </button>
       </div>
       <div ref={scrollRef} className="materials-tree-content" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
-        <TreeSection title="Video">
-          {video_sources.length === 0 ? (
+        <TreeSection title="Presentation">
+          {!presentationVideo ? (
+            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>No presentation video selected yet.</div>
+          ) : (
+            <TreeItem
+              key={presentationVideo.id}
+              icon={ICON_VIDEO}
+              title={videoDisplayTitle(presentationVideo)}
+              meta={[presentationVideo.transcript_status === 'ready' ? 'Ready' : (presentationVideo.transcript_status || ''), 'Primary'].filter(Boolean).join(' • ')}
+              selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
+              onClick={() => {
+                setSelectedVideo(presentationVideo)
+                setVideoId(presentationVideo.id)
+                setVideoPlayerKey(prev => prev + 1)
+                onSelectVideo?.()
+              }}
+            />
+          )}
+        </TreeSection>
+
+        <TreeSection title="Additional Videos">
+          {otherVideos.length === 0 ? (
             <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
           ) : (
-            video_sources.map((v, idx) => (
+            otherVideos.map((v) => (
               <TreeItem
                 key={v.id}
                 icon={ICON_VIDEO}
-                title={`Video ${idx + 1} – ${v.provider || 'Video'}`}
+                title={videoDisplayTitle(v)}
                 meta={v.transcript_status === 'ready' ? 'Ready' : v.transcript_status || ''}
-                selected={selectedVideo?.id === v.id}
+                selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
                 onClick={() => {
                   setSelectedVideo(v)
                   setVideoId(v.id)

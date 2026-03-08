@@ -84,7 +84,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   Storage: <code>{material.storage_url}</code>
                 </div>
               )}
-              {material.extracted_text && (
+              {(material.extracted_text || material.kind === 'video') && (
                 <div style={{
                   marginTop: '10px',
                   padding: '10px',
@@ -95,11 +95,13 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   overflow: 'auto',
                   border: '1px solid #e0e0e0'
                 }}>
-                  <strong>Extracted Text Preview:</strong>
-                  <div style={{ marginTop: '5px', fontStyle: 'italic', color: '#555' }}>
-                    {material.extracted_text.length > 500
-                      ? material.extracted_text.substring(0, 500) + '...'
-                      : material.extracted_text}
+                  <strong>{material.kind === 'video' ? 'Transcript:' : 'Extracted Text Preview:'}</strong>
+                  <div style={{ marginTop: '5px', fontStyle: material.extracted_text ? 'italic' : 'normal', color: '#555' }}>
+                    {material.extracted_text
+                      ? (material.extracted_text.length > 500
+                        ? material.extracted_text.substring(0, 500) + '...'
+                        : material.extracted_text)
+                      : (material.text_status === 'pending' || material.text_status === 'processing' ? 'Processing…' : 'No transcript yet.')}
                   </div>
                 </div>
               )}

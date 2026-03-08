@@ -233,6 +233,10 @@ func TestGetSession(t *testing.T) {
 		assert.Len(t, response.Artifacts, 2)
 		assert.Len(t, response.Materials, 1)
 		assert.Len(t, response.VideoSources, 1)
+		// Primary/additional: with no video_role set, effective primary is first video and additional is empty
+		require.NotNil(t, response.PrimaryVideo)
+		assert.Equal(t, videoSource.ID, response.PrimaryVideo.ID)
+		assert.Empty(t, response.AdditionalVideos)
 	})
 
 	t.Run("returns 404 for non-existent session", func(t *testing.T) {

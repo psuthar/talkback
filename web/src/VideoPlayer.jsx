@@ -518,17 +518,24 @@ export function VideoPlayer({
     embedUrl = convertedUrl || null
   }
   
-  // Playback is in-app only: we never use the Zoom stream URL. Use primary (downloaded) URL or other direct/upload URLs.
-  const mediaUrl = primaryVideoAccessUrl ||
-    video.media_url ||
-    (video.provider !== 'zoom' && video.video_url && playbackMode === 'direct' ? video.video_url : null)
+  // Prefer in-app MP4 playback: use primary stream only when this video is the primary; otherwise use media_url or session stream for uploads.
+  const baseForSessions = apiBaseUrl ? apiBaseUrl.replace(/\/$/, '').replace(/\/api\/?$/, '') : ''
+  const streamUrlForUpload = (video.source_type === 'upload' && sessionId && baseForSessions)
+    ? `${baseForSessions}/sessions/${sessionId}/video-sources/${video.id}/stream`
+    : null
+  const isPrimaryR2Video = primaryVideoAccessUrl && primaryVideoArtifactId && (String(video.id) === String(primaryVideoArtifactId) || video.id === 'primary')
+  const mediaUrl = isPrimaryR2Video
+    ? primaryVideoAccessUrl
+    : (video.media_url ||
+      streamUrlForUpload ||
+      (video.provider !== 'zoom' && video.video_url && playbackMode === 'direct' ? video.video_url : null))
 
   const openUrl = video.video_url || embedUrl
 
-  const isRenderingPrimaryVideo = !!(mediaUrl && (playbackMode === 'direct' || video.provider === 'r2') && primaryVideoAccessUrl && mediaUrl === primaryVideoAccessUrl)
+  const isRenderingPrimaryVideo = !!isPrimaryR2Video
 
-  // In-app player: primary video (Zoom import or upload) or other direct/upload sources
-  if (mediaUrl && (playbackMode === 'direct' || video.provider === 'r2')) {
+  // Always use the same in-app MP4 player when we have a playable URL (any source: Zoom import, Loom, upload, etc.).
+  if (mediaUrl) {
     return (
       <Html5VideoPlayer
         mediaUrl={mediaUrl}
@@ -539,43 +546,10 @@ export function VideoPlayer({
         playing={externalPlaying}
         openUrl={openUrl || null}
         openUrlLabel="Open in new tab"
-        artifactIdForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? primaryVideoArtifactId : null}
-        apiBaseUrlForRefresh={primaryVideoAccessUrl && primaryVideoArtifactId ? apiBaseUrl : ''}
+        artifactIdForRefresh={isPrimaryR2Video ? primaryVideoArtifactId : null}
+        apiBaseUrlForRefresh={isPrimaryR2Video ? apiBaseUrl : ''}
         onMounted={isRenderingPrimaryVideo ? onPrimaryVideoMounted : undefined}
       />
-    )
-  }
-  // Zoom source but no imported video yet: in-app playback only — show placeholder until import completes
-  if (video.provider === 'zoom' && openUrl) {
-    return (
-      <div style={{
-        padding: '24px',
-        backgroundColor: '#f0f7ff',
-        borderRadius: '8px',
-        textAlign: 'center',
-        border: '1px solid #b3d9ff'
-      }}>
-        <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
-          Video playback is in-app only. The recording will appear here once it has been imported from Zoom.
-        </p>
-        <p style={{ margin: '0 0 16px', color: '#666', fontSize: '14px' }}>
-          If import is in progress, wait a moment and refresh. You can open the recording in Zoom in the meantime.
-        </p>
-        <a
-          href={openUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            display: 'inline-block',
-            padding: '8px 16px',
-            color: '#2D8CFF',
-            fontSize: '14px',
-            textDecoration: 'none'
-          }}
-        >
-          Open in Zoom (new tab) →
-        </a>
-      </div>
     )
   }
   if (playbackMode === 'embed' && embedUrl) {
@@ -595,15 +569,15 @@ export function VideoPlayer({
         textAlign: 'center',
         color: '#666'
       }}>
-        <p>Video player not available. Missing embed_url or media_url.</p>
-        {video.video_url && (
-          <a 
-            href={video.video_url} 
-            target="_blank" 
+        <p>Video not available for in-app playback. It may still be processing.</p>
+        {(openUrl || video.video_url) && (
+          <a
+            href={openUrl || video.video_url}
+            target="_blank"
             rel="noopener noreferrer"
             style={{ color: '#2196F3', textDecoration: 'underline' }}
           >
-            Open video in new tab
+            Open in new tab
           </a>
         )}
       </div>

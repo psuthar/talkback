@@ -291,6 +291,51 @@ func (db *DB) ExistsMaterialWithFilenameInSession(ctx context.Context, sessionID
 	return exists, nil
 }
 
+// GetMaterialBySessionAndStorage finds an active material in the session whose storage_url or storage_key matches the given key (e.g. from VideoSource.StoredVideoObjectKey). Used to link video transcript back to the material.
+func (db *DB) GetMaterialBySessionAndStorage(ctx context.Context, sessionID uuid.UUID, storageKey string) (*models.Material, error) {
+	if storageKey == "" {
+		return nil, nil
+	}
+	query := `
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, COALESCE(storage_provider, 'local'), storage_key, size_bytes, text_status, extracted_text, title, error_message, created_at, deleted_at
+		FROM materials
+		WHERE session_id = $1 AND (deleted_at IS NULL)
+		  AND (storage_url = $2 OR storage_key = $2 OR REPLACE(storage_url, E'\\', '/') = REPLACE($2, E'\\', '/') OR REPLACE(COALESCE(storage_key, ''), E'\\', '/') = REPLACE($2, E'\\', '/'))
+		LIMIT 1
+	`
+	m := &models.Material{}
+	var storageKeyNull sql.NullString
+	err := db.Pool.QueryRow(ctx, query, sessionID, storageKey).Scan(
+		&m.ID,
+		&m.ArtifactID,
+		&m.SessionID,
+		&m.Kind,
+		&m.Filename,
+		&m.ContentType,
+		&m.StorageURL,
+		&m.StorageProvider,
+		&storageKeyNull,
+		&m.SizeBytes,
+		&m.TextStatus,
+		&m.ExtractedText,
+		&m.Title,
+		&m.ErrorMessage,
+		&m.CreatedAt,
+		&m.DeletedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get material by session and storage: %w", err)
+	}
+	m.StorageKey = storageKeyNull.String
+	if m.StorageProvider == "" {
+		m.StorageProvider = "local"
+	}
+	return m, nil
+}
+
 func (db *DB) UpdateMaterialTextStatus(ctx context.Context, materialID uuid.UUID, textStatus models.MaterialTextStatus, extractedText *string) error {
 	return db.UpdateMaterialTextStatusWithError(ctx, materialID, textStatus, extractedText, nil)
 }

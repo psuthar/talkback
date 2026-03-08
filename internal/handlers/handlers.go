@@ -207,6 +207,13 @@ func deriveMaterialKind(ext, contentType string, isImage bool) string {
 	if strings.HasPrefix(ct, "application/pdf") {
 		return "document"
 	}
+	if strings.HasPrefix(ct, "video/") {
+		return "video"
+	}
+	switch ext {
+	case ".mp4", ".webm", ".mov", ".m4a", ".mp3", ".wav", ".mpeg", ".mpg", ".avi", ".mkv":
+		return "video"
+	}
 	return "other"
 }
 

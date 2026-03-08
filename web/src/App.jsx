@@ -116,11 +116,10 @@ function App() {
 
   // Phase 3: Session states
   const [sessionTitle, setSessionTitle] = useState('')
-  const [sessions, setSessions] = useState([])
   const [currentSession, setCurrentSession] = useState(null)
   const [participantRef, setParticipantRef] = useState('')
   const [viewMode, setViewMode] = useState('session')
-  const [sessionMode, setSessionMode] = useState('create') // 'create' or 'select'
+  const [sessionMode, setSessionMode] = useState('select') // 'create' or 'select' — default list; effect sets 'create' when no sessions and can create
   const [createSource, setCreateSource] = useState('empty') // 'empty' | 'zoom' when sessionMode === 'create'
   const [zoomPasteUrlExpanded, setZoomPasteUrlExpanded] = useState(false) // collapsible "Or paste Zoom recording URL"
   const [sessionIdInput, setSessionIdInput] = useState('')
@@ -178,8 +177,15 @@ function App() {
   const [debugMode, setDebugMode] = useState(false)
   const [urlKey, setUrlKey] = useState(0) // bump to re-read URL after clearing ?mode=admin for non-admins
   
-  // Video player states
+  // Video player states. selectedVideoIdRef stores the user's chosen video id so selection survives refetches and effect runs.
   const [selectedVideo, setSelectedVideo] = useState(null)
+  const selectedVideoIdRef = useRef(null)
+  const setSelectedVideoWithRef = useCallback((v) => {
+    const id = v?.id ?? null
+    selectedVideoIdRef.current = id
+    setSelectedVideo(v)
+    setVideoId(id)
+  }, [])
   const [videoPlayerKey, setVideoPlayerKey] = useState(0) // Used to force iframe reload for restart
   const [currentVideoTime, setCurrentVideoTime] = useState(0)
   const [isVideoPlaying, setIsVideoPlaying] = useState(false)
@@ -411,12 +417,16 @@ function App() {
     return () => { cancelled = true }
   }, [apiBaseUrl, acceptToken])
 
-  // When user is participant (join-only), default to "Use Existing Session" and keep them there
+  // After login: if there are sessions, show list first for everyone; if no sessions and user can create (creator/admin), show create first
   useEffect(() => {
-    if (authUser?.global_role === 'participant') {
+    if (!authUser || mySessionsLoading || currentSession) return
+    if (mySessions.length > 0) {
       setSessionMode('select')
+    } else {
+      const canCreate = authUser.global_role !== 'participant'
+      setSessionMode(canCreate ? 'create' : 'select')
     }
-  }, [authUser?.global_role])
+  }, [authUser, mySessionsLoading, mySessions.length, currentSession])
 
   // Default participant identity to logged-in user's email (no anonymous users)
   useEffect(() => {
@@ -1410,12 +1420,6 @@ function App() {
     }
   }
 
-  const fetchSessions = async () => {
-    // Note: Sessions are now independent, so we don't fetch by artifact
-    // If needed in the future, we can add a GET /sessions endpoint
-    // For now, sessions are created and opened individually
-  }
-
   // Ensure creator identity exists (for Zoom OAuth)
   useEffect(() => {
     if (!creatorIdentity) {
@@ -1533,7 +1537,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.global_role])
 
-  const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null) => {
+  const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null, isRefetch = false) => {
     setLoading(true)
     clearFeedback(setSessionSelectFeedback)
 
@@ -1572,9 +1576,25 @@ function App() {
 
       const data = await response.json()
       setCurrentSession(data)
-      // When session has primary video (R2/local), use that for playback; clear any stale Zoom selection so we don't show 410
-      if (data?.session?.primary_video_artifact_id) {
-        setSelectedVideo(null)
+      if (isRefetch) {
+        // Preserve user's video selection when refetching; resolve by ref so we get fresh object (transcript etc.) from new data
+        const primary = data.primary_video ?? (data.video_sources?.length > 0 ? data.video_sources[0] : null)
+        const sources = data.video_sources ?? []
+        const preferredId = selectedVideoIdRef.current
+        const found = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
+        const resolved = found ?? primary
+        if (resolved) {
+          if (!found) selectedVideoIdRef.current = resolved?.id ?? null
+          setSelectedVideo(resolved)
+          setVideoId(resolved?.id ?? null)
+        }
+      } else {
+        // When session has primary video (R2/local), use that for playback; clear any stale Zoom selection so we don't show 410
+        if (data?.session?.primary_video_artifact_id) {
+          selectedVideoIdRef.current = null
+          setSelectedVideo(null)
+          setVideoId(null)
+        }
       }
       // If session has no video_sources yet (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears
       if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
@@ -1588,9 +1608,10 @@ function App() {
                 const prevId = prev?.session?.id || prev?.id
                 if (prevId !== currentId) return prev
                 if (retryData?.video_sources?.length > 0 && !retryData?.session?.primary_video_artifact_id) {
+                  const primary = retryData.primary_video ?? retryData.video_sources[0]
                   queueMicrotask(() => {
-                    setVideoId(retryData.video_sources[0].id)
-                    setSelectedVideo(retryData.video_sources[0])
+                    setVideoId(primary.id)
+                    setSelectedVideo(primary)
                   })
                   return retryData
                 }
@@ -1652,13 +1673,18 @@ function App() {
       if (data.artifacts && data.artifacts.length > 0) {
         setArtifactId(data.artifacts[0].id)
       }
-      // Pre-populate video selection when session has video sources (so participant view shows the player)
-      if (data.video_sources && data.video_sources.length > 0) {
-        setVideoId(data.video_sources[0].id)
-        setSelectedVideo(data.video_sources[0])
-      } else {
-        setVideoId(null)
-        setSelectedVideo(null)
+      // Pre-populate video selection only on initial open (not refetch)
+      if (!isRefetch) {
+        const primaryVideo = data.primary_video ?? (data.video_sources?.length > 0 ? data.video_sources[0] : null)
+        if (primaryVideo) {
+          selectedVideoIdRef.current = primaryVideo.id
+          setVideoId(primaryVideo.id)
+          setSelectedVideo(primaryVideo)
+        } else {
+          selectedVideoIdRef.current = null
+          setVideoId(null)
+          setSelectedVideo(null)
+        }
       }
       setViewMode('session')
       setSessionIdInput('') // Clear input
@@ -1742,8 +1768,21 @@ function App() {
   const refetchSession = useCallback(async (overrideSessionId) => {
     const id = overrideSessionId ?? currentSession?.session?.id ?? currentSession?.id
     if (!id) return
-    await openSession(id, sessionUserMode, true)
+    await openSession(id, sessionUserMode, true, null, true)
   }, [currentSession?.session?.id, currentSession?.id, sessionUserMode, openSession])
+
+  const setPrimaryVideoSource = useCallback(async (videoSourceId) => {
+    const sessionId = currentSession?.session?.id ?? currentSession?.id
+    if (!sessionId || !apiBaseUrl || !videoSourceId) return
+    const base = apiBaseUrl.replace(/\/$/, '')
+    const res = await fetch(`${base}/api/sessions/${sessionId}/set-primary-video`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_source_id: videoSourceId })
+    })
+    if (res.ok) await refetchSession()
+  }, [currentSession?.session?.id, currentSession?.id, apiBaseUrl, refetchSession])
 
   const markMaterialsSeen = useCallback(async (materialIds) => {
     const sessionId = currentSession?.session?.id || currentSession?.id
@@ -2133,14 +2172,6 @@ function App() {
     }
   }
 
-  // Fetch sessions when artifact changes
-  useEffect(() => {
-    if (artifactId) {
-      fetchSessions()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifactId])
-
   // Build participant URL for upper right corner link (include api so it works in new window/refresh)
   const sessionId = currentSession?.session?.id || currentSession?.id
   const participantUrl = sessionId 
@@ -2223,6 +2254,12 @@ function App() {
         setSessionProcessingReadyVersion((v) => v + 1)
         refetchSession()
       }
+    } else if (message.type === 'session_updated') {
+      const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
+      if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
+        console.log('WebSocket: Session updated (e.g. materials), refetching session...')
+        refetchSession()
+      }
     } else if (message.type === 'invitation_accepted') {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
       if (msgSessionId && typeof fetchSessionInvitations === 'function') {
@@ -2279,13 +2316,22 @@ function App() {
     return combined
   }, [pendingSessionQuestions, questions, mockQuestions])
 
-  // Keep selectedVideo/videoId in sync with currentSession.video_sources so the media player
-  // shows in both edit and participant mode (fixes launch from edit, refresh, and view mode)
+  // Resolve selected video from session using ref (user's chosen id) so selection survives refetches; sync ref when we fall back to primary
   useEffect(() => {
-    if (!currentSession?.video_sources?.length) return
-    const first = currentSession.video_sources[0]
-    setSelectedVideo(prev => (prev?.id === first?.id ? prev : first))
-    setVideoId(prev => (prev === first?.id ? prev : (first?.id ?? null)))
+    const primary = currentSession?.primary_video ?? currentSession?.video_sources?.[0]
+    const sources = currentSession?.video_sources ?? []
+    const preferredId = selectedVideoIdRef.current
+    const found = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
+    const resolved = found ?? primary
+    if (!resolved) {
+      setSelectedVideo(null)
+      setVideoId(null)
+      selectedVideoIdRef.current = null
+      return
+    }
+    if (!found) selectedVideoIdRef.current = resolved?.id ?? null
+    setSelectedVideo(resolved)
+    setVideoId(resolved?.id ?? null)
   }, [currentSession])
 
   const { connected: wsConnected } = useWebSocket(wsUrl, handleWebSocketMessage, (error) => {
@@ -2501,7 +2547,7 @@ function App() {
         </div>
       </div>
 
-      {showAdminView && <AdminUsers apiBaseUrl={apiBaseUrl} />}
+      {showAdminView && <AdminUsers apiBaseUrl={apiBaseUrl} debugMode={debugMode} />}
       {showAdminForbidden && (
         <div className="section" style={{ padding: '24px' }}>
           <p className="error">Forbidden. Admin access required.</p>
@@ -2589,8 +2635,8 @@ function App() {
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
-            {/* Select Mode first: Create New Session | Use Existing Session */}
-            {canCreateSessions && (
+            {/* Show Create vs Use Existing toggle only when no sessions and user can create; otherwise show list first */}
+            {canCreateSessions && mySessions.length === 0 && !mySessionsLoading && (
             <div style={{ marginBottom: '15px' }}>
               <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>Select Mode:</label>
               <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
@@ -2624,12 +2670,23 @@ function App() {
             </div>
             )}
 
-            {/* Use Existing Session: session list only */}
+            {/* Use Existing Session: session list (shown first when sessions exist; creators can switch to create via link) */}
             {(sessionMode === 'select' || !canCreateSessions) && (
               <div>
                 {authUser && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>{canCreateSessions ? 'Sessions' : "Sessions you're part of"}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                      <span style={{ fontWeight: 'bold' }}>{canCreateSessions ? 'Sessions' : "Sessions you're part of"}</span>
+                      {canCreateSessions && mySessions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSessionMode('create')}
+                          style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer' }}
+                        >
+                          Create new session
+                        </button>
+                      )}
+                    </div>
                     {mySessionsLoading ? (
                       <div className="info" style={{ marginTop: '8px' }}>Loading sessions…</div>
                     ) : mySessionsError ? (
@@ -2687,55 +2744,6 @@ function App() {
                         })}
                       </div>
                     )}
-                  </div>
-                )}
-
-                {/* List sessions for current artifact (creators only; participants only see "Sessions you're part of" above) */}
-                {artifactId && canCreateSessions && (
-                  <div style={{ marginTop: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>
-                      Sessions for Current Artifact ({sessions.length}):
-                    </div>
-                    {sessions.length === 0 ? (
-                      <div className="info">No sessions found for this artifact. Create one above.</div>
-                    ) : (
-                      <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                        {sessions.map(session => (
-                          <div key={session.id} style={{ 
-                            padding: '10px', 
-                            marginBottom: '8px', 
-                            border: '1px solid #ddd', 
-                            borderRadius: '5px',
-                            cursor: 'pointer',
-                            backgroundColor: session.status === 'open' ? '#e8f5e9' : '#f5f5f5',
-                            transition: 'background-color 0.2s'
-                          }} 
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = session.status === 'open' ? '#c8e6c9' : '#e0e0e0'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = session.status === 'open' ? '#e8f5e9' : '#f5f5f5'}
-                          onClick={() => openSession(session.id)}>
-                            <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>{session.title}</div>
-                            <div style={{ fontSize: '11px', color: '#666', marginBottom: '5px' }}>
-                              ID: <code style={{ fontSize: '10px' }}>{session.id}</code>
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#666' }}>
-                              Status: <span style={{ 
-                                color: session.status === 'open' ? '#4CAF50' : '#999',
-                                fontWeight: 'bold'
-                              }}>{session.status}</span>
-                              {session.created_by && ` | Created by: ${session.created_by}`}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {/* Sessions are now independent - no fetch needed */}
-                    <button 
-                      onClick={() => {}} 
-                      disabled={true}
-                      style={{ marginTop: '10px', fontSize: '12px', padding: '5px 10px', display: 'none' }}
-                    >
-                      Refresh List
-                    </button>
                   </div>
                 )}
               </div>
@@ -3041,69 +3049,6 @@ function App() {
         </>
       )}
 
-      {/* Phase 3: Sessions Section - Hidden when session is selected, shown in artifact view, only when user can create sessions */}
-      {artifactId && !currentSession && !isParticipantMode && canCreateSessions && (
-        <div className="section">
-          <h2>Phase 3: Sessions</h2>
-          
-          <div className="form-group">
-            <label>Create New Session:</label>
-            <input
-              type="text"
-              value={sessionTitle}
-              onChange={(e) => setSessionTitle(e.target.value)}
-              placeholder="Session title (e.g., Weekly review - Jan 2026)"
-              style={{ marginBottom: '10px' }}
-            />
-            <button onClick={createSession} disabled={!sessionTitle || loading}>
-              Create Session
-            </button>
-            {createSessionFeedback.message && (
-              <div className={createSessionFeedback.type} style={{ marginTop: '10px' }}>
-                {createSessionFeedback.message}
-              </div>
-            )}
-          </div>
-
-          {sessions.length > 0 && (
-            <div style={{ marginTop: '20px' }}>
-              <label><strong>Sessions for this Artifact ({sessions.length}):</strong></label>
-              <div style={{ marginTop: '10px' }}>
-                {sessions.map(session => (
-                  <div key={session.id} style={{ 
-                    padding: '12px', 
-                    marginBottom: '10px', 
-                    border: '1px solid #ddd', 
-                    borderRadius: '5px',
-                    cursor: 'pointer',
-                    backgroundColor: session.status === 'open' ? '#e8f5e9' : '#f5f5f5',
-                    transition: 'background-color 0.2s'
-                  }} 
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = session.status === 'open' ? '#c8e6c9' : '#e0e0e0'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = session.status === 'open' ? '#e8f5e9' : '#f5f5f5'}
-                  onClick={() => openSession(session.id)}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>{session.title}</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>
-                      Status: <span style={{ 
-                        color: session.status === 'open' ? '#4CAF50' : '#999',
-                        fontWeight: 'bold'
-                      }}>{session.status}</span> | 
-                      {session.created_by && `Created by: ${session.created_by} | `}
-                      Created: {new Date(session.created_at).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {sessions.length === 0 && artifactId && (
-            <div style={{ marginTop: '20px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '5px', fontSize: '14px' }}>
-              No sessions yet. Create one above to get started!
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Session View - Mode-based rendering. Only show when a session is open so participants without a session see only the session list (no materials/player). */}
       {viewMode === 'session' && currentSession && (
         <>
@@ -3119,7 +3064,8 @@ function App() {
               videoId={videoId}
               setVideoId={setVideoId}
               selectedVideo={selectedVideo}
-              setSelectedVideo={setSelectedVideo}
+              selectedVideoIdRef={selectedVideoIdRef}
+              setSelectedVideo={setSelectedVideoWithRef}
               videoPlayerKey={videoPlayerKey}
               setVideoPlayerKey={setVideoPlayerKey}
               currentVideoTime={currentVideoTime}
@@ -3150,6 +3096,7 @@ function App() {
               apiBaseUrl={apiBaseUrl}
               lastInvitationDraft={lastInvitationDraft}
               setLastInvitationDraft={setLastInvitationDraft}
+              setPrimaryVideoSource={setPrimaryVideoSource}
               onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
             />
           ) : (
@@ -3158,10 +3105,11 @@ function App() {
                 authUser={authUser}
                 currentSession={currentSession}
                 selectedVideo={selectedVideo}
-                setSelectedVideo={setSelectedVideo}
+                selectedVideoIdRef={selectedVideoIdRef}
+                setSelectedVideo={setSelectedVideoWithRef}
                 setVideoId={setVideoId}
-                videoPlayerKey={videoPlayerKey}
-                setVideoPlayerKey={setVideoPlayerKey}
+              videoPlayerKey={videoPlayerKey}
+              setVideoPlayerKey={setVideoPlayerKey}
                 currentVideoTime={currentVideoTime}
                 setCurrentVideoTime={setCurrentVideoTime}
                 isVideoPlaying={isVideoPlaying}

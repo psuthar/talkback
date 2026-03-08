@@ -408,7 +408,10 @@ export function SessionMaterialsTab({
               {isPdf(previewMaterial) && fileUrl(previewMaterial) ? (
                 <iframe title="PDF preview" src={fileUrl(previewMaterial)} style={{ width: '100%', height: '70vh', border: 'none' }} />
               ) : (
-                <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 14 }}>{(previewMaterial.extracted_text || '').slice(0, 50000)}{(previewMaterial.extracted_text?.length > 50000 ? '\n\n…' : '')}</div>
+                <>
+                  {previewMaterial.kind === 'video' && <div style={{ fontWeight: 600, marginBottom: 8 }}>Transcript</div>}
+                  <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 14 }}>{(previewMaterial.extracted_text || (previewMaterial.kind === 'video' ? 'No transcript yet.' : '')).slice(0, 50000)}{(previewMaterial.extracted_text?.length > 50000 ? '\n\n…' : '')}</div>
+                </>
               )}
             </div>
           </div>

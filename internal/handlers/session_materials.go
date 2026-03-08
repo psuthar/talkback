@@ -211,6 +211,9 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady
 		}
+	case isVideoForTranscription(ext, contentType):
+		// Video: transcript is handled by VideoSource + job; material is just the file reference — show ready so it doesn't stay "pending"
+		textStatus = models.MaterialTextStatusReady
 	}
 
 	titleFromForm := r.FormValue("title")
@@ -249,31 +252,60 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
-	// Enqueue Whisper transcription for video materials (local storage only)
-	if storageProvider == "local" && isVideoForTranscription(ext, contentType) && h.JobProcessor != nil {
-		jobKey := "material:" + material.ID.String()
-		existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
-		if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
-			// Use forward slashes so job processor's local-file detection works on all platforms
-			sourceURL := filepath.ToSlash(storageURL)
-			job := &models.TranscriptJob{
-				ID:            uuid.New(),
-				SessionID:     sessionID,
-				MaterialID:    &material.ID,
-				Status:        models.TranscriptJobStatusQueued,
-				SourceURL:     sourceURL,
-				JobKey:        jobKey,
-				QueuedAt:      time.Now(),
-			}
-			if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
-				log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
-			} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
-				log.Printf("SessionUploadMaterial Enqueue material transcript job: %v", err)
+	// For video files: create a VideoSource so the file appears in "Additional Videos" and is playable.
+	if isVideoForTranscription(ext, contentType) {
+		videoStoredKey := filepath.ToSlash(storageURL)
+		if storageProvider == "r2" && storageKey != "" {
+			videoStoredKey = storageKey
+		}
+		videoID := uuid.New()
+		originalURL := "file:///" + header.Filename
+		videoSource := &models.VideoSource{
+			ID:                   videoID,
+			ArtifactID:           artifactID,
+			SessionID:            sessionID,
+			Provider:             "other",
+			PlaybackMode:         "direct",
+			SourceType:           models.VideoSourceTypeUpload,
+			StoredVideoObjectKey: &videoStoredKey,
+			OriginalURL:          &originalURL,
+			TranscriptStatus:     models.VideoTranscriptStatusPending,
+			AutoTranscribeEnabled: true,
+		}
+		if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
+			log.Printf("SessionUploadMaterial CreateVideoSource: %v", err)
+		} else {
+			// Enqueue Whisper transcription (local: job processor reads file; R2 would need URL or worker support)
+			if storageProvider == "local" && h.JobProcessor != nil {
+				sourceURL := filepath.ToSlash(storageURL)
+				jobKey := utils.GenerateJobKey(videoID.String(), sourceURL)
+				existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
+				if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+					job := &models.TranscriptJob{
+						ID:            uuid.New(),
+						VideoSourceID: videoID,
+						SessionID:     sessionID,
+						Status:        models.TranscriptJobStatusQueued,
+						SourceURL:     sourceURL,
+						JobKey:        jobKey,
+						QueuedAt:      time.Now(),
+					}
+					if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
+						log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
+					} else if err := h.DB.UpdateVideoSourceTranscriptionJob(r.Context(), videoID, &job.ID); err != nil {
+						log.Printf("SessionUploadMaterial UpdateVideoSourceTranscriptionJob: %v", err)
+					} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+						log.Printf("SessionUploadMaterial Enqueue transcript job: %v", err)
+					}
+				}
 			}
 		}
 	}
 	if material.ExtractedText != nil && *material.ExtractedText != "" {
 		rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+	}
+	if h.Hub != nil {
+		h.Hub.BroadcastSessionUpdated(sessionID)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -341,6 +373,9 @@ func (h *Handlers) SessionPasteMaterial(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+	if h.Hub != nil {
+		h.Hub.BroadcastSessionUpdated(sessionID)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(material)
@@ -393,6 +428,26 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
 		_ = os.Remove(path)
 	}
+	// If this material was a video file, remove the linked VideoSource(s) so the Presentation video section stays in sync.
+	matKeyNorm := filepath.ToSlash(mat.StorageURL)
+	if mat.StorageKey != "" {
+		matKeyNorm = mat.StorageKey
+	}
+	if matKeyNorm != "" {
+		sources, _ := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
+		for _, vs := range sources {
+			if vs.StoredVideoObjectKey != nil {
+				key := *vs.StoredVideoObjectKey
+				keyNorm := filepath.ToSlash(key)
+				if keyNorm == matKeyNorm || key == matKeyNorm || key == mat.StorageURL || key == mat.StorageKey {
+					if err := h.DB.DeleteVideoSourceByID(r.Context(), vs.ID); err != nil {
+						log.Printf("DeleteSessionMaterial DeleteVideoSourceByID %s: %v", vs.ID, err)
+					}
+					break
+				}
+			}
+		}
+	}
 	// Delete chunks for this material (embeddings cascade-delete)
 	if err := h.DB.DeleteSessionChunksBySource(r.Context(), sessionID, "material", materialID); err != nil {
 		log.Printf("DeleteSessionMaterial delete chunks: %v", err)
@@ -400,6 +455,9 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 	if err := h.DB.SoftDeleteMaterial(r.Context(), materialID); err != nil {
 		http.Error(w, "Failed to delete material", http.StatusInternalServerError)
 		return
+	}
+	if h.Hub != nil {
+		h.Hub.BroadcastSessionUpdated(sessionID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

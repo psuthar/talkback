@@ -128,6 +128,7 @@ func (h *Handlers) UploadTranscriptFile(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, fmt.Sprintf("Failed to create video source: %v", err), http.StatusInternalServerError)
 		return
 	}
+	h.ensurePrimaryVideoIfNone(r.Context(), sessionID, videoID)
 
 	// Enqueue transcription job (use local file path as source URL)
 	jobKey := utils.GenerateJobKey(videoID.String(), objectKey)

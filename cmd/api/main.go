@@ -155,6 +155,10 @@ func main() {
 	onJobReady := func(sessionID uuid.UUID) { h.Hub.BroadcastSessionProcessingReady(sessionID) }
 	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) {
 		rag.IndexSessionAsync(sessionID, db, store)
+		// Notify all clients (creator + participants) so UI updates without refresh (e.g. material transcript ready)
+		if h.Hub != nil {
+			h.Hub.BroadcastSessionUpdated(sessionID)
+		}
 		// Zoom Whisper fallback: if a session_processing_job was awaiting transcript, mark it ready and broadcast
 		procJob, _ := db.GetSessionProcessingJobBySessionID(context.Background(), sessionID, "zoom")
 		if procJob != nil && procJob.State == models.ProcessingStateAwaitingWhisper {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function AdminUsers({ apiBaseUrl }) {
+export function AdminUsers({ apiBaseUrl, debugMode = false }) {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -299,56 +299,58 @@ export function AdminUsers({ apiBaseUrl }) {
         )
       })()}
 
-      {/* Reset All Data – admin only */}
-      <div style={{ marginTop: '32px', padding: '16px', border: '2px solid #fcc', borderRadius: '8px', backgroundColor: '#fff5f5' }}>
-        <h3 style={{ marginTop: 0, color: '#c33' }}>⚠ Reset All Data</h3>
-        <p style={{ color: '#c33', fontWeight: 600, marginBottom: '12px' }}>
-          WARNING: This will delete ALL artifacts, materials, videos, questions, answers, and related data. This action cannot be undone.
-        </p>
-        {!showResetConfirm ? (
-          <button
-            type="button"
-            onClick={() => setShowResetConfirm(true)}
-            style={{ backgroundColor: '#dc3545', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-          >
-            Show Reset Confirmation
-          </button>
-        ) : (
-          <div>
-            <label style={{ display: 'block', marginBottom: '8px' }}>
-              Type <strong>RESET</strong> to confirm:
-            </label>
-            <input
-              type="text"
-              value={resetConfirmText}
-              onChange={(e) => setResetConfirmText(e.target.value)}
-              placeholder="Type RESET to confirm"
-              style={{ display: 'block', marginBottom: '12px', padding: '8px', border: '2px solid #dc3545', borderRadius: '4px', width: '220px' }}
-            />
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <button
-                type="button"
-                onClick={handleResetAllData}
-                disabled={resetConfirmText !== 'RESET' || resetLoading}
-                style={{ backgroundColor: '#dc3545', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: resetConfirmText !== 'RESET' || resetLoading ? 'not-allowed' : 'pointer' }}
-              >
-                {resetLoading ? 'Resetting…' : '⚠ Reset All Data'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowResetConfirm(false); setResetConfirmText(''); setResetFeedback({ type: '', message: '' }) }}
-                disabled={resetLoading}
-                style={{ backgroundColor: '#6c757d', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
+      {/* Reset All Data – admin only, and only when debug mode is on */}
+      {debugMode && (
+        <div style={{ marginTop: '32px', padding: '16px', border: '2px solid #fcc', borderRadius: '8px', backgroundColor: '#fff5f5' }}>
+          <h3 style={{ marginTop: 0, color: '#c33' }}>⚠ Reset All Data</h3>
+          <p style={{ color: '#c33', fontWeight: 600, marginBottom: '12px' }}>
+            WARNING: This will delete ALL artifacts, materials, videos, questions, answers, and related data. This action cannot be undone.
+          </p>
+          {!showResetConfirm ? (
+            <button
+              type="button"
+              onClick={() => setShowResetConfirm(true)}
+              style={{ backgroundColor: '#dc3545', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+            >
+              Show Reset Confirmation
+            </button>
+          ) : (
+            <div>
+              <label style={{ display: 'block', marginBottom: '8px' }}>
+                Type <strong>RESET</strong> to confirm:
+              </label>
+              <input
+                type="text"
+                value={resetConfirmText}
+                onChange={(e) => setResetConfirmText(e.target.value)}
+                placeholder="Type RESET to confirm"
+                style={{ display: 'block', marginBottom: '12px', padding: '8px', border: '2px solid #dc3545', borderRadius: '4px', width: '220px' }}
+              />
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleResetAllData}
+                  disabled={resetConfirmText !== 'RESET' || resetLoading}
+                  style={{ backgroundColor: '#dc3545', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: resetConfirmText !== 'RESET' || resetLoading ? 'not-allowed' : 'pointer' }}
+                >
+                  {resetLoading ? 'Resetting…' : '⚠ Reset All Data'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowResetConfirm(false); setResetConfirmText(''); setResetFeedback({ type: '', message: '' }) }}
+                  disabled={resetLoading}
+                  style={{ backgroundColor: '#6c757d', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+              </div>
+              {resetFeedback.message && (
+                <p className={resetFeedback.type} style={{ marginTop: '12px' }}>{resetFeedback.message}</p>
+              )}
             </div>
-            {resetFeedback.message && (
-              <p className={resetFeedback.type} style={{ marginTop: '12px' }}>{resetFeedback.message}</p>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

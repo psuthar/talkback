@@ -304,6 +304,7 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
+	h.ensurePrimaryVideoIfNone(r.Context(), sessionID, videoID)
 
 	if err := h.DB.UpdateVideoSourceZoomTranscript(r.Context(), videoID, fullText, &vttContent, videoSegments); err != nil {
 		log.Printf("Update video source transcript from Zoom error: %v", err)

@@ -154,6 +154,14 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		// Continue with empty chunks; LLM will return not_covered
 	}
 
+	// Resolve effective primary video so retrieval can prefer its transcript
+	videoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sessionID)
+	primary, _ := resolveEffectivePrimaryAndAdditional(videoSources)
+	var primaryVideoID *uuid.UUID
+	if primary != nil {
+		primaryVideoID = &primary.ID
+	}
+
 	// Embed question and retrieve top-k (may retry after reindex if 0 chunks but session has transcript)
 	questionEmbedding, err := embedder.Embed(ctx, []string{req.QuestionText})
 	if err != nil || len(questionEmbedding) == 0 {
@@ -161,7 +169,7 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	var sessionChunks []models.SessionChunk
 	if len(questionEmbedding) > 0 {
-		sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK)
+		sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)
 		if err != nil {
 			log.Printf("SessionAsk RetrieveTopK: %v", err)
 		}
@@ -172,7 +180,7 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 			if reindexErr := rag.IndexSession(ctx, h.DB, embedder, sessionID, h.Storage); reindexErr != nil {
 				log.Printf("SessionAsk reindex after 0 chunks: %v", reindexErr)
 			} else {
-				sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK)
+				sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)
 				if err != nil {
 					log.Printf("SessionAsk RetrieveTopK after reindex: %v", err)
 				}

@@ -86,6 +86,15 @@ const (
 	VideoSourceTypeEmbedURL  VideoSourceType = "embed_url"
 )
 
+// VideoRole indicates whether a video is the session's primary presentation or additional.
+// Only video_sources may have a non-null video_role; at most one primary per session.
+type VideoRole string
+
+const (
+	VideoRolePrimary   VideoRole = "primary"
+	VideoRoleSecondary VideoRole = "secondary"
+)
+
 type VideoSource struct {
 	ID                    uuid.UUID             `json:"id"`
 	ArtifactID            uuid.UUID             `json:"artifact_id"` // Still keep for reference, but session_id is primary
@@ -108,6 +117,7 @@ type VideoSource struct {
 	TranscriptionJobID    *uuid.UUID            `json:"transcription_job_id,omitempty"`
 	RawVTT                *string               `json:"raw_vtt,omitempty"`             // Original VTT from Zoom (optional)
 	TranscriptSegments    []TranscriptSegment   `json:"transcript_segments,omitempty"` // Normalized start/end/text (optional)
+	VideoRole             *VideoRole           `json:"video_role,omitempty"`         // primary | secondary; only one primary per session
 	CreatedAt             time.Time             `json:"created_at"`
 }
 

@@ -175,6 +175,15 @@ func (h *SessionHub) BroadcastInvitationAccepted(sessionID uuid.UUID) {
 	}
 }
 
+// BroadcastSessionUpdated notifies clients that session data changed (e.g. materials added/updated/deleted, transcript ready) so they refetch the session.
+func (h *SessionHub) BroadcastSessionUpdated(sessionID uuid.UUID) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "session_updated",
+		Data:      map[string]string{"session_id": sessionID.String()},
+	}
+}
+
 // HandleWebSocket handles WebSocket connections for session updates
 func (h *Handlers) HandleWebSocket(hub *SessionHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

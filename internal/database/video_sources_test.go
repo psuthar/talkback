@@ -242,7 +242,34 @@ func TestUpdateVideoSourceTranscript(t *testing.T) {
 		err := db.UpdateVideoSourceTranscript(ctx, nonExistentVideoID, transcriptText)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to update video source transcript")
-		// Note: PostgreSQL UPDATE with WHERE clause that matches no rows doesn't error,
-		// but our function should still handle this case. The actual behavior depends on implementation.
+	})
+
+	t.Run("SetVideoSourceVideoRole sets primary and demotes previous primary", func(t *testing.T) {
+		session := createTestSession(t, db, "Role Test Session")
+		art1, _ := db.CreateArtifact(ctx, session.ID, "Art 1", nil)
+		art2, _ := db.CreateArtifact(ctx, session.ID, "Art 2", nil)
+		vs1 := &models.VideoSource{
+			ID: uuid.New(), ArtifactID: art1.ID, SessionID: session.ID, Provider: "other",
+			VideoURL: "https://example.com/1", PlaybackMode: "embed", TranscriptStatus: models.VideoTranscriptStatusReady,
+		}
+		vs2 := &models.VideoSource{
+			ID: uuid.New(), ArtifactID: art2.ID, SessionID: session.ID, Provider: "other",
+			VideoURL: "https://example.com/2", PlaybackMode: "embed", TranscriptStatus: models.VideoTranscriptStatusReady,
+		}
+		require.NoError(t, db.CreateVideoSource(ctx, vs1))
+		require.NoError(t, db.CreateVideoSource(ctx, vs2))
+
+		require.NoError(t, db.SetVideoSourceVideoRole(ctx, session.ID, vs1.ID, models.VideoRolePrimary))
+		got1, _ := db.GetVideoSourceByID(ctx, vs1.ID)
+		require.NotNil(t, got1.VideoRole)
+		assert.Equal(t, models.VideoRolePrimary, *got1.VideoRole)
+
+		require.NoError(t, db.SetVideoSourceVideoRole(ctx, session.ID, vs2.ID, models.VideoRolePrimary))
+		got1Again, _ := db.GetVideoSourceByID(ctx, vs1.ID)
+		got2, _ := db.GetVideoSourceByID(ctx, vs2.ID)
+		require.NotNil(t, got1Again.VideoRole)
+		assert.Equal(t, models.VideoRoleSecondary, *got1Again.VideoRole)
+		require.NotNil(t, got2.VideoRole)
+		assert.Equal(t, models.VideoRolePrimary, *got2.VideoRole)
 	})
 }

@@ -272,6 +272,16 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 		if err := jp.db.UpdateVideoSourceTranscriptionSource(ctx, job.VideoSourceID, "whisper"); err != nil {
 			log.Printf("Warning: Failed to update transcription source: %v", err)
 		}
+		// Link transcript to the matching material so materials list shows it like PDF extracted text
+		vs, errVS := jp.db.GetVideoSourceByID(ctx, job.VideoSourceID)
+		if errVS == nil && vs != nil && vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
+			mat, errMat := jp.db.GetMaterialBySessionAndStorage(ctx, job.SessionID, *vs.StoredVideoObjectKey)
+			if errMat == nil && mat != nil {
+				if errUp := jp.db.UpdateMaterialTextStatus(ctx, mat.ID, models.MaterialTextStatusReady, &result.Text); errUp != nil {
+					log.Printf("Warning: Failed to update material transcript for video: %v", errUp)
+				}
+			}
+		}
 	}
 
 	if err := jp.db.CompleteTranscriptJob(ctx, job.ID, &modelStr, &result.Language, &durationSeconds); err != nil {

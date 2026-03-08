@@ -13,8 +13,12 @@ import (
 
 const DefaultTopK = 10
 
-// RetrieveTopK retrieves top-k chunks for a session by embedding similarity (cosine)
-func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int) ([]models.SessionChunk, error) {
+// PrimaryVideoScoreBoost multiplies similarity for chunks from the primary video transcript so Q&A prefers them.
+const PrimaryVideoScoreBoost = 1.2
+
+// RetrieveTopK retrieves top-k chunks for a session by embedding similarity (cosine).
+// If primaryVideoID is non-nil, chunks from that video's transcript (source_type=transcript, source_id=primaryVideoID) get a score boost so they are preferred over materials.
+func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]models.SessionChunk, error) {
 	if k <= 0 {
 		k = DefaultTopK
 	}
@@ -38,6 +42,9 @@ func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, que
 			continue
 		}
 		sim := cosineSimilarity(questionEmbedding, ce.Embedding)
+		if primaryVideoID != nil && ce.Chunk.SourceType == "transcript" && ce.Chunk.SourceID != nil && *ce.Chunk.SourceID == *primaryVideoID {
+			sim *= PrimaryVideoScoreBoost
+		}
 		scoredList = append(scoredList, scored{chunk: ce.Chunk, score: sim})
 	}
 	sort.Slice(scoredList, func(i, j int) bool { return scoredList[i].score > scoredList[j].score })

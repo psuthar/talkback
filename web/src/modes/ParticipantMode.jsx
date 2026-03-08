@@ -14,6 +14,7 @@ export function ParticipantMode({
   authUser,
   currentSession,
   selectedVideo,
+  selectedVideoIdRef,
   setSelectedVideo,
   setVideoId,
   videoPlayerKey,
@@ -64,21 +65,28 @@ export function ParticipantMode({
 
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
-  const firstVideoSource = currentSession?.video_sources?.[0]
+  // Resolve displayed video from session using ref (so selection survives refetches); fallback to primary
+  const sources = currentSession?.video_sources ?? []
+  const primary = currentSession?.primary_video ?? sources[0]
+  const primarySourceId = currentSession?.primary_video?.id ?? sources[0]?.id
+  const transcriptSourceForPrimary = primary ?? sources[0]
   const syntheticR2Video = hasPrimaryR2Video
     ? {
         id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
         provider: 'r2',
         playback_mode: 'direct',
         media_url: primaryVideoAccessUrl,
-        transcript_status: firstVideoSource?.transcript_status ?? 'ready',
-        transcript_text: firstVideoSource?.transcript_text ?? null,
-        transcript_segments: firstVideoSource?.transcript_segments ?? null,
+        transcript_status: transcriptSourceForPrimary?.transcript_status ?? 'ready',
+        transcript_text: transcriptSourceForPrimary?.transcript_text ?? null,
+        transcript_segments: transcriptSourceForPrimary?.transcript_segments ?? null,
         source_type: 'upload'
       }
     : null
-  // When we have a downloaded primary video, always use it (never Zoom stream)
-  const video = hasPrimaryR2Video ? syntheticR2Video : (selectedVideo || (currentSession?.video_sources && currentSession.video_sources[0]))
+  const preferredId = selectedVideoIdRef?.current ?? selectedVideo?.id
+  const resolvedFromSession = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
+  // When primary is selected and we have R2 primary, use syntheticR2Video so player uses video_access_url and correct transcript
+  const useR2Primary = hasPrimaryR2Video && syntheticR2Video && (!resolvedFromSession || String(resolvedFromSession.id) === String(primarySourceId))
+  const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
 
@@ -120,8 +128,12 @@ export function ParticipantMode({
     }
   }, [currentSession?.session?.id])
 
-  // When video has transcript text but no segments, fetch session transcript for detailed view (e.g. Zoom sessions)
+  // When primary video has transcript text but no segments, fetch session transcript (e.g. Zoom). Do not fetch for additional videos — they use their own transcript only.
   useEffect(() => {
+    if (!useR2Primary) {
+      setSessionTranscriptSegments(null)
+      return
+    }
     const sid = currentSession?.session?.id
     const hasVideoTranscript = video?.transcript_text
     const hasVideoSegments = Array.isArray(video?.transcript_segments) && video.transcript_segments.length > 0
@@ -139,7 +151,7 @@ export function ParticipantMode({
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [currentSession?.session?.id, video?.transcript_text, video?.transcript_segments?.length, apiBaseUrl])
+  }, [useR2Primary, currentSession?.session?.id, video?.transcript_text, video?.transcript_segments?.length, apiBaseUrl])
 
   const handleSelectDocument = (doc, scrollTarget = null) => {
     setSelectedDocument(doc)
@@ -164,9 +176,21 @@ export function ParticipantMode({
       ? citation.navigation.seek_ms
       : startMsVal
 
+    const sources = currentSession?.video_sources ?? []
+    const labelLooksLikeVideo = citation?.label && typeof citation.label === 'string' && /\.(mp4|webm|mov|m4v)(\s|$|\()/i.test(citation.label)
+    const labelMatchesVideo = labelLooksLikeVideo && sources.length > 0 && (() => {
+      const labelBase = citation.label.split(/\s*\(\s*block\s+\d+\s*\)/i)[0]?.trim() || ''
+      if (!labelBase) return false
+      return sources.some(v => {
+        const title = v?.stored_video_object_key ? String(v.stored_video_object_key).split('/').filter(Boolean).pop() : (v?.original_url ? (() => { try { return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() } catch (_) { return '' } })() : '') || ''
+        return title && (title === labelBase || labelBase.endsWith(title) || title.endsWith(labelBase))
+      })
+    })()
+
     const isTranscriptCitation = citation?.source_type === 'transcript' ||
       startMsVal != null ||
-      (citation?.navigation?.type === 'video')
+      (citation?.navigation?.type === 'video') ||
+      labelMatchesVideo
 
     const applyTranscriptCitation = () => {
       if (seekMs != null && typeof setCurrentVideoTime === 'function') {
@@ -185,16 +209,34 @@ export function ParticipantMode({
     }
 
     if (isTranscriptCitation) {
-      if (selectedDocument) {
-        // Switch to video view first so the transcript is visible, then seek + highlight
-        handleBackToVideo()
-        setTimeout(applyTranscriptCitation, 0)
-      } else {
-        applyTranscriptCitation()
+      // Select the video that this citation points to (primary or additional) so the correct video/transcript is shown
+      const vidSourceId = citation?.source_id ?? citation?.sourceId ?? citation?.navigation?.source_id
+      let vs = vidSourceId ? sources.find(v => String(v.id) === String(vidSourceId)) : null
+      if (!vs && citation?.label && typeof citation.label === 'string' && sources.length > 0) {
+        const labelBase = citation.label.split(/\s*\(\s*block\s+\d+\s*\)/i)[0]?.trim() || ''
+        if (labelBase) {
+          vs = sources.find(v => {
+            const title = v?.stored_video_object_key
+              ? String(v.stored_video_object_key).split('/').filter(Boolean).pop()
+              : (v?.original_url ? (() => { try { return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() } catch (_) { return '' } })() : '') || ''
+            return title && (title === labelBase || labelBase.endsWith(title) || title.endsWith(labelBase))
+          }) || null
+        }
       }
+      if (vs) {
+        setSelectedVideo(vs)
+        setVideoId(vs.id)
+        setVideoPlayerKey(prev => prev + 1)
+      }
+      handleBackToVideo()
+      setTimeout(applyTranscriptCitation, 0)
+      return
     }
 
     // Open material/document when citation points to one: use source_id (from API or enriched from chunk)
+    // Do not open a document when the citation label clearly refers to a video (e.g. "test.mp4 (block 1)") — we already handled that above when labelMatchesVideo
+    if (labelLooksLikeVideo) return
+
     const materials = currentSession?.materials
     if (!Array.isArray(materials) || materials.length === 0) return
 
@@ -359,29 +401,6 @@ export function ParticipantMode({
                     </p>
                   </div>
                 )}
-                {!hasPrimaryR2Video && currentSession?.video_sources && currentSession.video_sources.length > 1 && (
-                  <div style={{ marginBottom: '10px' }}>
-                    <label style={{ fontWeight: 'bold', marginRight: '8px' }}>Session Video:</label>
-                    <select
-                      value={video?.id || currentSession.video_sources[0]?.id}
-                      onChange={(e) => {
-                        const v = currentSession.video_sources.find(vs => vs.id === e.target.value)
-                        if (v) {
-                          setSelectedVideo(v)
-                          setVideoId(v.id)
-                          setVideoPlayerKey(prev => prev + 1)
-                        }
-                      }}
-                      style={{ padding: '4px 8px', fontSize: '14px' }}
-                    >
-                      {currentSession.video_sources.map((v, idx) => (
-                        <option key={v.id} value={v.id}>
-                          Video {idx + 1}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
                 {video && !(currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code) && (
                   <>
                     <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
@@ -398,19 +417,23 @@ export function ParticipantMode({
                         primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
                       />
                     </div>
-                    {video.transcript_text && (
-                      <div style={{ flexShrink: 0, marginTop: '6px' }}>
+                    <div style={{ flexShrink: 0, marginTop: '6px' }}>
+                      {video.transcript_text ? (
                         <TranscriptViewer
                           transcriptText={video.transcript_text}
                           segments={
                             Array.isArray(video.transcript_segments) && video.transcript_segments.length > 0
                               ? video.transcript_segments
-                              : sessionTranscriptSegments ?? undefined
+                              : (useR2Primary ? sessionTranscriptSegments : null) ?? undefined
                           }
                           highlightRangeMs={transcriptHighlightRange}
                         />
-                      </div>
-                    )}
+                      ) : (
+                        <div style={{ padding: '12px', color: '#666', fontSize: '14px', fontStyle: 'italic' }}>
+                          Transcript: {video.transcript_status === 'pending' || video.transcript_status === 'processing' ? 'Processing…' : 'No transcript yet.'}
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </>
