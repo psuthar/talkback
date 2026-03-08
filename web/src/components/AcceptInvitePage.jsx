@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 function normalizeEmail(e) {
   return (e || '').trim().toLowerCase()
@@ -112,7 +112,28 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
         return
       }
       if (data.accept_token) setAcceptAuthToken(data.accept_token)
-      onLoginSuccess(data)
+      // Accept the invitation so the user is added as participant (works in incognito with accept_token)
+      const sessionId = resolveResult?.session_id
+      if (token && sessionId) {
+        try {
+          const acceptBody = { token }
+          if (data.accept_token) acceptBody.accept_auth_token = data.accept_token
+          const acceptRes = await fetch(`${base}/api/invitations/accept`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(acceptBody)
+          })
+          const acceptData = await acceptRes.json().catch(() => ({}))
+          if (acceptRes.ok && acceptData.session_id) {
+            onLoginSuccess(data, { goToSessionId: acceptData.session_id })
+            return
+          }
+        } catch (_) { /* continue to open session anyway */ }
+        onLoginSuccess(data, { goToSessionId: sessionId })
+      } else {
+        onLoginSuccess(data)
+      }
     } catch (err) {
       setLoginError(err.message || 'Network error')
     } finally {
@@ -383,7 +404,14 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
     )
   }
 
-  // C – Signed in as correct user: Join session
+  // C – Signed in as correct user: auto-join so the session opens without an extra click (invite link purpose)
+  const autoJoinStarted = useRef(false)
+  useEffect(() => {
+    if (autoJoinStarted.current || !token || !resolveResult || resolveResult.status === 'accepted') return
+    autoJoinStarted.current = true
+    handleAccept()
+  }, [token, resolveResult?.session_id, resolveResult?.status])
+
   const isUnauthorized = acceptError && (acceptError.toLowerCase() === 'unauthorized' || acceptError.toLowerCase().includes('unauthorized'))
   return (
     <div style={containerStyle}>
@@ -393,7 +421,7 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
         {resolveResult.inviter_name && ` by ${resolveResult.inviter_name}`}.
       </p>
       <div style={cardStyle}>
-        <p style={{ marginBottom: '16px', fontSize: '14px' }}>You’re signed in as {authUser.email}. Click below to join.</p>
+        <p style={{ marginBottom: '16px', fontSize: '14px' }}>You’re signed in as {authUser.email}.</p>
         {acceptError && (
           <div style={errorStyle}>
             {isUnauthorized ? (
@@ -412,9 +440,11 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
             )}
           </div>
         )}
-        <button type="button" onClick={handleAccept} disabled={acceptLoading} style={btnPrimary}>
-          {acceptLoading ? 'Joining…' : 'Join session'}
-        </button>
+        {acceptError && (
+          <button type="button" onClick={handleAccept} disabled={acceptLoading} style={btnPrimary}>
+            {acceptLoading ? 'Joining…' : 'Join session'}
+          </button>
+        )}
       </div>
     </div>
   )

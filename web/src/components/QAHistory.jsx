@@ -35,6 +35,7 @@ function findRootId(questions, questionId) {
 }
 
 // Build thread tree: roots have no parent_question_id; replies grouped under parent.
+// Top-level questions: newest first (descending by created_at). Nested replies: chronological (ascending).
 function buildThreadTree(questions) {
   if (!questions || questions.length === 0) return { roots: [], byParent: {} }
   const byParent = {}
@@ -43,7 +44,7 @@ function buildThreadTree(questions) {
     if (!byParent[pid]) byParent[pid] = []
     byParent[pid].push(q)
   }
-  const roots = (byParent.root || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+  const roots = (byParent.root || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   for (const k of Object.keys(byParent)) {
     if (k !== 'root') byParent[k].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
   }

@@ -90,6 +90,13 @@ export function ParticipantMode({
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
 
+  // When user selects a video in the tree (Presentation or Additional Videos), mark the corresponding material as seen so the "New" badge clears
+  useEffect(() => {
+    if (!selectedVideo?.artifact_id || !markMaterialsSeen || !currentSession?.materials?.length) return
+    const material = currentSession.materials.find(m => m?.artifact_id && String(m.artifact_id) === String(selectedVideo.artifact_id))
+    if (material?.id) markMaterialsSeen([material.id])
+  }, [selectedVideo?.id, selectedVideo?.artifact_id, markMaterialsSeen, currentSession?.id, currentSession?.materials])
+
   const [selectedDocument, setSelectedDocument] = useState(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
   /** When opening a document from a citation, pass { page, block } so viewer can scroll to it */

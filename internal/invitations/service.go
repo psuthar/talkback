@@ -152,6 +152,7 @@ func (s *Service) Resolve(ctx context.Context, rawToken string, accountExists fu
 	title, _ := s.Lookup.GetSessionTitle(ctx, inv.SessionID)
 	inviterName, _ := s.Lookup.GetUserDisplayName(ctx, inv.InviterUserID)
 	return &ResolveResult{
+		SessionID:     inv.SessionID.String(),
 		SessionTitle:  title,
 		InviterName:   inviterName,
 		InvitedEmail:  inv.InvitedEmailNormalized,
