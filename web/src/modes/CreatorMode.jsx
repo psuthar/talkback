@@ -76,6 +76,33 @@ function InvitationActionButton({ apiBaseUrl, invitationId, action, onDone }) {
   )
 }
 
+function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError }) {
+  const [loading, setLoading] = useState(false)
+  const base = (apiBaseUrl || '').replace(/\/$/, '')
+  const handleClick = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${base}/api/invitations/${invitationId}/link`, { method: 'GET', credentials: 'include' })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.accept_url) {
+        await navigator.clipboard.writeText(data.accept_url)
+        if (typeof onCopied === 'function') onCopied()
+      } else {
+        if (typeof onError === 'function') onError(data.error || 'Failed to get link')
+      }
+    } catch (_) {
+      if (typeof onError === 'function') onError('Failed to get link')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '11px' }}>
+      {loading ? '…' : 'Copy link'}
+    </button>
+  )
+}
+
 export function CreatorMode({
   currentSession,
   sessionProcessingReadyVersion = 0,
@@ -816,56 +843,6 @@ export function CreatorMode({
                   {inviteFeedback.message}
                 </div>
               )}
-              {lastInvitationDraft && (
-                <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '12px' }}>
-                  <p style={{ margin: '0 0 8px 0', color: '#555' }}>If your email app did not open, copy the invitation link below and send it manually.</p>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (lastInvitationDraft) {
-                          navigator.clipboard.writeText(buildInviteMessageBody(lastInvitationDraft)).catch(() => {})
-                          if (typeof setInviteFeedback === 'function') {
-                            setInviteFeedback({ type: 'success', message: 'Invitation message copied to clipboard.' })
-                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                          }
-                        }
-                      }}
-                      style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
-                    >
-                      Copy invitation message
-                    </button>
-                    {typeof setLastInvitationDraft === 'function' && (
-                      <button type="button" onClick={() => setLastInvitationDraft(null)} style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}>
-                        Dismiss
-                      </button>
-                    )}
-                  </div>
-                  {lastInvitationDraft?.accept_url && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ddd' }}>
-                      <input
-                        type="text"
-                        readOnly
-                        value={lastInvitationDraft.accept_url}
-                        style={{ flex: '1', minWidth: '120px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(lastInvitationDraft.accept_url).catch(() => {})
-                          if (typeof setInviteFeedback === 'function') {
-                            setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
-                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                          }
-                        }}
-                        style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
-                      >
-                        Copy link
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
               {sessionInvitations?.length > 0 && (
                 <div style={{ marginTop: '14px' }}>
                   <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invitations:</label>
@@ -883,7 +860,24 @@ export function CreatorMode({
                       <tbody>
                         {sessionInvitations.map((inv) => (
                           <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
-                            <td style={{ padding: '6px 8px' }}>{inv.invited_email}</td>
+                            <td style={{ padding: '6px 8px' }}>
+                              {inv.invited_email}
+                              {inv.status === 'pending' && (
+                                <CopyInvitationLinkButton
+                                  apiBaseUrl={apiBaseUrl}
+                                  invitationId={inv.id}
+                                  onCopied={() => {
+                                    if (typeof setInviteFeedback === 'function') {
+                                      setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
+                                      setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
+                                    }
+                                  }}
+                                  onError={(msg) => {
+                                    if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
+                                  }}
+                                />
+                              )}
+                            </td>
                             <td style={{ padding: '6px 8px' }}>{inv.invited_role || 'participant'}</td>
                             <td style={{ padding: '6px 8px' }}>{inv.status}</td>
                             <td style={{ padding: '6px 8px' }}>{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : '—'}</td>

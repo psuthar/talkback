@@ -2223,6 +2223,12 @@ function App() {
         setSessionProcessingReadyVersion((v) => v + 1)
         refetchSession()
       }
+    } else if (message.type === 'invitation_accepted') {
+      const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
+      if (msgSessionId && typeof fetchSessionInvitations === 'function') {
+        console.log('WebSocket: Invitation accepted, refetching invitations...')
+        fetchSessionInvitations(msgSessionId)
+      }
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
       console.log('WebSocket: Answer created/updated, refreshing questions...')
       
@@ -2258,7 +2264,7 @@ function App() {
         }
       }
     }
-  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, currentSession?.session?.id, currentSession?.id])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id])
 
   // Clear mock questions and pending (optimistic) questions when session changes
   useEffect(() => {
@@ -3019,50 +3025,6 @@ function App() {
                     {inviteFeedback.message}
                   </div>
                 )}
-                {lastInvitationDraft && (
-                  <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#f5f5f5', borderRadius: '6px', fontSize: '12px' }}>
-                    <p style={{ margin: '0 0 8px 0', color: '#555' }}>If your email app did not open, copy the invitation link below and send it manually.</p>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (lastInvitationDraft) {
-                            navigator.clipboard.writeText(buildInviteMessageBody(lastInvitationDraft)).catch(() => {})
-                            setInviteFeedback({ type: 'success', message: 'Invitation message copied to clipboard.' })
-                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                          }
-                        }}
-                        style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
-                      >
-                        Copy invitation message
-                      </button>
-                      <button type="button" onClick={() => setLastInvitationDraft(null)} style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}>
-                        Dismiss
-                      </button>
-                    </div>
-                    {lastInvitationDraft?.accept_url && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #ddd' }}>
-                        <input
-                          type="text"
-                          readOnly
-                          value={lastInvitationDraft.accept_url}
-                          style={{ flex: '1', minWidth: '120px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace' }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(lastInvitationDraft.accept_url).catch(() => {})
-                            setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
-                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                          }}
-                          style={{ padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
-                        >
-                          Copy link
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -3235,6 +3197,7 @@ function App() {
               replyingToQuestionId={replyingToQuestionId}
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
+              onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null
                   ? citation.navigation.seek_ms

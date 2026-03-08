@@ -244,6 +244,9 @@ func (h *Handlers) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to accept"})
 		return
 	}
+	if h.Hub != nil {
+		h.Hub.BroadcastInvitationAccepted(sessionID)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/?session=" + sessionID.String()})
 }
 
@@ -334,6 +337,9 @@ func (h *Handlers) RegisterAndAcceptInvitation(w http.ResponseWriter, r *http.Re
 	if acceptTok, err := auth.IssueAcceptToken(newUserID); err == nil {
 		me["accept_token"] = acceptTok
 	}
+	if h.Hub != nil {
+		h.Hub.BroadcastInvitationAccepted(sessionID)
+	}
 	writeJSON(w, http.StatusOK, me)
 }
 
@@ -391,6 +397,49 @@ func (h *Handlers) ResendInvitation(w http.ResponseWriter, r *http.Request) {
 			"inviter_email":   res.InviterEmail,
 		},
 	})
+}
+
+// GetInvitationLink handles GET or POST /api/invitations/:id/link (RequireAuth). Returns a fresh accept_url for copy-link (rotates token; does not send email).
+func (h *Handlers) GetInvitationLink(w http.ResponseWriter, r *http.Request) {
+	if h.InvitationService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "invitation service not configured"})
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	invitationID, err := parseUUIDFromPath(r.URL.Path, "api", "invitations", "link")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid invitation id"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ctx := r.Context()
+	if h.InvitationService.Repo != nil {
+		inv, _ := h.InvitationService.Repo.GetByID(ctx, invitationID)
+		if inv != nil {
+			canAccess, _ := h.DB.UserCanAccessSession(ctx, inv.SessionID, user)
+			if !canAccess {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "not authorized"})
+				return
+			}
+		}
+	}
+	acceptURL, err := h.InvitationService.GetAcceptURL(ctx, invitationID)
+	if err != nil {
+		if err == invitations.ErrNotFound || err == invitations.ErrAlreadyAccepted || err == invitations.ErrExpired {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get link"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"accept_url": acceptURL})
 }
 
 // RevokeInvitation handles POST /api/invitations/:id/revoke (RequireAuth).

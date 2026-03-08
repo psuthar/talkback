@@ -192,6 +192,30 @@ func (s *Service) Resend(ctx context.Context, invitationID uuid.UUID) (*ResendRe
 	}, nil
 }
 
+// GetAcceptURL rotates the token and returns a new accept URL for copy-link. Does not send email.
+// Caller must verify authorization. Returns ErrNotFound, ErrAlreadyAccepted, or ErrExpired on invalid state.
+func (s *Service) GetAcceptURL(ctx context.Context, invitationID uuid.UUID) (acceptURL string, err error) {
+	inv, err := s.Repo.GetByID(ctx, invitationID)
+	if err != nil || inv == nil {
+		return "", ErrNotFound
+	}
+	if inv.Status != StatusPending {
+		return "", ErrAlreadyAccepted
+	}
+	if inv.ExpiresAt.Before(time.Now()) {
+		return "", ErrExpired
+	}
+	raw, hash, err := GenerateToken()
+	if err != nil {
+		return "", err
+	}
+	expiry := time.Now().Add(time.Duration(s.expiryHours()) * time.Hour)
+	if err := s.Repo.UpdateTokenAndExpiry(ctx, inv.ID, hash, expiry); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(s.Config.AppBaseURL, "/") + "/accept-invite?token=" + raw, nil
+}
+
 // Revoke marks the invitation as revoked. Caller must verify authorization.
 func (s *Service) Revoke(ctx context.Context, invitationID uuid.UUID) error {
 	inv, err := s.Repo.GetByID(ctx, invitationID)

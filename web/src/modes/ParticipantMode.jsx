@@ -57,7 +57,8 @@ export function ParticipantMode({
   replyingToQuestionId,
   setReplyingToQuestionId,
   currentAskerName,
-  onCitationClick
+  onCitationClick,
+  onClearSession
 }) {
   const hasSession = currentSession && currentSession.session
 
@@ -303,6 +304,15 @@ export function ParticipantMode({
         }}>
           {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
         </span>
+        {onClearSession && (
+          <button
+            type="button"
+            onClick={onClearSession}
+            style={{ backgroundColor: '#f44336', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+          >
+            Clear Session
+          </button>
+        )}
       </div>
 
       <div className={gridClassName}>

@@ -166,6 +166,15 @@ func (h *SessionHub) BroadcastSessionProcessingReady(sessionID uuid.UUID) {
 	}
 }
 
+// BroadcastInvitationAccepted notifies clients that an invitation was accepted so they can refetch the invitations list.
+func (h *SessionHub) BroadcastInvitationAccepted(sessionID uuid.UUID) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "invitation_accepted",
+		Data:      map[string]string{"session_id": sessionID.String()},
+	}
+}
+
 // HandleWebSocket handles WebSocket connections for session updates
 func (h *Handlers) HandleWebSocket(hub *SessionHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

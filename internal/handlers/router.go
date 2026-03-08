@@ -276,7 +276,7 @@ func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) 
 		h.RegisterAndAcceptInvitation(w, r)
 		return
 	}
-	// parts[2] is UUID, parts[3] is resend or revoke
+	// parts[2] is UUID, parts[3] is resend, revoke, or link
 	if len(parts) >= 4 {
 		if parts[3] == "resend" {
 			h.RequireAuth(h.ResendInvitation)(w, r)
@@ -284,6 +284,10 @@ func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) 
 		}
 		if parts[3] == "revoke" {
 			h.RequireAuth(h.RevokeInvitation)(w, r)
+			return
+		}
+		if parts[3] == "link" {
+			h.RequireAuth(h.GetInvitationLink)(w, r)
 			return
 		}
 	}
