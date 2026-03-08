@@ -1,0 +1,5 @@
+ALTER TABLE session_processing_jobs DROP CONSTRAINT IF EXISTS session_processing_jobs_state_check;
+ALTER TABLE session_processing_jobs ADD CONSTRAINT session_processing_jobs_state_check CHECK (state IN (
+    'queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding',
+    'waiting', 'ready', 'failed_transient', 'failed_permanent', 'canceled'
+));

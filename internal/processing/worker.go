@@ -9,6 +9,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
+	"github.com/psuthar/talkback/internal/utils"
 )
 
 // OnJobReadyFunc is called when a processing job reaches ready (e.g. Zoom import complete). Optional; used to broadcast over WebSocket.
@@ -17,8 +18,9 @@ type OnJobReadyFunc func(sessionID uuid.UUID)
 // RunWorker claims and runs session_processing_jobs. Run in a goroutine; exits when ctx is done.
 // store can be nil; when set (e.g. R2), Zoom import will upload MP4 to storage and set primary_video_artifact_id.
 // storagePrefix is the R2 key prefix (e.g. "talkback") used when building artifact keys; only used when store != nil.
+// jobProcessor is optional; when set, Zoom import can enqueue Whisper fallback when native transcript is not available (local storage only).
 // onJobReady is optional; when set, it is called when a job reaches ready so the API can broadcast to WebSocket clients.
-func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, pollInterval, lockDuration time.Duration, onJobReady OnJobReadyFunc) {
+func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, pollInterval, lockDuration time.Duration, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
 	if pollInterval <= 0 {
 		pollInterval = 15 * time.Second
 	}
@@ -40,17 +42,17 @@ func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc,
 			if job == nil {
 				continue
 			}
-			runOne(ctx, db, job, getZoomToken, store, storagePrefix, onJobReady)
+			runOne(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
 		}
 	}
 }
 
-func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, onJobReady OnJobReadyFunc) {
+func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
 	defer func() {
 		// Ensure unlock on panic
 		_ = db.UnlockSessionProcessingJob(ctx, job.ID)
 	}()
-	_ = RunJob(ctx, db, job, getZoomToken, store, storagePrefix, onJobReady)
+	_ = RunJob(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
 }
 
 // RunReconciler resets next_retry_at for stuck or waiting jobs so the worker can pick them up. Run in a goroutine.

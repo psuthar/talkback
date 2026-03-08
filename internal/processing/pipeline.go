@@ -53,9 +53,10 @@ type ZoomTokenFunc func(ctx context.Context, creatorIdentity string) (string, er
 
 // RunJob runs the ingestion pipeline for one session_processing_job (fetch → download → parse → chunk → embed → ready).
 // When store and storagePrefix are set, downloads Zoom MP4 and uploads to storage, then sets session primary_video_artifact_id.
+// If Zoom transcript is not available, enqueues a Whisper fallback job when the video is stored locally and jobProcessor is set.
 // Idempotent: skips stages whose outputs already exist. Updates job state and session mirror.
 // onJobReady is optional; when set, it is called when the job reaches ready so the API can broadcast to WebSocket clients.
-func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, onJobReady OnJobReadyFunc) (err error) {
+func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) (err error) {
 	sessionID := job.SessionID
 	jobID := job.ID
 	attempt := job.AttemptCount + 1
@@ -302,9 +303,90 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 		}
 	}
 
-	// Transcript required for the rest of the pipeline (parse, segments, video source, chunk, embed)
+	// Transcript: use native Zoom transcript if available; otherwise Whisper fallback (when video is local and jobProcessor set)
 	transcriptFile, transcriptStatus := utils.FindTranscriptFileWithStatus(rec.RecordingFiles)
 	if transcriptFile == nil || transcriptStatus == utils.TranscriptStatusProcessing {
+		// Whisper fallback: if we have the video stored locally, enqueue a transcript job and move to awaiting_whisper
+		if jobProcessor != nil {
+			sess, _ := db.GetSession(ctx, sessionID)
+			if sess != nil && sess.PrimaryVideoArtifactID != nil {
+				fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
+				if fa != nil && fa.Status == models.FileArtifactStatusReady && fa.StorageProvider == "local" && fa.StorageKey != "" {
+					// Ensure artifact + video_source exist (idempotent)
+					artifacts, _ := db.GetArtifactsBySessionID(ctx, sessionID)
+					var artifactID uuid.UUID
+					if len(artifacts) > 0 {
+						artifactID = artifacts[0].ID
+					} else {
+						title := rec.Topic
+						if title == "" {
+							title = "Zoom Recording"
+						}
+						artifact, createErr := db.CreateArtifact(ctx, sessionID, title, nil)
+						if createErr != nil {
+							setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", createErr.Error())
+							updateMirror(models.ProcessingStateFailedPermanent)
+							return nil
+						}
+						artifactID = artifact.ID
+					}
+					sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
+					var videoID uuid.UUID
+					if len(sources) > 0 {
+						videoID = sources[0].ID
+					} else {
+						videoID = uuid.New()
+						zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
+						vs := &models.VideoSource{
+							ID:               videoID,
+							ArtifactID:       artifactID,
+							SessionID:        sessionID,
+							Provider:         "zoom",
+							VideoURL:         zoomURL,
+							PlaybackMode:     "embed",
+							OriginalURL:      &zoomURL,
+							TranscriptStatus: models.VideoTranscriptStatusPending,
+							SourceType:       models.VideoSourceTypeEmbedURL,
+						}
+						if err := db.CreateVideoSource(ctx, vs); err != nil {
+							log.Printf("Zoom Whisper fallback: create video source: %v", err)
+							// fall through to waiting
+						}
+					}
+					if videoID != uuid.Nil {
+						jobKey := "zoom_whisper:" + sessionID.String()
+						existing, _ := db.GetTranscriptJobByKey(ctx, jobKey)
+						if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+							sourceURL := filepath.ToSlash(fa.StorageKey)
+							tj := &models.TranscriptJob{
+								ID:            uuid.New(),
+								VideoSourceID: videoID,
+								SessionID:     sessionID,
+								Status:        models.TranscriptJobStatusQueued,
+								SourceURL:     sourceURL,
+								JobKey:        jobKey,
+								QueuedAt:      time.Now(),
+							}
+							if err := db.CreateTranscriptJob(ctx, tj); err != nil {
+								log.Printf("Zoom Whisper fallback: create transcript job: %v", err)
+							} else {
+								_ = db.UpdateVideoSourceTranscriptionJob(ctx, videoID, &tj.ID)
+								if enqErr := jobProcessor.Enqueue(ctx, tj); enqErr != nil {
+									log.Printf("Zoom Whisper fallback: enqueue: %v", enqErr)
+								} else {
+									log.Printf("Zoom Whisper fallback: enqueued transcript job for session %s", sessionID)
+									updateJobState(ctx, db, jobID, models.ProcessingStateAwaitingWhisper, "download", attempt, nil, nil, nil)
+									_ = db.UnlockSessionProcessingJob(ctx, jobID)
+									updateMirror(models.ProcessingStateAwaitingWhisper)
+									return nil
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		// No Whisper fallback (R2 or no job processor): wait for Zoom transcript
 		code := "transcript_not_ready"
 		msg := "no transcript file available"
 		if transcriptStatus == utils.TranscriptStatusProcessing {

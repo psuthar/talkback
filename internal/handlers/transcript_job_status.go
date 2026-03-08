@@ -56,21 +56,31 @@ func (h *Handlers) GetTranscriptJobStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get video source to retrieve transcript text
 	var transcriptText *string
 	if job.Status == "completed" {
-		videoSource, err := h.DB.GetVideoSourceByID(r.Context(), job.VideoSourceID)
-		if err == nil && videoSource.TranscriptText != nil {
-			transcriptText = videoSource.TranscriptText
+		if job.MaterialID != nil {
+			mat, err := h.DB.GetMaterialByID(r.Context(), *job.MaterialID)
+			if err == nil && mat.ExtractedText != nil {
+				transcriptText = mat.ExtractedText
+			}
+		} else if job.VideoSourceID != uuid.Nil {
+			videoSource, err := h.DB.GetVideoSourceByID(r.Context(), job.VideoSourceID)
+			if err == nil && videoSource.TranscriptText != nil {
+				transcriptText = videoSource.TranscriptText
+			}
 		}
 	}
 
+	videoSourceIDStr := ""
+	if job.VideoSourceID != uuid.Nil {
+		videoSourceIDStr = job.VideoSourceID.String()
+	}
 	response := TranscriptJobStatusResponse{
-		JobID:         job.ID.String(),
-		Status:        string(job.Status),
+		JobID:          job.ID.String(),
+		Status:         string(job.Status),
 		TranscriptText: transcriptText,
-		ErrorMessage:  job.ErrorMessage,
-		VideoSourceID: job.VideoSourceID.String(),
+		ErrorMessage:   job.ErrorMessage,
+		VideoSourceID:  videoSourceIDStr,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

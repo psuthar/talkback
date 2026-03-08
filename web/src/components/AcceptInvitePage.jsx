@@ -4,7 +4,18 @@ function normalizeEmail(e) {
   return (e || '').trim().toLowerCase()
 }
 
-export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onLoginSuccess, onRegisterSuccess, onSignOut }) {
+function AcceptInvitePageAlreadyAcceptedRedirect({ sessionId, onGoToSession, containerStyle }) {
+  useEffect(() => {
+    if (sessionId && typeof onGoToSession === 'function') onGoToSession(sessionId)
+  }, [sessionId, onGoToSession])
+  return (
+    <div style={containerStyle}>
+      <p style={{ textAlign: 'center', color: '#666' }}>Opening session…</p>
+    </div>
+  )
+}
+
+export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onLoginSuccess, onRegisterSuccess, onSignOut, onGoToSession }) {
   const [resolveResult, setResolveResult] = useState(null)
   const [resolveError, setResolveError] = useState(null)
   const [resolveLoading, setResolveLoading] = useState(true)
@@ -180,6 +191,78 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
         <h1 style={headingStyle}>Invitation</h1>
         <div style={{ ...cardStyle, ...errorStyle }}>
           {resolveError || 'Invalid or expired invitation link.'}
+        </div>
+      </div>
+    )
+  }
+
+  // Already accepted (re-use same link): go to session if logged in, else prompt login then go
+  if (resolveResult.status === 'accepted' && resolveResult.session_id) {
+    if (authUser) {
+      // Redirect to session (effect runs once)
+      return <AcceptInvitePageAlreadyAcceptedRedirect sessionId={resolveResult.session_id} onGoToSession={onGoToSession} containerStyle={containerStyle} />
+    }
+    return (
+      <div style={containerStyle}>
+        <h1 style={headingStyle}>Open session</h1>
+        <p style={subStyle}>
+          You’ve already accepted this invitation to <strong>{resolveResult.session_title || 'the session'}</strong>.
+          Sign in to open the session.
+        </p>
+        <div style={cardStyle}>
+          <form onSubmit={(e) => {
+            e.preventDefault()
+            setLoginError('')
+            setLoginSubmitting(true)
+            setAcceptAuthToken(null)
+            fetch(`${base}/api/auth/login`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                email: loginEmail.trim().toLowerCase(),
+                password: loginPassword,
+                for_accept_invite: true
+              })
+            })
+              .then((res) => res.json().catch(() => ({})))
+              .then((data) => {
+                if (!data.id) {
+                  setLoginError(data.error || 'Login failed')
+                  return
+                }
+                if (data.accept_token) setAcceptAuthToken(data.accept_token)
+                onLoginSuccess(data, { goToSessionId: resolveResult.session_id })
+              })
+              .catch(() => setLoginError('Network error'))
+              .finally(() => setLoginSubmitting(false))
+          }}>
+            <div style={{ marginBottom: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Email</label>
+              <input
+                type="email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                required
+                placeholder="you@example.com"
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Password</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                required
+                style={{ width: '100%', padding: '10px 12px', fontSize: '14px', boxSizing: 'border-box' }}
+              />
+            </div>
+            {loginError && <div style={errorStyle}>{loginError}</div>}
+            <button type="submit" disabled={loginSubmitting} style={{ ...btnPrimary, width: '100%' }}>
+              {loginSubmitting ? 'Signing in…' : 'Sign in and open session'}
+            </button>
+          </form>
         </div>
       </div>
     )

@@ -114,9 +114,7 @@ func main() {
 		log.Println("R2 storage not configured (STORAGE_DRIVER is not 'r2'); video presign and file artifacts will return 503")
 	}
 
-	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
-
-	// Initialize handlers
+	// Initialize handlers (OnTranscriptCompleted set below after we have h, so Zoom Whisper fallback can broadcast)
 	// Invitation service: creates secure invite records and returns accept_url for mailto or Resend.
 	// APP_BASE_URL must be the frontend (web app) origin where /accept-invite is served, NOT the API URL.
 	// On Render: set APP_BASE_URL on the API service to your web service URL (e.g. https://talkback-ux.onrender.com).
@@ -153,6 +151,21 @@ func main() {
 	log.Println("Invitation service enabled (mailto delivery; set RESEND_API_KEY for email sending)")
 	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
 
+	// When a transcript job completes: reindex session for RAG; if it was Zoom Whisper fallback, mark processing job ready and broadcast
+	onJobReady := func(sessionID uuid.UUID) { h.Hub.BroadcastSessionProcessingReady(sessionID) }
+	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) {
+		rag.IndexSessionAsync(sessionID, db, store)
+		// Zoom Whisper fallback: if a session_processing_job was awaiting transcript, mark it ready and broadcast
+		procJob, _ := db.GetSessionProcessingJobBySessionID(context.Background(), sessionID, "zoom")
+		if procJob != nil && procJob.State == models.ProcessingStateAwaitingWhisper {
+			_ = db.UpdateSessionProcessingJobState(context.Background(), procJob.ID, models.ProcessingStateReady, models.ProcessingStageReady, procJob.AttemptCount, nil, nil, nil)
+			_ = db.UnlockSessionProcessingJob(context.Background(), procJob.ID)
+			_ = db.UpdateSessionProcessingMirror(context.Background(), sessionID, models.ProcessingStateReady)
+			onJobReady(sessionID)
+			log.Printf("Zoom Whisper fallback: marked processing job ready for session %s", sessionID)
+		}
+	}
+
 	// Mission #4: processing worker and reconciler for Zoom import pipeline
 	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {
 		tok, _, err := h.GetValidZoomAccessTokenContext(ctx, creatorIdentity)
@@ -169,9 +182,7 @@ func main() {
 	} else {
 		log.Printf("Zoom MP4 ingest: local disk (no R2; MP4 saved under sessions/{id}/videos/ for debugging)")
 	}
-	go processing.RunWorker(ctx, db, getZoomToken, store, storagePrefix, 15*time.Second, 15*time.Minute, func(sessionID uuid.UUID) {
-		h.Hub.BroadcastSessionProcessingReady(sessionID)
-	})
+	go processing.RunWorker(ctx, db, getZoomToken, store, storagePrefix, 15*time.Second, 15*time.Minute, jobProcessor, onJobReady)
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 

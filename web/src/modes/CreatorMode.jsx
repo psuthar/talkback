@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
-import { SessionSharing } from '../components/SessionSharing'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
@@ -129,10 +128,6 @@ export function CreatorMode({
   loading,
   apiBaseUrl,
   creatorIdentity,
-  transcriptText,
-  setTranscriptText,
-  submitTranscript,
-  submitTranscriptFeedback,
   authUser,
   inviteEmail,
   setInviteEmail,
@@ -165,6 +160,7 @@ export function CreatorMode({
   const answerVoiceChunksRef = useRef([])
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
+  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false) // collapsed by default
 
   const startAnswering = (questionId) => {
     setAnsweringQuestionId(questionId)
@@ -821,105 +817,127 @@ export function CreatorMode({
           </div>
           {authUser && inviteUserToSession && (
             <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
-              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invite by email:</label>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <input
-                  type="email"
-                  value={inviteEmail ?? ''}
-                  onChange={(e) => setInviteEmail?.(e.target.value)}
-                  placeholder="user@example.com"
-                  style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
-                />
-                <select value={inviteRole ?? 'participant'} onChange={(e) => setInviteRole?.(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
-                  <option value="participant">Participant</option>
-                  <option value="creator">Creator</option>
-                </select>
-                <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
-                  {inviteLoading ? 'Sending…' : 'Invite'}
-                </button>
-              </div>
-              {inviteFeedback?.message && (
-                <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
-                  {inviteFeedback.message}
-                </div>
-              )}
-              {sessionInvitations?.length > 0 && (
-                <div style={{ marginTop: '14px' }}>
-                  <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invitations:</label>
-                  <div style={{ fontSize: '12px', overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr style={{ borderBottom: '1px solid #ddd', textAlign: 'left' }}>
-                          <th style={{ padding: '6px 8px' }}>Email</th>
-                          <th style={{ padding: '6px 8px' }}>Role</th>
-                          <th style={{ padding: '6px 8px' }}>Status</th>
-                          <th style={{ padding: '6px 8px' }}>Expires</th>
-                          {typeof fetchSessionInvitations === 'function' && <th style={{ padding: '6px 8px' }}>Actions</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sessionInvitations.map((inv) => (
-                          <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
-                            <td style={{ padding: '6px 8px' }}>
-                              {inv.invited_email}
-                              {inv.status === 'pending' && (
-                                <CopyInvitationLinkButton
-                                  apiBaseUrl={apiBaseUrl}
-                                  invitationId={inv.id}
-                                  onCopied={() => {
-                                    if (typeof setInviteFeedback === 'function') {
-                                      setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
-                                      setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                                    }
-                                  }}
-                                  onError={(msg) => {
-                                    if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
-                                  }}
-                                />
-                              )}
-                            </td>
-                            <td style={{ padding: '6px 8px' }}>{inv.invited_role || 'participant'}</td>
-                            <td style={{ padding: '6px 8px' }}>{inv.status}</td>
-                            <td style={{ padding: '6px 8px' }}>{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : '—'}</td>
-                            {typeof fetchSessionInvitations === 'function' && (
-                              <td style={{ padding: '6px 8px' }}>
-                                {inv.status === 'pending' && (
-                                  <>
-                                    <InvitationActionButton
-                                      apiBaseUrl={apiBaseUrl}
-                                      invitationId={inv.id}
-                                      action="resend"
-                                      onDone={(data) => {
-                                        if (data?.invitation) {
-                                          const mailtoUrl = buildInviteMailto(data.invitation)
-                                          if (mailtoUrl) {
-                                            try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
-                                          }
-                                          if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation)
-                                          if (typeof setInviteFeedback === 'function') {
-                                            setInviteFeedback({ type: 'success', message: 'A new invitation draft has been opened in your email app.' })
-                                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), 4000)
-                                          }
-                                        }
-                                        fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
-                                      }}
-                                    />
-                                    <InvitationActionButton
-                                      apiBaseUrl={apiBaseUrl}
-                                      invitationId={inv.id}
-                                      action="revoke"
-                                      onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)}
-                                    />
-                                  </>
-                                )}
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              <button
+                type="button"
+                onClick={() => setMembersPanelExpanded((e) => !e)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  width: '100%',
+                  padding: '8px 0',
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  color: '#1565C0',
+                  textAlign: 'left'
+                }}
+                aria-expanded={membersPanelExpanded}
+              >
+                <span style={{ transform: membersPanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
+                Members{sessionInvitations?.length != null && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
+              </button>
+              {membersPanelExpanded && (
+                <>
+                  <label style={{ display: 'block', marginBottom: '6px', marginTop: '8px', fontSize: '13px', fontWeight: '500' }}>Invite by email:</label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="email"
+                      value={inviteEmail ?? ''}
+                      onChange={(e) => setInviteEmail?.(e.target.value)}
+                      placeholder="user@example.com"
+                      style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
+                    />
+                    <select value={inviteRole ?? 'participant'} onChange={(e) => setInviteRole?.(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
+                      <option value="participant">Participant</option>
+                      <option value="creator">Creator</option>
+                    </select>
+                    <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
+                      {inviteLoading ? 'Sending…' : 'Invite'}
+                    </button>
                   </div>
-                </div>
+                  {inviteFeedback?.message && (
+                    <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
+                      {inviteFeedback.message}
+                    </div>
+                  )}
+                  {sessionInvitations?.length > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invitations:</label>
+                      <div style={{ fontSize: '12px', overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid #ddd', textAlign: 'left' }}>
+                              <th style={{ padding: '6px 8px' }}>Email</th>
+                              <th style={{ padding: '6px 8px' }}>Role</th>
+                              <th style={{ padding: '6px 8px' }}>Status</th>
+                              <th style={{ padding: '6px 8px' }}>Expires</th>
+                              {typeof fetchSessionInvitations === 'function' && <th style={{ padding: '6px 8px' }}>Actions</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sessionInvitations.map((inv) => (
+                              <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '6px 8px' }}>{inv.invited_email}</td>
+                                <td style={{ padding: '6px 8px' }}>{inv.invited_role || 'participant'}</td>
+                                <td style={{ padding: '6px 8px' }}>{inv.status}</td>
+                                <td style={{ padding: '6px 8px' }}>{(inv.status === 'accepted' || inv.status === 'revoked') ? '—' : (inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : '—')}</td>
+                                {typeof fetchSessionInvitations === 'function' && (
+                                  <td style={{ padding: '6px 8px' }}>
+                                    {inv.status === 'pending' && (
+                                      <>
+                                        <InvitationActionButton
+                                          apiBaseUrl={apiBaseUrl}
+                                          invitationId={inv.id}
+                                          action="resend"
+                                          onDone={(data) => {
+                                            if (data?.invitation) {
+                                              const mailtoUrl = buildInviteMailto(data.invitation)
+                                              if (mailtoUrl) {
+                                                try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
+                                              }
+                                              if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation)
+                                              if (typeof setInviteFeedback === 'function') {
+                                                setInviteFeedback({ type: 'success', message: 'A new invitation draft has been opened in your email app.' })
+                                                setTimeout(() => setInviteFeedback({ type: '', message: '' }), 4000)
+                                              }
+                                            }
+                                            fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
+                                          }}
+                                        />
+                                        <InvitationActionButton
+                                          apiBaseUrl={apiBaseUrl}
+                                          invitationId={inv.id}
+                                          action="revoke"
+                                          onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)}
+                                        />
+                                        <CopyInvitationLinkButton
+                                          apiBaseUrl={apiBaseUrl}
+                                          invitationId={inv.id}
+                                          onCopied={() => {
+                                            if (typeof setInviteFeedback === 'function') {
+                                              setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
+                                              setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
+                                            }
+                                          }}
+                                          onError={(msg) => {
+                                            if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
+                                          }}
+                                        />
+                                      </>
+                                    )}
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -1286,36 +1304,6 @@ export function CreatorMode({
           refetchSession={refetchSession}
         />
       )}
-
-      {/* Session Sharing */}
-      {currentSession?.session && (
-        <SessionSharing 
-          sessionId={currentSession.session.id} 
-          sessionTitle={currentSession.session.title}
-          apiBaseUrl={apiBaseUrl}
-        />
-      )}
-
-      <h2>Submit Transcript</h2>
-      <div className="section">
-        <div className="form-group">
-          <label>Paste transcript text (for an existing video):</label>
-          <textarea
-            value={transcriptText}
-            onChange={(e) => setTranscriptText(e.target.value)}
-            placeholder="Paste transcript text here…"
-            rows={10}
-          />
-        </div>
-        <button onClick={submitTranscript} disabled={!artifactId || !videoId || !transcriptText || loading}>
-          Submit Transcript
-        </button>
-        {submitTranscriptFeedback.message && (
-          <div className={submitTranscriptFeedback.type} style={{ marginTop: '10px' }}>
-            {submitTranscriptFeedback.message}
-          </div>
-        )}
-      </div>
 
       {/* Q&A History with Answer Input */}
       <div className="section">

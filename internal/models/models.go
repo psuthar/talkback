@@ -210,17 +210,18 @@ type IngestionJob struct {
 
 // SessionProcessingJobState and Stage (Mission #4)
 const (
-	ProcessingStateQueued           = "queued"
-	ProcessingStateFetching         = "fetching"
-	ProcessingStateDownloading      = "downloading"
-	ProcessingStateParsing         = "parsing"
-	ProcessingStateChunking        = "chunking"
-	ProcessingStateEmbedding        = "embedding"
-	ProcessingStateWaiting         = "waiting"
-	ProcessingStateReady           = "ready"
-	ProcessingStateFailedTransient = "failed_transient"
-	ProcessingStateFailedPermanent = "failed_permanent"
-	ProcessingStateCanceled        = "canceled"
+	ProcessingStateQueued             = "queued"
+	ProcessingStateFetching           = "fetching"
+	ProcessingStateDownloading       = "downloading"
+	ProcessingStateParsing           = "parsing"
+	ProcessingStateChunking          = "chunking"
+	ProcessingStateEmbedding         = "embedding"
+	ProcessingStateWaiting           = "waiting"
+	ProcessingStateAwaitingWhisper   = "awaiting_whisper" // Zoom: video stored, Whisper job enqueued for transcript
+	ProcessingStateReady            = "ready"
+	ProcessingStateFailedTransient   = "failed_transient"
+	ProcessingStateFailedPermanent  = "failed_permanent"
+	ProcessingStateCanceled         = "canceled"
 )
 
 const (
@@ -407,7 +408,8 @@ const (
 
 type TranscriptJob struct {
 	ID               uuid.UUID           `json:"id"`
-	VideoSourceID    uuid.UUID           `json:"video_source_id"`
+	VideoSourceID    uuid.UUID           `json:"video_source_id"`    // nil (uuid.Nil) when job is for a material
+	MaterialID       *uuid.UUID          `json:"material_id,omitempty"` // set when transcribing an uploaded material (e.g. MP4)
 	SessionID        uuid.UUID           `json:"session_id"`
 	Status           TranscriptJobStatus `json:"status"`
 	ErrorMessage     *string             `json:"error_message,omitempty"`

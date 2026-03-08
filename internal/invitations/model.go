@@ -64,7 +64,9 @@ type ResendResult struct {
 }
 
 // ResolveResult is the minimal payload for GET /api/invitations/resolve (no sensitive data).
+// When Status is "accepted", SessionID is set so the client can open the session (re-use same link).
 type ResolveResult struct {
+	SessionID    string `json:"session_id,omitempty"`
 	SessionTitle string `json:"session_title"`
 	InviterName  string `json:"inviter_name"`
 	InvitedEmail string `json:"invited_email"`

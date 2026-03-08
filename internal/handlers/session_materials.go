@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
@@ -248,6 +249,29 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
+	// Enqueue Whisper transcription for video materials (local storage only)
+	if storageProvider == "local" && isVideoForTranscription(ext, contentType) && h.JobProcessor != nil {
+		jobKey := "material:" + material.ID.String()
+		existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
+		if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+			// Use forward slashes so job processor's local-file detection works on all platforms
+			sourceURL := filepath.ToSlash(storageURL)
+			job := &models.TranscriptJob{
+				ID:            uuid.New(),
+				SessionID:     sessionID,
+				MaterialID:    &material.ID,
+				Status:        models.TranscriptJobStatusQueued,
+				SourceURL:     sourceURL,
+				JobKey:        jobKey,
+				QueuedAt:      time.Now(),
+			}
+			if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
+				log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
+			} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+				log.Printf("SessionUploadMaterial Enqueue material transcript job: %v", err)
+			}
+		}
+	}
 	if material.ExtractedText != nil && *material.ExtractedText != "" {
 		rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
 	}
@@ -412,4 +436,16 @@ func sessionIDFromPath(path string, minParts int) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("invalid path")
 	}
 	return uuid.Parse(idStr)
+}
+
+// isVideoForTranscription returns true for file types we transcribe with Whisper (e.g. MP4)
+func isVideoForTranscription(ext, contentType string) bool {
+	if strings.HasPrefix(strings.ToLower(contentType), "video/") {
+		return true
+	}
+	switch ext {
+	case ".mp4", ".webm", ".mov", ".m4a", ".mp3", ".wav", ".mpeg", ".mpg", ".avi", ".mkv":
+		return true
+	}
+	return false
 }

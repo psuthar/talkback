@@ -127,7 +127,19 @@ func (s *Service) Resolve(ctx context.Context, rawToken string, accountExists fu
 		return nil, ErrRevoked
 	}
 	if inv.Status == StatusAccepted {
-		return nil, ErrAlreadyAccepted
+		// Re-use: return session so client can open it (logged in → go to session; else login then go)
+		title, _ := s.Lookup.GetSessionTitle(ctx, inv.SessionID)
+		inviterName, _ := s.Lookup.GetUserDisplayName(ctx, inv.InviterUserID)
+		return &ResolveResult{
+			SessionID:    inv.SessionID.String(),
+			SessionTitle: title,
+			InviterName:  inviterName,
+			InvitedEmail: inv.InvitedEmailNormalized,
+			InvitedRole:  string(inv.InvitedRole),
+			Status:       string(StatusAccepted),
+			Expired:      false,
+			AccountExists: accountExists(inv.InvitedEmailNormalized),
+		}, nil
 	}
 	if inv.ExpiresAt.Before(time.Now()) {
 		return &ResolveResult{

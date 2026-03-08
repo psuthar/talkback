@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // stringPtr returns a pointer to a string
@@ -125,18 +127,28 @@ func (jp *JobProcessor) worker(ctx context.Context, workerID int) {
 
 // processJob processes a single transcription job
 func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJob, workerID int) {
-	log.Printf("Worker %d processing job %s for video %s", workerID, job.ID, job.VideoSourceID)
+	isMaterialJob := job.MaterialID != nil && job.VideoSourceID == uuid.Nil
+	if isMaterialJob {
+		log.Printf("Worker %d processing job %s for material %s", workerID, job.ID, *job.MaterialID)
+	} else {
+		log.Printf("Worker %d processing job %s for video %s", workerID, job.ID, job.VideoSourceID)
+	}
 
 	// Update status to downloading/started
 	if err := jp.db.UpdateTranscriptJobStarted(ctx, job.ID); err != nil {
 		log.Printf("Failed to update job status: %v", err)
 		jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Failed to start job: %v", err))
+		if isMaterialJob {
+			jp.db.UpdateMaterialTextStatusWithError(ctx, *job.MaterialID, models.MaterialTextStatusFailed, nil, stringPtr(fmt.Sprintf("Failed to start job: %v", err)))
+		}
 		return
 	}
 
-	// Update video source status to processing
-	if err := jp.db.UpdateVideoSourceTranscriptStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusProcessing); err != nil {
-		log.Printf("Warning: Failed to update video source status to processing: %v", err)
+	// Update video source status to processing (skip for material jobs)
+	if !isMaterialJob {
+		if err := jp.db.UpdateVideoSourceTranscriptStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusProcessing); err != nil {
+			log.Printf("Warning: Failed to update video source status to processing: %v", err)
+		}
 	}
 
 	var tempFile string
@@ -145,24 +157,26 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 	// Local file path: sessions/{session_id}/... or legacy data/...
 	if strings.HasPrefix(job.SourceURL, "sessions/") || strings.HasPrefix(job.SourceURL, "./sessions/") ||
 		strings.HasPrefix(job.SourceURL, "data/") || strings.HasPrefix(job.SourceURL, "./data/") {
-		// Local file - use it directly, no download needed
-		filePath := strings.TrimPrefix(job.SourceURL, "./")
-		
-		// Verify file exists
+		// Local file - resolve relative path against upload root, then use directly
+		rel := strings.TrimPrefix(job.SourceURL, "./")
+		filePath := filepath.Join(storage.UploadRoot(), rel)
 		if _, err := os.Stat(filePath); err != nil {
 			log.Printf("Local file not found: %v", err)
-			jp.db.FailTranscriptJob(ctx, job.ID, fmt.Sprintf("Local file not found: %v", err))
-			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, stringPtr(fmt.Sprintf("Local file not found: %v", err)))
+			errMsg := fmt.Sprintf("Local file not found: %v", err)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			if isMaterialJob {
+				jp.db.UpdateMaterialTextStatusWithError(ctx, *job.MaterialID, models.MaterialTextStatusFailed, nil, &errMsg)
+			} else {
+				jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			}
 			return
 		}
-
 		tempFile = filePath
-		cleanup = func() {} // No cleanup needed for stored files
+		cleanup = func() {}
 		defer cleanup()
 		log.Printf("Using local file: %s", tempFile)
 	} else {
-		// Remote URL - resolve and download (existing Loom logic)
-		// Resolve Loom URL to media URL using GraphQL
+		// Remote URL - resolve and download (Loom logic; material jobs use local path above)
 		resolver := NewLoomResolver()
 		info, resolveErr := resolver.ResolveMedia(ctx, job.SourceURL, job.LoomPassword)
 		if resolveErr != nil {
@@ -172,7 +186,6 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
 			return
 		}
-
 		if info.MediaURL == "" {
 			errMsg := "Unable to resolve downloadable media URL - video may be private"
 			log.Printf("%s", errMsg)
@@ -180,8 +193,6 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
 			return
 		}
-
-		// Check if the resolved URL is an HLS playlist - Whisper doesn't support these
 		if strings.Contains(info.MediaURL, ".m3u8") || strings.Contains(info.MediaURL, "playlist") {
 			errMsg := "Loom returned an HLS playlist (.m3u8) URL which Whisper API cannot process. This video may only be available in streaming format. Please upload the transcript manually, or contact Loom to request direct MP4 access for this video."
 			log.Printf("%s (URL: %s)", errMsg, info.MediaURL)
@@ -189,13 +200,9 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
 			return
 		}
-
-		// Update job with resolved URL
 		if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusDownloading, &info.MediaURL); err != nil {
 			log.Printf("Failed to update job progress: %v", err)
 		}
-
-		// Download media
 		jobIDStr := job.ID.String()
 		var downloadErr error
 		tempFile, cleanup, downloadErr = jp.service.DownloadMedia(ctx, info.MediaURL, jobIDStr)
@@ -228,45 +235,52 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 		log.Printf("Failed to transcribe: %v", err)
 		errMsg := fmt.Sprintf("Failed to transcribe: %v", err)
 		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-		jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+		if isMaterialJob {
+			jp.db.UpdateMaterialTextStatusWithError(ctx, *job.MaterialID, models.MaterialTextStatusFailed, nil, &errMsg)
+		} else {
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+		}
 		return
 	}
 
-	// Update status to saving
 	if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusSaving, nil); err != nil {
 		log.Printf("Failed to update job status: %v", err)
 	}
 
-	// Save transcript to video source
 	durationSeconds := int(result.Duration)
-	modelStr := "whisper-1" // Default, can be overridden via env
+	modelStr := "whisper-1"
 	if modelEnv := os.Getenv("WHISPER_MODEL"); modelEnv != "" {
 		modelStr = modelEnv
 	}
-	
-	if err := jp.db.UpdateVideoSourceTranscript(ctx, job.VideoSourceID, result.Text); err != nil {
-		log.Printf("Failed to save transcript: %v", err)
-		errMsg := fmt.Sprintf("Failed to save transcript: %v", err)
-		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-		jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
-		return
+
+	if isMaterialJob {
+		if err := jp.db.UpdateMaterialTextStatus(ctx, *job.MaterialID, models.MaterialTextStatusReady, &result.Text); err != nil {
+			log.Printf("Failed to save material transcript: %v", err)
+			errMsg := fmt.Sprintf("Failed to save transcript: %v", err)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateMaterialTextStatusWithError(ctx, *job.MaterialID, models.MaterialTextStatusFailed, nil, &errMsg)
+			return
+		}
+	} else {
+		if err := jp.db.UpdateVideoSourceTranscript(ctx, job.VideoSourceID, result.Text); err != nil {
+			log.Printf("Failed to save transcript: %v", err)
+			errMsg := fmt.Sprintf("Failed to save transcript: %v", err)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
+		if err := jp.db.UpdateVideoSourceTranscriptionSource(ctx, job.VideoSourceID, "whisper"); err != nil {
+			log.Printf("Warning: Failed to update transcription source: %v", err)
+		}
 	}
 
-	// Update video source transcription metadata
-	if err := jp.db.UpdateVideoSourceTranscriptionSource(ctx, job.VideoSourceID, "whisper"); err != nil {
-		log.Printf("Warning: Failed to update transcription source: %v", err)
-	}
-
-	// Mark job as completed
 	if err := jp.db.CompleteTranscriptJob(ctx, job.ID, &modelStr, &result.Language, &durationSeconds); err != nil {
 		log.Printf("Failed to complete job: %v", err)
 		return
 	}
-
 	if jp.OnTranscriptCompleted != nil {
 		jp.OnTranscriptCompleted(job.SessionID)
 	}
-
 	log.Printf("Worker %d completed job %s", workerID, job.ID)
 }
 

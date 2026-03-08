@@ -2312,7 +2312,11 @@ function App() {
         token={acceptInviteToken}
         authUser={authUser}
         authChecked={authChecked}
-        onLoginSuccess={(data) => {
+        onGoToSession={(sessionId) => {
+          window.history.replaceState(null, '', `/?session=${sessionId}`)
+          openSession(sessionId, 'participant')
+        }}
+        onLoginSuccess={(data, options) => {
           window.history.replaceState(null, '', window.location.pathname + (acceptInviteToken ? `?token=${encodeURIComponent(acceptInviteToken)}` : ''))
           setAuthUser(data)
           if (data.accept_token) {
@@ -2328,6 +2332,10 @@ function App() {
                 }
               })
               .catch(() => {})
+          }
+          if (options?.goToSessionId) {
+            window.history.replaceState(null, '', `/?session=${options.goToSessionId}`)
+            openSession(options.goToSessionId, 'participant')
           }
         }}
         onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
@@ -3128,10 +3136,6 @@ function App() {
               loading={loading}
               apiBaseUrl={apiBaseUrl}
               creatorIdentity={creatorIdentity}
-              transcriptText={transcriptText}
-              setTranscriptText={setTranscriptText}
-              submitTranscript={submitTranscript}
-              submitTranscriptFeedback={submitTranscriptFeedback}
               authUser={authUser}
               inviteEmail={inviteEmail}
               setInviteEmail={setInviteEmail}
