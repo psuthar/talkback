@@ -8,7 +8,7 @@ import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
-import { getDefaultApiBaseUrl } from './config'
+import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
@@ -112,6 +112,9 @@ function App() {
   const [mediaRecorder, setMediaRecorder] = useState(null)
   const [mediaStream, setMediaStream] = useState(null)
   const voiceChunksRef = useRef([])
+  const voiceSilenceIntervalRef = useRef(null)
+  const voiceContextRef = useRef(null)
+  const voiceRecorderRef = useRef(null)
   const materialFileInputRef = useRef(null)
 
   // Phase 3: Session states
@@ -231,6 +234,15 @@ function App() {
   }
 
   const cleanupVoiceMedia = () => {
+    if (voiceSilenceIntervalRef.current) {
+      clearInterval(voiceSilenceIntervalRef.current)
+      voiceSilenceIntervalRef.current = null
+    }
+    try {
+      const ctx = voiceContextRef.current
+      if (ctx && ctx.state !== 'closed') ctx.close()
+      voiceContextRef.current = null
+    } catch { /* ignore */ }
     try {
       if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop()
@@ -238,6 +250,7 @@ function App() {
     } catch {
       // ignore
     }
+    voiceRecorderRef.current = null
     if (mediaStream) {
       mediaStream.getTracks().forEach(t => t.stop())
     }
@@ -1538,7 +1551,7 @@ function App() {
   }, [authUser?.global_role])
 
   const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null, isRefetch = false) => {
-    setLoading(true)
+    if (!isRefetch) setLoading(true)
     clearFeedback(setSessionSelectFeedback)
 
     const baseUrl = overrideApiBaseUrl != null ? overrideApiBaseUrl : apiBaseUrl
@@ -1570,7 +1583,7 @@ function App() {
         // Mode is already set above, so UI will still hide/show correct sections
         // Set viewMode to 'session' so ParticipantMode can render even if session load failed
         setViewMode('session')
-        setLoading(false)
+        if (!isRefetch) setLoading(false)
         return
       }
 
@@ -1695,7 +1708,7 @@ function App() {
     } catch (err) {
       setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${err.message}` })
     } finally {
-      setLoading(false)
+      if (!isRefetch) setLoading(false)
     }
   }
 
@@ -1998,6 +2011,7 @@ function App() {
       const chosenType = preferredTypes.find(t => window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(t))
       const recorder = chosenType ? new MediaRecorder(stream, { mimeType: chosenType }) : new MediaRecorder(stream)
       setMediaRecorder(recorder)
+      voiceRecorderRef.current = recorder
       voiceChunksRef.current = []
       setVoiceRecording(true)
 
@@ -2008,6 +2022,16 @@ function App() {
       }
 
       recorder.onstop = async () => {
+        if (voiceSilenceIntervalRef.current) {
+          clearInterval(voiceSilenceIntervalRef.current)
+          voiceSilenceIntervalRef.current = null
+        }
+        try {
+          const ctx = voiceContextRef.current
+          if (ctx && ctx.state !== 'closed') ctx.close()
+          voiceContextRef.current = null
+        } catch { /* ignore */ }
+        voiceRecorderRef.current = null
         setVoiceRecording(false)
         const chunks = voiceChunksRef.current || []
         const mime = recorder.mimeType
@@ -2020,6 +2044,56 @@ function App() {
       }
 
       recorder.start()
+
+      // Silence detection: auto-stop after N ms of silence (only after user has spoken)
+      const silenceMs = getVoiceSilenceMs()
+      const SILENCE_CHECK_MS = 100
+      const SILENCE_THRESHOLD = 15 // average frequency bucket value below which we consider silence
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        voiceContextRef.current = ctx
+        const source = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        analyser.smoothingTimeConstant = 0.6
+        source.connect(analyser)
+        const data = new Uint8Array(analyser.frequencyBinCount)
+        let hasSpoken = false
+        let silenceStart = null
+        voiceSilenceIntervalRef.current = setInterval(() => {
+          const rec = voiceRecorderRef.current
+          if (!rec || rec.state !== 'recording') {
+            if (voiceSilenceIntervalRef.current) {
+              clearInterval(voiceSilenceIntervalRef.current)
+              voiceSilenceIntervalRef.current = null
+            }
+            return
+          }
+          analyser.getByteFrequencyData(data)
+          let sum = 0
+          for (let i = 0; i < data.length; i++) sum += data[i]
+          const avg = data.length ? sum / data.length : 0
+          if (avg > SILENCE_THRESHOLD) {
+            hasSpoken = true
+            silenceStart = null
+          } else if (hasSpoken) {
+            const now = Date.now()
+            if (silenceStart == null) silenceStart = now
+            if (now - silenceStart >= silenceMs) {
+              if (voiceSilenceIntervalRef.current) {
+                clearInterval(voiceSilenceIntervalRef.current)
+                voiceSilenceIntervalRef.current = null
+              }
+              try {
+                rec.requestData()
+                rec.stop()
+              } catch (_) { /* ignore */ }
+            }
+          }
+        }, SILENCE_CHECK_MS)
+      } catch (_) {
+        // No silence detection (e.g. AudioContext not supported); user must click Stop
+      }
     } catch (err) {
       const msg = err && err.name === 'NotAllowedError'
         ? 'Microphone permission denied. Please allow microphone access and try again.'
