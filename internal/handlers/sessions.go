@@ -1911,11 +1911,35 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Video source does not belong to this session", http.StatusBadRequest)
 		return
 	}
-	// Upload sources (e.g. video files from materials): stream from StoredVideoObjectKey (local or R2).
+	// Upload sources (e.g. video files from materials): stream from StoredVideoObjectKey (R2 or local).
+	// Try R2 first when configured (e.g. Render) so R2-stored uploads play; fall back to local path when key looks like sessions/ or data/.
 	if vs.SourceType == models.VideoSourceTypeUpload && vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
 		key := *vs.StoredVideoObjectKey
 		w.Header().Set("Content-Type", "video/mp4")
 		w.Header().Set("Accept-Ranges", "bytes")
+		if h.Storage != nil {
+			exists, size, contentType, headErr := h.Storage.Head(r.Context(), key)
+			if headErr == nil && exists {
+				if contentType != "" {
+					w.Header().Set("Content-Type", contentType)
+				}
+				if size > 0 {
+					w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+				}
+				w.WriteHeader(http.StatusOK)
+				if r.Method == http.MethodHead {
+					return
+				}
+				rc, err := h.Storage.Get(r.Context(), key)
+				if err != nil {
+					log.Printf("ZoomVideoStream R2 Get %s: %v", key, err)
+					return
+				}
+				defer rc.Close()
+				_, _ = io.Copy(w, rc)
+				return
+			}
+		}
 		if strings.HasPrefix(key, "sessions/") || strings.HasPrefix(key, "data/") {
 			absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(key))
 			f, err := os.Open(absPath)
@@ -1943,33 +1967,7 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 			http.ServeContent(w, r, "video.mp4", modTime, f)
 			return
 		}
-		if h.Storage != nil {
-			exists, size, contentType, headErr := h.Storage.Head(r.Context(), key)
-			if headErr != nil || !exists {
-				log.Printf("ZoomVideoStream R2 Head %s: %v", key, headErr)
-				http.Error(w, "Video not found", http.StatusNotFound)
-				return
-			}
-			if contentType != "" {
-				w.Header().Set("Content-Type", contentType)
-			}
-			if size > 0 {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-			}
-			w.WriteHeader(http.StatusOK)
-			if r.Method == http.MethodHead {
-				return
-			}
-			rc, err := h.Storage.Get(r.Context(), key)
-			if err != nil {
-				log.Printf("ZoomVideoStream R2 Get %s: %v", key, err)
-				return
-			}
-			defer rc.Close()
-			_, _ = io.Copy(w, rc)
-			return
-		}
-		http.Error(w, "Video storage not configured", http.StatusServiceUnavailable)
+		http.Error(w, "Video not found", http.StatusNotFound)
 		return
 	}
 	// Playback is only from R2 when primary_video_artifact_id is set; do not proxy Zoom.

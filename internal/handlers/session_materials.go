@@ -275,27 +275,43 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
 			log.Printf("SessionUploadMaterial CreateVideoSource: %v", err)
 		} else {
-			// Enqueue Whisper transcription (local: job processor reads file; R2 would need URL or worker support)
-			if storageProvider == "local" && h.JobProcessor != nil {
-				sourceURL := filepath.ToSlash(storageURL)
-				jobKey := utils.GenerateJobKey(videoID.String(), sourceURL)
-				existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
-				if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
-					job := &models.TranscriptJob{
-						ID:            uuid.New(),
-						VideoSourceID: videoID,
-						SessionID:     sessionID,
-						Status:        models.TranscriptJobStatusQueued,
-						SourceURL:     sourceURL,
-						JobKey:        jobKey,
-						QueuedAt:      time.Now(),
+			// Enqueue Whisper transcription: local path or R2 presigned URL
+			if h.JobProcessor != nil {
+				var sourceURL string
+				if storageProvider == "local" {
+					sourceURL = filepath.ToSlash(storageURL)
+				} else if storageProvider == "r2" && storageKey != "" && h.Storage != nil {
+					presigned, err := h.Storage.PresignGet(r.Context(), storageKey, time.Hour)
+					if err != nil {
+						log.Printf("SessionUploadMaterial PresignGet for transcript job: %v", err)
+					} else {
+						sourceURL = presigned
 					}
-					if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
-						log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
-					} else if err := h.DB.UpdateVideoSourceTranscriptionJob(r.Context(), videoID, &job.ID); err != nil {
-						log.Printf("SessionUploadMaterial UpdateVideoSourceTranscriptionJob: %v", err)
-					} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
-						log.Printf("SessionUploadMaterial Enqueue transcript job: %v", err)
+				}
+				if sourceURL != "" {
+					keyInput := sourceURL
+					if storageProvider == "r2" && storageKey != "" {
+						keyInput = storageKey
+					}
+					jobKey := utils.GenerateJobKey(videoID.String(), keyInput)
+					existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
+					if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+						job := &models.TranscriptJob{
+							ID:            uuid.New(),
+							VideoSourceID: videoID,
+							SessionID:     sessionID,
+							Status:        models.TranscriptJobStatusQueued,
+							SourceURL:     sourceURL,
+							JobKey:        jobKey,
+							QueuedAt:      time.Now(),
+						}
+						if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
+							log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
+						} else if err := h.DB.UpdateVideoSourceTranscriptionJob(r.Context(), videoID, &job.ID); err != nil {
+							log.Printf("SessionUploadMaterial UpdateVideoSourceTranscriptionJob: %v", err)
+						} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+							log.Printf("SessionUploadMaterial Enqueue transcript job: %v", err)
+						}
 					}
 				}
 			}

@@ -175,8 +175,22 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 		cleanup = func() {}
 		defer cleanup()
 		log.Printf("Using local file: %s", tempFile)
+	} else if strings.HasPrefix(job.SourceURL, "http://") || strings.HasPrefix(job.SourceURL, "https://") {
+		// Direct HTTP(S) URL (e.g. R2 presigned GET) - download without Loom resolver
+		jobIDStr := job.ID.String()
+		var downloadErr error
+		tempFile, cleanup, downloadErr = jp.service.DownloadMedia(ctx, job.SourceURL, jobIDStr)
+		if downloadErr != nil {
+			log.Printf("Failed to download media from URL: %v", downloadErr)
+			errMsg := fmt.Sprintf("Failed to download media: %v", downloadErr)
+			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+			return
+		}
+		defer cleanup()
+		log.Printf("Downloaded media from URL for transcription")
 	} else {
-		// Remote URL - resolve and download (Loom logic; material jobs use local path above)
+		// Remote URL - resolve and download (Loom logic)
 		resolver := NewLoomResolver()
 		info, resolveErr := resolver.ResolveMedia(ctx, job.SourceURL, job.LoomPassword)
 		if resolveErr != nil {
