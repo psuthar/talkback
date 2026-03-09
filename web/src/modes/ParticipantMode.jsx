@@ -90,12 +90,18 @@ export function ParticipantMode({
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
 
-  // When user selects a video in the tree (Presentation or Additional Videos), mark the corresponding material as seen so the "New" badge clears
+  // When user selects a video in the tree (Presentation or Additional Videos), mark the corresponding material as seen so the "New" badge clears.
+  // Only depend on selection so we don't re-run when refetchSession updates currentSession (which would cause an infinite loop: mark seen -> refetch -> new materials ref -> effect -> mark seen -> ...).
+  const lastMarkedMaterialIdsRef = useRef(null)
   useEffect(() => {
     if (!selectedVideo?.artifact_id || !markMaterialsSeen || !currentSession?.materials?.length) return
     const material = currentSession.materials.find(m => m?.artifact_id && String(m.artifact_id) === String(selectedVideo.artifact_id))
-    if (material?.id) markMaterialsSeen([material.id])
-  }, [selectedVideo?.id, selectedVideo?.artifact_id, markMaterialsSeen, currentSession?.id, currentSession?.materials])
+    if (!material?.id) return
+    const ids = [material.id]
+    if (lastMarkedMaterialIdsRef.current && ids.length === lastMarkedMaterialIdsRef.current.length && ids.every((id, i) => id === lastMarkedMaterialIdsRef.current[i])) return
+    lastMarkedMaterialIdsRef.current = ids
+    markMaterialsSeen(ids)
+  }, [selectedVideo?.id, selectedVideo?.artifact_id, markMaterialsSeen])
 
   const [selectedDocument, setSelectedDocument] = useState(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
