@@ -246,7 +246,6 @@ func main() {
 				origin = allowedOrigins[0]
 			} else if reqOrigin != "" && len(allowedOrigins) == 0 {
 				origin = reqOrigin
-				log.Printf("CORS: reflecting Origin for credentialed request: %s", origin)
 			}
 			if origin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", origin)

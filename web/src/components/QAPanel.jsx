@@ -2,8 +2,6 @@ import { QAHistory } from './QAHistory'
 
 export function QAPanel({
   questions,
-  fetchSessionQuestions,
-  sessionId,
   loading,
   questionText,
   setQuestionText,
@@ -35,19 +33,7 @@ export function QAPanel({
   return (
     <>
       <div className="participant-qa-scroll">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <h3 style={{ margin: 0, fontSize: '14px', color: '#555' }}>Q&A</h3>
-          {sessionId && (
-            <button
-              type="button"
-              onClick={() => fetchSessionQuestions(sessionId)}
-              disabled={loading}
-              style={{ padding: '2px 8px', fontSize: '12px' }}
-            >
-              Refresh
-            </button>
-          )}
-        </div>
+        <h3 style={{ margin: 0, marginBottom: '8px', fontSize: '14px', color: '#555' }}>Q&A</h3>
         {isThinking && (
           <div style={{
             padding: '12px',
