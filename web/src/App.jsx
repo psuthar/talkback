@@ -1550,7 +1550,7 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.global_role])
 
-  const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null, isRefetch = false) => {
+  const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null, isRefetch = false, overrideParticipantRef = null) => {
     if (!isRefetch) setLoading(true)
     clearFeedback(setSessionSelectFeedback)
 
@@ -1565,16 +1565,19 @@ function App() {
     if (forceMode === 'participant') {
       setSessionUserMode('participant')
       setCurrentUser('participant')
+      if (overrideParticipantRef) setParticipantRef(overrideParticipantRef)
     } else if (forceMode === 'creator') {
       setSessionUserMode('creator')
     }
 
     try {
-      // When in participant mode, send participant_ref so backend can return unread_material_ids for "new document" marker
+      // When in participant mode, send participant_ref so backend can return unread_material_ids for "new document" marker.
+      // Use overrideParticipantRef when opening from invite flow (register/login) since participantRef state may not have updated yet.
       const isParticipant = forceMode === 'participant' || (typeof sessionUserMode !== 'undefined' && sessionUserMode === 'participant')
+      const effectiveParticipantRef = overrideParticipantRef ?? participantRef ?? authUser?.email
       const headers = {}
-      if (isParticipant && participantRef) {
-        headers['X-Participant-Ref'] = participantRef
+      if (isParticipant && effectiveParticipantRef) {
+        headers['X-Participant-Ref'] = effectiveParticipantRef
       }
       // Always fetch fresh session so video_access_url (presigned) is current; avoid cached response on reload
       const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store' })
@@ -1799,16 +1802,19 @@ function App() {
 
   const markMaterialsSeen = useCallback(async (materialIds) => {
     const sessionId = currentSession?.session?.id || currentSession?.id
-    if (!sessionId || !participantRef || !materialIds?.length) return
+    const effectiveParticipantRef = participantRef || authUser?.email
+    if (!sessionId || !effectiveParticipantRef || !materialIds?.length) return
     try {
-      await fetch(`${apiBaseUrl}/sessions/${sessionId}/materials/seen`, {
+      const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/materials/seen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participant_ref: participantRef, material_ids: materialIds })
+        credentials: 'include',
+        body: JSON.stringify({ participant_ref: effectiveParticipantRef, material_ids: materialIds })
       })
+      if (!res.ok) return
       await refetchSession()
     } catch (_) { /* ignore */ }
-  }, [currentSession?.session?.id, currentSession?.id, participantRef, apiBaseUrl, refetchSession])
+  }, [currentSession?.session?.id, currentSession?.id, participantRef, authUser?.email, apiBaseUrl, refetchSession])
 
   const loadSessionById = async (mode = null) => {
     if (!sessionIdInput.trim()) {
@@ -2455,7 +2461,7 @@ function App() {
           }
           if (options?.goToSessionId) {
             window.history.replaceState(null, '', `/?session=${options.goToSessionId}`)
-            openSession(options.goToSessionId, 'participant')
+            openSession(options.goToSessionId, 'participant', false, null, false, data.user?.email)
           }
         }}
         onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
@@ -2464,7 +2470,7 @@ function App() {
           setAuthUser(user)
           setAcceptToken(tok || null)
           try { if (tok) sessionStorage.setItem('talkback.accept_token', tok) } catch (_) {}
-          openSession(sessionId, 'participant')
+          openSession(sessionId, 'participant', false, null, false, user.email)
         }}
         onSignOut={async () => {
           try {
