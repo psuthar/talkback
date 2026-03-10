@@ -30,10 +30,16 @@ type PriorQAPair struct {
 	CitationLabels []string // optional: citation_id and label for each citation in this answer
 }
 
+// SessionContext carries decision-intelligence fields from the session into the LLM prompt.
+type SessionContext struct {
+	Premise         *string
+	PrimaryDecision *string
+}
+
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
 // priorQA is an optional list of previous question-answer pairs from the same session for context accumulation
 // Returns the QAResponse and the chunks that were used (for debugging)
-func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifactTitle string, priorQA []PriorQAPair) (*QAResponse, []Chunk, error) {
+func GenerateAnswer(ctx context.Context, question string, chunks []Chunk, artifactTitle string, sessionCtx SessionContext, priorQA []PriorQAPair) (*QAResponse, []Chunk, error) {
 	// Short-circuit: if no chunks retrieved, return not_covered without calling OpenAI
 	if len(chunks) == 0 {
 		return &QAResponse{
@@ -121,7 +127,34 @@ You MUST respond in valid JSON format matching this exact structure:
 
 IMPORTANT: Do not include any text outside the JSON structure. Do not use markdown code blocks. Return ONLY the JSON object.`
 
-	systemPrompt := basePrompt + priorQASection.String() + jsonFormatSection
+	// Build optional decision context section (injected between base prompt and JSON format)
+	var decisionSection strings.Builder
+	premiseStr := ""
+	if sessionCtx.Premise != nil && *sessionCtx.Premise != "" {
+		premiseStr = *sessionCtx.Premise
+		if len(premiseStr) > 500 {
+			premiseStr = premiseStr[:500]
+		}
+	}
+	decisionStr := ""
+	if sessionCtx.PrimaryDecision != nil && *sessionCtx.PrimaryDecision != "" {
+		decisionStr = *sessionCtx.PrimaryDecision
+		if len(decisionStr) > 500 {
+			decisionStr = decisionStr[:500]
+		}
+	}
+	if premiseStr != "" || decisionStr != "" {
+		decisionSection.WriteString("\n\nDECISION CONTEXT:\n")
+		if premiseStr != "" {
+			decisionSection.WriteString(fmt.Sprintf("Session background: %s\n", premiseStr))
+		}
+		if decisionStr != "" {
+			decisionSection.WriteString(fmt.Sprintf("Decision being evaluated: %s\n", decisionStr))
+		}
+		decisionSection.WriteString("Frame your answers within this decision context where relevant.")
+	}
+
+	systemPrompt := basePrompt + decisionSection.String() + priorQASection.String() + jsonFormatSection
 
 	// Build user prompt with chunk IDs clearly listed
 	var chunkIDs []string

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { VideoPlayer } from '../VideoPlayer'
 import { QAHistory } from '../components/QAHistory'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
@@ -59,7 +59,8 @@ export function ParticipantMode({
   setReplyingToQuestionId,
   currentAskerName,
   onCitationClick,
-  onClearSession
+  onClearSession,
+  stanceVersion = 0
 }) {
   const hasSession = currentSession && currentSession.session
 
@@ -89,6 +90,75 @@ export function ParticipantMode({
   const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
+
+  // Decision stance state
+  const [myStance, setMyStance] = useState(null)
+  const [stanceAggregate, setStanceAggregate] = useState(null)
+  const [stanceResponses, setStanceResponses] = useState([]) // per-person list with user_email
+  const [stanceResponsesCollapsed, setStanceResponsesCollapsed] = useState(false) // default expanded so responses are visible
+  const [stanceRationale, setStanceRationale] = useState('')
+  const [stanceSubmitting, setStanceSubmitting] = useState(false)
+  const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
+
+  const fetchMyStance = useCallback(async () => {
+    if (!currentSession?.session?.id || !apiBaseUrl) return
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stances`, { credentials: 'include' })
+      if (!res.ok) return
+      const data = await res.json()
+      setMyStance(data.my_stance ?? null)
+      setStanceAggregate(data.aggregate ?? null)
+      // API returns responses (lowercase); support both for robustness
+      const list = Array.isArray(data.responses) ? data.responses : (Array.isArray(data.Responses) ? data.Responses : [])
+      setStanceResponses(list)
+    } catch { /* ignore */ }
+  }, [currentSession?.session?.id, apiBaseUrl])
+
+  // Refetch stances when stanceVersion changes (bumped by WebSocket stance_updated), so responses list and aggregate update in real time for all participants
+  useEffect(() => {
+    fetchMyStance()
+  }, [fetchMyStance, stanceVersion])
+
+  const submitStance = async (stanceValue) => {
+    if (!currentSession?.session?.id || stanceSubmitting) return
+    if (currentSession.session.decision_outcome) return
+    setStanceSubmitting(true)
+    setStanceFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const body = { stance: stanceValue }
+      const trimmedRationale = stanceRationale.trim().slice(0, 500)
+      if (trimmedRationale) body.rationale = trimmedRationale
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stance`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      if (!res.ok) {
+        let msg = 'Failed to submit stance'
+        const text = await res.text()
+        try {
+          const errBody = JSON.parse(text)
+          if (errBody?.error) msg = errBody.error
+        } catch {
+          if (text) msg = text
+        }
+        setStanceFeedback({ type: 'error', message: msg })
+        return
+      }
+      const data = await res.json()
+      setMyStance(data.my_stance ?? null)
+      setStanceAggregate(data.aggregate ?? null)
+      setStanceFeedback({ type: 'success', message: 'Position recorded' })
+      fetchMyStance() // refetch to get updated responses list
+    } catch (err) {
+      setStanceFeedback({ type: 'error', message: err?.message || 'Failed to submit stance' })
+    } finally {
+      setStanceSubmitting(false)
+    }
+  }
 
   // When user selects a video in the tree (Presentation or Additional Videos), mark the corresponding material as seen so the "New" badge clears.
   // Only depend on selection so we don't re-run when refetchSession updates currentSession (which would cause an infinite loop: mark seen -> refetch -> new materials ref -> effect -> mark seen -> ...).
@@ -369,6 +439,130 @@ export function ParticipantMode({
           </button>
         )}
       </div>
+
+      {(currentSession.session.premise || currentSession.session.primary_decision || currentSession.session.decision_outcome) && (
+        <div style={{
+          flexShrink: 0,
+          display: 'flex',
+          gap: '20px',
+          flexWrap: 'wrap',
+          padding: '6px 20px',
+          backgroundColor: '#f1f8e9',
+          borderBottom: '1px solid #c8e6c9',
+          fontSize: '13px',
+          color: '#333'
+        }}>
+          {currentSession.session.premise && (
+            <span><strong>Premise:</strong> {currentSession.session.premise}</span>
+          )}
+          {currentSession.session.primary_decision && (
+            <span><strong>Decision:</strong> {currentSession.session.primary_decision}</span>
+          )}
+          {currentSession.session.decision_outcome && (
+            <span><strong>Outcome:</strong> {currentSession.session.decision_outcome}</span>
+          )}
+        </div>
+      )}
+
+      {currentSession.session.primary_decision && (
+        <div style={{ flexShrink: 0, padding: '10px 20px', backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0' }}>
+          <strong style={{ fontSize: '13px' }}>Your Position</strong>
+          {currentSession.session.decision_outcome ? (
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888', fontStyle: 'italic' }}>
+              Stances are locked — the outcome has been recorded.
+            </p>
+          ) : null}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+            {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => (
+              <button
+                key={s}
+                type="button"
+                disabled={stanceSubmitting || !!currentSession.session.decision_outcome}
+                onClick={() => submitStance(s)}
+                style={{
+                  padding: '5px 12px', fontSize: '12px', borderRadius: '4px',
+                  border: myStance?.stance === s ? '2px solid #1976d2' : '1px solid #ccc',
+                  backgroundColor: myStance?.stance === s ? '#e3f2fd' : '#fafafa',
+                  color: '#1a1a1a',
+                  fontWeight: myStance?.stance === s ? 700 : 400,
+                  cursor: (stanceSubmitting || currentSession.session.decision_outcome) ? 'default' : 'pointer'
+                }}
+              >
+                {s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+          {!currentSession.session.decision_outcome && (
+            <>
+              <textarea
+                value={stanceRationale}
+                onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+                placeholder="Optional: briefly explain your position (max 500 chars)…"
+                rows={2}
+                style={{ width: '100%', marginTop: '8px', padding: '6px 8px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box' }}
+              />
+              <div style={{ fontSize: '11px', color: '#999', textAlign: 'right' }}>{stanceRationale.length}/500</div>
+            </>
+          )}
+          {stanceFeedback.message && (
+            <p style={{ margin: '4px 0 0', fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
+              {stanceFeedback.message}
+            </p>
+          )}
+          {(stanceAggregate?.total > 0 || stanceResponses?.length > 0) && (
+            <div style={{ marginTop: '10px', fontSize: '12px', color: '#555' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setStanceResponsesCollapsed((c) => {
+                    const next = !c
+                    if (next) fetchMyStance() // refetch when expanding so responses list is populated
+                    return next
+                  })
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: '2px 0',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontSize: '12px',
+                  color: '#555',
+                  fontWeight: 600
+                }}
+                aria-expanded={!stanceResponsesCollapsed}
+              >
+                <span style={{ transform: stanceResponsesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
+                All responses ({stanceAggregate?.total ?? stanceResponses.length})
+              </button>
+              {!stanceResponsesCollapsed && (
+                <>
+                  {stanceResponses.length > 0 ? (
+                    <ul style={{ margin: '6px 0 0 16px', paddingLeft: '4px' }}>
+                      {stanceResponses.map((r, i) => (
+                        <li key={r.id || `${r.user_id}-${i}`} style={{ marginBottom: '4px' }}>
+                          <strong>{r.user_email || 'Unknown'}</strong>
+                          {' — '}
+                          <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
+                          {r.rationale && r.rationale.trim() && (
+                            <span style={{ color: '#666', fontStyle: 'italic' }}> ({r.rationale.trim().slice(0, 80)}{r.rationale.trim().length > 80 ? '…' : ''})</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ margin: '6px 0 0 16px', fontSize: '12px', color: '#888' }}>
+                      {stanceAggregate?.total > 0 ? `${stanceAggregate.total} response(s) recorded. Refreshing…` : 'No responses yet.'}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className={gridClassName}>
         <aside

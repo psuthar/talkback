@@ -369,6 +369,9 @@ type Session struct {
 	IndexUpdatedAt          *time.Time `json:"index_updated_at,omitempty"`
 	ProcessingState         string    `json:"processing_state,omitempty"`       // mirror of session_processing_jobs.state
 	ProcessingUpdatedAt     *time.Time `json:"processing_updated_at,omitempty"`
+	Premise                 *string   `json:"premise,omitempty"`
+	PrimaryDecision         *string   `json:"primary_decision,omitempty"`
+	DecisionOutcome         *string   `json:"decision_outcome,omitempty"`
 	CreatedAt               time.Time `json:"created_at"`
 	UpdatedAt               time.Time `json:"updated_at"`
 }
@@ -521,4 +524,42 @@ type SessionInvitation struct {
 	UserID           uuid.UUID `json:"user_id"`
 	InvitedByUserID  *uuid.UUID `json:"invited_by_user_id,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+}
+
+// Stance values for decision_stances.
+const (
+	StanceAgree        = "agree"
+	StanceDisagree     = "disagree"
+	StanceConditional  = "conditional"
+	StanceAbstain      = "abstain"
+	StanceNeedMoreInfo = "need_more_info"
+)
+
+var ValidStances = []string{StanceAgree, StanceDisagree, StanceConditional, StanceAbstain, StanceNeedMoreInfo}
+
+// DecisionStance represents a participant's recorded position on a session's primary decision.
+type DecisionStance struct {
+	ID        uuid.UUID `json:"id"`
+	SessionID uuid.UUID `json:"session_id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Stance    string    `json:"stance"` // agree | disagree | conditional | abstain | need_more_info
+	Rationale *string   `json:"rationale,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DecisionStanceWithUser extends DecisionStance with the submitter's email for the creator view.
+type DecisionStanceWithUser struct {
+	DecisionStance
+	UserEmail string `json:"user_email"`
+}
+
+// StanceAggregate holds per-stance counts for a session.
+type StanceAggregate struct {
+	Agree        int `json:"agree"`
+	Disagree     int `json:"disagree"`
+	Conditional  int `json:"conditional"`
+	Abstain      int `json:"abstain"`
+	NeedMoreInfo int `json:"need_more_info"`
+	Total        int `json:"total"`
 }

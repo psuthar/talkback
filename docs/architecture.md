@@ -1,6 +1,6 @@
 # TalkBack — Architecture Overview
 
-High-level view of main tech stacks, services, and applications.
+High-level view of main tech stacks, services, and applications. The product is evolving toward **decision-centric sessions** (premise, primary decision, outcomes) and decision intelligence, not only generic meeting summaries or Q&A.
 
 ## Diagram
 
@@ -147,6 +147,12 @@ The pipeline is designed so that **Loom, Google Meet, Microsoft Teams** (and sim
 - **internal/storage** — Upload root; **internal/storage/r2** — R2 client and presigning
 - **internal/email** — Resend sender for invite emails
 - **internal/utils** — Job processor, Whisper transcriber, Zoom client, Loom resolver
+
+## Product direction
+
+Sessions are evolving to support **premise** and **primary decision** (schema and UX). The long-term goal includes **decision intelligence**: structured decisions and outcomes derived from or attached to sessions. Naming should stay clear (e.g. decision topic vs decision outcome) as these concepts are added.
+
+---
 
 ## Deployment (e.g. Render)
 

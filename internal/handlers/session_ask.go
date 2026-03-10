@@ -247,7 +247,11 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 	priorQuestions, priorAnswers, _ := h.DB.GetQuestionsBySessionID(ctx, sessionID, 10)
 	priorQA = append(priorQA, buildPriorQA(priorQuestions, priorAnswers, question.ID)...)
 
-	qaResponse, _, err := utils.GenerateAnswer(ctx, req.QuestionText, chunks, session.Title, priorQA)
+	sessionCtx := utils.SessionContext{
+		Premise:         session.Premise,
+		PrimaryDecision: session.PrimaryDecision,
+	}
+	qaResponse, _, err := utils.GenerateAnswer(ctx, req.QuestionText, chunks, session.Title, sessionCtx, priorQA)
 	if emptyChunkMessage != "" && qaResponse != nil {
 		qaResponse.AnswerText = emptyChunkMessage
 	}

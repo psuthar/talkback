@@ -167,6 +167,22 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "stance" {
+		if r.Method == http.MethodPost {
+			h.RequireAuth(h.SessionSubmitStance)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "stances" {
+		if r.Method == http.MethodGet {
+			h.RequireAuth(h.SessionGetStances)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "questions" && len(parts) >= 5 && parts[4] == "polish" {
 		if r.Method == http.MethodPost {
 			h.SessionPolishQuestion(w, r)

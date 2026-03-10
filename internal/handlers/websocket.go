@@ -184,6 +184,16 @@ func (h *SessionHub) BroadcastSessionUpdated(sessionID uuid.UUID) {
 	}
 }
 
+// BroadcastStanceUpdated notifies all session clients that a stance was submitted or updated.
+// Broadcasts the current aggregate so clients can update counts without a refetch.
+func (h *SessionHub) BroadcastStanceUpdated(sessionID uuid.UUID, aggregate *models.StanceAggregate) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "stance_updated",
+		Data:      aggregate,
+	}
+}
+
 // HandleWebSocket handles WebSocket connections for session updates
 func (h *Handlers) HandleWebSocket(hub *SessionHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

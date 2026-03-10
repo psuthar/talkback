@@ -46,6 +46,7 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			premise, primary_decision, decision_outcome,
 			created_at, updated_at
 		FROM sessions
 		WHERE id = $1
@@ -63,6 +64,9 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		&indexUpdatedAt,
 		&processingState,
 		&processingUpdatedAt,
+		&session.Premise,
+		&session.PrimaryDecision,
+		&session.DecisionOutcome,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)
@@ -90,6 +94,7 @@ func (db *DB) ListSessionsByCreatedBy(ctx context.Context, createdBy string) ([]
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			premise, primary_decision, decision_outcome,
 			created_at, updated_at
 		FROM sessions
 		WHERE created_by = $1
@@ -108,6 +113,7 @@ func (db *DB) ListSessionsForInvitedUser(ctx context.Context, userID uuid.UUID) 
 	query := `
 		SELECT s.id, s.title, s.created_by, s.status, s.source_provider, s.source_reference_url, s.primary_video_artifact_id,
 			COALESCE(s.index_status, 'none'), s.index_updated_at, s.processing_state, s.processing_updated_at,
+			s.premise, s.primary_decision, s.decision_outcome,
 			s.created_at, s.updated_at
 		FROM sessions s
 		INNER JOIN session_memberships sm ON s.id = sm.session_id
@@ -127,6 +133,7 @@ func (db *DB) ListAllSessions(ctx context.Context) ([]*models.Session, error) {
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
+			premise, primary_decision, decision_outcome,
 			created_at, updated_at
 		FROM sessions
 		ORDER BY updated_at DESC
@@ -162,6 +169,9 @@ func scanSessionRows(rows interface {
 			&indexUpdatedAt,
 			&processingState,
 			&processingUpdatedAt,
+			&session.Premise,
+			&session.PrimaryDecision,
+			&session.DecisionOutcome,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 		)
@@ -405,6 +415,29 @@ func (db *DB) UpdateSessionStatus(ctx context.Context, sessionID uuid.UUID, stat
 		return fmt.Errorf("failed to update session status: session not found")
 	}
 
+	return nil
+}
+
+// UpdateSessionContext updates premise, primary_decision, and/or decision_outcome for a session.
+// A nil pointer for any field leaves that column unchanged; a pointer to an
+// empty string explicitly clears the field to NULL.
+func (db *DB) UpdateSessionContext(ctx context.Context, sessionID uuid.UUID, premise, primaryDecision, decisionOutcome *string) error {
+	query := `
+		UPDATE sessions
+		SET
+			premise          = CASE WHEN $1::TEXT IS NULL THEN premise ELSE NULLIF($1, '') END,
+			primary_decision = CASE WHEN $2::TEXT IS NULL THEN primary_decision ELSE NULLIF($2, '') END,
+			decision_outcome = CASE WHEN $3::TEXT IS NULL THEN decision_outcome ELSE NULLIF($3, '') END,
+			updated_at       = now()
+		WHERE id = $4
+	`
+	result, err := db.Pool.Exec(ctx, query, premise, primaryDecision, decisionOutcome, sessionID)
+	if err != nil {
+		return fmt.Errorf("UpdateSessionContext: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("UpdateSessionContext: session not found")
+	}
 	return nil
 }
 

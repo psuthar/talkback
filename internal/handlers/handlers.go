@@ -865,7 +865,7 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate answer using LLM with prior Q&A context
-	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, priorQA)
+	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, utils.SessionContext{}, priorQA)
 	if err != nil {
 		log.Printf("Error generating answer: %v", err)
 		// Still create an error answer

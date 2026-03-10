@@ -132,6 +132,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState('') // User identifier for mode detection
   const [sessionUserMode, setSessionUserMode] = useState(null) // 'creator' or 'participant' - from API
   const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
+  const [stanceVersion, setStanceVersion] = useState(0) // bumped when WebSocket stance_updated; mode components use to refetch stances
   const [replyingToQuestionId, setReplyingToQuestionId] = useState(null) // Threaded reply: parent question id when user clicked "Reply"
 
   // TalkBack auth: logged-in user from GET /api/me (cookie or Bearer accept_token for incognito)
@@ -1990,7 +1991,8 @@ function App() {
       return
     }
 
-    // Start recording
+    // Start recording — pause video first so it doesn't compete with the mic
+    setIsVideoPlaying(false)
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setVoiceFeedback({ type: 'error', message: 'Microphone is not supported in this browser.' })
@@ -2346,6 +2348,10 @@ function App() {
         console.log('WebSocket: Invitation accepted, refetching invitations...')
         fetchSessionInvitations(msgSessionId)
       }
+    } else if (message.type === 'stance_updated') {
+      // Bump stanceVersion so ParticipantMode and CreatorMode refetch GET /stances and update responses list + aggregate in real time
+      console.log('WebSocket: Stance updated, bumping stanceVersion...')
+      setStanceVersion((v) => v + 1)
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
       console.log('WebSocket: Answer created/updated, refreshing questions...')
       
@@ -2381,7 +2387,7 @@ function App() {
         }
       }
     }
-  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, setStanceVersion])
 
   // Clear mock questions and pending (optimistic) questions when session changes
   useEffect(() => {
@@ -3138,6 +3144,7 @@ function App() {
             <CreatorMode
               currentSession={currentSession}
               sessionProcessingReadyVersion={sessionProcessingReadyVersion}
+              stanceVersion={stanceVersion}
               refetchSession={refetchSession}
               artifactId={artifactId}
               setArtifactId={setArtifactId}
@@ -3229,6 +3236,7 @@ function App() {
               replyingToQuestionId={replyingToQuestionId}
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
+              stanceVersion={stanceVersion}
               onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null

@@ -1,0 +1,126 @@
+package database
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/psuthar/talkback/internal/models"
+)
+
+// CreateOrUpdateStance upserts a participant's stance for a session.
+func (db *DB) CreateOrUpdateStance(ctx context.Context, sessionID, userID uuid.UUID, stance string, rationale *string) (*models.DecisionStance, error) {
+	query := `
+		INSERT INTO decision_stances (id, session_id, user_id, stance, rationale)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4)
+		ON CONFLICT (session_id, user_id) DO UPDATE
+			SET stance     = EXCLUDED.stance,
+			    rationale  = EXCLUDED.rationale,
+			    updated_at = now()
+		RETURNING id, session_id, user_id, stance, rationale, created_at, updated_at
+	`
+	s := &models.DecisionStance{}
+	err := db.Pool.QueryRow(ctx, query, sessionID, userID, stance, rationale).Scan(
+		&s.ID, &s.SessionID, &s.UserID, &s.Stance, &s.Rationale, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("CreateOrUpdateStance: %w", err)
+	}
+	return s, nil
+}
+
+// GetStanceByUserAndSession returns the stance row for a specific user in a session, or nil if none exists.
+func (db *DB) GetStanceByUserAndSession(ctx context.Context, sessionID, userID uuid.UUID) (*models.DecisionStance, error) {
+	query := `
+		SELECT id, session_id, user_id, stance, rationale, created_at, updated_at
+		FROM decision_stances
+		WHERE session_id = $1 AND user_id = $2
+	`
+	s := &models.DecisionStance{}
+	err := db.Pool.QueryRow(ctx, query, sessionID, userID).Scan(
+		&s.ID, &s.SessionID, &s.UserID, &s.Stance, &s.Rationale, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("GetStanceByUserAndSession: %w", err)
+	}
+	return s, nil
+}
+
+// GetStancesBySessionID returns all stances for a session joined with the submitter's email, newest first.
+func (db *DB) GetStancesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.DecisionStanceWithUser, error) {
+	query := `
+		SELECT ds.id, ds.session_id, ds.user_id, ds.stance, ds.rationale, ds.created_at, ds.updated_at,
+		       u.email
+		FROM decision_stances ds
+		JOIN users u ON u.id = ds.user_id
+		WHERE ds.session_id = $1
+		ORDER BY ds.updated_at DESC
+	`
+	rows, err := db.Pool.Query(ctx, query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("GetStancesBySessionID: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*models.DecisionStanceWithUser
+	for rows.Next() {
+		sw := &models.DecisionStanceWithUser{}
+		err := rows.Scan(
+			&sw.ID, &sw.SessionID, &sw.UserID, &sw.Stance, &sw.Rationale, &sw.CreatedAt, &sw.UpdatedAt,
+			&sw.UserEmail,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("GetStancesBySessionID scan: %w", err)
+		}
+		out = append(out, sw)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetStancesBySessionID rows: %w", err)
+	}
+	if out == nil {
+		out = []*models.DecisionStanceWithUser{}
+	}
+	return out, nil
+}
+
+// GetStanceAggregate returns per-stance counts for a session.
+func (db *DB) GetStanceAggregate(ctx context.Context, sessionID uuid.UUID) (*models.StanceAggregate, error) {
+	query := `
+		SELECT stance, COUNT(*) FROM decision_stances WHERE session_id = $1 GROUP BY stance
+	`
+	rows, err := db.Pool.Query(ctx, query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("GetStanceAggregate: %w", err)
+	}
+	defer rows.Close()
+
+	agg := &models.StanceAggregate{}
+	for rows.Next() {
+		var stance string
+		var count int
+		if err := rows.Scan(&stance, &count); err != nil {
+			return nil, fmt.Errorf("GetStanceAggregate scan: %w", err)
+		}
+		switch stance {
+		case models.StanceAgree:
+			agg.Agree = count
+		case models.StanceDisagree:
+			agg.Disagree = count
+		case models.StanceConditional:
+			agg.Conditional = count
+		case models.StanceAbstain:
+			agg.Abstain = count
+		case models.StanceNeedMoreInfo:
+			agg.NeedMoreInfo = count
+		}
+		agg.Total += count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetStanceAggregate rows: %w", err)
+	}
+	return agg, nil
+}

@@ -105,6 +105,7 @@ function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError 
 export function CreatorMode({
   currentSession,
   sessionProcessingReadyVersion = 0,
+  stanceVersion = 0,
   refetchSession,
   artifactId,
   setArtifactId,
@@ -163,6 +164,14 @@ export function CreatorMode({
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false) // collapsed by default
+  const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
+  const [contextPremise, setContextPremise] = useState('')
+  const [contextDecision, setContextDecision] = useState('')
+  const [contextOutcome, setContextOutcome] = useState('')
+  const [contextSaving, setContextSaving] = useState(false)
+  const [contextFeedback, setContextFeedback] = useState({ type: '', message: '' })
+  const [stanceData, setStanceData] = useState(null)
+  const [stancePanelExpanded, setStancePanelExpanded] = useState(true)
 
   const startAnswering = (questionId) => {
     setAnsweringQuestionId(questionId)
@@ -774,6 +783,55 @@ export function CreatorMode({
     if (files.length > 0) uploadMaterialToSession(files[0])
   }
 
+  // Sync context form fields when session changes
+  useEffect(() => {
+    setContextPremise(currentSession?.session?.premise ?? '')
+    setContextDecision(currentSession?.session?.primary_decision ?? '')
+    setContextOutcome(currentSession?.session?.decision_outcome ?? '')
+  }, [currentSession?.session?.id, currentSession?.session?.premise, currentSession?.session?.primary_decision, currentSession?.session?.decision_outcome])
+
+  const fetchStances = useCallback(async () => {
+    if (!currentSession?.session?.id || !apiBaseUrl) return
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stances`, { credentials: 'include' })
+      if (!res.ok) return
+      const data = await res.json()
+      setStanceData(data)
+    } catch { /* ignore */ }
+  }, [currentSession?.session?.id, apiBaseUrl])
+
+  useEffect(() => {
+    fetchStances()
+  }, [fetchStances, stanceVersion])
+
+  const saveSessionContext = async () => {
+    if (!currentSession?.session?.id || contextSaving) return
+    setContextSaving(true)
+    setContextFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/sessions/${currentSession.session.id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ premise: contextPremise, primary_decision: contextDecision, decision_outcome: contextOutcome })
+      })
+      if (!res.ok) {
+        const t = await res.text()
+        setContextFeedback({ type: 'error', message: t || res.statusText })
+        return
+      }
+      setContextFeedback({ type: 'success', message: 'Saved' })
+      if (refetchSession) await refetchSession()
+      setTimeout(() => setContextFeedback({ type: '', message: '' }), 2500)
+    } catch (err) {
+      setContextFeedback({ type: 'error', message: err?.message || 'Save failed' })
+    } finally {
+      setContextSaving(false)
+    }
+  }
+
   if (!currentSession) {
     return (
       <div style={{ padding: '20px', color: '#666', textAlign: 'center' }}>
@@ -950,6 +1008,133 @@ export function CreatorMode({
               )}
             </div>
           )}
+          {/* Context: premise and primary decision */}
+          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
+            <button
+              type="button"
+              onClick={() => setContextPanelExpanded((e) => !e)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                width: '100%',
+                padding: '8px 0',
+                border: 'none',
+                background: 'none',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: '600',
+                color: '#1565C0',
+                textAlign: 'left'
+              }}
+              aria-expanded={contextPanelExpanded}
+            >
+              <span style={{ transform: contextPanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
+              Context
+            </button>
+            {contextPanelExpanded && (
+              <div style={{ marginTop: '8px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Premise</label>
+                <textarea
+                  value={contextPremise}
+                  onChange={(e) => setContextPremise(e.target.value)}
+                  placeholder="Describe the session premise…"
+                  rows={3}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+                <label style={{ display: 'block', marginTop: '10px', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Primary Decision</label>
+                <textarea
+                  value={contextDecision}
+                  onChange={(e) => setContextDecision(e.target.value)}
+                  placeholder="What is the primary decision being discussed…"
+                  rows={3}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+                <label style={{ display: 'block', marginTop: '10px', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Decision Outcome</label>
+                <textarea
+                  value={contextOutcome}
+                  onChange={(e) => setContextOutcome(e.target.value)}
+                  placeholder="What was actually decided…"
+                  rows={3}
+                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={saveSessionContext}
+                    disabled={contextSaving}
+                    style={{ padding: '6px 16px', fontSize: '13px', fontWeight: '500' }}
+                  >
+                    {contextSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  {contextFeedback.message && (
+                    <span style={{ fontSize: '12px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
+                      {contextFeedback.message}
+                    </span>
+                  )}
+                </div>
+                {currentSession?.session?.primary_decision && stanceData?.aggregate && (
+                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e0e0e0' }}>
+                    <button
+                      type="button"
+                      onClick={() => setStancePanelExpanded((e) => !e)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        width: '100%', padding: '4px 0', border: 'none', background: 'none',
+                        cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#1565C0',
+                        textAlign: 'left'
+                      }}
+                    >
+                      <span style={{ transform: stancePanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
+                      Stance Summary ({stanceData.aggregate.total})
+                    </button>
+                    {stancePanelExpanded && (
+                      <div style={{ marginTop: '8px' }}>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                          {[
+                            ['Agree', stanceData.aggregate.agree, '#2e7d32', '#e8f5e9'],
+                            ['Disagree', stanceData.aggregate.disagree, '#c62828', '#ffebee'],
+                            ['Conditional', stanceData.aggregate.conditional, '#e65100', '#fff3e0'],
+                            ['Abstain', stanceData.aggregate.abstain, '#546e7a', '#eceff1'],
+                            ['Need More Info', stanceData.aggregate.need_more_info, '#1565C0', '#e3f2fd']
+                          ].map(([label, count, color, bg]) => (
+                            <span key={label} style={{
+                              padding: '3px 10px', borderRadius: '12px', fontSize: '12px',
+                              fontWeight: count > 0 ? 700 : 400,
+                              color: count > 0 ? color : '#999',
+                              backgroundColor: count > 0 ? bg : '#f5f5f5',
+                              border: `1px solid ${count > 0 ? color : '#e0e0e0'}`
+                            }}>
+                              {label}: {count}
+                            </span>
+                          ))}
+                        </div>
+                        {stanceData.responses?.length > 0 && (
+                          <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {stanceData.responses.map((r) => (
+                              <div key={r.id} style={{
+                                padding: '6px 10px', backgroundColor: '#fafafa',
+                                border: '1px solid #e0e0e0', borderRadius: '4px', fontSize: '12px'
+                              }}>
+                                <span style={{ fontWeight: 600 }}>{r.user_email}</span>
+                                {' — '}
+                                <span style={{ textTransform: 'capitalize' }}>{r.stance.replace(/_/g, ' ')}</span>
+                                {r.rationale && (
+                                  <span style={{ color: '#666', marginLeft: '6px' }}>
+                                    "{r.rationale.length > 80 ? r.rationale.slice(0, 80) + '…' : r.rationale}"
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

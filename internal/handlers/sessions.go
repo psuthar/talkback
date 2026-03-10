@@ -1167,7 +1167,7 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate answer using LLM with prior Q&A context
-	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, priorQA)
+	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, utils.SessionContext{}, priorQA)
 	if err != nil {
 		log.Printf("Error generating answer: %v", err)
 		// Still create an error answer
@@ -1748,29 +1748,40 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse request body
-	type UpdateSessionStatusRequest struct {
-		Status string `json:"status"` // "open" or "closed"
+	type UpdateSessionRequest struct {
+		Status          *string `json:"status"`           // "open" or "closed" (optional)
+		Premise         *string `json:"premise"`           // session premise (optional)
+		PrimaryDecision *string `json:"primary_decision"`  // primary decision (optional)
+		DecisionOutcome *string `json:"decision_outcome"`  // decision outcome (optional)
 	}
 
-	var req UpdateSessionStatusRequest
+	var req UpdateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	// Validate status
-	status := models.SessionStatus(req.Status)
-	if status != models.SessionStatusOpen && status != models.SessionStatusClosed {
-		http.Error(w, fmt.Sprintf("Invalid status: %s. Must be 'open' or 'closed'", req.Status), http.StatusBadRequest)
-		return
+	// Update status if provided
+	if req.Status != nil {
+		status := models.SessionStatus(*req.Status)
+		if status != models.SessionStatusOpen && status != models.SessionStatusClosed {
+			http.Error(w, fmt.Sprintf("Invalid status: %s. Must be 'open' or 'closed'", *req.Status), http.StatusBadRequest)
+			return
+		}
+		if err = h.DB.UpdateSessionStatus(r.Context(), sessionID, status); err != nil {
+			log.Printf("Error updating session status: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to update session status: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
-	// Update session status
-	err = h.DB.UpdateSessionStatus(r.Context(), sessionID, status)
-	if err != nil {
-		log.Printf("Error updating session status: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to update session status: %v", err), http.StatusInternalServerError)
-		return
+	// Update premise / primary_decision / decision_outcome if any is provided
+	if req.Premise != nil || req.PrimaryDecision != nil || req.DecisionOutcome != nil {
+		if err = h.DB.UpdateSessionContext(r.Context(), sessionID, req.Premise, req.PrimaryDecision, req.DecisionOutcome); err != nil {
+			log.Printf("Error updating session context: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to update session context: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Get updated session
