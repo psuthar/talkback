@@ -519,19 +519,19 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 5 {
-		// /sessions/{id}/questions/{question_id}/answers - POST (create answer)
+		// /sessions/{id}/questions/{question_id}/answers - POST (create answer; admin or creator)
 		if parts[2] == "questions" && parts[4] == "answers" {
 			if r.Method == http.MethodPost {
-				h.CreateSessionAnswer(w, r)
+				h.RequireAuth(h.CreateSessionAnswer)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// /sessions/{id}/answers/{answer_id}/confirm - PATCH/PUT (update answer confirmation)
+		// /sessions/{id}/answers/{answer_id}/confirm - PATCH/PUT (update answer confirmation; admin or creator)
 		if parts[2] == "answers" && parts[4] == "confirm" {
 			if r.Method == http.MethodPatch || r.Method == http.MethodPut {
-				h.UpdateAnswerConfirmed(w, r)
+				h.RequireAuth(h.UpdateAnswerConfirmed)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -540,10 +540,10 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 6 {
-		// /sessions/{id}/questions/{question_id}/answers/voice - POST (transcribe answer voice)
+		// /sessions/{id}/questions/{question_id}/answers/voice - POST (transcribe answer voice; admin or creator)
 		if parts[2] == "questions" && parts[4] == "answers" && parts[5] == "voice" {
 			if r.Method == http.MethodPost {
-				h.TranscribeSessionAnswerVoice(w, r)
+				h.RequireAuth(h.TranscribeSessionAnswerVoice)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

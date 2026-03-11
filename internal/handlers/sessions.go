@@ -1289,10 +1289,16 @@ func (h *Handlers) TranscribeSessionQuestionVoice(w http.ResponseWriter, r *http
 	})
 }
 
-// CreateSessionAnswer allows creators to answer a question in a session
+// CreateSessionAnswer allows admin or session creator to provide an answer to a question (RequireAuth).
 func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
@@ -1315,10 +1321,16 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
+	// Verify session exists and user is admin or session creator
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
+		return
+	}
+	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
+	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
+	if !isCreator && !isAdmin {
+		http.Error(w, "Only the session creator or an admin can add an answer", http.StatusForbidden)
 		return
 	}
 
@@ -1369,7 +1381,7 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 		_ = h.DB.DeleteAnswer(r.Context(), existingAnswer.ID)
 	}
 
-	// Create new answer
+	// Create new answer (human-provided: model=manual, answered_by=user email)
 	answer := &models.Answer{
 		ID:           uuid.New(),
 		QuestionID:   questionID,
@@ -1378,6 +1390,7 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 		Confidence:   1.0, // Manual answers have full confidence
 		Citations:    []models.Citation{},
 		Model:        stringPtr("manual"),
+		AnsweredBy:   stringPtr(user.Email),
 	}
 
 	if err := h.DB.CreateAnswer(r.Context(), answer); err != nil {
@@ -1400,10 +1413,16 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(answer)
 }
 
-// UpdateAnswerConfirmed updates the confirmed status of an answer
+// UpdateAnswerConfirmed updates the confirmed status of an answer (RequireAuth; admin or session creator only).
 func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
@@ -1426,10 +1445,16 @@ func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
+	// Verify session exists and user is admin or session creator
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
+		return
+	}
+	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
+	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
+	if !isCreator && !isAdmin {
+		http.Error(w, "Only the session creator or an admin can confirm an answer", http.StatusForbidden)
 		return
 	}
 
@@ -1499,10 +1524,16 @@ func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(updatedAnswer)
 }
 
-// TranscribeSessionAnswerVoice accepts a short audio recording for an answer and returns a transcription.
+// TranscribeSessionAnswerVoice accepts a short audio recording for an answer and returns a transcription (RequireAuth; admin or creator).
 func (h *Handlers) TranscribeSessionAnswerVoice(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 
@@ -1525,10 +1556,16 @@ func (h *Handlers) TranscribeSessionAnswerVoice(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
+	// Verify session exists and user is admin or session creator
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
+		return
+	}
+	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
+	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
+	if !isCreator && !isAdmin {
+		http.Error(w, "Only the session creator or an admin can provide an answer", http.StatusForbidden)
 		return
 	}
 

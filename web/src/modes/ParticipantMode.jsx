@@ -145,6 +145,9 @@ export function ParticipantMode({
         } catch {
           if (text) msg = text
         }
+        if (res.status === 401) {
+          msg = 'Your session isn’t recognized. Please log out and log in again from this page (or open the session from the same site where you logged in).'
+        }
         setStanceFeedback({ type: 'error', message: msg })
         return
       }
@@ -497,6 +500,11 @@ export function ParticipantMode({
               <textarea
                 value={stanceRationale}
                 onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+                onBlur={() => {
+                  if (myStance?.stance && !stanceSubmitting && !currentSession.session.decision_outcome) {
+                    submitStance(myStance.stance)
+                  }
+                }}
                 placeholder="Optional: briefly explain your position (max 500 chars)…"
                 rows={2}
                 style={{ width: '100%', marginTop: '8px', padding: '6px 8px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box' }}

@@ -79,7 +79,7 @@ export function MaterialsTreePanel({
   if (!session) return null
 
   const { video_sources = [], materials = [], unread_material_ids = [], primary_video, additional_videos = [] } = session
-  const unreadSet = new Set(unread_material_ids || [])
+  const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
   const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
   const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
   const documents = materials.filter(m => {
@@ -241,7 +241,7 @@ export function MaterialsTreePanel({
                 key={m.id}
                 icon={getMaterialIcon(m)}
                 title={m.filename || 'Untitled'}
-                meta={[materialStatusMeta(m), unreadSet.has(m.id) ? 'New' : null].filter(Boolean).join(' • ')}
+                meta={[materialStatusMeta(m), unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean).join(' • ')}
                 selected={selectedDocumentId === m.id}
                 onClick={(e) => onSelectDocument(m, e)}
               />
@@ -258,7 +258,7 @@ export function MaterialsTreePanel({
                 key={m.id}
                 icon={getMaterialIcon(m)}
                 title={m.filename || 'Untitled'}
-                meta={[materialStatusMetaSlides(m), unreadSet.has(m.id) ? 'New' : null].filter(Boolean).join(' • ')}
+                meta={[materialStatusMetaSlides(m), unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean).join(' • ')}
                 selected={selectedDocumentId === m.id}
                 onClick={(e) => onSelectDocument(m, e)}
               />

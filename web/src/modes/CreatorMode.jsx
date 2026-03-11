@@ -163,6 +163,7 @@ export function CreatorMode({
   const answerVoiceChunksRef = useRef([])
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
+  const [answerSubmitting, setAnswerSubmitting] = useState(false)
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false) // collapsed by default
   const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
   const [contextPremise, setContextPremise] = useState('')
@@ -173,10 +174,15 @@ export function CreatorMode({
   const [stanceData, setStanceData] = useState(null)
   const [stancePanelExpanded, setStancePanelExpanded] = useState(true)
 
-  const startAnswering = (questionId) => {
+  const startAnswering = (questionId, existingAnswer = null) => {
     setAnsweringQuestionId(questionId)
-    setAnswerText('')
-    setAnswerStatus('answered')
+    if (existingAnswer && (existingAnswer.answer_text || existingAnswer.answer_text === '')) {
+      setAnswerText(existingAnswer.answer_text || '')
+      setAnswerStatus(existingAnswer.answer_status || 'answered')
+    } else {
+      setAnswerText('')
+      setAnswerStatus('answered')
+    }
     setAnswerFeedback({ type: '', message: '' })
   }
 
@@ -333,6 +339,7 @@ export function CreatorMode({
 
       const response = await fetch(`${apiBaseUrl}/sessions/${currentSession.session.id}/questions/${answeringQuestionId}/answers/voice`, {
         method: 'POST',
+        credentials: 'include',
         body: form
       })
 
@@ -367,11 +374,12 @@ export function CreatorMode({
     }
 
     setAnswerFeedback({ type: '', message: '' })
-    setLoading(true)
+    setAnswerSubmitting(true)
 
     try {
       const response = await fetch(`${apiBaseUrl}/sessions/${currentSession.session.id}/questions/${answeringQuestionId}/answers`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           answer_text: text.trim(),
@@ -400,7 +408,7 @@ export function CreatorMode({
     } catch (err) {
       setAnswerFeedback({ type: 'error', message: `Failed to submit answer: ${err.message}` })
     } finally {
-      setLoading(false)
+      setAnswerSubmitting(false)
     }
   }
 
@@ -1627,6 +1635,13 @@ export function CreatorMode({
                   <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
                     <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
                     <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+                      <div style={{ marginBottom: '5px' }}>
+                        From: {q.answer.model && q.answer.model !== 'manual'
+                          ? <span style={{ fontWeight: 'bold' }}>System</span>
+                          : (q.answer.answered_by
+                              ? <span style={{ fontWeight: 'bold' }}>{q.answer.answered_by}</span>
+                              : <span style={{ fontWeight: 'bold' }}>Creator</span>)}
+                      </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '5px' }}>
                         <span>
                           Status: <span style={{ 
@@ -1635,119 +1650,52 @@ export function CreatorMode({
                             fontWeight: 'bold'
                           }}>{q.answer.answer_status}</span>
                         </span>
-                        {q.answer.confidence !== undefined && q.answer.confidence !== null && (
+                        {q.answer.model !== 'manual' && q.answer.confidence !== undefined && q.answer.confidence !== null && (
                           <span>
                             Confidence: <span style={{ fontWeight: 'bold' }}>{(q.answer.confidence * 100).toFixed(1)}%</span>
                           </span>
                         )}
                       </div>
-                      {q.answer && q.answer.answer_status === 'answered' && (
-                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#f0f8ff', borderRadius: '4px', border: '1px solid #2196F3' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer', userSelect: 'none' }}>
+                      <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+                        {q.answer && q.answer.answer_status === 'answered' && q.answer.model !== 'manual' && (
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer' }}>
                             <input
                               type="checkbox"
                               checked={q.answer.confirmed || false}
                               disabled={confirmingAnswerId === q.answer.id}
                               onChange={async (e) => {
-                                // Try multiple ways to get session ID
-                                let sessionId = currentSession?.session?.id || currentSession?.id
-                                
-                                // If still no session ID, try to get it from the question
-                                if (!sessionId && q.session_id) {
-                                  sessionId = q.session_id
-                                }
-                                
-                                if (!sessionId) {
-                                  console.error('No session ID available for confirmation', { currentSession, question: q })
-                                  alert('Session ID not found. Please ensure you are viewing a session. The checkbox will still work if you have a session selected.')
-                                  e.target.checked = !e.target.checked // Revert checkbox
-                                  return
-                                }
-                                
+                                const sessionId = currentSession?.session?.id || currentSession?.id
                                 const answerId = q.answer?.id
-                                if (!answerId) {
-                                  console.error('No answer ID found', { question: q })
-                                  alert('Answer ID not found.')
-                                  e.target.checked = !e.target.checked // Revert checkbox
-                                  return
-                                }
-                                
+                                if (!sessionId || !answerId) return
                                 const confirmed = e.target.checked
-                                
-                                console.log('Updating answer confirmation:', { answerId, sessionId, confirmed, apiBaseUrl })
-                                
-                                if (!apiBaseUrl) {
-                                  console.error('API base URL not set')
-                                  alert('API URL not configured. Please check your settings.')
-                                  e.target.checked = !e.target.checked // Revert checkbox
-                                  return
-                                }
-                                
                                 setConfirmingAnswerId(answerId)
                                 try {
-                                  const url = `${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`
-                                  console.log('Calling API:', url, { method: 'PATCH', body: { confirmed } })
-                                  
-                                  const response = await fetch(url, {
+                                  const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`, {
                                     method: 'PATCH',
+                                    credentials: 'include',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ confirmed })
                                   })
-                                  
-                                  console.log('Response status:', response.status, response.statusText)
-                                  
-                                  if (!response.ok) {
-                                    const text = await response.text()
-                                    console.error('Failed to update answer confirmation:', { status: response.status, statusText: response.statusText, body: text })
-                                    alert(`Failed to update confirmation (${response.status}): ${text || response.statusText}`)
-                                    // Revert checkbox on error
-                                    e.target.checked = !confirmed
-                                    return
-                                  }
-                                  
-                                  const updatedAnswer = await response.json()
-                                  console.log('Answer confirmation updated successfully:', updatedAnswer)
-                                  
-                                  // WebSocket will update the UI, but we can also refresh questions
-                                  if (fetchSessionQuestions) {
-                                    fetchSessionQuestions(sessionId)
-                                  }
-                                } catch (err) {
-                                  console.error('Error updating answer confirmation:', err)
-                                  const errorMsg = err.message || (err instanceof TypeError && err.message.includes('fetch') ? 'Network error - check if the API server is running' : 'Unknown error')
-                                  alert(`Error updating confirmation: ${errorMsg}`)
-                                  // Revert checkbox on error
-                                  e.target.checked = !confirmed
+                                  if (res.ok && fetchSessionQuestions) fetchSessionQuestions(sessionId)
                                 } finally {
                                   setConfirmingAnswerId(null)
                                 }
                               }}
-                              style={{ 
-                                cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer',
-                                width: '18px',
-                                height: '18px',
-                                margin: 0
-                              }}
                             />
-                            <span style={{ 
-                              fontSize: '13px', 
-                              color: q.answer.confirmed ? '#4CAF50' : '#2196F3', 
-                              fontWeight: q.answer.confirmed ? 'bold' : 'normal' 
-                            }}>
-                              {q.answer.confirmed ? '✓ Confirmed by Creator' : 'Confirm this answer'}
-                            </span>
+                            <span>{q.answer.confirmed ? '✓ Verified' : 'Verify this answer'}</span>
                           </label>
-                        </div>
-                      )}
+                        )}
+                        {answeringQuestionId !== q.id && (
+                          <button
+                            type="button"
+                            onClick={() => startAnswering(q.id, q.answer)}
+                            style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: '#1565c0', backgroundColor: '#e3f2fd', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer' }}
+                          >
+                            {q.answer ? 'Replace answer' : 'Answer'}
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    {answeringQuestionId === q.id && (
-                      <button 
-                        onClick={() => startAnswering(q.id)}
-                        style={{ marginTop: '10px', fontSize: '12px', padding: '4px 8px' }}
-                      >
-                        Edit Answer
-                      </button>
-                    )}
                   </div>
                 ) : (
                   <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
@@ -1764,14 +1712,16 @@ export function CreatorMode({
                 )}
 
                 {/* Answer Input Form */}
-                {answeringQuestionId === q.id && (
+                {answeringQuestionId === q.id ? (
                   <div style={{ marginTop: '15px', padding: '15px', border: '2px solid #2196F3', borderRadius: '5px', backgroundColor: '#f0f8ff' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Your Answer:</div>
-                    
+                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>
+                      {q.answer ? 'Replace answer' : 'Your answer'}
+                    </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
                       <button
                         onClick={toggleAnswerVoiceRecording}
-                        disabled={loading || answerVoiceUploading}
+                        disabled={loading || answerSubmitting || answerVoiceUploading}
+                        type="button"
                         style={{
                           marginTop: 0,
                           backgroundColor: answerVoiceRecording ? '#d32f2f' : '#1976D2',
@@ -1802,14 +1752,14 @@ export function CreatorMode({
                         <div style={{ display: 'flex', gap: '10px' }}>
                           <button
                             onClick={confirmAnswerVoice}
-                            disabled={!answerVoiceTranscribedText.trim() || loading}
+                            disabled={!answerVoiceTranscribedText.trim() || loading || answerSubmitting}
                             style={{ marginTop: 0 }}
                           >
                             Confirm & Submit
                           </button>
                           <button
                             onClick={() => { setShowAnswerVoiceConfirm(false); setAnswerVoiceTranscribedText('') }}
-                            disabled={loading}
+                            disabled={loading || answerSubmitting}
                             style={{ marginTop: 0, backgroundColor: '#757575' }}
                           >
                             Cancel
@@ -1840,14 +1790,14 @@ export function CreatorMode({
                         <div style={{ display: 'flex', gap: '10px' }}>
                           <button
                             onClick={() => submitAnswer(answerText)}
-                            disabled={!answerText.trim() || loading}
+                            disabled={!answerText.trim() || loading || answerSubmitting}
                             style={{ marginTop: 0 }}
                           >
                             Submit Answer
                           </button>
                           <button
                             onClick={cancelAnswering}
-                            disabled={loading}
+                            disabled={loading || answerSubmitting}
                             style={{ marginTop: 0, backgroundColor: '#757575' }}
                           >
                             Cancel
@@ -1862,7 +1812,7 @@ export function CreatorMode({
                       </div>
                     )}
                   </div>
-                )}
+                ) : null}
               </div>
             ))}
           </div>

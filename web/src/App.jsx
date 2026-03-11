@@ -1580,8 +1580,9 @@ function App() {
       if (isParticipant && effectiveParticipantRef) {
         headers['X-Participant-Ref'] = effectiveParticipantRef
       }
-      // Always fetch fresh session so video_access_url (presigned) is current; avoid cached response on reload
-      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store' })
+      // Always fetch fresh session so video_access_url (presigned) is current; avoid cached response on reload.
+      // Use credentials so refetch after markMaterialsSeen sends cookie and returns updated unread_material_ids.
+      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store', credentials: 'include' })
       if (!response.ok) {
         setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${response.status}` })
         // Mode is already set above, so UI will still hide/show correct sections
@@ -1617,7 +1618,7 @@ function App() {
       if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
         const loadedId = data.session.id || sessionId
         setTimeout(() => {
-          fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store' })
+          fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store', credentials: 'include' })
             .then((r) => r.ok ? r.json() : null)
             .then((retryData) => {
               const currentId = loadedId
@@ -1804,13 +1805,14 @@ function App() {
   const markMaterialsSeen = useCallback(async (materialIds) => {
     const sessionId = currentSession?.session?.id || currentSession?.id
     const effectiveParticipantRef = participantRef || authUser?.email
-    if (!sessionId || !effectiveParticipantRef || !materialIds?.length) return
+    const ids = Array.isArray(materialIds) ? materialIds.map((id) => String(id)).filter(Boolean) : []
+    if (!sessionId || !effectiveParticipantRef || ids.length === 0) return
     try {
       const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/materials/seen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ participant_ref: effectiveParticipantRef, material_ids: materialIds })
+        body: JSON.stringify({ participant_ref: effectiveParticipantRef, material_ids: ids })
       })
       if (!res.ok) return
       await refetchSession()
@@ -2389,10 +2391,11 @@ function App() {
     }
   }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, setStanceVersion])
 
-  // Clear mock questions and pending (optimistic) questions when session changes
+  // Clear all question state when session changes so we never show the previous session's questions
   useEffect(() => {
     setMockQuestions([])
     setPendingSessionQuestions([])
+    setQuestions([])
   }, [effectiveSessionId])
 
   // Merge pending + server questions + mock, sorted by created_at so new question appears in order

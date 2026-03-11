@@ -46,8 +46,8 @@ func (db *DB) CreateAnswer(ctx context.Context, answer *models.Answer) error {
 	}
 
 	query := `
-		INSERT INTO answers (id, question_id, answer_text, answer_status, confidence, citations, model, confirmed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO answers (id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at
 	`
 
@@ -59,6 +59,7 @@ func (db *DB) CreateAnswer(ctx context.Context, answer *models.Answer) error {
 		answer.Confidence,
 		citationsJSON,
 		answer.Model,
+		answer.AnsweredBy,
 		answer.Confirmed,
 	).Scan(&answer.CreatedAt)
 	if err != nil {
@@ -117,10 +118,10 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 	query := `
 		SELECT 
 			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
-			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
+			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
-			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, confirmed, created_at
+			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
 			ORDER BY created_at DESC
@@ -149,6 +150,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 		var answerConfidence *float32
 		var answerCitationsJSON []byte
 		var answerModel *string
+		var answerAnsweredBy *string
 		var answerConfirmed *bool
 		var answerCreatedAt *time.Time
 
@@ -169,6 +171,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 			&answerConfidence,
 			&answerCitationsJSON,
 			&answerModel,
+			&answerAnsweredBy,
 			&answerConfirmed,
 			&answerCreatedAt,
 		)
@@ -195,6 +198,7 @@ func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID
 				Confidence:   *answerConfidence,
 				Citations:    citations,
 				Model:        answerModel,
+				AnsweredBy:   answerAnsweredBy,
 				Confirmed:    *answerConfirmed,
 				CreatedAt:    *answerCreatedAt,
 			}
@@ -211,7 +215,7 @@ func (db *DB) GetLatestAnswerByQuestionID(ctx context.Context, questionID uuid.U
 	var citationsJSON []byte
 
 	query := `
-		SELECT id, question_id, answer_text, answer_status, confidence, citations, model, confirmed, created_at
+		SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 		FROM answers
 		WHERE question_id = $1
 		ORDER BY created_at DESC
@@ -226,6 +230,7 @@ func (db *DB) GetLatestAnswerByQuestionID(ctx context.Context, questionID uuid.U
 		&answer.Confidence,
 		&citationsJSON,
 		&answer.Model,
+		&answer.AnsweredBy,
 		&answer.Confirmed,
 		&answer.CreatedAt,
 	)
@@ -256,10 +261,10 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 	query := `
 		SELECT 
 			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
-			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
+			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
-			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, confirmed, created_at
+			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
 			ORDER BY created_at DESC
@@ -280,6 +285,7 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 	var answerConfidence *float32
 	var answerCitationsJSON []byte
 	var answerModel *string
+	var answerAnsweredBy *string
 	var answerConfirmed *bool
 	var answerCreatedAt *time.Time
 
@@ -300,6 +306,7 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 		&answerConfidence,
 		&answerCitationsJSON,
 		&answerModel,
+		&answerAnsweredBy,
 		&answerConfirmed,
 		&answerCreatedAt,
 	)
@@ -328,6 +335,7 @@ func (db *DB) FindExistingQuestionByText(ctx context.Context, sessionID uuid.UUI
 			Confidence:   *answerConfidence,
 			Citations:    citations,
 			Model:        answerModel,
+			AnsweredBy:   answerAnsweredBy,
 			Confirmed:    *answerConfirmed,
 			CreatedAt:    *answerCreatedAt,
 		}
@@ -347,7 +355,7 @@ func (db *DB) GetAnswerByID(ctx context.Context, answerID uuid.UUID) (*models.An
 	var citationsJSON []byte
 
 	query := `
-		SELECT id, question_id, answer_text, answer_status, confidence, citations, model, confirmed, created_at
+		SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 		FROM answers
 		WHERE id = $1
 	`
@@ -360,6 +368,7 @@ func (db *DB) GetAnswerByID(ctx context.Context, answerID uuid.UUID) (*models.An
 		&answer.Confidence,
 		&citationsJSON,
 		&answer.Model,
+		&answer.AnsweredBy,
 		&answer.Confirmed,
 		&answer.CreatedAt,
 	)

@@ -4,7 +4,8 @@
       "Bash(grep:*)",
       "Bash(go build:*)",
       "Bash(go test:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(find /c/Users/pares/code/talkback/web/src -type f -name \"*.jsx\" | head -3 | xargs -I {} grep -l \"fetch\\\\|http\\\\|api\" {} 2>/dev/null | head -2)"
     ]
   }
 }

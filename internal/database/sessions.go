@@ -309,10 +309,10 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 	query := `
 		SELECT 
 			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
-			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.confirmed, a.created_at
+			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
-			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, confirmed, created_at
+			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
 			ORDER BY created_at DESC
@@ -341,6 +341,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 		var answerConfidence *float32
 		var answerCitationsJSON []byte
 		var answerModel *string
+		var answerAnsweredBy *string
 		var answerConfirmed *bool
 		var answerCreatedAt *time.Time
 
@@ -361,6 +362,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 			&answerConfidence,
 			&answerCitationsJSON,
 			&answerModel,
+			&answerAnsweredBy,
 			&answerConfirmed,
 			&answerCreatedAt,
 		)
@@ -387,6 +389,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 				Confidence:   *answerConfidence,
 				Citations:    citations,
 				Model:        answerModel,
+				AnsweredBy:   answerAnsweredBy,
 				Confirmed:    *answerConfirmed,
 				CreatedAt:    *answerCreatedAt,
 			}
@@ -451,10 +454,10 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 	query := `
 		SELECT 
 			q.id, q.artifact_id, q.session_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
-			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.created_at
+			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
 		LEFT JOIN LATERAL (
-			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, created_at
+			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
 			ORDER BY created_at DESC
@@ -483,6 +486,8 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 		var answerConfidence *float32
 		var answerCitationsJSON []byte
 		var answerModel *string
+		var answerAnsweredBy *string
+		var answerConfirmed *bool
 		var answerCreatedAt *time.Time
 
 		err := rows.Scan(
@@ -501,6 +506,8 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 			&answerConfidence,
 			&answerCitationsJSON,
 			&answerModel,
+			&answerAnsweredBy,
+			&answerConfirmed,
 			&answerCreatedAt,
 		)
 		if err != nil {
@@ -518,6 +525,10 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 				}
 			}
 
+			confirmed := false
+			if answerConfirmed != nil {
+				confirmed = *answerConfirmed
+			}
 			answer := &models.Answer{
 				ID:           *answerID,
 				QuestionID:   *answerQuestionID,
@@ -526,6 +537,8 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 				Confidence:   *answerConfidence,
 				Citations:    citations,
 				Model:        answerModel,
+				AnsweredBy:   answerAnsweredBy,
+				Confirmed:    confirmed,
 				CreatedAt:    *answerCreatedAt,
 			}
 			answers = append(answers, answer)

@@ -101,21 +101,30 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
         <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
           <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
           <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+            From: {q.answer.model && q.answer.model !== 'manual'
+              ? <strong>System</strong>
+              : (q.answer.answered_by ? <strong>{q.answer.answered_by}</strong> : <strong>Creator</strong>)}
+            {' | '}
             Status: <span style={{
               color: q.answer.answer_status === 'answered' ? '#4CAF50' :
                 q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
               fontWeight: 'bold'
-            }}>{q.answer.answer_status}</span> |
-            Confidence: {q.answer.confidence ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
-            {q.answer.confirmed && (
-              <span style={{
-                marginLeft: '10px',
-                color: '#4CAF50',
-                fontWeight: 'bold',
-                fontSize: '13px'
-              }}>
-                ✓ Confirmed by Creator
-              </span>
+            }}>{q.answer.answer_status}</span>
+            {q.answer.model !== 'manual' && (
+              <>
+                {' | '}
+                Confidence: {q.answer.confidence != null ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
+                {q.answer.confirmed && (
+                  <span style={{
+                    marginLeft: '10px',
+                    color: '#4CAF50',
+                    fontWeight: 'bold',
+                    fontSize: '13px'
+                  }}>
+                    ✓ Confirmed by Creator
+                  </span>
+                )}
+              </>
             )}
           </div>
           {q.answer.citations && q.answer.citations.length > 0 && (
