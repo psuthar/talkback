@@ -16,8 +16,9 @@ type ConfigStruct struct {
 	SessionTTLHours         int
 	CookieDomain            string
 	CookieSecure            bool
-	BootstrapAdminEmail     string // if set and matches first signup/login, set global_role=admin; also used for auto-create at startup
-	BootstrapAdminPassword  string // if set with BootstrapAdminEmail, auto-create admin account at startup when missing
+	BootstrapAdminEmail       string // TALKBACK_BOOTSTRAP_ADMIN_EMAIL: if set, first signup/login gets admin; also used for auto-create at startup
+	BootstrapAdminPassword    string // TALKBACK_BOOTSTRAP_ADMIN_PASSWORD: required for auto-create; used to sync password when user exists
+	BootstrapAdminDisplayName string // TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME: display name for bootstrap admin when creating or fixing "Admin"
 	AllowedOrigins          []string
 	MaxQuestionsPerSession  int    // max questions allowed per session (default 10); set via TB_MAX_QUESTIONS_PER_SESSION
 }
@@ -52,6 +53,9 @@ func loadConfig() ConfigStruct {
 	}
 	if v := os.Getenv("TALKBACK_BOOTSTRAP_ADMIN_PASSWORD"); v != "" {
 		c.BootstrapAdminPassword = v
+	}
+	if v := os.Getenv("TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME"); v != "" {
+		c.BootstrapAdminDisplayName = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("TB_ALLOWED_ORIGINS"); v != "" {
 		for _, o := range strings.Split(v, ",") {

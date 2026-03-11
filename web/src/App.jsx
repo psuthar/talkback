@@ -167,6 +167,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [currentAnswer, setCurrentAnswer] = useState(null)
   const [questions, setQuestions] = useState([])
+  const [unreadQuestionIds, setUnreadQuestionIds] = useState([]) // IDs of questions with new/unread content (from GET ?participant_ref=)
   const [pendingSessionQuestions, setPendingSessionQuestions] = useState([]) // Optimistic: show question immediately while waiting for /ask response
   const [mockQuestions, setMockQuestions] = useState([]) // In-memory mock questions (not persisted)
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
@@ -2224,9 +2225,15 @@ function App() {
     }
   }
 
-  const fetchSessionQuestions = async (sessionId) => {
+  const effectiveParticipantRefForQuestions = participantRef || authUser?.email || null
+
+  const fetchSessionQuestions = async (sessionId, participantRefForUnread = null) => {
+    const ref = participantRefForUnread ?? effectiveParticipantRefForQuestions
     try {
-      const response = await fetch(`${apiBaseUrl}/sessions/${sessionId}/questions`)
+      const url = ref
+        ? `${apiBaseUrl}/sessions/${sessionId}/questions?participant_ref=${encodeURIComponent(ref)}`
+        : `${apiBaseUrl}/sessions/${sessionId}/questions`
+      const response = await fetch(url, { credentials: 'include' })
       if (!response.ok) {
         return
       }
@@ -2251,10 +2258,31 @@ function App() {
       if (questionsWithAnswers.length > 0 || data.questions?.length === 0) {
         setQuestions(questionsWithAnswers)
       }
+      if (ref && Array.isArray(data.unread_question_ids)) {
+        setUnreadQuestionIds(data.unread_question_ids)
+      } else if (!ref) {
+        setUnreadQuestionIds([])
+      }
     } catch (err) {
       // Silently fail
     }
   }
+
+  const markQuestionViewed = useCallback(async (sessionId, questionId) => {
+    const ref = effectiveParticipantRefForQuestions
+    if (!ref || !sessionId || !questionId) return
+    try {
+      const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/questions/${questionId}/view`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ participant_ref: ref })
+      })
+      if (res.ok) {
+        await fetchSessionQuestions(sessionId, ref)
+      }
+    } catch (_) { /* ignore */ }
+  }, [apiBaseUrl, effectiveParticipantRefForQuestions])
 
   // Build participant URL for upper right corner link (include api so it works in new window/refresh)
   const sessionId = currentSession?.session?.id || currentSession?.id
@@ -2396,6 +2424,7 @@ function App() {
     setMockQuestions([])
     setPendingSessionQuestions([])
     setQuestions([])
+    setUnreadQuestionIds([])
   }, [effectiveSessionId])
 
   // Merge pending + server questions + mock, sorted by created_at so new question appears in order
@@ -2529,7 +2558,7 @@ function App() {
   }
 
   return (
-    <div className="container">
+    <div className={`container${isParticipantMode && currentSession ? ' participant-full-width' : ''}`}>
       {zoomImportToast && (
         <div style={{
           position: 'fixed',
@@ -3081,11 +3110,6 @@ function App() {
                 </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>
                   ID: <code style={{ fontSize: '11px' }}>{currentSession?.session?.id ?? '—'}</code> | 
-                  {currentSession?.artifacts && currentSession.artifacts.length > 0 ? (
-                    <>Artifacts: {currentSession.artifacts.map(a => a.title).join(', ')} |</>
-                  ) : (
-                    <>No artifacts |</>
-                  )} 
                   Status: <span style={{ 
                     color: currentSession?.session?.status === 'open' ? '#4CAF50' : '#999',
                     fontWeight: 'bold'
@@ -3168,6 +3192,8 @@ function App() {
               transcriptJobs={transcriptJobs}
               regenerateTranscript={regenerateTranscript}
               questions={displayQuestions}
+              unreadQuestionIds={unreadQuestionIds}
+              markQuestionViewed={markQuestionViewed}
               fetchSessionQuestions={fetchSessionQuestions}
               loading={loading}
               apiBaseUrl={apiBaseUrl}
@@ -3188,6 +3214,7 @@ function App() {
               setLastInvitationDraft={setLastInvitationDraft}
               setPrimaryVideoSource={setPrimaryVideoSource}
               onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
+              debugMode={debugMode}
             />
           ) : (
             <div className="participant-layout-root">
@@ -3209,6 +3236,8 @@ function App() {
                 getVideoEmbedUrl={getVideoEmbedUrl}
                 transcriptJobs={transcriptJobs}
                 questions={displayQuestions}
+                unreadQuestionIds={unreadQuestionIds}
+                markQuestionViewed={markQuestionViewed}
                 fetchSessionQuestions={fetchSessionQuestions}
                 loading={loading}
                 apiBaseUrl={apiBaseUrl}

@@ -28,6 +28,17 @@ code {
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+/* Participant mode: use full viewport width, no side margins (body has padding: 20px) */
+.container.participant-full-width {
+  max-width: none;
+  width: calc(100% + 40px);
+  margin: 0 -20px;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: content-box;
+}
+
 h1 {
   color: #333;
   margin-bottom: 10px;
@@ -305,13 +316,13 @@ button:disabled {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 260px 1fr 360px;
+  grid-template-columns: 20% 45% 35%;
   grid-template-rows: 1fr;
   overflow: hidden;
 }
 
 .participant-layout-grid.materials-collapsed {
-  grid-template-columns: 48px 1fr 360px;
+  grid-template-columns: 48px 1fr 35%;
 }
 
 .participant-materials-panel {
@@ -323,12 +334,13 @@ button:disabled {
   overflow: hidden;
   transition: min-width 0.2s ease, width 0.2s ease;
   flex-shrink: 0;
+  min-width: 0;
 }
 
-/* Expanded: full panel width so "Materials" and list are fully visible */
+/* Expanded: column is 20% from grid; panel fills it */
 .participant-materials-panel.materials-panel-expanded {
-  width: 260px;
-  min-width: 260px;
+  width: 100%;
+  min-width: 0;
 }
 
 .participant-layout-grid.materials-collapsed .participant-materials-panel,
@@ -372,8 +384,7 @@ button:disabled {
 }
 
 .participant-qa-panel {
-  width: 360px;
-  min-width: 360px;
+  min-width: 0;
   border-left: 1px solid #e0e0e0;
   background: #fafafa;
   display: flex;
@@ -437,31 +448,19 @@ button:disabled {
 
 @media (max-width: 1024px) {
   .participant-layout-grid {
-    grid-template-columns: 260px 1fr 320px;
+    grid-template-columns: 20% 45% 35%;
   }
   .participant-layout-grid.materials-collapsed {
-    grid-template-columns: 48px 1fr 320px;
-  }
-  .participant-qa-panel {
-    min-width: 320px;
-    width: 320px;
+    grid-template-columns: 48px 1fr 35%;
   }
 }
 
 @media (max-width: 768px) {
   .participant-layout-grid {
-    grid-template-columns: 220px 1fr 280px;
+    grid-template-columns: 24% 42% 34%;
   }
   .participant-layout-grid.materials-collapsed {
-    grid-template-columns: 48px 1fr 280px;
-  }
-  .participant-qa-panel {
-    min-width: 280px;
-    width: 280px;
-  }
-  .participant-materials-panel.materials-panel-expanded {
-    min-width: 220px;
-    width: 220px;
+    grid-template-columns: 48px 1fr 34%;
   }
   .participant-materials-panel.materials-panel-collapsed,
   .participant-layout-grid.materials-collapsed .participant-materials-panel {

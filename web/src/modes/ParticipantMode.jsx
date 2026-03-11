@@ -28,6 +28,8 @@ export function ParticipantMode({
   getVideoEmbedUrl,
   transcriptJobs,
   questions,
+  unreadQuestionIds = [],
+  markQuestionViewed,
   fetchSessionQuestions,
   loading,
   apiBaseUrl,
@@ -96,6 +98,7 @@ export function ParticipantMode({
   const [stanceAggregate, setStanceAggregate] = useState(null)
   const [stanceResponses, setStanceResponses] = useState([]) // per-person list with user_email
   const [stanceResponsesCollapsed, setStanceResponsesCollapsed] = useState(false) // default expanded so responses are visible
+  const [stancePanelExpanded, setStancePanelExpanded] = useState(false) // Your Position section: closed by default
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -109,6 +112,10 @@ export function ParticipantMode({
       const data = await res.json()
       setMyStance(data.my_stance ?? null)
       setStanceAggregate(data.aggregate ?? null)
+      // Populate rationale from server so the text field shows what the user previously typed (participant view)
+      if (data.my_stance?.rationale != null) {
+        setStanceRationale(typeof data.my_stance.rationale === 'string' ? data.my_stance.rationale : '')
+      }
       // API returns responses (lowercase); support both for robustness
       const list = Array.isArray(data.responses) ? data.responses : (Array.isArray(data.Responses) ? data.Responses : [])
       setStanceResponses(list)
@@ -468,15 +475,115 @@ export function ParticipantMode({
       )}
 
       {currentSession.session.primary_decision && (
-        <div style={{ flexShrink: 0, padding: '10px 20px', backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0' }}>
-          <strong style={{ fontSize: '13px' }}>Your Position</strong>
-          {currentSession.session.decision_outcome ? (
-            <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888', fontStyle: 'italic' }}>
-              Stances are locked — the outcome has been recorded.
-            </p>
-          ) : null}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-            {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => (
+        <div style={{ flexShrink: 0, backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0' }}>
+          <button
+            type="button"
+            onClick={() => setStancePanelExpanded((e) => !e)}
+            style={{
+              width: '100%',
+              padding: '10px 20px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'stretch',
+              gap: '0',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textAlign: 'left',
+              fontSize: '13px'
+            }}
+            aria-expanded={stancePanelExpanded}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <strong>Your Position</strong>
+              <span style={{ transform: stancePanelExpanded ? 'rotate(180deg)' : 'rotate(0deg)', display: 'inline-block', transition: 'transform 0.15s ease', flexShrink: 0 }}>▼</span>
+            </div>
+            {!stancePanelExpanded && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px', minWidth: 0 }}>
+                {(myStance?.stance || stanceRationale?.trim()) ? (
+                  <>
+                    <span style={{ fontSize: '13px', color: '#333', fontWeight: 500 }}>
+                      Your decision:
+                    </span>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '4px 10px',
+                        borderRadius: '6px',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        backgroundColor: myStance?.stance === 'agree' ? '#e8f5e9' : myStance?.stance === 'disagree' ? '#ffebee' : myStance?.stance === 'conditional' ? '#fff3e0' : myStance?.stance === 'abstain' ? '#eceff1' : '#e3f2fd',
+                        color: myStance?.stance === 'agree' ? '#2e7d32' : myStance?.stance === 'disagree' ? '#c62828' : myStance?.stance === 'conditional' ? '#e65100' : myStance?.stance === 'abstain' ? '#546e7a' : '#1565c0',
+                        border: `2px solid ${myStance?.stance === 'agree' ? '#81c784' : myStance?.stance === 'disagree' ? '#e57373' : myStance?.stance === 'conditional' ? '#ffb74d' : myStance?.stance === 'abstain' ? '#90a4ae' : '#64b5f6'}`
+                      }}
+                    >
+                      {myStance?.stance ? (myStance.stance === 'need_more_info' ? 'Need More Info' : myStance.stance.charAt(0).toUpperCase() + myStance.stance.slice(1)) : '—'}
+                    </span>
+                    {stanceRationale?.trim() && (
+                      <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+                        {stanceRationale.trim().slice(0, 60)}{stanceRationale.trim().length > 60 ? '…' : ''}
+                      </span>
+                    )}
+                    {!currentSession.session.decision_outcome && (
+                      <span style={{ fontSize: '12px', color: '#1976d2', fontWeight: 600, flexShrink: 0 }}>
+                        Change →
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  !currentSession.session.decision_outcome ? (
+                    <>
+                      <span style={{ fontSize: '13px', color: '#666', fontWeight: 500 }}>Your decision:</span>
+                      <span style={{ fontSize: '12px', color: '#1976d2', fontWeight: 600 }}>
+                        not made yet — Add your response →
+                      </span>
+                    </>
+                  ) : null
+                )}
+              </div>
+            )}
+          </button>
+          {stancePanelExpanded && (
+            <div style={{ padding: '0 20px 10px 20px' }}>
+              {currentSession.session.decision_outcome ? (
+                <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888', fontStyle: 'italic' }}>
+                  Stances are locked — the outcome has been recorded.
+                </p>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setStancePanelExpanded(false)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      marginTop: '6px',
+                      marginBottom: '4px',
+                      padding: '6px 0',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontSize: '13px',
+                      color: myStance?.stance ? '#1565c0' : '#666',
+                      fontWeight: myStance?.stance ? 600 : 400
+                    }}
+                  >
+                    Your decision: {myStance?.stance
+                      ? (myStance.stance === 'need_more_info' ? 'Need More Info' : myStance.stance.charAt(0).toUpperCase() + myStance.stance.slice(1))
+                      : 'not made yet'}
+                    <span style={{ marginLeft: '6px', fontSize: '11px', color: '#888', fontWeight: 'normal' }}>— click to collapse</span>
+                  </button>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
+            {[
+              { value: 'agree', bg: '#e8f5e9', border: '#81c784', color: '#2e7d32' },
+              { value: 'disagree', bg: '#ffebee', border: '#e57373', color: '#c62828' },
+              { value: 'conditional', bg: '#fff3e0', border: '#ffb74d', color: '#e65100' },
+              { value: 'abstain', bg: '#eceff1', border: '#90a4ae', color: '#546e7a' },
+              { value: 'need_more_info', bg: '#e3f2fd', border: '#64b5f6', color: '#1565c0' }
+            ].map(({ value: s, bg, border, color }) => (
               <button
                 key={s}
                 type="button"
@@ -484,88 +591,88 @@ export function ParticipantMode({
                 onClick={() => submitStance(s)}
                 style={{
                   padding: '5px 12px', fontSize: '12px', borderRadius: '4px',
-                  border: myStance?.stance === s ? '2px solid #1976d2' : '1px solid #ccc',
-                  backgroundColor: myStance?.stance === s ? '#e3f2fd' : '#fafafa',
-                  color: '#1a1a1a',
-                  fontWeight: myStance?.stance === s ? 700 : 400,
+                  border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
+                  backgroundColor: bg,
+                  color,
+                  fontWeight: myStance?.stance === s ? 700 : 500,
                   cursor: (stanceSubmitting || currentSession.session.decision_outcome) ? 'default' : 'pointer'
                 }}
               >
                 {s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
-          </div>
-          {!currentSession.session.decision_outcome && (
-            <>
-              <textarea
-                value={stanceRationale}
-                onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                onBlur={() => {
-                  if (myStance?.stance && !stanceSubmitting && !currentSession.session.decision_outcome) {
-                    submitStance(myStance.stance)
-                  }
-                }}
-                placeholder="Optional: briefly explain your position (max 500 chars)…"
-                rows={2}
-                style={{ width: '100%', marginTop: '8px', padding: '6px 8px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box' }}
-              />
-              <div style={{ fontSize: '11px', color: '#999', textAlign: 'right' }}>{stanceRationale.length}/500</div>
-            </>
-          )}
-          {stanceFeedback.message && (
-            <p style={{ margin: '4px 0 0', fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
-              {stanceFeedback.message}
-            </p>
-          )}
-          {(stanceAggregate?.total > 0 || stanceResponses?.length > 0) && (
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#555' }}>
-              <button
-                type="button"
-                onClick={() => {
-                  setStanceResponsesCollapsed((c) => {
-                    const next = !c
-                    if (next) fetchMyStance() // refetch when expanding so responses list is populated
-                    return next
-                  })
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: '2px 0',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                  fontSize: '12px',
-                  color: '#555',
-                  fontWeight: 600
-                }}
-                aria-expanded={!stanceResponsesCollapsed}
-              >
-                <span style={{ transform: stanceResponsesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
-                All responses ({stanceAggregate?.total ?? stanceResponses.length})
-              </button>
-              {!stanceResponsesCollapsed && (
-                <>
-                  {stanceResponses.length > 0 ? (
-                    <ul style={{ margin: '6px 0 0 16px', paddingLeft: '4px' }}>
-                      {stanceResponses.map((r, i) => (
-                        <li key={r.id || `${r.user_id}-${i}`} style={{ marginBottom: '4px' }}>
-                          <strong>{r.user_email || 'Unknown'}</strong>
-                          {' — '}
-                          <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
-                          {r.rationale && r.rationale.trim() && (
-                            <span style={{ color: '#666', fontStyle: 'italic' }}> ({r.rationale.trim().slice(0, 80)}{r.rationale.trim().length > 80 ? '…' : ''})</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p style={{ margin: '6px 0 0 16px', fontSize: '12px', color: '#888' }}>
-                      {stanceAggregate?.total > 0 ? `${stanceAggregate.total} response(s) recorded. Refreshing…` : 'No responses yet.'}
-                    </p>
-                  )}
+                  </div>
+                  <textarea
+                    value={stanceRationale}
+                    onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+                    onBlur={() => {
+                      if (myStance?.stance && !stanceSubmitting && !currentSession.session.decision_outcome) {
+                        submitStance(myStance.stance)
+                      }
+                    }}
+                    placeholder="Optional: briefly explain your position (max 500 chars)…"
+                    rows={2}
+                    style={{ width: '100%', marginTop: '8px', padding: '6px 8px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ fontSize: '11px', color: '#999', textAlign: 'right' }}>{stanceRationale.length}/500</div>
                 </>
+              )}
+              {stanceFeedback.message && (
+                <p style={{ margin: '4px 0 0', fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
+                  {stanceFeedback.message}
+                </p>
+              )}
+              {(stanceAggregate?.total > 0 || stanceResponses?.length > 0) && (
+                <div style={{ marginTop: '10px', fontSize: '12px', color: '#555' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStanceResponsesCollapsed((c) => {
+                        const next = !c
+                        if (next) fetchMyStance() // refetch when expanding so responses list is populated
+                        return next
+                      })
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: '2px 0',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '12px',
+                      color: '#555',
+                      fontWeight: 600
+                    }}
+                    aria-expanded={!stanceResponsesCollapsed}
+                  >
+                    <span style={{ transform: stanceResponsesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
+                    All responses ({stanceAggregate?.total ?? stanceResponses.length})
+                  </button>
+                  {!stanceResponsesCollapsed && (
+                    <>
+                      {stanceResponses.length > 0 ? (
+                        <ul style={{ margin: '6px 0 0 16px', paddingLeft: '4px' }}>
+                          {stanceResponses.map((r, i) => (
+                            <li key={r.id || `${r.user_id}-${i}`} style={{ marginBottom: '4px' }}>
+                              <strong>{r.user_email || 'Unknown'}</strong>
+                              {' — '}
+                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
+                              {r.rationale && r.rationale.trim() && (
+                                <span style={{ color: '#666', fontStyle: 'italic' }}> ({r.rationale.trim().slice(0, 80)}{r.rationale.trim().length > 80 ? '…' : ''})</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p style={{ margin: '6px 0 0 16px', fontSize: '12px', color: '#888' }}>
+                          {stanceAggregate?.total > 0 ? `${stanceAggregate.total} response(s) recorded. Refreshing…` : 'No responses yet.'}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -663,7 +770,8 @@ export function ParticipantMode({
         <aside className="participant-qa-panel">
           <QAPanel
             questions={questions || []}
-            fetchSessionQuestions={fetchSessionQuestions}
+            unreadQuestionIds={unreadQuestionIds}
+            markQuestionViewed={markQuestionViewed}
             sessionId={currentSession.session?.id}
             loading={loading}
             questionText={questionText}
@@ -675,6 +783,7 @@ export function ParticipantMode({
             replyingToQuestionId={replyingToQuestionId}
             setReplyingToQuestionId={setReplyingToQuestionId}
             currentAskerName={currentAskerName}
+            creatorDisplayName={currentSession?.created_by_display_name}
             voiceRecording={voiceRecording}
             voiceUploading={voiceUploading}
             toggleVoiceRecording={toggleVoiceRecording}

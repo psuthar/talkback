@@ -903,8 +903,9 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 }
 
 type GetQuestionsResponse struct {
-	Questions []*models.Question `json:"questions"`
-	Answers   []*models.Answer   `json:"answers"`
+	Questions          []*models.Question `json:"questions"`
+	Answers            []*models.Answer   `json:"answers"`
+	UnreadQuestionIDs  []string           `json:"unread_question_ids,omitempty"` // when participant_ref provided
 }
 
 func (h *Handlers) GetQuestions(w http.ResponseWriter, r *http.Request) {

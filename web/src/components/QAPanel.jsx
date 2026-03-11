@@ -2,6 +2,9 @@ import { QAHistory } from './QAHistory'
 
 export function QAPanel({
   questions,
+  unreadQuestionIds = [],
+  markQuestionViewed,
+  sessionId,
   loading,
   questionText,
   setQuestionText,
@@ -12,6 +15,7 @@ export function QAPanel({
   replyingToQuestionId,
   setReplyingToQuestionId,
   currentAskerName,
+  creatorDisplayName,
   voiceRecording,
   voiceUploading,
   toggleVoiceRecording,
@@ -26,116 +30,80 @@ export function QAPanel({
   voicePolishMode
 }) {
   const isThinking = loading && questionText && (!currentAnswer || !currentAnswer.answer)
-  const replyingToQuestion = replyingToQuestionId && Array.isArray(questions)
-    ? questions.find((q) => q.id === replyingToQuestionId)
-    : null
 
-  return (
-    <>
-      <div className="participant-qa-scroll">
-        <h3 style={{ margin: 0, marginBottom: '8px', fontSize: '14px', color: '#555' }}>Q&A</h3>
-        {isThinking && (
-          <div style={{
-            padding: '12px',
-            marginBottom: '12px',
-            backgroundColor: '#fff3e0',
-            borderRadius: '4px',
-            fontSize: '13px',
-            display: 'flex',
+  const MicIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable="false">
+      <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+    </svg>
+  )
+
+  const askBlock = (
+    <footer className="participant-qa-footer">
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
+        <button
+          type="button"
+          onClick={toggleVoiceRecording}
+          disabled={loading || voiceUploading}
+          title={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          aria-label={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          style={{
+            flexShrink: 0,
+            padding: '8px',
+            display: 'inline-flex',
             alignItems: 'center',
-            gap: '8px'
-          }}>
-            <span className="spinner" aria-hidden />
-            <span>Thinking…</span>
-          </div>
-        )}
-        <QAHistory
-          questions={questions}
-          readOnly={false}
-          currentAskerName={currentAskerName}
-          onCitationClick={onCitationClick}
-          onReply={setReplyingToQuestionId ? (q) => setReplyingToQuestionId(q.id) : undefined}
-        />
-      </div>
-      <footer className="participant-qa-footer">
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
-          <button
-            type="button"
-            onClick={toggleVoiceRecording}
-            disabled={loading || voiceUploading}
-            style={{
-              padding: '6px 10px',
-              fontSize: '13px',
-              backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2'
-            }}
-          >
-            {voiceRecording ? 'Stop Mic' : (voiceUploading ? '…' : 'Mic')}
-          </button>
+            justifyContent: 'center',
+            backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: (loading || voiceUploading) ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {voiceRecording ? (
+            <span style={{ fontSize: '12px', fontWeight: 600 }}>Stop</span>
+          ) : voiceUploading ? (
+            <span className="spinner" style={{ width: 18, height: 18 }} aria-hidden />
+          ) : (
+            <MicIcon />
+          )}
+        </button>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {voiceRecording && (
             <span style={{ fontSize: '12px', color: '#d32f2f' }}>Listening…</span>
           )}
-          {voiceUploading && (
-            <span style={{ fontSize: '12px', color: '#666', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span className="spinner" aria-hidden /> Processing…
-            </span>
+          {!showVoiceConfirm && (
+            <>
+              <textarea
+                value={questionText}
+                onChange={(e) => setQuestionText(e.target.value)}
+                placeholder="Ask a question..."
+                rows={2}
+                style={{
+                  width: '100%',
+                  resize: 'vertical',
+                  minHeight: '44px',
+                  padding: '8px',
+                  boxSizing: 'border-box'
+                }}
+              />
+              <button
+                type="button"
+                onClick={askSessionQuestion}
+                disabled={!questionText?.trim() || loading}
+                style={{ width: '100%' }}
+              >
+                Ask
+              </button>
+            </>
           )}
         </div>
-        {voiceFeedback.message && (
-          <div className={voiceFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
-            {voiceFeedback.message}
-          </div>
-        )}
-        {replyingToQuestion && (
-          <div style={{
-            marginBottom: '8px',
-            padding: '8px 10px',
-            backgroundColor: '#e3f2fd',
-            borderRadius: '4px',
-            fontSize: '12px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '8px'
-          }}>
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Replying to: {(replyingToQuestion.question_text || '').slice(0, 60)}
-              {(replyingToQuestion.question_text || '').length > 60 ? '…' : ''}
-            </span>
-            <button
-              type="button"
-              onClick={() => setReplyingToQuestionId(null)}
-              style={{ flexShrink: 0, padding: '2px 8px', fontSize: '12px' }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-        {!showVoiceConfirm && (
-          <>
-            <textarea
-              value={questionText}
-              onChange={(e) => setQuestionText(e.target.value)}
-              placeholder={replyingToQuestionId ? 'Ask a follow-up...' : 'Ask a question...'}
-              rows={2}
-              style={{
-                width: '100%',
-                marginBottom: '8px',
-                resize: 'vertical',
-                minHeight: '44px',
-                padding: '8px'
-              }}
-            />
-            <button
-              type="button"
-              onClick={askSessionQuestion}
-              disabled={!questionText?.trim() || loading}
-              style={{ width: '100%' }}
-            >
-              Ask
-            </button>
-          </>
-        )}
-        {showVoiceConfirm && (
+      </div>
+      {voiceFeedback.message && (
+        <div className={voiceFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
+          {voiceFeedback.message}
+        </div>
+      )}
+      {showVoiceConfirm && !replyingToQuestionId && (
           <div style={{
             marginTop: '10px',
             padding: '10px',
@@ -202,12 +170,65 @@ export function QAPanel({
             </div>
           </div>
         )}
-        {askQuestionFeedback.message && (
-          <div className={askQuestionFeedback.type} style={{ marginTop: '8px', fontSize: '12px' }}>
-            {askQuestionFeedback.message}
+      {askQuestionFeedback.message && (
+        <div className={askQuestionFeedback.type} style={{ marginTop: '8px', fontSize: '12px' }}>
+          {askQuestionFeedback.message}
+        </div>
+      )}
+    </footer>
+  )
+
+  return (
+    <>
+      {askBlock}
+      <div className="participant-qa-scroll">
+        <h3 style={{ margin: 0, marginBottom: '8px', fontSize: '14px', color: '#555' }}>Q&A</h3>
+        {isThinking && (
+          <div style={{
+            padding: '12px',
+            marginBottom: '12px',
+            backgroundColor: '#fff3e0',
+            borderRadius: '4px',
+            fontSize: '13px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span className="spinner" aria-hidden />
+            <span>Thinking…</span>
           </div>
         )}
-      </footer>
+        <QAHistory
+          questions={questions}
+          unreadQuestionIds={unreadQuestionIds}
+          markQuestionViewed={markQuestionViewed}
+          sessionId={sessionId}
+          readOnly={false}
+          currentAskerName={currentAskerName}
+          onCitationClick={onCitationClick}
+          onReply={setReplyingToQuestionId ? (q) => setReplyingToQuestionId(q.id) : undefined}
+          creatorDisplayName={creatorDisplayName}
+          replyingToQuestionId={replyingToQuestionId}
+          setReplyingToQuestionId={setReplyingToQuestionId}
+          questionText={questionText}
+          setQuestionText={setQuestionText}
+          askSessionQuestion={askSessionQuestion}
+          loading={loading}
+          toggleVoiceRecording={toggleVoiceRecording}
+          voiceRecording={voiceRecording}
+          voiceUploading={voiceUploading}
+          voiceFeedback={voiceFeedback}
+          showVoiceConfirm={showVoiceConfirm}
+          voiceTranscribedText={voiceTranscribedText}
+          setVoiceTranscribedText={setVoiceTranscribedText}
+          confirmVoiceQuestion={confirmVoiceQuestion}
+          cancelVoiceReview={cancelVoiceReview}
+          polishVoiceQuestion={polishVoiceQuestion}
+          voicePolishing={voicePolishing}
+          voicePolishMode={voicePolishMode}
+          askQuestionFeedback={askQuestionFeedback}
+        />
+      </div>
     </>
   )
 }

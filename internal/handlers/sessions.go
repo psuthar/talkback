@@ -42,19 +42,20 @@ type GetSessionsResponse struct {
 }
 
 type GetSessionResponse struct {
-	Session             *models.Session       `json:"session"`
-	Artifacts           []*models.Artifact    `json:"artifacts"`
-	Materials           []*models.Material     `json:"materials"`
-	VideoSources        []*models.VideoSource `json:"video_sources"`
-	PrimaryVideo        *models.VideoSource   `json:"primary_video,omitempty"`   // effective primary (explicit primary, else first ready, else first)
-	AdditionalVideos    []*models.VideoSource `json:"additional_videos,omitempty"` // all other session videos
-	RecentQuestions     []*models.Question    `json:"recent_questions"`
-	RecentAnswers       []*models.Answer      `json:"recent_answers"`
-	Mode                string                `json:"mode"` // "creator" or "participant"
-	UnreadMaterialIDs   []string              `json:"unread_material_ids,omitempty"`   // only when participant_ref provided
-	VideoAccessURL      string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
-	PlaybackReasonCode  string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
-	PlaybackMessage     string                `json:"playback_message,omitempty"`      // safe message when video not playable
+	Session                *models.Session       `json:"session"`
+	Artifacts              []*models.Artifact    `json:"artifacts"`
+	Materials              []*models.Material     `json:"materials"`
+	VideoSources           []*models.VideoSource `json:"video_sources"`
+	PrimaryVideo           *models.VideoSource   `json:"primary_video,omitempty"`   // effective primary (explicit primary, else first ready, else first)
+	AdditionalVideos       []*models.VideoSource `json:"additional_videos,omitempty"` // all other session videos
+	RecentQuestions        []*models.Question    `json:"recent_questions"`
+	RecentAnswers          []*models.Answer      `json:"recent_answers"`
+	Mode                   string                `json:"mode"` // "creator" or "participant"
+	CreatedByDisplayName   *string               `json:"created_by_display_name,omitempty"` // session creator display name for UI
+	UnreadMaterialIDs      []string              `json:"unread_material_ids,omitempty"`   // only when participant_ref provided
+	VideoAccessURL         string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
+	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
+	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
 }
 
 // resolveEffectivePrimaryAndAdditional returns the session's effective primary video (explicit primary, else first ready, else first) and all other videos as additional. Backward compatible when video_role is nil.
@@ -104,6 +105,20 @@ func (h *Handlers) ensurePrimaryVideoIfNone(ctx context.Context, sessionID, vide
 	}
 	if err := h.DB.SetVideoSourceVideoRole(ctx, sessionID, videoSourceID, models.VideoRolePrimary); err != nil {
 		log.Printf("Warning: set first video as primary: %v", err)
+	}
+}
+
+// enrichAnswersWithDisplayNames sets AnsweredByDisplayName on each answer when AnsweredBy (email) is set.
+func (h *Handlers) enrichAnswersWithDisplayNames(ctx context.Context, answers []*models.Answer) {
+	for _, a := range answers {
+		if a == nil || a.AnsweredBy == nil || *a.AnsweredBy == "" {
+			continue
+		}
+		u, err := h.DB.GetUserByEmail(ctx, *a.AnsweredBy)
+		if err != nil || u == nil {
+			continue
+		}
+		a.AnsweredByDisplayName = &u.DisplayName
 	}
 }
 
@@ -408,6 +423,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	h.enrichAnswersWithDisplayNames(r.Context(), answers)
 
 	// Determine mode: creator if current_user matches session.created_by, otherwise participant
 	mode := "participant"
@@ -478,20 +494,27 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	primaryVideo, additionalVideos := resolveEffectivePrimaryAndAdditional(allVideoSources)
+	var createdByDisplayName *string
+	if session.CreatedBy != nil && *session.CreatedBy != "" {
+		if creator, err := h.DB.GetUserByEmail(r.Context(), *session.CreatedBy); err == nil && creator != nil {
+			createdByDisplayName = &creator.DisplayName
+		}
+	}
 	response := GetSessionResponse{
-		Session:            session,
-		Artifacts:          artifacts,
-		Materials:          allMaterials,
-		VideoSources:       allVideoSources,
-		PrimaryVideo:       primaryVideo,
-		AdditionalVideos:   additionalVideos,
-		RecentQuestions:    questions,
-		RecentAnswers:      answers,
-		Mode:               mode,
-		UnreadMaterialIDs:  unreadMaterialIDs,
-		VideoAccessURL:     videoAccessURL,
-		PlaybackReasonCode: playbackReasonCode,
-		PlaybackMessage:    playbackMessage,
+		Session:              session,
+		Artifacts:            artifacts,
+		Materials:            allMaterials,
+		VideoSources:         allVideoSources,
+		PrimaryVideo:         primaryVideo,
+		AdditionalVideos:     additionalVideos,
+		RecentQuestions:      questions,
+		RecentAnswers:        answers,
+		Mode:                 mode,
+		CreatedByDisplayName: createdByDisplayName,
+		UnreadMaterialIDs:    unreadMaterialIDs,
+		VideoAccessURL:       videoAccessURL,
+		PlaybackReasonCode:   playbackReasonCode,
+		PlaybackMessage:      playbackMessage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1746,15 +1769,69 @@ func (h *Handlers) GetSessionQuestions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	h.enrichAnswersWithDisplayNames(r.Context(), answers)
 
 	response := GetQuestionsResponse{
 		Questions: questions,
 		Answers:   answers,
 	}
+	if participantRef := strings.TrimSpace(r.URL.Query().Get("participant_ref")); participantRef != "" {
+		unread, err := h.DB.GetUnreadQuestionIDs(r.Context(), sessionID, participantRef)
+		if err != nil {
+			log.Printf("Error getting unread question IDs: %v", err)
+		} else {
+			response.UnreadQuestionIDs = make([]string, 0, len(unread))
+			for _, id := range unread {
+				response.UnreadQuestionIDs = append(response.UnreadQuestionIDs, id.String())
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// MarkQuestionViewed records that the participant viewed (expanded) a question. POST body: { "participant_ref": "..." }.
+func (h *Handlers) MarkQuestionViewed(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// /sessions/{id}/questions/{questionId}/view
+	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "questions" || pathParts[4] != "view" {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[1])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	questionID, err := uuid.Parse(pathParts[3])
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		ParticipantRef string `json:"participant_ref"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ParticipantRef) == "" {
+		http.Error(w, "participant_ref required in body", http.StatusBadRequest)
+		return
+	}
+	participantRef := strings.TrimSpace(body.ParticipantRef)
+	if err := h.DB.MarkQuestionViewed(r.Context(), sessionID, participantRef, questionID); err != nil {
+		log.Printf("Error marking question viewed: %v", err)
+		http.Error(w, "Failed to record view", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // UpdateSessionStatus updates the status of a session (e.g., close it)

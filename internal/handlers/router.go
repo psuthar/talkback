@@ -489,6 +489,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(parts) == 5 {
+		// /sessions/{id}/questions/{questionId}/view - POST (mark question as viewed by participant)
+		if parts[2] == "questions" && parts[4] == "view" {
+			if r.Method == http.MethodPost {
+				h.MarkQuestionViewed(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// /sessions/{id}/video-sources/{video_source_id}/stream - GET (proxy Zoom MP4 for in-app playback)
 		if parts[2] == "video-sources" && parts[4] == "stream" {
 			if r.Method == http.MethodGet {

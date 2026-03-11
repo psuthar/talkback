@@ -336,7 +336,8 @@ type Answer struct {
 	Confidence   float32      `json:"confidence"` // 0.0-1.0
 	Citations    []Citation   `json:"citations"`
 	Model        *string      `json:"model,omitempty"`   // "manual" for human-provided; e.g. "gpt-4o-mini" for system
-	AnsweredBy   *string      `json:"answered_by,omitempty"` // email/name when model = manual
+	AnsweredBy   *string      `json:"answered_by,omitempty"`             // email when model = manual
+	AnsweredByDisplayName *string `json:"answered_by_display_name,omitempty"` // display name for UI (enriched at read time)
 	Confirmed    bool         `json:"confirmed"` // Creator confirmation for system-generated answers
 	CreatedAt    time.Time    `json:"created_at"`
 }

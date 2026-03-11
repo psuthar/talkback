@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
@@ -126,6 +126,8 @@ export function CreatorMode({
   transcriptJobs,
   regenerateTranscript,
   questions,
+  unreadQuestionIds = [],
+  markQuestionViewed,
   fetchSessionQuestions,
   loading,
   apiBaseUrl,
@@ -144,7 +146,8 @@ export function CreatorMode({
   lastInvitationDraft,
   setLastInvitationDraft,
   setPrimaryVideoSource,
-  onClearSession
+  onClearSession,
+  debugMode = false
 }) {
   const [materialUploading, setMaterialUploading] = useState(false)
   const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
@@ -164,6 +167,31 @@ export function CreatorMode({
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
   const [answerSubmitting, setAnswerSubmitting] = useState(false)
+  const [questionCardsExpanded, setQuestionCardsExpanded] = useState({}) // per-question collapse; default all collapsed
+  // When answering a question, expand that card so the answer form is visible
+  useEffect(() => {
+    if (answeringQuestionId) {
+      setQuestionCardsExpanded((prev) => ({ ...prev, [answeringQuestionId]: true }))
+    }
+  }, [answeringQuestionId])
+
+  // Thread tree for participant questions (roots + nested replies), same structure as participant view (QAHistory ThreadList)
+  const { roots: creatorRoots, byParent: creatorByParent } = useMemo(() => {
+    const qs = questions || []
+    if (qs.length === 0) return { roots: [], byParent: {} }
+    const byParent = {}
+    for (const q of qs) {
+      const pid = q.parent_question_id ?? 'root'
+      if (!byParent[pid]) byParent[pid] = []
+      byParent[pid].push(q)
+    }
+    const roots = (byParent.root || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    for (const k of Object.keys(byParent)) {
+      if (k !== 'root') byParent[k].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    }
+    return { roots, byParent }
+  }, [questions])
+
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false) // collapsed by default
   const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
   const [contextPremise, setContextPremise] = useState('')
@@ -869,7 +897,6 @@ export function CreatorMode({
               </div>
               <div style={{ fontSize: '13px', color: '#666' }}>
                 ID: <code style={{ fontSize: '11px' }}>{currentSession.session.id}</code>
-                {currentSession.artifacts?.length > 0 && <> | Artifacts: {currentSession.artifacts.map(a => a.title).join(', ')}</>}
                 {' | '}
                 <strong>Status:</strong>{' '}
                 <span style={{ color: currentSession.session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>
@@ -1556,42 +1583,32 @@ export function CreatorMode({
         />
       )}
 
-      {/* Q&A History with Answer Input */}
+      {/* Q&A History with Answer Input – thread tree matches participant view (roots then nested replies) */}
       <div className="section">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
           <h2 style={{ margin: 0 }}>Participant Questions</h2>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
-              Real-time updates via WebSocket
-            </span>
-            <button 
-              onClick={createMockQuestion} 
-              disabled={mockQuestionLoading || loading || !currentSession?.session?.id}
-              style={{ 
-                backgroundColor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? '#ccc' : '#9c27b0', 
-                color: 'white',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                border: 'none',
-                cursor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'not-allowed' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                boxShadow: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
-                transition: 'all 0.2s'
-              }}
-              title={!currentSession?.session?.id ? 'Please select a session first' : 'Create a mock question to test WebSocket functionality (not persisted to database)'}
-            >
-              {mockQuestionLoading ? 'Creating...' : '🧪 Test WebSocket'}
-            </button>
-            <button 
-              onClick={() => currentSession?.session?.id && fetchSessionQuestions(currentSession.session.id)} 
-              disabled={loading || !currentSession?.session?.id}
-              style={{
-                opacity: (loading || !currentSession?.session?.id) ? 0.6 : 1
-              }}
-            >
-              Refresh Now
-            </button>
+            {debugMode && (
+              <button 
+                onClick={createMockQuestion} 
+                disabled={mockQuestionLoading || loading || !currentSession?.session?.id}
+                style={{ 
+                  backgroundColor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? '#ccc' : '#9c27b0', 
+                  color: 'white',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  border: 'none',
+                  cursor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '14px',
+                  boxShadow: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
+                  transition: 'all 0.2s'
+                }}
+                title={!currentSession?.session?.id ? 'Please select a session first' : 'Create a mock question to test WebSocket functionality (not persisted to database)'}
+              >
+                {mockQuestionLoading ? 'Creating...' : '🧪 Test WebSocket'}
+              </button>
+            )}
           </div>
         </div>
         {(questions.length > 0) && (
@@ -1600,32 +1617,74 @@ export function CreatorMode({
           </div>
         )}
         
-        {questions.length === 0 ? (
+        {creatorRoots.length === 0 ? (
           <div className="info">No questions yet from participants.</div>
         ) : (
           <div>
-            {questions.map((q) => (
-              <div key={q.id} style={{ 
-                marginBottom: '20px', 
-                padding: '15px', 
-                border: '1px solid #ddd', 
-                borderRadius: '5px',
-                backgroundColor: q.answer ? '#f9f9f9' : '#fff'
-              }}>
-                <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span>Q: {q.question_text}</span>
-                  <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
-                    {q.asked_by ? (
-                      <>— asked by <strong>{q.asked_by}</strong></>
+            {(() => {
+              const renderList = (roots, byParent, depth = 0) => (roots || []).map((q) => {
+                const isExpanded = questionCardsExpanded[q.id] === true
+                const hasReplies = (byParent[q.id]?.length ?? 0) > 0
+                const showReplies = isExpanded && hasReplies
+                return (
+                  <div key={q.id} style={{ marginBottom: depth === 0 ? '8px' : 0 }}>
+                    <div style={{
+                      marginBottom: '20px',
+                      padding: '15px',
+                      border: '1px solid #ddd',
+                      borderRadius: '5px',
+                      backgroundColor: q.answer ? '#f9f9f9' : '#fff',
+                      ...(depth > 0 && { marginLeft: 28, borderLeft: '3px solid #90caf9' })
+                    }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuestionCardsExpanded((prev) => {
+                        const next = { ...prev, [q.id]: !prev[q.id] }
+                        if (!prev[q.id] && next[q.id] && markQuestionViewed) {
+                          const sid = currentSession?.session?.id || currentSession?.id
+                          if (sid) markQuestionViewed(sid, q.id)
+                        }
+                        return next
+                      })
+                    }}
+                    aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                    style={{
+                      flexShrink: 0,
+                      marginTop: '2px',
+                      padding: '2px 6px',
+                      fontSize: '12px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#666'
+                    }}
+                  >
+                    {isExpanded ? '▼' : '▶'}
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {!isExpanded ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
+                        {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
+                          <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                        )}
+                      </div>
                     ) : (
-                      <>— asked by <span style={{ color: '#999' }}>—</span></>
-                    )}
-                  </span>
+                      <>
+                <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  Q: {q.question_text}
+                  {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
+                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                  )}
                 </div>
                 <div style={{ fontSize: '11px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
                   Asked: {new Date(q.created_at).toLocaleString()}
+                  {' · asked by '}
+                  {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
                   {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-                    <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
+                    <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
                       | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
                     </span>
                   )}
@@ -1636,11 +1695,11 @@ export function CreatorMode({
                     <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
                     <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
                       <div style={{ marginBottom: '5px' }}>
-                        From: {q.answer.model && q.answer.model !== 'manual'
-                          ? <span style={{ fontWeight: 'bold' }}>System</span>
-                          : (q.answer.answered_by
-                              ? <span style={{ fontWeight: 'bold' }}>{q.answer.answered_by}</span>
-                              : <span style={{ fontWeight: 'bold' }}>Creator</span>)}
+                        From: <span style={{ fontWeight: 'bold' }}>
+                          {q.answer.model && q.answer.model !== 'manual'
+                            ? 'System Generated'
+                            : (q.answer.answered_by_display_name ?? q.answer.answered_by ?? currentSession?.created_by_display_name ?? '—')}
+                        </span>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '5px' }}>
                         <span>
@@ -1813,8 +1872,21 @@ export function CreatorMode({
                     )}
                   </div>
                 ) : null}
-              </div>
-            ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+                </div>
+                    {showReplies && (
+                      <div style={{ paddingLeft: '28px', borderLeft: '2px solid #e0e0e0', marginTop: '4px' }}>
+                        {renderList(byParent[q.id], byParent, depth + 1)}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
+              return renderList(creatorRoots, creatorByParent, 0)
+            })()}
           </div>
         )}
       </div>

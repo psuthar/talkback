@@ -507,9 +507,29 @@ func runMigrations() error {
 	return nil
 }
 
+// bootstrapAdminDisplayName returns the display name for the bootstrap admin:
+// from TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME if set, otherwise derived from the email local part (e.g. paresh@... -> Paresh).
+func bootstrapAdminDisplayName(email, fromEnv string) string {
+	if fromEnv != "" {
+		return strings.TrimSpace(fromEnv)
+	}
+	at := strings.Index(email, "@")
+	localPart := email
+	if at > 0 {
+		localPart = email[:at]
+	}
+	localPart = strings.TrimSpace(strings.ToLower(localPart))
+	if localPart == "" {
+		return "User"
+	}
+	return strings.ToUpper(localPart[:1]) + localPart[1:]
+}
+
 // ensureBootstrapAdmin creates an admin user at startup when TALKBACK_BOOTSTRAP_ADMIN_EMAIL
 // and TALKBACK_BOOTSTRAP_ADMIN_PASSWORD are set and no user with that email exists.
 // If the user already exists, their global_role is ensured to be admin.
+// Email, display name and password all come from env: TALKBACK_BOOTSTRAP_ADMIN_EMAIL,
+// TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME, TALKBACK_BOOTSTRAP_ADMIN_PASSWORD.
 func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 	email := auth.Config.BootstrapAdminEmail
 	if email == "" {
@@ -520,6 +540,7 @@ func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 	if err != nil {
 		return err
 	}
+	displayName := bootstrapAdminDisplayName(email, auth.Config.BootstrapAdminDisplayName)
 	if existing != nil {
 		// User exists: ensure they have admin role (idempotent)
 		if existing.GlobalRole != models.GlobalRoleAdmin {
@@ -527,6 +548,14 @@ func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 				return err
 			}
 			log.Printf("Bootstrap admin: existing user %s promoted to admin", email)
+		}
+		// If display name is still "Admin", update to configured default (e.g. Paresh) so UI shows name not role.
+		if existing.DisplayName == "Admin" {
+			if err := db.SetUserDisplayName(ctx, existing.ID, displayName); err != nil {
+				log.Printf("Bootstrap admin: failed to update display name for %s: %v", email, err)
+			} else {
+				log.Printf("Bootstrap admin: set display name to %q for %s", displayName, email)
+			}
 		}
 		// If bootstrap password is set, sync it so admin can always log in with env password after redeploys.
 		if password != "" {
@@ -553,7 +582,7 @@ func ensureBootstrapAdmin(ctx context.Context, db *database.DB) error {
 	user := &models.User{
 		ID:          uuid.New(),
 		Email:       email,
-		DisplayName: "Admin",
+		DisplayName: displayName,
 		Status:      models.UserStatusActive,
 		GlobalRole:  models.GlobalRoleAdmin,
 	}

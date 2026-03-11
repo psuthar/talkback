@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 
+const MicIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable="false">
+    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+  </svg>
+)
+
 function CitationBadge({ citation, onClick }) {
   const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
   const canNavigate = citation.anchor?.start_ms != null ||
@@ -51,14 +57,171 @@ function buildThreadTree(questions) {
   return { roots, byParent }
 }
 
-function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
+const SYSTEM_GENERATED_LABEL = 'System Generated'
+
+// Inline reply form shown under a Q&A card when user clicks Reply (textarea + mic + Ask + Cancel).
+function InlineReplyForm({
+  questionText,
+  setQuestionText,
+  askSessionQuestion,
+  loading,
+  onCancel,
+  toggleVoiceRecording,
+  voiceRecording,
+  voiceUploading,
+  voiceFeedback,
+  showVoiceConfirm,
+  voiceTranscribedText,
+  setVoiceTranscribedText,
+  confirmVoiceQuestion,
+  cancelVoiceReview,
+  polishVoiceQuestion,
+  voicePolishing,
+  voicePolishMode,
+  askQuestionFeedback
+}) {
+  const textareaRef = useRef(null)
+  useEffect(() => {
+    textareaRef.current?.focus()
+  }, [])
+
+  return (
+    <div style={{
+      marginTop: '12px',
+      padding: '12px',
+      border: '2px solid #2196F3',
+      borderRadius: '6px',
+      backgroundColor: '#f0f8ff'
+    }}>
+      <div style={{ fontSize: '12px', color: '#1565c0', marginBottom: '8px', fontWeight: 600 }}>
+        Ask a follow-up…
+      </div>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
+        <button
+          type="button"
+          onClick={toggleVoiceRecording}
+          disabled={loading || voiceUploading}
+          title={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          aria-label={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          style={{
+            flexShrink: 0,
+            padding: '8px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: (loading || voiceUploading) ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {voiceRecording ? (
+            <span style={{ fontSize: '12px', fontWeight: 600 }}>Stop</span>
+          ) : voiceUploading ? (
+            <span className="spinner" style={{ width: 18, height: 18 }} aria-hidden />
+          ) : (
+            <MicIcon />
+          )}
+        </button>
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {voiceRecording && (
+            <span style={{ fontSize: '12px', color: '#d32f2f' }}>Listening…</span>
+          )}
+          {!showVoiceConfirm && (
+            <>
+              <textarea
+                ref={textareaRef}
+                value={questionText}
+                onChange={(e) => setQuestionText(e.target.value)}
+                placeholder="Ask a follow-up..."
+                rows={2}
+                style={{
+                  width: '100%',
+                  resize: 'vertical',
+                  minHeight: '44px',
+                  padding: '8px',
+                  boxSizing: 'border-box'
+                }}
+              />
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={askSessionQuestion}
+                  disabled={!questionText?.trim() || loading}
+                  style={{ padding: '6px 14px' }}
+                >
+                  Ask
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  disabled={loading}
+                  style={{ padding: '6px 14px', backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+          {showVoiceConfirm && (
+            <div style={{ marginTop: '8px', padding: '10px', border: '1px solid #ddd', borderRadius: '4px', backgroundColor: '#fff' }}>
+              <textarea
+                value={voiceTranscribedText}
+                onChange={(e) => setVoiceTranscribedText(e.target.value)}
+                rows={2}
+                style={{ width: '100%', padding: '6px', boxSizing: 'border-box', marginBottom: '8px' }}
+              />
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {polishVoiceQuestion && (
+                  <button
+                    type="button"
+                    onClick={() => polishVoiceQuestion(true)}
+                    disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
+                    title="AI polish"
+                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                  >
+                    {voicePolishing && voicePolishMode === 'llm' ? <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden /> : 'Polish'}
+                  </button>
+                )}
+                <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} style={{ padding: '6px 12px' }}>
+                  Confirm & Submit
+                </button>
+                <button type="button" onClick={() => cancelVoiceReview?.()} disabled={loading} style={{ padding: '6px 12px', backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      {voiceFeedback?.message && (
+        <div className={voiceFeedback.type} style={{ fontSize: '12px', marginTop: '6px' }}>{voiceFeedback.message}</div>
+      )}
+      {askQuestionFeedback?.message && (
+        <div className={askQuestionFeedback.type} style={{ fontSize: '12px', marginTop: '6px' }}>{askQuestionFeedback.message}</div>
+      )}
+    </div>
+  )
+}
+
+function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, collapsed = false, onToggle, creatorDisplayName, replyingToQuestionId, inlineReplyProps, replyCount = 0 }) {
+  const answerFromLabel = (() => {
+    if (!q.answer) return null
+    if (q.answer.model && q.answer.model !== 'manual') {
+      return SYSTEM_GENERATED_LABEL
+    }
+    return q.answer.answered_by_display_name || q.answer.answered_by || creatorDisplayName || null
+  })()
+  const confirmedByLabel = creatorDisplayName || null
   const isReply = depth > 0
+  const replyIndentPx = 28
   return (
     <div
       key={q.id}
       style={{
         marginBottom: '15px',
-        marginLeft: isReply ? '20px' : 0,
+        marginLeft: isReply ? replyIndentPx : 0,
         padding: isReply ? '10px 12px' : '15px',
         border: '1px solid #ddd',
         borderRadius: '5px',
@@ -66,44 +229,73 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
         borderLeft: isReply ? '3px solid #90caf9' : undefined
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span>Q: {q.question_text}</span>
-            <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#666' }}>
-              {q.asked_by ? (
-                <>— asked by <strong>{q.asked_by}</strong></>
-              ) : (
-                <>— asked by <span style={{ color: '#999' }}>—</span></>
-              )}
-            </span>
-          </div>
-          <div style={{ fontSize: '11px', color: '#999', marginTop: '5px' }}>
-            Asked: {new Date(q.created_at).toLocaleString()}
-            {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-              <span style={{ marginLeft: '10px', color: '#2196F3', fontWeight: 'bold' }}>
-                | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
-              </span>
-            )}
-          </div>
-        </div>
-        {onReply && (
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+        {onToggle && (
           <button
             type="button"
-            onClick={() => onReply(q)}
-            style={{ flexShrink: 0, padding: '4px 10px', fontSize: '12px' }}
+            onClick={onToggle}
+            aria-label={collapsed ? 'Expand' : 'Collapse'}
+            style={{
+              flexShrink: 0,
+              marginTop: '2px',
+              padding: '2px 6px',
+              fontSize: '12px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#666'
+            }}
           >
-            Reply
+            {collapsed ? '▶' : '▼'}
           </button>
         )}
-      </div>
-      {!collapsed && q.answer ? (
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {collapsed ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
+              {replyCount > 0 && (
+                <span style={{ fontSize: '12px', color: '#888' }}>({replyCount} {replyCount === 1 ? 'reply' : 'replies'})</span>
+              )}
+              {isUnread && (
+                <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+              )}
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    Q: {q.question_text}
+                    {isUnread && (
+                      <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#999', marginTop: '5px' }}>
+                    Asked: {new Date(q.created_at).toLocaleString()}
+                    {' · asked by '}
+                    {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
+                    {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
+                      <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
+                        | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {onReply && (
+                  <button
+                    type="button"
+                    onClick={() => onReply(q)}
+                    style={{ flexShrink: 0, padding: '4px 10px', fontSize: '12px' }}
+                  >
+                    Reply
+                  </button>
+                )}
+              </div>
+      {q.answer ? (
         <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
           <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
           <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-            From: {q.answer.model && q.answer.model !== 'manual'
-              ? <strong>System</strong>
-              : (q.answer.answered_by ? <strong>{q.answer.answered_by}</strong> : <strong>Creator</strong>)}
+            From: {answerFromLabel ? <strong>{answerFromLabel}</strong> : <strong>—</strong>}
             {' | '}
             Status: <span style={{
               color: q.answer.answer_status === 'answered' ? '#4CAF50' :
@@ -114,14 +306,14 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
               <>
                 {' | '}
                 Confidence: {q.answer.confidence != null ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
-                {q.answer.confirmed && (
+                {q.answer.confirmed && confirmedByLabel && (
                   <span style={{
                     marginLeft: '10px',
                     color: '#4CAF50',
                     fontWeight: 'bold',
                     fontSize: '13px'
                   }}>
-                    ✓ Confirmed by Creator
+                    ✓ Confirmed by {confirmedByLabel}
                   </span>
                 )}
               </>
@@ -142,12 +334,19 @@ function QACard({ q, onCitationClick, onReply, depth = 0, collapsed = false }) {
             </div>
           )}
         </div>
-      ) : !collapsed ? (
+      ) : (
         <div style={{ marginTop: '10px', padding: '10px', backgroundColor: q._pending ? '#e3f2fd' : '#f5f5f5', borderRadius: '3px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className="spinner" style={{ width: 16, height: 16, flexShrink: 0 }} aria-hidden />
           <span>{q._pending ? 'Getting an answer…' : 'Processing…'}</span>
         </div>
-      ) : null}
+      )}
+      {replyingToQuestionId === q.id && inlineReplyProps && (
+        <InlineReplyForm {...inlineReplyProps} />
+      )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -160,60 +359,48 @@ function countReplies(byParent, rootId) {
   return n
 }
 
-function ThreadList({ roots, byParent, onCitationClick, onReply, depth = 0, expandedThreads = {}, onToggleThread }) {
+function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, onReply, depth = 0, expandedCards = {}, onToggleCard, creatorDisplayName, replyingToQuestionId, inlineReplyProps }) {
   const isRootLevel = depth === 0
   return (
     <>
       {roots.map((q) => {
         const hasReplies = byParent[q.id] && byParent[q.id].length > 0
-        const isExpandable = isRootLevel
-        const isExpanded = !isExpandable || expandedThreads[q.id] === true
-        const showReplies = !isRootLevel || isExpanded
+        const isExpanded = expandedCards[q.id] === true
+        const showReplies = isExpanded && hasReplies
         const replyCount = hasReplies ? countReplies(byParent, q.id) : 0
+        const isUnread = unreadQuestionIds && unreadQuestionIds.includes(String(q.id))
 
         return (
           <div key={q.id} style={{ marginBottom: isRootLevel ? '8px' : 0 }}>
-            {isRootLevel ? (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
-                <button
-                  type="button"
-                  onClick={() => onToggleThread?.(q.id)}
-                  aria-label={isExpanded ? 'Collapse thread' : 'Expand thread'}
-                  style={{
-                    flexShrink: 0,
-                    marginTop: '18px',
-                    padding: '2px 6px',
-                    fontSize: '12px',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#666'
-                  }}
-                >
-                  {isExpanded ? '▼' : '▶'}
-                </button>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <QACard q={q} onCitationClick={onCitationClick} onReply={onReply} depth={depth} collapsed={!isExpanded} />
-                  {!isExpanded && hasReplies && (
-                    <div style={{ fontSize: '12px', color: '#888', marginTop: '4px', marginLeft: '15px' }}>
-                      {replyCount} {replyCount === 1 ? 'reply' : 'replies'}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <QACard q={q} onCitationClick={onCitationClick} onReply={onReply} depth={depth} />
-            )}
+            <QACard
+              q={q}
+              isUnread={isUnread}
+              onCitationClick={onCitationClick}
+              onReply={onReply}
+              depth={depth}
+              collapsed={!isExpanded}
+              onToggle={onToggleCard ? () => onToggleCard(q.id) : undefined}
+              creatorDisplayName={creatorDisplayName}
+              replyingToQuestionId={replyingToQuestionId}
+              inlineReplyProps={inlineReplyProps}
+              replyCount={isRootLevel ? replyCount : 0}
+            />
             {showReplies && hasReplies && (
-              <ThreadList
-                roots={byParent[q.id]}
-                byParent={byParent}
-                onCitationClick={onCitationClick}
-                onReply={onReply}
-                depth={depth + 1}
-                expandedThreads={expandedThreads}
-                onToggleThread={onToggleThread}
-              />
+              <div style={{ paddingLeft: '28px', borderLeft: '2px solid #e0e0e0', marginTop: '4px' }}>
+                <ThreadList
+                  roots={byParent[q.id]}
+                  byParent={byParent}
+                  unreadQuestionIds={unreadQuestionIds}
+                  onCitationClick={onCitationClick}
+                  onReply={onReply}
+                  depth={depth + 1}
+                  expandedCards={expandedCards}
+                  onToggleCard={onToggleCard}
+                  creatorDisplayName={creatorDisplayName}
+                  replyingToQuestionId={replyingToQuestionId}
+                  inlineReplyProps={inlineReplyProps}
+                />
+              </div>
             )}
           </div>
         )
@@ -222,46 +409,45 @@ function ThreadList({ roots, byParent, onCitationClick, onReply, depth = 0, expa
   )
 }
 
-export function QAHistory({ questions, readOnly = false, currentAskerName, onCitationClick, onReply }) {
-  // Collapsed by default; only the asker (currentAskerName) sees their own questions auto-expanded.
-  const [expandedThreads, setExpandedThreads] = useState({})
-  const prevQuestionIdsRef = useRef(new Set())
+export function QAHistory({
+  questions,
+  unreadQuestionIds = [],
+  markQuestionViewed,
+  sessionId,
+  readOnly = false,
+  currentAskerName,
+  onCitationClick,
+  onReply,
+  creatorDisplayName,
+  replyingToQuestionId,
+  setReplyingToQuestionId,
+  questionText,
+  setQuestionText,
+  askSessionQuestion,
+  loading,
+  toggleVoiceRecording,
+  voiceRecording,
+  voiceUploading,
+  voiceFeedback,
+  showVoiceConfirm,
+  voiceTranscribedText,
+  setVoiceTranscribedText,
+  confirmVoiceQuestion,
+  cancelVoiceReview,
+  polishVoiceQuestion,
+  voicePolishing,
+  voicePolishMode,
+  askQuestionFeedback
+}) {
+  // Per-question collapse/expand. Default all collapsed when user loads the list.
+  const [expandedCards, setExpandedCards] = useState({})
 
-  // Initial load: expand only threads where the root question was asked by current user. New questions: expand only if asked by current user.
+  // When user clicks Reply, expand that card and its root so the inline form is visible.
   useEffect(() => {
-    if (!questions || questions.length === 0) return
-    const prevIds = prevQuestionIdsRef.current
-    const currentIds = new Set(questions.map((q) => q.id))
-    const newIds = questions.filter((q) => !prevIds.has(q.id))
-    const { roots } = buildThreadTree(questions)
-
-    if (prevIds.size === 0) {
-      // Initial load: expand only "my" root questions (asked_by === currentAskerName)
-      if (currentAskerName) {
-        setExpandedThreads((prev) => {
-          const next = { ...prev }
-          for (const r of roots) {
-            if (r.asked_by === currentAskerName) next[r.id] = true
-          }
-          return next
-        })
-      }
-    } else if (newIds.length > 0) {
-      // New questions appeared: expand only if the new question was asked by current user
-      setExpandedThreads((prev) => {
-        let next = { ...prev }
-        for (const q of newIds) {
-          if (currentAskerName && q.asked_by === currentAskerName) {
-            const rootId = q.parent_question_id ? findRootId(questions, q.parent_question_id) : q.id
-            next[rootId] = true
-          }
-        }
-        return next
-      })
-    }
-
-    prevQuestionIdsRef.current = currentIds
-  }, [questions, currentAskerName])
+    if (!replyingToQuestionId || !questions?.length) return
+    const rootId = findRootId(questions, replyingToQuestionId)
+    setExpandedCards((prev) => ({ ...prev, [rootId]: true, [replyingToQuestionId]: true }))
+  }, [replyingToQuestionId, questions])
 
   if (!questions || questions.length === 0) {
     return (
@@ -272,19 +458,57 @@ export function QAHistory({ questions, readOnly = false, currentAskerName, onCit
   }
 
   const { roots, byParent } = buildThreadTree(questions)
-  const handleToggleThread = (rootId) => {
-    setExpandedThreads((prev) => ({ ...prev, [rootId]: !prev[rootId] }))
+  const handleToggleCard = (questionId) => {
+    setExpandedCards((prev) => {
+      const next = { ...prev, [questionId]: !prev[questionId] }
+      if (!prev[questionId] && next[questionId] && markQuestionViewed && sessionId) {
+        markQuestionViewed(sessionId, questionId)
+      }
+      return next
+    })
   }
+
+  const inlineReplyProps =
+    !readOnly && setReplyingToQuestionId && questionText != null && setQuestionText && askSessionQuestion
+      ? {
+          questionText: questionText || '',
+          setQuestionText,
+          askSessionQuestion,
+          loading: !!loading,
+          onCancel: () => {
+            setReplyingToQuestionId(null)
+            setQuestionText('')
+            cancelVoiceReview?.()
+          },
+          toggleVoiceRecording: toggleVoiceRecording || (() => {}),
+          voiceRecording: !!voiceRecording,
+          voiceUploading: !!voiceUploading,
+          voiceFeedback: voiceFeedback || {},
+          showVoiceConfirm: !!showVoiceConfirm,
+          voiceTranscribedText: voiceTranscribedText || '',
+          setVoiceTranscribedText: setVoiceTranscribedText || (() => {}),
+          confirmVoiceQuestion: confirmVoiceQuestion || (() => {}),
+          cancelVoiceReview: cancelVoiceReview || (() => {}),
+          polishVoiceQuestion: polishVoiceQuestion || (() => {}),
+          voicePolishing: !!voicePolishing,
+          voicePolishMode: voicePolishMode || '',
+          askQuestionFeedback: askQuestionFeedback || {}
+        }
+      : null
 
   return (
     <div>
       <ThreadList
         roots={roots}
         byParent={byParent}
+        unreadQuestionIds={unreadQuestionIds}
         onCitationClick={onCitationClick}
         onReply={readOnly ? undefined : onReply}
-        expandedThreads={expandedThreads}
-        onToggleThread={handleToggleThread}
+        expandedCards={expandedCards}
+        onToggleCard={readOnly ? undefined : handleToggleCard}
+        creatorDisplayName={creatorDisplayName}
+        replyingToQuestionId={replyingToQuestionId}
+        inlineReplyProps={inlineReplyProps}
       />
     </div>
   )

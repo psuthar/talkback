@@ -69,6 +69,12 @@ func (db *DB) SetUserGlobalRole(ctx context.Context, userID uuid.UUID, role mode
 	return err
 }
 
+// SetUserDisplayName sets display_name for the user (e.g. bootstrap admin display name fix).
+func (db *DB) SetUserDisplayName(ctx context.Context, userID uuid.UUID, displayName string) error {
+	_, err := db.Pool.Exec(ctx, `UPDATE users SET display_name = $1, updated_at = now() WHERE id = $2`, displayName, userID)
+	return err
+}
+
 // CountUsers returns the number of users (for bootstrap: first user can be admin).
 func (db *DB) CountUsers(ctx context.Context) (int, error) {
 	var n int
