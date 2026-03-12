@@ -262,6 +262,19 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		title = rec.Topic
 	}
 
+	exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), creatorIdentity, title, nil)
+	if err != nil {
+		log.Printf("CreateSessionFromZoom SessionWithTitleExistsForCreator: %v", err)
+		writeJSONError(w, "Failed to check session title", http.StatusInternalServerError)
+		return
+	}
+	if exists {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "A session with this name already exists. Please use a unique name."})
+		return
+	}
+
 	sessionID := uuid.New()
 	sourceRefURL := zoomURL
 	session := &models.Session{

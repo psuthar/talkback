@@ -79,6 +79,62 @@ func TestGetSession(t *testing.T) {
 	})
 }
 
+func TestDeleteSession(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+
+	t.Run("deletes session and removes all session data", func(t *testing.T) {
+		session := createTestSession(t, db, "To Delete")
+		err := db.DeleteFileArtifactsBySessionID(ctx, session.ID)
+		require.NoError(t, err)
+		err = db.DeleteSession(ctx, session.ID)
+		require.NoError(t, err)
+		_, err = db.GetSession(ctx, session.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("returns error when deleting non-existent session", func(t *testing.T) {
+		err := db.DeleteSession(ctx, uuid.New())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "session not found")
+	})
+}
+
+func TestDeleteFileArtifactsBySessionID(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+
+	t.Run("deletes all file_artifacts for session", func(t *testing.T) {
+		session := createTestSession(t, db, "Session With File Artifacts")
+		fn := "zoom.mp4"
+		fa := &models.FileArtifact{
+			ID:              uuid.New(),
+			SessionID:       &session.ID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &fn,
+			ContentType:     "video/mp4",
+			StorageProvider: "r2",
+			StorageBucket:   "bucket",
+			StorageKey:      "sessions/" + session.ID.String() + "/v.mp4",
+			Status:          models.FileArtifactStatusReady,
+		}
+		err := db.CreateFileArtifact(ctx, fa)
+		require.NoError(t, err)
+		err = db.DeleteFileArtifactsBySessionID(ctx, session.ID)
+		require.NoError(t, err)
+		got, err := db.GetFileArtifactByID(ctx, fa.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+}
+
 func TestGetSessionsByArtifactID(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

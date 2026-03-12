@@ -113,6 +113,58 @@ func (s *Service) ListBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*
 	return s.Repo.ListBySessionID(ctx, sessionID)
 }
 
+// ListPendingForUser returns pending invitation items for the given email (for "Pending Invites" UI).
+func (s *Service) ListPendingForUser(ctx context.Context, emailNormalized string) ([]*PendingInvitationItem, error) {
+	invitations, err := s.Repo.ListPendingByInvitedEmail(ctx, emailNormalized)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*PendingInvitationItem, 0, len(invitations))
+	for _, inv := range invitations {
+		title, _ := s.Lookup.GetSessionTitle(ctx, inv.SessionID)
+		inviterName, _ := s.Lookup.GetUserDisplayName(ctx, inv.InviterUserID)
+		out = append(out, &PendingInvitationItem{
+			ID:           inv.ID.String(),
+			SessionID:    inv.SessionID.String(),
+			SessionTitle: title,
+			InviterName:  inviterName,
+			InvitedRole:  string(inv.InvitedRole),
+			ExpiresAt:    inv.ExpiresAt.Format(time.RFC3339),
+		})
+	}
+	return out, nil
+}
+
+// AcceptByInvitationID accepts an invitation by ID when the authenticated user's email matches the invited email.
+func (s *Service) AcceptByInvitationID(ctx context.Context, invitationID uuid.UUID, authenticatedEmail string, createMembership func(sessionID, userID uuid.UUID, role string, invitedBy *uuid.UUID) error, getUserID func(email string) (uuid.UUID, bool)) (sessionID uuid.UUID, err error) {
+	authenticatedEmail = NormalizeEmail(authenticatedEmail)
+	inv, err := s.Repo.GetByID(ctx, invitationID)
+	if err != nil || inv == nil {
+		return uuid.Nil, ErrNotFound
+	}
+	if inv.Status != StatusPending {
+		return uuid.Nil, ErrAlreadyAccepted
+	}
+	if inv.ExpiresAt.Before(time.Now()) {
+		return uuid.Nil, ErrExpired
+	}
+	if NormalizeEmail(inv.InvitedEmailNormalized) != authenticatedEmail {
+		return uuid.Nil, ErrWrongEmail
+	}
+	userID, ok := getUserID(authenticatedEmail)
+	if !ok {
+		return uuid.Nil, ErrNoAccount
+	}
+	if err := createMembership(inv.SessionID, userID, string(inv.InvitedRole), &inv.InviterUserID); err != nil {
+		return uuid.Nil, err
+	}
+	now := time.Now()
+	if err := s.Repo.UpdateStatus(ctx, inv.ID, StatusAccepted, &now, &userID, nil); err != nil {
+		return uuid.Nil, err
+	}
+	return inv.SessionID, nil
+}
+
 // Resolve looks up by token and returns minimal payload for the accept-invite page. Does not expose token or sensitive data.
 func (s *Service) Resolve(ctx context.Context, rawToken string, accountExists func(email string) bool) (*ResolveResult, error) {
 	if rawToken == "" {

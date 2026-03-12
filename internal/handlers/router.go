@@ -258,9 +258,23 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
-// ApiSessionsRouterWithInvite wraps APISessionsRouter: .../invitations (POST/GET) use new invite flow; .../invite POST legacy; else APISessionsRouter.
+// ApiSessionsRouterWithInvite wraps APISessionsRouter: .../copy (POST), .../invitations (POST/GET) use new invite flow; DELETE .../sessions/:id; .../invite POST legacy; else APISessionsRouter.
 func (h *Handlers) ApiSessionsRouterWithInvite(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
+	pathTrim := strings.Trim(path, "/")
+	parts := strings.Split(pathTrim, "/")
+	if r.Method == http.MethodDelete && len(parts) == 3 && parts[0] == "api" && parts[1] == "sessions" {
+		h.RequireAuth(h.DeleteSession)(w, r)
+		return
+	}
+	if r.Method == http.MethodPost && strings.HasSuffix(path, "/copy") {
+		h.RequireAuth(h.CopySession)(w, r)
+		return
+	}
+	if (r.Method == http.MethodPatch || r.Method == http.MethodPut) && len(parts) == 3 && parts[0] == "api" && parts[1] == "sessions" {
+		h.RequireAuth(h.UpdateSessionStatus)(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/invitations") {
 		if r.Method == http.MethodPost {
 			h.RequireAuth(h.CreateInvitation)(w, r)
@@ -300,7 +314,11 @@ func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) 
 		h.RegisterAndAcceptInvitation(w, r)
 		return
 	}
-	// parts[2] is UUID, parts[3] is resend, revoke, or link
+	if parts[2] == "pending" {
+		h.RequireAuth(h.ListPendingInvitations)(w, r)
+		return
+	}
+	// parts[2] is UUID, parts[3] is resend, revoke, link, or accept
 	if len(parts) >= 4 {
 		if parts[3] == "resend" {
 			h.RequireAuth(h.ResendInvitation)(w, r)
@@ -312,6 +330,10 @@ func (h *Handlers) ApiInvitationsRouter(w http.ResponseWriter, r *http.Request) 
 		}
 		if parts[3] == "link" {
 			h.RequireAuth(h.GetInvitationLink)(w, r)
+			return
+		}
+		if parts[3] == "accept" {
+			h.RequireAuth(h.AcceptInvitationByID)(w, r)
 			return
 		}
 	}

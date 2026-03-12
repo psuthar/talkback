@@ -465,6 +465,12 @@ export function EmbedPlayer({
   )
 }
 
+// Zoom does not allow embedding (X-Frame-Options: sameorigin). Use this to show "Open in Zoom" instead of iframe.
+function isZoomEmbedUrl(url) {
+  if (!url || typeof url !== 'string') return false
+  return url.includes('zoom.us') || url.includes('zoom.com')
+}
+
 // Helper function to convert Loom share URL to embed URL
 function getLoomEmbedUrl(shareUrl) {
   if (!shareUrl || typeof shareUrl !== 'string') return null
@@ -550,6 +556,23 @@ export function VideoPlayer({
         apiBaseUrlForRefresh={isPrimaryR2Video ? apiBaseUrl : ''}
         onMounted={isRenderingPrimaryVideo ? onPrimaryVideoMounted : undefined}
       />
+    )
+  }
+  // We never show the Zoom embed or external Zoom link; playback is only from our MP4 (primary video). Show preparing state.
+  if (playbackMode === 'embed' && embedUrl && isZoomEmbedUrl(embedUrl)) {
+    return (
+      <div style={{
+        padding: '24px',
+        backgroundColor: '#f5f5f5',
+        borderRadius: '8px',
+        textAlign: 'center',
+        color: '#555',
+        border: '1px solid #e0e0e0'
+      }}>
+        <p style={{ margin: 0 }}>
+          Video is being prepared for in-app playback. It will appear here when ready.
+        </p>
+      </div>
     )
   }
   if (playbackMode === 'embed' && embedUrl) {

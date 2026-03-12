@@ -141,6 +141,15 @@ func (db *DB) UpdateFileArtifactToFailed(ctx context.Context, id uuid.UUID, fail
 	return nil
 }
 
+// DeleteFileArtifactsBySessionID deletes all file_artifacts for the session (required before deleting session, since session_id has ON DELETE SET NULL).
+func (db *DB) DeleteFileArtifactsBySessionID(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM file_artifacts WHERE session_id = $1`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete file_artifacts by session_id: %w", err)
+	}
+	return nil
+}
+
 // SetSessionPrimaryVideoArtifact sets sessions.primary_video_artifact_id for the given session.
 func (db *DB) SetSessionPrimaryVideoArtifact(ctx context.Context, sessionID uuid.UUID, artifactID *uuid.UUID) error {
 	query := `UPDATE sessions SET primary_video_artifact_id = $1, updated_at = now() WHERE id = $2`

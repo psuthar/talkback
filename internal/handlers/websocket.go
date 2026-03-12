@@ -184,6 +184,15 @@ func (h *SessionHub) BroadcastSessionUpdated(sessionID uuid.UUID) {
 	}
 }
 
+// BroadcastSessionDeleted notifies clients that the session was deleted (e.g. by admin). Clients should show an alert and return to the session list.
+func (h *SessionHub) BroadcastSessionDeleted(sessionID uuid.UUID) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "session_deleted",
+		Data:      map[string]string{"session_id": sessionID.String()},
+	}
+}
+
 // BroadcastStanceUpdated notifies all session clients that a stance was submitted or updated.
 // Broadcasts the current aggregate so clients can update counts without a refetch.
 func (h *SessionHub) BroadcastStanceUpdated(sessionID uuid.UUID, aggregate *models.StanceAggregate) {

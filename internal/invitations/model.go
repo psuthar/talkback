@@ -75,3 +75,13 @@ type ResolveResult struct {
 	Expired      bool   `json:"expired"`
 	AccountExists bool  `json:"account_exists"`
 }
+
+// PendingInvitationItem is one entry for GET /api/invitations/pending (logged-in user's pending invites).
+type PendingInvitationItem struct {
+	ID           string `json:"id"`
+	SessionID    string `json:"session_id"`
+	SessionTitle string `json:"session_title"`
+	InviterName  string `json:"inviter_name"`
+	InvitedRole  string `json:"invited_role"`
+	ExpiresAt    string `json:"expires_at"`
+}

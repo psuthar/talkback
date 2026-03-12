@@ -138,6 +138,31 @@ func (r *Repository) PendingInvitationBySessionAndEmail(ctx context.Context, ses
 	return r.scanOne(r.Pool.QueryRow(ctx, query, sessionID, emailNormalized))
 }
 
+// ListPendingByInvitedEmail returns all pending, non-expired invitations for the given email (for "Pending Invites" UI).
+func (r *Repository) ListPendingByInvitedEmail(ctx context.Context, emailNormalized string) ([]*Invitation, error) {
+	query := `
+		SELECT id, session_id, invited_email_normalized, inviter_user_id, invited_role,
+			token_hash, status, expires_at, accepted_at, accepted_by_user_id, email_verified_at, created_at, updated_at
+		FROM session_invitations
+		WHERE invited_email_normalized = $1 AND status = 'pending' AND expires_at > now()
+		ORDER BY created_at DESC
+	`
+	rows, err := r.Pool.Query(ctx, query, emailNormalized)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*Invitation
+	for rows.Next() {
+		inv, err := r.scanOne(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, inv)
+	}
+	return list, rows.Err()
+}
+
 // RevokePendingBySessionAndEmail revokes all pending invitations for session+email (for "resend" flow).
 func (r *Repository) RevokePendingBySessionAndEmail(ctx context.Context, sessionID uuid.UUID, emailNormalized string) (int, error) {
 	res, err := r.Pool.Exec(ctx,

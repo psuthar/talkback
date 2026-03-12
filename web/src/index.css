@@ -39,6 +39,18 @@ code {
   box-sizing: content-box;
 }
 
+/* Admin mode: use full width so admin panel is not narrow with blank side panels; no horizontal scroll */
+.container.admin-full-width {
+  max-width: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 30px 20px;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
 h1 {
   color: #333;
   margin-bottom: 10px;
@@ -290,6 +302,11 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
 }
 
 /* Participant layout: full-height, no page scroll */

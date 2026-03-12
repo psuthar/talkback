@@ -1,6 +1,21 @@
 import { useState, useEffect, useCallback } from 'react'
 
-export function AdminUsers({ apiBaseUrl, debugMode = false }) {
+export function AdminUsers({
+  apiBaseUrl,
+  debugMode = false,
+  usersExpanded: usersExpandedProp = false,
+  onUsersExpandedChange,
+  sessionsExpanded: sessionsExpandedProp = false,
+  onSessionsExpandedChange
+}) {
+  const [usersExpandedLocal, setUsersExpandedLocal] = useState(false)
+  const [sessionsExpandedLocal, setSessionsExpandedLocal] = useState(false)
+  const isControlledUsers = onUsersExpandedChange != null
+  const isControlledSessions = onSessionsExpandedChange != null
+  const usersExpanded = isControlledUsers ? usersExpandedProp : usersExpandedLocal
+  const sessionsExpanded = isControlledSessions ? sessionsExpandedProp : sessionsExpandedLocal
+  const setUsersExpanded = isControlledUsers ? onUsersExpandedChange : setUsersExpandedLocal
+  const setSessionsExpanded = isControlledSessions ? onSessionsExpandedChange : setSessionsExpandedLocal
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -11,12 +26,20 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
   const [addError, setAddError] = useState('')
   const [addRole, setAddRole] = useState('creator')
   const [removeId, setRemoveId] = useState(null)
-  const [removeConfirm, setRemoveConfirm] = useState('')
+  const [removingUserId, setRemovingUserId] = useState(null)
+  const [removeUserError, setRemoveUserError] = useState('')
   const [roleUpdatingId, setRoleUpdatingId] = useState(null)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [resetFeedback, setResetFeedback] = useState({ type: '', message: '' })
   const [resetLoading, setResetLoading] = useState(false)
+
+  const [sessions, setSessions] = useState([])
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [sessionsError, setSessionsError] = useState('')
+  const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState(null)
+  const [deletingSessionId, setDeletingSessionId] = useState(null)
+  const [sessionDeleteError, setSessionDeleteError] = useState('')
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -40,9 +63,32 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
     }
   }, [apiBaseUrl])
 
+  const fetchSessions = useCallback(async () => {
+    setSessionsLoading(true)
+    setSessionsError('')
+    try {
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/sessions`, { credentials: 'include' })
+      if (!res.ok) {
+        if (res.status === 403) setSessionsError('Forbidden: admin access required')
+        else setSessionsError(`Failed to load sessions: ${res.status}`)
+        return
+      }
+      const data = await res.json()
+      setSessions(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setSessionsError(e.message || 'Network error')
+    } finally {
+      setSessionsLoading(false)
+    }
+  }, [apiBaseUrl])
+
   useEffect(() => {
     fetchUsers()
   }, [fetchUsers])
+
+  useEffect(() => {
+    if (sessionsExpanded && apiBaseUrl) fetchSessions()
+  }, [sessionsExpanded, apiBaseUrl, fetchSessions])
 
   const handleAddUser = async (e) => {
     e.preventDefault()
@@ -109,8 +155,9 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
   }
 
   const handleRemoveUser = async (id) => {
-    if (removeConfirm !== 'remove') return
-    setAddError('')
+    if (!id) return
+    setRemoveUserError('')
+    setRemovingUserId(id)
     try {
       const res = await fetch(`${apiBaseUrl}/api/admin/users/${id}`, {
         method: 'DELETE',
@@ -118,14 +165,39 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        setAddError(data.error || `Failed to remove user: ${res.status}`)
+        setRemoveUserError(data.error || `Failed to remove user: ${res.status}`)
         return
       }
       setRemoveId(null)
-      setRemoveConfirm('')
       fetchUsers()
     } catch (e) {
-      setAddError(e.message || 'Network error')
+      setRemoveUserError(e.message || 'Network error')
+    } finally {
+      setRemovingUserId(null)
+    }
+  }
+
+  const handleDeleteSessionConfirm = async (sessionId) => {
+    if (!sessionId) return
+    setSessionDeleteError('')
+    setDeletingSessionId(sessionId)
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const res = await fetch(`${base}/api/sessions/${sessionId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSessionDeleteError(data.error || `Could not delete session: ${res.status}`)
+        return
+      }
+      setSessions(prev => prev.filter(item => (item.session || item).id !== sessionId))
+      setDeleteConfirmSessionId(null)
+    } catch (e) {
+      setSessionDeleteError(e.message || 'Network error')
+    } finally {
+      setDeletingSessionId(null)
     }
   }
 
@@ -159,13 +231,26 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
   }
 
   return (
-    <div className="section" style={{ maxWidth: '900px' }}>
-      <h2>Admin – Users</h2>
+    <div className="section" style={{ width: '100%' }}>
+      <h2>Admin</h2>
+
+      <div style={{ maxHeight: 'calc(100vh - 180px)', overflowY: 'auto', paddingRight: '8px' }}>
+      {/* Expandable: Users */}
+      <div style={{ marginBottom: '20px', border: '1px solid #bbb', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+        <button
+          type="button"
+          onClick={() => setUsersExpanded(!usersExpanded)}
+          style={{ width: '100%', padding: '16px 20px', textAlign: 'left', fontSize: '18px', fontWeight: 700, border: 'none', background: '#e8e8e8', color: '#1a1a1a', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+        >
+          <span style={{ transform: usersExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', fontSize: '14px' }}>▶</span>
+          Users
+        </button>
+        {usersExpanded && (
+          <div style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
       {loading && <p>Loading users…</p>}
       {error && <p className="error" style={{ marginBottom: '12px' }}>{error}</p>}
       {addError && <p className="error" style={{ marginBottom: '12px' }}>{addError}</p>}
 
-      {/* Add user form */}
       <form onSubmit={handleAddUser} style={{ marginBottom: '24px', padding: '16px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
         <h3 style={{ marginTop: 0 }}>Add user</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end' }}>
@@ -257,39 +342,15 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
                 </td>
                 <td style={{ padding: '8px 12px' }}>{(u.session_ids && u.session_ids.length) || 0}</td>
                 <td style={{ padding: '8px 12px' }}>
-                  {removeId === u.id ? (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <input
-                        type="text"
-                        placeholder="Type 'remove' to confirm"
-                        value={removeConfirm}
-                        onChange={(e) => setRemoveConfirm(e.target.value)}
-                        style={{ width: '160px', fontSize: '12px' }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveUser(u.id)}
-                        disabled={removeConfirm !== 'remove' || isLastAdmin}
-                        title={isLastAdmin ? 'Cannot remove the last admin' : ''}
-                        style={{ fontSize: '12px', padding: '4px 10px' }}
-                      >
-                        Confirm remove
-                      </button>
-                      <button type="button" onClick={() => { setRemoveId(null); setRemoveConfirm('') }} style={{ fontSize: '12px', padding: '4px 10px' }}>
-                        Cancel
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => !isLastAdmin && setRemoveId(u.id)}
-                      disabled={isLastAdmin}
-                      title={isLastAdmin ? 'Cannot remove the last admin' : ''}
-                      style={{ fontSize: '12px', padding: '4px 10px', opacity: isLastAdmin ? 0.6 : 1 }}
-                    >
-                      Remove
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => !isLastAdmin && setRemoveId(u.id)}
+                    disabled={isLastAdmin || removingUserId === u.id}
+                    title={isLastAdmin ? 'Cannot remove the last admin' : ''}
+                    style={{ fontSize: '12px', padding: '4px 10px', opacity: isLastAdmin ? 0.6 : 1 }}
+                  >
+                    Remove
+                  </button>
                 </td>
               </tr>
               )
@@ -298,6 +359,215 @@ export function AdminUsers({ apiBaseUrl, debugMode = false }) {
         </table>
         )
       })()}
+          </div>
+        )}
+      </div>
+
+      {/* Expandable: Sessions */}
+      <div style={{ marginBottom: '20px', border: '1px solid #bbb', borderRadius: '8px', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
+        <button
+          type="button"
+          onClick={() => setSessionsExpanded(!sessionsExpanded)}
+          style={{ width: '100%', padding: '16px 20px', textAlign: 'left', fontSize: '18px', fontWeight: 700, border: 'none', background: '#e8e8e8', color: '#1a1a1a', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
+        >
+          <span style={{ transform: sessionsExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', fontSize: '14px' }}>▶</span>
+          Sessions
+        </button>
+        {sessionsExpanded && (
+          <div style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
+            {deletingSessionId && (
+              <div style={{ marginBottom: '12px', padding: '12px', background: '#e3f2fd', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                  <span className="spinner" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '14px' }}>Deleting session…</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#bbdefb', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                </div>
+              </div>
+            )}
+            {sessionDeleteError && <p className="error" style={{ marginBottom: '12px' }}>{sessionDeleteError}</p>}
+            {sessionsLoading && <p>Loading sessions…</p>}
+            {!sessionsLoading && sessionsError && <p className="error">{sessionsError}</p>}
+            {!sessionsLoading && !sessionsError && sessions.length === 0 && <p className="info">No sessions.</p>}
+            {!sessionsLoading && !sessionsError && sessions.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #ddd', textAlign: 'left' }}>
+                    <th style={{ padding: '8px 12px' }}>Title</th>
+                    <th style={{ padding: '8px 12px' }}>ID</th>
+                    <th style={{ padding: '8px 12px' }}>Created by</th>
+                    <th style={{ padding: '8px 12px' }}>Status</th>
+                    <th style={{ padding: '8px 12px' }}>Updated</th>
+                    <th style={{ padding: '8px 12px' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.map((item) => {
+                    const session = item.session || item
+                    const isDeleting = deletingSessionId === session.id
+                    return (
+                      <tr key={session.id} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '8px 12px' }}>{session.title || '—'}</td>
+                        <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: '12px' }}>{session.id}</td>
+                        <td style={{ padding: '8px 12px' }}>{session.created_by || '—'}</td>
+                        <td style={{ padding: '8px 12px' }}>{session.status || '—'}</td>
+                        <td style={{ padding: '8px 12px' }}>{session.updated_at ? new Date(session.updated_at).toLocaleString() : '—'}</td>
+                        <td style={{ padding: '8px 12px' }}>
+                          <button
+                            type="button"
+                            disabled={isDeleting}
+                            onClick={() => setDeleteConfirmSessionId(session.id)}
+                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
+      </div>
+
+      {/* Delete session confirmation modal */}
+      {deleteConfirmSessionId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-session-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)'
+          }}
+          onClick={() => { if (deletingSessionId !== deleteConfirmSessionId) { setDeleteConfirmSessionId(null); setSessionDeleteError('') } }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              padding: '24px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              maxWidth: '400px',
+              width: '90%'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="delete-session-modal-title" style={{ marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
+              Delete this session?
+            </h3>
+            {deletingSessionId === deleteConfirmSessionId ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span className="spinner" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '14px', color: '#555' }}>Deleting session…</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ marginBottom: '20px', color: '#555' }}>This cannot be undone. Continue or cancel?</p>
+                {sessionDeleteError && <p className="error" style={{ marginBottom: '16px', fontSize: '14px' }}>{sessionDeleteError}</p>}
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setDeleteConfirmSessionId(null); setSessionDeleteError('') }}
+                    style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteSessionConfirm(deleteConfirmSessionId) }}
+                    style={{ padding: '8px 16px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Remove user confirmation modal */}
+      {removeId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remove-user-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)'
+          }}
+          onClick={() => { if (removingUserId !== removeId) { setRemoveId(null); setRemoveUserError('') } }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              padding: '24px',
+              borderRadius: '8px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              maxWidth: '400px',
+              width: '90%'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="remove-user-modal-title" style={{ marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
+              Remove this user?
+            </h3>
+            {removingUserId === removeId ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  <span className="spinner" style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '14px', color: '#555' }}>Removing user…</span>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{ marginBottom: '20px', color: '#555' }}>This cannot be undone. Continue or cancel?</p>
+                {removeUserError && <p className="error" style={{ marginBottom: '16px', fontSize: '14px' }}>{removeUserError}</p>}
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setRemoveId(null); setRemoveUserError('') }}
+                    style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleRemoveUser(removeId) }}
+                    style={{ padding: '8px 16px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Reset All Data – admin only, and only when debug mode is on */}
       {debugMode && (

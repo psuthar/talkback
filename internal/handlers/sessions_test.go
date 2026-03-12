@@ -707,17 +707,34 @@ func TestUpdateSessionStatus(t *testing.T) {
 	db := h.DB
 	ctx := context.Background()
 
-	session := createTestSessionForHandlers(t, db, "Session to Update")
+	// Create a user and session so we have a creator; reuse the same cookie for all subtests
+	req0 := httptest.NewRequest(http.MethodPatch, "/sessions/"+uuid.New().String(), bytes.NewReader([]byte("{}")))
+	creator := addUserSessionCookie(t, h, req0, "creator-update@example.com")
+	session := &models.Session{
+		ID:        uuid.New(),
+		Title:     "Session to Update",
+		CreatedBy: &creator.Email,
+		Status:    models.SessionStatusOpen,
+	}
+	err := db.CreateSession(ctx, session)
+	require.NoError(t, err)
 	assert.Equal(t, models.SessionStatusOpen, session.Status)
+
+	addCookieToRequest := func(req *http.Request) {
+		for _, c := range req0.Cookies() {
+			req.AddCookie(c)
+		}
+	}
 
 	t.Run("updates session status to closed", func(t *testing.T) {
 		reqBody := map[string]string{"status": "closed"}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+session.ID.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var updatedSession models.Session
@@ -738,9 +755,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+session.ID.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 		var updatedSession models.Session
@@ -754,9 +772,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+session.ID.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 		assert.Contains(t, w.Body.String(), "Invalid status")
@@ -767,9 +786,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/invalid-id", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -780,9 +800,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+nonExistentID.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -792,9 +813,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String(), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
@@ -802,9 +824,10 @@ func TestUpdateSessionStatus(t *testing.T) {
 	t.Run("returns 400 for invalid request body", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+session.ID.String(), bytes.NewReader([]byte("invalid json")))
 		req.Header.Set("Content-Type", "application/json")
+		addCookieToRequest(req)
 		w := httptest.NewRecorder()
 
-		h.UpdateSessionStatus(w, req)
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
@@ -1145,6 +1168,71 @@ func TestSessionPlayback(t *testing.T) {
 		err = json.Unmarshal(w.Body.Bytes(), &body)
 		require.NoError(t, err)
 		assert.Equal(t, "VIDEO_NOT_INGESTED", body.ReasonCode)
+	})
+}
+
+func TestDeleteSession(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+	db := h.DB
+
+	t.Run("returns 401 when not authenticated", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "To Delete")
+		req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+session.ID.String(), nil)
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteSession)(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("returns 404 for non-existent session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+uuid.New().String(), nil)
+		addAdminSessionCookie(t, h, req)
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteSession)(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 403 when current user is not admin", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "To Delete")
+		req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+session.ID.String(), nil)
+		addUserSessionCookie(t, h, req, "creator@example.com")
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteSession)(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		_, err := db.GetSession(ctx, session.ID)
+		require.NoError(t, err)
+	})
+
+	t.Run("returns 204 and deletes session when current user is admin", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, db, "To Delete")
+		adminEmail := "admin-delete-session@example.com"
+		admin := &models.User{
+			ID:          uuid.New(),
+			Email:       adminEmail,
+			DisplayName: "Admin",
+			Status:      models.UserStatusActive,
+			GlobalRole:  models.GlobalRoleAdmin,
+		}
+		err := db.CreateUser(ctx, admin)
+		require.NoError(t, err)
+		loginSession := &models.LoginSession{
+			ID:        uuid.New(),
+			UserID:    admin.ID,
+			CreatedAt: time.Now(),
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		err = db.CreateLoginSession(ctx, loginSession)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+session.ID.String(), nil)
+		req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: loginSession.ID.String()})
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.DeleteSession)(w, req)
+		assert.Equal(t, http.StatusNoContent, w.Code)
+		_, err = db.GetSession(ctx, session.ID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
 	})
 }
 

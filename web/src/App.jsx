@@ -146,6 +146,17 @@ function App() {
   const [mySessions, setMySessions] = useState([])
   const [mySessionsLoading, setMySessionsLoading] = useState(false)
   const [mySessionsError, setMySessionsError] = useState('')
+  // Pending session invitations for the logged-in user (shown in "Pending Invites" section)
+  const [pendingInvitations, setPendingInvitations] = useState([])
+  const [pendingInvitationsLoading, setPendingInvitationsLoading] = useState(false)
+  const [pendingInvitationsFetched, setPendingInvitationsFetched] = useState(false) // true after first successful fetch
+  const [acceptingInvitationId, setAcceptingInvitationId] = useState(null)
+  const [copyingSessionId, setCopyingSessionId] = useState(null) // session id while copy in progress
+  const [copyModalSession, setCopyModalSession] = useState(null) // { id, title } when copy modal is open
+  const [copyModalTitle, setCopyModalTitle] = useState('') // optional title for copy
+  const [renameSessionId, setRenameSessionId] = useState(null)
+  const [renameSessionTitle, setRenameSessionTitle] = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
   
   // Response states - per-section feedback
   const [createArtifactFeedback, setCreateArtifactFeedback] = useState({ type: '', message: '' })
@@ -181,6 +192,9 @@ function App() {
   const [healthChecking, setHealthChecking] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
   const [urlKey, setUrlKey] = useState(0) // bump to re-read URL after clearing ?mode=admin for non-admins
+  // Admin panel: section expanded state (collapsed by default; reset on logout; preserved when switching app ↔ admin)
+  const [adminUsersExpanded, setAdminUsersExpanded] = useState(false)
+  const [adminSessionsExpanded, setAdminSessionsExpanded] = useState(false)
   
   // Video player states. selectedVideoIdRef stores the user's chosen video id so selection survives refetches and effect runs.
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -478,6 +492,14 @@ function App() {
     }
   }, [authUser])
 
+  // Admin section expansion: reset to collapsed when user logs out so next login sees collapsed
+  useEffect(() => {
+    if (!authUser) {
+      setAdminUsersExpanded(false)
+      setAdminSessionsExpanded(false)
+    }
+  }, [authUser])
+
   // Participants must never see edit mode: if auth just loaded and user is participant but we're in creator mode (e.g. opened via ?mode=edit before auth loaded), force participant mode and URL
   useEffect(() => {
     if (authUser?.global_role !== 'participant') return
@@ -493,7 +515,36 @@ function App() {
     setUrlKey(k => k + 1)
   }, [authUser?.global_role, apiBaseUrl])
 
-  // Fetch "my sessions" when in creator mode with no session and user is logged in
+  const fetchPendingInvitations = useCallback(async () => {
+    if (!authUser?.email || !apiBaseUrl) {
+      setPendingInvitations([])
+      setPendingInvitationsFetched(false)
+      return
+    }
+    setPendingInvitationsLoading(true)
+    setPendingInvitationsFetched(false)
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const headers = {}
+      if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+      const res = await fetch(`${base}/api/invitations/pending`, { credentials: 'include', headers })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setPendingInvitations([])
+        setPendingInvitationsFetched(true)
+        return
+      }
+      setPendingInvitations(Array.isArray(data.invitations) ? data.invitations : [])
+      setPendingInvitationsFetched(true)
+    } catch (_) {
+      setPendingInvitations([])
+      setPendingInvitationsFetched(true)
+    } finally {
+      setPendingInvitationsLoading(false)
+    }
+  }, [authUser?.email, apiBaseUrl, acceptToken])
+
+  // Fetch "my sessions" and pending invitations when no session selected and user is logged in (same conditions so both APIs run together)
   useEffect(() => {
     if (!authUser || !apiBaseUrl || currentSession) {
       if (!authUser && !currentSession) {
@@ -502,6 +553,8 @@ function App() {
       }
       return
     }
+    // Fetch pending invitations whenever we fetch sessions (so invitations API is always called on selection screen)
+    fetchPendingInvitations()
     let cancelled = false
     setMySessionsLoading(true)
     setMySessionsError('')
@@ -537,7 +590,16 @@ function App() {
         if (!cancelled) setMySessionsLoading(false)
       })
     return () => { cancelled = true }
-  }, [authUser, apiBaseUrl, currentSession, acceptToken])
+  }, [authUser, apiBaseUrl, currentSession, acceptToken, fetchPendingInvitations])
+
+  useEffect(() => {
+    if (!authUser || currentSession) {
+      setPendingInvitations([])
+      setPendingInvitationsFetched(false)
+      return
+    }
+    fetchPendingInvitations()
+  }, [authUser, currentSession, fetchPendingInvitations])
 
   // Sync creator identity to logged-in user email so new sessions (e.g. from Zoom) show in "Your sessions"
   useEffect(() => {
@@ -1253,12 +1315,16 @@ function App() {
 
       if (!response.ok) {
         const text = await response.text()
+        let message
         try {
           const json = JSON.parse(text)
-          setCreateSessionFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
+          message = response.status === 409 || /already exists|unique name/i.test(json.error || '')
+            ? 'A session with this name already exists. Please use a unique name.'
+            : (json.error || `Error ${response.status}`)
         } catch {
-          setCreateSessionFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
+          message = `Error ${response.status}: ${text}`
         }
+        setCreateSessionFeedback({ type: 'error', message })
         return
       }
 
@@ -1275,6 +1341,88 @@ function App() {
       setCreateSessionFeedback({ type: 'error', message: `Failed to create session: ${err.message}` })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const duplicateTitleMessage = 'A session with this name already exists. Please use a unique name.'
+
+  const copySession = async (sourceSessionId, optionalTitle) => {
+    if (!apiBaseUrl || !sourceSessionId) return
+    setCopyingSessionId(sourceSessionId)
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const headers = { 'Content-Type': 'application/json' }
+      if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+      const body = optionalTitle && optionalTitle.trim() ? JSON.stringify({ title: optionalTitle.trim() }) : undefined
+      const res = await fetch(`${base}/api/sessions/${sourceSessionId}/copy`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        ...(body ? { body } : {})
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const message = res.status === 409 || /already exists|unique name/i.test(data.error || '')
+          ? duplicateTitleMessage
+          : (data.error || `Copy failed: ${res.status}`)
+        setCreateSessionFeedback({ type: 'error', message })
+        return
+      }
+      setCopyModalSession(null)
+      setCopyModalTitle('')
+      await openSession(data.id, 'creator')
+    } catch (err) {
+      setCreateSessionFeedback({ type: 'error', message: `Failed to copy session: ${err.message}` })
+    } finally {
+      setCopyingSessionId(null)
+    }
+  }
+
+  const saveRenameSession = async () => {
+    if (!renameSessionId || !apiBaseUrl) return
+    const title = renameSessionTitle.trim()
+    if (!title) {
+      setCreateSessionFeedback({ type: 'error', message: 'Title cannot be empty' })
+      return
+    }
+    setRenameSaving(true)
+    setCreateSessionFeedback({ type: '', message: '' })
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const headers = { 'Content-Type': 'application/json' }
+      if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+      const res = await fetch(`${base}/api/sessions/${renameSessionId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ title })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const message = res.status === 409 || /already exists|unique name/i.test(data.error || '')
+          ? duplicateTitleMessage
+          : (data.error || `Failed to rename: ${res.status}`)
+        setCreateSessionFeedback({ type: 'error', message })
+        return
+      }
+      setRenameSessionId(null)
+      setRenameSessionTitle('')
+      setMySessions(prev => prev.map(item => {
+        const s = item.session || item
+        if (s.id === renameSessionId) return { ...item, session: { ...s, title } }
+        return item
+      }))
+      if (currentSession && (currentSession.session?.id === renameSessionId || currentSession.id === renameSessionId)) {
+        setCurrentSession(prev => {
+          if (!prev) return null
+          if (prev.session) return { ...prev, session: { ...prev.session, title } }
+          return { ...prev, title }
+        })
+      }
+    } catch (err) {
+      setCreateSessionFeedback({ type: 'error', message: `Failed to rename: ${err.message}` })
+    } finally {
+      setRenameSaving(false)
     }
   }
 
@@ -1456,6 +1604,14 @@ function App() {
     if (zoom === 'connected' && ci) {
       setCreatorIdentity(ci)
       setZoomConnection({ zoom_user_email: null, zoom_user_id: null }) // will be filled by /me
+      // Restore create-session flow if user left to connect Zoom from "Create new session" -> "From Zoom"
+      try {
+        if (sessionStorage.getItem('talkback.zoom_return_to_create') === '1') {
+          sessionStorage.removeItem('talkback.zoom_return_to_create')
+          setSessionMode('create')
+          setCreateSource('zoom')
+        }
+      } catch (_) { /* ignore */ }
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     } else if (zoom === 'error') {
       setZoomImportError(message === 'missing_code_or_state' ? 'Zoom sign-in was cancelled or incomplete.' : message === 'server_not_configured' ? 'Zoom is not configured on the server.' : message === 'exchange_failed' ? 'Could not complete Zoom sign-in.' : message === 'save_failed' ? 'Could not save Zoom connection.' : message || 'Zoom sign-in failed.')
@@ -1717,6 +1873,29 @@ function App() {
       if (!isRefetch) setLoading(false)
     }
   }
+
+  const acceptPendingInvitation = useCallback(async (invitationId) => {
+    if (!apiBaseUrl || !invitationId) return
+    setAcceptingInvitationId(invitationId)
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const headers = { 'Content-Type': 'application/json' }
+      if (acceptToken) headers['Authorization'] = `Bearer ${acceptToken}`
+      const res = await fetch(`${base}/api/invitations/${invitationId}/accept`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({})
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.session_id) {
+        setPendingInvitations((prev) => prev.filter((inv) => inv.id !== invitationId))
+        await openSession(data.session_id, 'participant')
+      }
+    } finally {
+      setAcceptingInvitationId(null)
+    }
+  }, [apiBaseUrl, openSession, acceptToken])
 
   const inviteUserToSession = async () => {
     const email = inviteEmail?.trim()?.toLowerCase()
@@ -2372,6 +2551,16 @@ function App() {
         console.log('WebSocket: Session updated (e.g. materials), refetching session...')
         refetchSession()
       }
+    } else if (message.type === 'session_deleted') {
+      const deletedId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
+      if (!deletedId) return
+      const currentId = currentSession?.session?.id || currentSession?.id
+      if (currentId === deletedId) {
+        window.alert('This session was deleted.')
+        setCurrentSession(null)
+        setSessionMode('select')
+      }
+      setMySessions((prev) => prev.filter((item) => (item.session?.id ?? item.session_id ?? item.id) !== deletedId))
     } else if (message.type === 'invitation_accepted') {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
       if (msgSessionId && typeof fetchSessionInvitations === 'function') {
@@ -2417,7 +2606,7 @@ function App() {
         }
       }
     }
-  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, setStanceVersion])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, setStanceVersion, setCurrentSession, setSessionMode, setMySessions])
 
   // Clear all question state when session changes so we never show the previous session's questions
   useEffect(() => {
@@ -2558,7 +2747,7 @@ function App() {
   }
 
   return (
-    <div className={`container${isParticipantMode && currentSession ? ' participant-full-width' : ''}`}>
+    <div className={`container${showAdminView ? ' admin-full-width' : isParticipantMode && currentSession ? ' participant-full-width' : ''}`}>
       {zoomImportToast && (
         <div style={{
           position: 'fixed',
@@ -2577,9 +2766,62 @@ function App() {
           {zoomImportToast.message}
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h1 style={{ margin: 0 }}>TalkBack Phase 3 - Web UI</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+
+      {/* Copy session modal: optional title */}
+      {copyModalSession && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={() => { setCopyModalSession(null); setCopyModalTitle('') }}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Copy session</h3>
+            <p style={{ marginBottom: '12px', color: '#555', fontSize: '14px' }}>Source: {copyModalSession.title}</p>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>New session title (optional)</label>
+            <input
+              type="text"
+              value={copyModalTitle}
+              onChange={e => setCopyModalTitle(e.target.value)}
+              placeholder="Copy of …"
+              style={{ width: '100%', padding: '8px', marginBottom: '16px', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => { setCopyModalSession(null); setCopyModalTitle('') }} style={{ padding: '8px 16px' }}>Cancel</button>
+              <button
+                type="button"
+                onClick={() => copySession(copyModalSession.id, copyModalTitle.trim() || undefined)}
+                disabled={copyingSessionId === copyModalSession.id}
+                style={{ padding: '8px 16px', cursor: copyingSessionId === copyModalSession.id ? 'not-allowed' : 'pointer' }}
+              >
+                {copyingSessionId === copyModalSession.id ? 'Copying…' : 'Copy'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename session modal */}
+      {renameSessionId && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={() => { setRenameSessionId(null); setRenameSessionTitle('') }}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Rename session</h3>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>Title</label>
+            <input
+              type="text"
+              value={renameSessionTitle}
+              onChange={e => setRenameSessionTitle(e.target.value)}
+              placeholder="Session title"
+              style={{ width: '100%', padding: '8px', marginBottom: '16px', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => { setRenameSessionId(null); setRenameSessionTitle('') }} disabled={renameSaving} style={{ padding: '8px 16px' }}>Cancel</button>
+              <button type="button" onClick={saveRenameSession} disabled={renameSaving || !renameSessionTitle.trim()} style={{ padding: '8px 16px', cursor: renameSaving ? 'not-allowed' : 'pointer' }}>
+                {renameSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', minWidth: 0 }}>
+        <h1 style={{ margin: 0, minWidth: 0 }}>TalkBack Phase 3 - Web UI</h1>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px', minWidth: 0 }}>
           {/* TalkBack auth: logged-in state + Log out */}
           <span style={{ fontSize: '13px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
             Logged in as {authUser.display_name || authUser.email}
@@ -2665,7 +2907,16 @@ function App() {
         </div>
       </div>
 
-      {showAdminView && <AdminUsers apiBaseUrl={apiBaseUrl} debugMode={debugMode} />}
+      {showAdminView && (
+              <AdminUsers
+                apiBaseUrl={apiBaseUrl}
+                debugMode={debugMode}
+                usersExpanded={adminUsersExpanded}
+                onUsersExpandedChange={setAdminUsersExpanded}
+                sessionsExpanded={adminSessionsExpanded}
+                onSessionsExpandedChange={setAdminSessionsExpanded}
+              />
+            )}
       {showAdminForbidden && (
         <div className="section" style={{ padding: '24px' }}>
           <p className="error">Forbidden. Admin access required.</p>
@@ -2749,6 +3000,56 @@ function App() {
       {/* Session Selector - when no session: show picker. When session open in creator mode, CreatorMode shows the single session header (no duplicate here). */}
       {(!currentSession || !isParticipantMode) && !(currentSession && viewMode === 'session' && !isParticipantMode) && (
         <>
+          {/* Pending Invites: only show when there are pending invites (hide when empty or in create flow) */}
+          {!currentSession && authUser && sessionMode !== 'create' && pendingInvitationsFetched && pendingInvitations.length > 0 && (
+            <div style={{ marginBottom: '20px', padding: '14px', backgroundColor: '#fff3e0', borderRadius: '8px', border: '2px solid #ff9800' }}>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem' }}>Pending Invites</h3>
+              <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                  {pendingInvitations.map((inv) => (
+                    <div
+                      key={inv.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '10px',
+                        padding: '10px',
+                        marginBottom: '6px',
+                        border: '1px solid #ffcc80',
+                        borderRadius: '5px',
+                        backgroundColor: '#fff'
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: '600' }}>{inv.session_title || 'Untitled session'}</div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                          Invited by {inv.inviter_name || '—'} · {inv.invited_role || 'participant'}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={acceptingInvitationId === inv.id}
+                        onClick={() => acceptPendingInvitation(inv.id)}
+                        style={{
+                          flexShrink: 0,
+                          padding: '6px 14px',
+                          backgroundColor: '#ff9800',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: acceptingInvitationId === inv.id ? 'not-allowed' : 'pointer',
+                          fontWeight: '600',
+                          fontSize: '13px'
+                        }}
+                      >
+                        {acceptingInvitationId === inv.id ? 'Accepting…' : 'Accept & open'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+            </div>
+          )}
+
           <h2>{authUser?.global_role === 'participant' && !currentSession ? "Sessions you're part of" : 'Session Selection (Required)'}</h2>
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
@@ -2857,6 +3158,27 @@ function App() {
                                 Status: <span style={{ color: session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>{session.status}</span>
                                 {session.updated_at && ` · Updated ${new Date(session.updated_at).toLocaleDateString()}`}
                               </div>
+                              {canCreateSessions && (myRole === 'creator' || myRole === 'admin') && (
+                                <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    disabled={copyingSessionId === session.id}
+                                    onClick={() => { setCopyModalSession({ id: session.id, title: session.title || 'Untitled session' }); setCopyModalTitle('Copy of ' + (session.title || 'Untitled session')) }}
+                                    style={{ fontSize: '12px', padding: '4px 10px', cursor: copyingSessionId === session.id ? 'not-allowed' : 'pointer' }}
+                                  >
+                                    {copyingSessionId === session.id ? 'Copying…' : 'Copy session'}
+                                  </button>
+                                  {(myRole === 'creator' || myRole === 'admin') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => { setRenameSessionId(session.id); setRenameSessionTitle(session.title || '') }}
+                                      style={{ fontSize: '12px', padding: '4px 10px', cursor: 'pointer' }}
+                                    >
+                                      Rename
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           )
                         })}
@@ -2869,7 +3191,26 @@ function App() {
 
             {/* Create New Session: sub-choice From Zoom | Empty session */}
             {sessionMode === 'create' && canCreateSessions && (
-              <div>
+              <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '8px', border: '1px solid #e0e0e0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '1rem' }}>Create new session</span>
+                  <button
+                    type="button"
+                    onClick={() => setSessionMode('select')}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '14px',
+                      cursor: 'pointer',
+                      border: '1px solid #999',
+                      borderRadius: '4px',
+                      background: '#fff',
+                      color: '#555',
+                      fontWeight: '500'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
                 <div style={{ marginBottom: '15px' }}>
                   <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>How to create:</label>
                   <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
@@ -2940,12 +3281,16 @@ function App() {
                       </div>
                     ) : (
                       <div style={{ marginBottom: '10px' }}>
-                        <a
-                          href={`${apiBaseUrl}/auth/zoom/start?creator_identity=${encodeURIComponent(creatorIdentity)}`}
-                          style={{ padding: '6px 12px', backgroundColor: '#2D8CFF', color: 'white', textDecoration: 'none', borderRadius: '4px', fontSize: '14px', display: 'inline-block' }}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try { sessionStorage.setItem('talkback.zoom_return_to_create', '1') } catch (_) {}
+                            window.location.href = `${apiBaseUrl}/auth/zoom/start?creator_identity=${encodeURIComponent(creatorIdentity)}`
+                          }}
+                          style={{ padding: '6px 12px', backgroundColor: '#2D8CFF', color: 'white', border: 'none', borderRadius: '4px', fontSize: '14px', cursor: 'pointer' }}
                         >
                           Connect Zoom
-                        </a>
+                        </button>
                       </div>
                     )}
                     {zoomConnection && (
@@ -3120,6 +3465,10 @@ function App() {
                 onClick={() => { 
                   setCurrentSession(null)
                   setSessionSelectFeedback({ type: '', message: '' })
+                  const apiQ = new URLSearchParams(window.location.search).get('api')
+                  const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
+                  const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
+                  window.history.replaceState(null, '', `${window.location.pathname}?mode=${mode}${apiSuffix}`)
                 }} 
                 style={{ 
                   backgroundColor: '#f44336',
@@ -3213,7 +3562,14 @@ function App() {
               lastInvitationDraft={lastInvitationDraft}
               setLastInvitationDraft={setLastInvitationDraft}
               setPrimaryVideoSource={setPrimaryVideoSource}
-              onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
+              onClearSession={() => {
+                setCurrentSession(null)
+                setSessionSelectFeedback({ type: '', message: '' })
+                const apiQ = new URLSearchParams(window.location.search).get('api')
+                const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
+                const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
+                window.history.replaceState(null, '', `${window.location.pathname}?mode=${mode}${apiSuffix}`)
+              }}
               debugMode={debugMode}
             />
           ) : (
@@ -3269,7 +3625,13 @@ function App() {
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
               stanceVersion={stanceVersion}
-              onClearSession={() => { setCurrentSession(null); setSessionSelectFeedback({ type: '', message: '' }) }}
+              onClearSession={() => {
+                setCurrentSession(null)
+                setSessionSelectFeedback({ type: '', message: '' })
+                const apiQ = new URLSearchParams(window.location.search).get('api')
+                const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
+                window.history.replaceState(null, '', `${window.location.pathname}?mode=view${apiSuffix}`)
+              }}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null
                   ? citation.navigation.seek_ms

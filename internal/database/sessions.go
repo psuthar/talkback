@@ -38,6 +38,19 @@ func (db *DB) CreateSession(ctx context.Context, session *models.Session) error 
 	return nil
 }
 
+// DeleteSession deletes the session by ID. Cascades remove artifacts, materials, video_sources, questions, etc.
+// Call DeleteFileArtifactsBySessionID first since file_artifacts.session_id has ON DELETE SET NULL.
+func (db *DB) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
+	result, err := db.Pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	return nil
+}
+
 // GetSession retrieves a session by ID
 func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Session, error) {
 	session := &models.Session{}
@@ -440,6 +453,38 @@ func (db *DB) UpdateSessionContext(ctx context.Context, sessionID uuid.UUID, pre
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("UpdateSessionContext: session not found")
+	}
+	return nil
+}
+
+// SessionWithTitleExistsForCreator returns true if the creator already has a session with the same title (case-insensitive, trimmed).
+// excludeSessionID, when non-nil, excludes that session ID (used for rename so the current session is not counted).
+func (db *DB) SessionWithTitleExistsForCreator(ctx context.Context, createdBy string, title string, excludeSessionID *uuid.UUID) (bool, error) {
+	query := `
+		SELECT 1 FROM sessions
+		WHERE created_by = $1 AND LOWER(TRIM(title)) = LOWER(TRIM($2))
+		  AND ($3::uuid IS NULL OR id != $3)
+		LIMIT 1
+	`
+	var n int
+	err := db.Pool.QueryRow(ctx, query, createdBy, title, excludeSessionID).Scan(&n)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("SessionWithTitleExistsForCreator: %w", err)
+	}
+	return true, nil
+}
+
+// UpdateSessionTitle updates the session title and updated_at.
+func (db *DB) UpdateSessionTitle(ctx context.Context, sessionID uuid.UUID, title string) error {
+	result, err := db.Pool.Exec(ctx, `UPDATE sessions SET title = $1, updated_at = now() WHERE id = $2`, title, sessionID)
+	if err != nil {
+		return fmt.Errorf("UpdateSessionTitle: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("UpdateSessionTitle: session not found")
 	}
 	return nil
 }

@@ -20,4 +20,7 @@ type Interface interface {
 	Head(ctx context.Context, key string) (exists bool, size int64, contentType string, err error)
 	// Delete removes the object.
 	Delete(ctx context.Context, key string) error
+	// DeletePrefix removes all objects whose keys start with the given prefix (e.g. "sessions/{sessionID}/").
+	// Returns the number of objects deleted. Used for session deletion.
+	DeletePrefix(ctx context.Context, prefix string) (deleted int, err error)
 }

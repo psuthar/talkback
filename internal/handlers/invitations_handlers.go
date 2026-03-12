@@ -188,6 +188,87 @@ func (h *Handlers) ResolveInvitation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"invitation": result})
 }
 
+// ListPendingInvitations handles GET /api/invitations/pending (RequireAuth). Returns pending invitations for the current user.
+func (h *Handlers) ListPendingInvitations(w http.ResponseWriter, r *http.Request) {
+	if h.InvitationService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "invitation service not configured"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	email := invitations.NormalizeEmail(user.Email)
+	if email == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"invitations": []interface{}{}})
+		return
+	}
+	list, err := h.InvitationService.ListPendingForUser(r.Context(), email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list pending invitations"})
+		return
+	}
+	if list == nil {
+		list = []*invitations.PendingInvitationItem{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"invitations": list})
+}
+
+// AcceptInvitationByID handles POST /api/invitations/:id/accept (RequireAuth). Accepts the invitation when current user's email matches.
+func (h *Handlers) AcceptInvitationByID(w http.ResponseWriter, r *http.Request) {
+	if h.InvitationService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "invitation service not configured"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	invitationID, err := parseUUIDFromPath(r.URL.Path, "api", "invitations", "accept")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid invitation id"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	ctx := r.Context()
+	createMembership := func(sessionID, userID uuid.UUID, role string, invitedBy *uuid.UUID) error {
+		return h.DB.CreateSessionMembership(ctx, sessionID, userID, role, invitedBy)
+	}
+	getUserID := func(email string) (uuid.UUID, bool) {
+		u, _ := h.DB.GetUserByEmail(ctx, invitations.NormalizeEmail(email))
+		if u == nil {
+			return uuid.Nil, false
+		}
+		return u.ID, true
+	}
+	sessionID, err := h.InvitationService.AcceptByInvitationID(ctx, invitationID, user.Email, createMembership, getUserID)
+	if err != nil {
+		if err == invitations.ErrWrongEmail {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "this invitation was sent to a different email"})
+			return
+		}
+		if err == invitations.ErrNotFound || err == invitations.ErrExpired || err == invitations.ErrAlreadyAccepted || err == invitations.ErrNoAccount {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to accept"})
+		return
+	}
+	if h.Hub != nil {
+		h.Hub.BroadcastInvitationAccepted(sessionID)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/?session=" + sessionID.String()})
+}
+
 // AcceptInvitationRequest is the body for POST /api/invitations/accept.
 type AcceptInvitationRequest struct {
 	Token          string `json:"token"`

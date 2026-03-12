@@ -1,25 +1,20 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
-	"github.com/psuthar/talkback/internal/utils"
 )
 
 // Phase 3: Session Handlers
@@ -56,86 +51,6 @@ type GetSessionResponse struct {
 	VideoAccessURL         string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
 	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
 	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
-}
-
-// resolveEffectivePrimaryAndAdditional returns the session's effective primary video (explicit primary, else first ready, else first) and all other videos as additional. Backward compatible when video_role is nil.
-func resolveEffectivePrimaryAndAdditional(videoSources []*models.VideoSource) (primary *models.VideoSource, additional []*models.VideoSource) {
-	if len(videoSources) == 0 {
-		return nil, nil
-	}
-	// 1) Explicit primary
-	for _, vs := range videoSources {
-		if vs != nil && vs.VideoRole != nil && *vs.VideoRole == models.VideoRolePrimary {
-			primary = vs
-			break
-		}
-	}
-	// 2) First ready
-	if primary == nil {
-		for _, vs := range videoSources {
-			if vs != nil && vs.TranscriptStatus == models.VideoTranscriptStatusReady {
-				primary = vs
-				break
-			}
-		}
-	}
-	// 3) First video
-	if primary == nil {
-		primary = videoSources[0]
-	}
-	// Additional = all except primary (by ID)
-	for _, vs := range videoSources {
-		if vs != nil && (primary == nil || vs.ID != primary.ID) {
-			additional = append(additional, vs)
-		}
-	}
-	return primary, additional
-}
-
-// ensurePrimaryVideoIfNone sets the given video as primary for the session when no video in the session is yet marked primary (e.g. first video uploaded or Zoom import).
-func (h *Handlers) ensurePrimaryVideoIfNone(ctx context.Context, sessionID, videoSourceID uuid.UUID) {
-	sources, err := h.DB.GetVideoSourcesBySessionID(ctx, sessionID)
-	if err != nil || len(sources) == 0 {
-		return
-	}
-	for _, vs := range sources {
-		if vs != nil && vs.VideoRole != nil && *vs.VideoRole == models.VideoRolePrimary {
-			return // already have a primary
-		}
-	}
-	if err := h.DB.SetVideoSourceVideoRole(ctx, sessionID, videoSourceID, models.VideoRolePrimary); err != nil {
-		log.Printf("Warning: set first video as primary: %v", err)
-	}
-}
-
-// enrichAnswersWithDisplayNames sets AnsweredByDisplayName on each answer when AnsweredBy (email) is set.
-func (h *Handlers) enrichAnswersWithDisplayNames(ctx context.Context, answers []*models.Answer) {
-	for _, a := range answers {
-		if a == nil || a.AnsweredBy == nil || *a.AnsweredBy == "" {
-			continue
-		}
-		u, err := h.DB.GetUserByEmail(ctx, *a.AnsweredBy)
-		if err != nil || u == nil {
-			continue
-		}
-		a.AnsweredByDisplayName = &u.DisplayName
-	}
-}
-
-type JoinParticipantRequest struct {
-	ParticipantRef string `json:"participant_ref"`
-}
-
-type CreateEventRequest struct {
-	ParticipantRef   *string                `json:"participant_ref,omitempty"`
-	EventType        string                 `json:"event_type"`
-	VideoTimeSeconds *int                   `json:"video_time_seconds,omitempty"`
-	Payload          map[string]interface{} `json:"payload,omitempty"`
-}
-
-type transcribeVoiceResponse struct {
-	TranscribedText string   `json:"transcribed_text"`
-	Confidence      *float32 `json:"confidence,omitempty"`
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -250,8 +165,20 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Title == "" {
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+
+	exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), user.Email, title, nil)
+	if err != nil {
+		log.Printf("CreateSession SessionWithTitleExistsForCreator: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check session title"})
+		return
+	}
+	if exists {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "A session with this name already exists. Please use a unique name."})
 		return
 	}
 
@@ -259,7 +186,7 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	// Create session (creator is the authenticated user)
 	session := &models.Session{
 		ID:        uuid.New(),
-		Title:     req.Title,
+		Title:     title,
 		CreatedBy: &createdBy,
 		Status:    models.SessionStatusOpen,
 	}
@@ -271,11 +198,11 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create a first artifact so the session is immediately usable (edit view, Q&A, and "session has no artifacts" is avoided)
-	title := session.Title
-	if title == "" {
-		title = "Session content"
+	artifactTitle := session.Title
+	if artifactTitle == "" {
+		artifactTitle = "Session content"
 	}
-	if _, err := h.DB.CreateArtifact(r.Context(), session.ID, title, nil); err != nil {
+	if _, err := h.DB.CreateArtifact(r.Context(), session.ID, artifactTitle, nil); err != nil {
 		log.Printf("Error creating default artifact for session %s: %v", session.ID, err)
 		// Non-fatal: session is created; user can create an artifact from the UI
 	}
@@ -291,6 +218,399 @@ func (h *Handlers) CreateSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
+}
+
+// CopySessionRequest is the optional body for POST /api/sessions/:id/copy
+type CopySessionRequest struct {
+	Title *string `json:"title,omitempty"`
+}
+
+// CopySessionResponse is the response for POST /api/sessions/:id/copy
+type CopySessionResponse struct {
+	ID        string  `json:"id"`
+	Title     string  `json:"title"`
+	CreatedBy *string `json:"created_by,omitempty"`
+	Status    string  `json:"status"`
+	CreatedAt string  `json:"created_at"`
+}
+
+// CopySession creates a new session with the same artifacts and materials as the source (Creator or Admin only). Files are copied in R2/local for isolation. Questions, answers, unread state, and video are not copied. RAG is reprocessed for the new session.
+func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !user.GlobalRole.CanCreateSessions() {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "your role does not allow creating sessions"})
+		return
+	}
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 || parts[0] != "api" || parts[1] != "sessions" || parts[3] != "copy" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+		return
+	}
+	sourceSessionID, err := uuid.Parse(parts[2])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session id"})
+		return
+	}
+	ctx := r.Context()
+	sourceSession, err := h.DB.GetSession(ctx, sourceSessionID)
+	if err != nil || sourceSession == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	// Only source creator or admin can copy
+	if user.GlobalRole != models.GlobalRoleAdmin {
+		if sourceSession.CreatedBy == nil || *sourceSession.CreatedBy != user.Email {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can copy this session"})
+			return
+		}
+	}
+
+	var copyReq CopySessionRequest
+	_ = json.NewDecoder(r.Body).Decode(&copyReq) // optional body; ignore decode error for empty body
+
+	createdBy := user.Email
+	title := "Copy of " + sourceSession.Title
+	if copyReq.Title != nil && strings.TrimSpace(*copyReq.Title) != "" {
+		title = strings.TrimSpace(*copyReq.Title)
+		exists, err := h.DB.SessionWithTitleExistsForCreator(ctx, createdBy, title, nil)
+		if err != nil {
+			log.Printf("CopySession SessionWithTitleExistsForCreator: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check session title"})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "A session with this name already exists. Please use a unique name."})
+			return
+		}
+	} else {
+		// Default title: ensure uniqueness by appending (2), (3), ... as needed
+		if len(title) > 512 {
+			title = title[:512]
+		}
+		for n := 1; ; n++ {
+			if n > 1 {
+				suffix := fmt.Sprintf(" (%d)", n)
+				title = "Copy of " + sourceSession.Title + suffix
+				if len(title) > 512 {
+					title = title[:512]
+				}
+			}
+			exists, err := h.DB.SessionWithTitleExistsForCreator(ctx, createdBy, title, nil)
+			if err != nil {
+				log.Printf("CopySession SessionWithTitleExistsForCreator: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check session title"})
+				return
+			}
+			if !exists {
+				break
+			}
+		}
+	}
+
+	newSession := &models.Session{
+		ID:        uuid.New(),
+		Title:     title,
+		CreatedBy: &createdBy,
+		Status:    models.SessionStatusOpen,
+	}
+	if err := h.DB.CreateSession(ctx, newSession); err != nil {
+		log.Printf("CopySession CreateSession: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
+		return
+	}
+	artifacts, err := h.DB.GetArtifactsBySessionID(ctx, sourceSessionID)
+	if err != nil {
+		log.Printf("CopySession GetArtifactsBySessionID: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list source artifacts"})
+		return
+	}
+	oldToNewArtifact := make(map[uuid.UUID]uuid.UUID)
+	if len(artifacts) == 0 {
+		// Ensure at least one artifact so the session is usable (match CreateSession behavior)
+		if _, err := h.DB.CreateArtifact(ctx, newSession.ID, newSession.Title, nil); err != nil {
+			log.Printf("CopySession CreateArtifact default: %v", err)
+		}
+	}
+	for _, a := range artifacts {
+		newArtifact, err := h.DB.CreateArtifact(ctx, newSession.ID, a.Title, a.Description)
+		if err != nil {
+			log.Printf("CopySession CreateArtifact: %v", err)
+			continue
+		}
+		oldToNewArtifact[a.ID] = newArtifact.ID
+	}
+	materials, err := h.DB.GetActiveMaterialsBySessionID(ctx, sourceSessionID)
+	if err != nil {
+		log.Printf("CopySession GetActiveMaterialsBySessionID: %v", err)
+	} else {
+		r2Prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+		for _, m := range materials {
+			newArtifactID, ok := oldToNewArtifact[m.ArtifactID]
+			if !ok {
+				continue
+			}
+			newMaterial := &models.Material{
+				ID:            uuid.New(),
+				ArtifactID:    newArtifactID,
+				SessionID:     newSession.ID,
+				Kind:          m.Kind,
+				Filename:      m.Filename,
+				ContentType:   m.ContentType,
+				StorageURL:    "",
+				StorageProvider: m.StorageProvider,
+				StorageKey:    "",
+				SizeBytes:     m.SizeBytes,
+				TextStatus:    m.TextStatus,
+				ExtractedText: m.ExtractedText,
+				Title:         m.Title,
+				ErrorMessage:  m.ErrorMessage,
+			}
+			if m.StorageProvider == "r2" && m.StorageKey != "" && h.Storage != nil {
+				newKey := storage.BuildArtifactStorageKey(r2Prefix, newSession.ID, newArtifactID, m.Filename)
+				rc, err := h.Storage.Get(ctx, m.StorageKey)
+				if err != nil {
+					log.Printf("CopySession R2 Get %s: %v", m.StorageKey, err)
+					continue
+				}
+				var size int64
+				if m.SizeBytes != nil {
+					size = *m.SizeBytes
+				}
+				_, _, err = h.Storage.Put(ctx, newKey, rc, m.ContentType, size)
+				_ = rc.Close()
+				if err != nil {
+					log.Printf("CopySession R2 Put %s: %v", newKey, err)
+					continue
+				}
+				newMaterial.StorageKey = newKey
+			} else if m.StorageProvider == "local" && m.Filename != "" {
+				srcPath := filepath.Join(storage.UploadRoot(), storage.SessionStorageRoot, sourceSessionID.String(), "data", "uploads", filepath.Base(m.Filename))
+				dstDir := storage.SessionUploadsAbsDir(newSession.ID)
+				if err := os.MkdirAll(dstDir, 0755); err != nil {
+					log.Printf("CopySession MkdirAll: %v", err)
+					continue
+				}
+				dstPath := filepath.Join(dstDir, filepath.Base(m.Filename))
+				srcF, err := os.Open(srcPath)
+				if err != nil {
+					log.Printf("CopySession local Open %s: %v", srcPath, err)
+					continue
+				}
+				dstF, err := os.Create(dstPath)
+				if err != nil {
+					srcF.Close()
+					log.Printf("CopySession local Create %s: %v", dstPath, err)
+					continue
+				}
+				_, _ = io.Copy(dstF, srcF)
+				srcF.Close()
+				_ = dstF.Close()
+				newMaterial.StorageURL = storage.SessionArtifactPath(newSession.ID, m.Filename)
+			}
+			if err := h.DB.CreateMaterial(ctx, newMaterial); err != nil {
+				log.Printf("CopySession CreateMaterial: %v", err)
+			}
+		}
+	}
+	// Copy video_sources (Zoom/embed sessions: transcript + embed URL so copy has video and transcript even without primary_video_artifact_id).
+	sourceVideoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sourceSessionID)
+	for i, vs := range sourceVideoSources {
+		newArtifactID, ok := oldToNewArtifact[vs.ArtifactID]
+		if !ok {
+			continue
+		}
+		copyVS := &models.VideoSource{
+			ID:                   uuid.New(),
+			ArtifactID:           newArtifactID,
+			SessionID:            newSession.ID,
+			Provider:             vs.Provider,
+			VideoURL:             vs.VideoURL,
+			PlaybackMode:         vs.PlaybackMode,
+			EmbedURL:             vs.EmbedURL,
+			MediaURL:             vs.MediaURL,
+			DurationSeconds:     vs.DurationSeconds,
+			PosterURL:            vs.PosterURL,
+			SourceType:           vs.SourceType,
+			StoredVideoObjectKey: nil, // do not copy stored key; use embed/media URL on copy
+			OriginalURL:          vs.OriginalURL,
+			FailureReason:        vs.FailureReason,
+			TranscriptStatus:     vs.TranscriptStatus,
+			AutoTranscribeEnabled: vs.AutoTranscribeEnabled,
+			TranscriptionSource:  vs.TranscriptionSource,
+			TranscriptionJobID:   nil, // job belongs to source session
+			VideoRole:            vs.VideoRole,
+		}
+		if err := h.DB.CreateVideoSource(ctx, copyVS); err != nil {
+			log.Printf("CopySession CreateVideoSource: %v", err)
+			continue
+		}
+		if vs.TranscriptText != nil && *vs.TranscriptText != "" {
+			_ = h.DB.UpdateVideoSourceZoomTranscript(ctx, copyVS.ID, *vs.TranscriptText, vs.RawVTT, vs.TranscriptSegments)
+		}
+		// Ensure first copied source is primary so UI shows one primary
+		if i == 0 {
+			_ = h.DB.SetVideoSourceVideoRole(ctx, newSession.ID, copyVS.ID, models.VideoRolePrimary)
+		}
+	}
+	// Copy primary video (file_artifact) if present: copy R2 object and create new file_artifact, set session primary.
+	copiedPrimaryVideo := false
+	if sourceSession.PrimaryVideoArtifactID != nil && h.Storage != nil {
+		fa, err := h.DB.GetFileArtifactByID(ctx, *sourceSession.PrimaryVideoArtifactID)
+		if err == nil && fa != nil && fa.Status == models.FileArtifactStatusReady && fa.StorageKey != "" {
+			filename := "video"
+			if fa.Filename != nil && *fa.Filename != "" {
+				filename = *fa.Filename
+			}
+			newFAID := uuid.New()
+			r2Prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+			newKey := storage.BuildArtifactStorageKey(r2Prefix, newSession.ID, newFAID, filename)
+			rc, err := h.Storage.Get(ctx, fa.StorageKey)
+			if err != nil {
+				log.Printf("CopySession primary video R2 Get %s: %v", fa.StorageKey, err)
+			} else {
+				var size int64
+				if fa.SizeBytes != nil {
+					size = *fa.SizeBytes
+				}
+				_, _, err = h.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
+				_ = rc.Close()
+				if err != nil {
+					log.Printf("CopySession primary video R2 Put %s: %v", newKey, err)
+				} else {
+					newFA := &models.FileArtifact{
+						ID:              newFAID,
+						SessionID:       &newSession.ID,
+						OwnerUserID:     nil,
+						Kind:            fa.Kind,
+						Filename:        fa.Filename,
+						ContentType:     fa.ContentType,
+						SizeBytes:       fa.SizeBytes,
+						Sha256:          fa.Sha256,
+						StorageProvider: fa.StorageProvider,
+						StorageBucket:   fa.StorageBucket,
+						StorageKey:      newKey,
+						Status:          models.FileArtifactStatusReady,
+					}
+					if err := h.DB.CreateFileArtifact(ctx, newFA); err != nil {
+						log.Printf("CopySession CreateFileArtifact: %v", err)
+					} else if err := h.DB.SetSessionPrimaryVideoArtifact(ctx, newSession.ID, &newFAID); err != nil {
+						log.Printf("CopySession SetSessionPrimaryVideoArtifact: %v", err)
+					} else {
+						copiedPrimaryVideo = true
+					}
+				}
+			}
+		}
+	}
+	// If copy has no MP4 yet but source was Zoom, enqueue processing so the worker downloads Zoom MP4 for the new session (in-app player only).
+	if !copiedPrimaryVideo {
+		if sourceJob, err := h.DB.GetSessionProcessingJobBySessionID(ctx, sourceSessionID, "zoom"); err == nil && sourceJob != nil && (sourceJob.MeetingUUID != nil || sourceJob.InstanceUUID != nil) {
+			creatorIdentity := sourceJob.CreatorIdentity
+			if creatorIdentity == nil && sourceSession.CreatedBy != nil {
+				creatorIdentity = sourceSession.CreatedBy
+			}
+			newJob := &models.SessionProcessingJob{
+				ID:              uuid.New(),
+				SessionID:       newSession.ID,
+				Source:          "zoom",
+				State:           models.ProcessingStateQueued,
+				Stage:           models.ProcessingStageFetch,
+				MeetingUUID:     sourceJob.MeetingUUID,
+				InstanceUUID:    sourceJob.InstanceUUID,
+				CreatorIdentity: creatorIdentity,
+			}
+			if err := h.DB.CreateOrGetSessionProcessingJob(ctx, newJob); err != nil {
+				log.Printf("CopySession CreateOrGetSessionProcessingJob zoom for new session: %v", err)
+			} else {
+				log.Printf("CopySession enqueued Zoom processing for new session %s (MP4 will be available when job completes)", newSession.ID)
+			}
+		}
+	}
+	if h.Storage != nil {
+		rag.IndexSessionAsync(newSession.ID, h.DB, h.Storage)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(CopySessionResponse{
+		ID:        newSession.ID.String(),
+		Title:     newSession.Title,
+		CreatedBy: newSession.CreatedBy,
+		Status:    string(newSession.Status),
+		CreatedAt: newSession.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	})
+}
+
+// DeleteSession removes a session and all its DB/file data. Admin-only.
+func (h *Handlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	if user.GlobalRole != models.GlobalRoleAdmin {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only an admin can delete sessions"})
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 || pathParts[0] != "api" || pathParts[1] != "sessions" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path"})
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[2])
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session id"})
+		return
+	}
+	ctx := r.Context()
+	session, err := h.DB.GetSession(ctx, sessionID)
+	if err != nil || session == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	// 1. R2: delete all objects under sessions/{sessionID}/
+	if h.Storage != nil {
+		r2Prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+		prefix := "sessions/" + sessionID.String() + "/"
+		if r2Prefix != "" {
+			prefix = r2Prefix + "/" + prefix
+		}
+		if _, delErr := h.Storage.DeletePrefix(ctx, prefix); delErr != nil {
+			log.Printf("DeleteSession R2 DeletePrefix %s: %v", prefix, delErr)
+		}
+	}
+	// 2. Local: remove session directory (uploads, videos, transcripts)
+	localDir := filepath.Join(storage.UploadRoot(), storage.SessionStorageRoot, sessionID.String())
+	if err := os.RemoveAll(localDir); err != nil {
+		log.Printf("DeleteSession RemoveAll %s: %v", localDir, err)
+	}
+	// 3. DB: file_artifacts first (session_id has ON DELETE SET NULL), then session (cascades do the rest)
+	if err := h.DB.DeleteFileArtifactsBySessionID(ctx, sessionID); err != nil {
+		log.Printf("DeleteSession DeleteFileArtifactsBySessionID: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session data"})
+		return
+	}
+	if err := h.DB.DeleteSession(ctx, sessionID); err != nil {
+		log.Printf("DeleteSession DeleteSession: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session"})
+		return
+	}
+	if h.Hub != nil {
+		h.Hub.BroadcastSessionDeleted(sessionID)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GetArtifactsBySession retrieves all artifacts for a session
@@ -523,1356 +843,93 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// SessionPlaybackResponse is the success response for GET .../playback.
-type SessionPlaybackResponse struct {
-	URL       string    `json:"url"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
-
-// SessionPlaybackErrorResponse is the error body for playback (409/404/422).
-type SessionPlaybackErrorResponse struct {
-	Message    string `json:"message"`
-	ReasonCode string `json:"reason_code"`
-}
-
-// SessionPlayback returns R2 presigned URL only when primary artifact is ready, r2, and video. No Zoom fallback.
-// GET /sessions/:id/playback or GET /api/sessions/:id/playback
-func (h *Handlers) SessionPlayback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	var sessionID uuid.UUID
-	var err error
-	if len(pathParts) >= 4 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "playback" {
-		sessionID, err = uuid.Parse(pathParts[2])
-	} else if len(pathParts) >= 3 && pathParts[0] == "sessions" && pathParts[2] == "playback" {
-		sessionID, err = uuid.Parse(pathParts[1])
-	} else {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Session not found", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	if session.PrimaryVideoArtifactID == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
-	if err != nil || fa == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	switch fa.Status {
-	case models.FileArtifactStatusPending:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video is still being prepared. Refresh in a moment.", ReasonCode: "VIDEO_INGEST_PENDING"})
-		return
-	case models.FileArtifactStatusFailed:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video ingest failed. Creator can retry import.", ReasonCode: "VIDEO_INGEST_FAILED"})
-		return
-	}
-	if fa.Status != models.FileArtifactStatusReady {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
-	isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
-	if fa.StorageProvider != "r2" || !isVideo || h.Storage == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Video not available for this session.", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	ttl := time.Hour
-	expiresAt := time.Now().Add(ttl)
-	url, err := h.Storage.PresignGet(r.Context(), fa.StorageKey, ttl)
-	if err != nil {
-		log.Printf("SessionPlayback PresignGet: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(SessionPlaybackErrorResponse{Message: "Failed to generate playback URL.", ReasonCode: "VIDEO_NOT_INGESTED"})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(SessionPlaybackResponse{URL: url, ExpiresAt: expiresAt})
-}
-
-// SetPrimaryVideoArtifactRequest body for POST /api/sessions/:id/primary-video-artifact
-type SetPrimaryVideoArtifactRequest struct {
-	ArtifactID string `json:"artifact_id"`
-}
-
-// SessionPrimaryVideoStream serves the primary video file for a session (from local disk or by streaming from R2).
-// GET /api/sessions/:id/primary-video — same-origin so the browser avoids CORS with R2.
-func (h *Handlers) SessionPrimaryVideoStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "primary-video" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[2])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil || session.PrimaryVideoArtifactID == nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
-	if err != nil || fa == nil || fa.Status != models.FileArtifactStatusReady {
-		http.Error(w, "Video not found", http.StatusNotFound)
-		return
-	}
-	ct := "video/mp4"
-	if fa.ContentType != "" {
-		ct = strings.TrimSpace(fa.ContentType)
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Accept-Ranges", "bytes")
-
-	switch fa.StorageProvider {
-	case "r2":
-		if h.Storage == nil {
-			http.Error(w, "R2 storage not configured", http.StatusServiceUnavailable)
-			return
-		}
-		exists, size, contentType, headErr := h.Storage.Head(r.Context(), fa.StorageKey)
-		if headErr != nil || !exists {
-			log.Printf("SessionPrimaryVideoStream R2 Head %s: %v", fa.StorageKey, headErr)
-			http.Error(w, "Video not found", http.StatusNotFound)
-			return
-		}
-		if contentType != "" {
-			w.Header().Set("Content-Type", contentType)
-		}
-		if r.Method == http.MethodHead {
-			if size > 0 {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-			}
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if size > 0 {
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-		}
-		w.WriteHeader(http.StatusOK)
-		rc, err := h.Storage.Get(r.Context(), fa.StorageKey)
-		if err != nil {
-			log.Printf("SessionPrimaryVideoStream R2 Get %s: %v", fa.StorageKey, err)
-			return
-		}
-		defer rc.Close()
-		_, _ = io.Copy(w, rc)
-		return
-	case "local":
-		absPath := filepath.Join(storage.UploadRoot(), fa.StorageKey)
-		f, err := os.Open(absPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				http.Error(w, "Video file not found", http.StatusNotFound)
-				return
-			}
-			log.Printf("SessionPrimaryVideoStream open %s: %v", absPath, err)
-			http.Error(w, "Failed to open video", http.StatusInternalServerError)
-			return
-		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			http.Error(w, "Failed to stat video", http.StatusInternalServerError)
-			return
-		}
-		if r.Method == http.MethodHead {
-			if info.Size() > 0 {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-			}
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		http.ServeContent(w, r, "zoom.mp4", info.ModTime(), f)
-		return
-	default:
-		http.Error(w, "Primary video storage not supported", http.StatusBadRequest)
-		return
-	}
-}
-
-// SetSessionPrimaryVideoArtifact sets the session's primary_video_artifact_id (for R2 playback). Called after client completes presign-put flow.
-func (h *Handlers) SetSessionPrimaryVideoArtifact(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	// /api/sessions/:id/primary-video-artifact -> parts ["api","sessions", id, "primary-video-artifact"]
-	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "primary-video-artifact" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[2])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	var req SetPrimaryVideoArtifactRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	artifactID, err := uuid.Parse(strings.TrimSpace(req.ArtifactID))
-	if err != nil {
-		http.Error(w, "Invalid artifact_id", http.StatusBadRequest)
-		return
-	}
-	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	fa, err := h.DB.GetFileArtifactByID(r.Context(), artifactID)
-	if err != nil || fa == nil {
-		http.Error(w, "Artifact not found", http.StatusNotFound)
-		return
-	}
-	if fa.SessionID == nil || *fa.SessionID != sessionID {
-		http.Error(w, "Artifact does not belong to this session", http.StatusBadRequest)
-		return
-	}
-	if fa.Kind != models.FileArtifactKindVideo {
-		http.Error(w, "Artifact is not a video", http.StatusBadRequest)
-		return
-	}
-	if fa.Status != models.FileArtifactStatusReady {
-		http.Error(w, "Artifact is not ready", http.StatusBadRequest)
-		return
-	}
-	if err := h.DB.SetSessionPrimaryVideoArtifact(r.Context(), sessionID, &artifactID); err != nil {
-		log.Printf("SetSessionPrimaryVideoArtifact: %v", err)
-		http.Error(w, "Failed to set primary video artifact", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video artifact set"})
-}
-
-// SetPrimaryVideoSourceRequest body for POST /api/sessions/:id/set-primary-video (creator: mark a video source as the session's primary presentation).
-type SetPrimaryVideoSourceRequest struct {
-	VideoSourceID string `json:"video_source_id"`
-}
-
-// SetSessionPrimaryVideoSource sets the given video source as primary (video_role=primary) and demotes any existing primary. Creator or admin only.
-func (h *Handlers) SetSessionPrimaryVideoSource(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 4 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "set-primary-video" {
-		http.Error(w, "Invalid path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[2])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	var req SetPrimaryVideoSourceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	videoSourceID, err := uuid.Parse(strings.TrimSpace(req.VideoSourceID))
-	if err != nil {
-		http.Error(w, "Invalid video_source_id", http.StatusBadRequest)
-		return
-	}
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
-	if err != nil || vs == nil || vs.SessionID != sessionID {
-		http.Error(w, "Video source not found", http.StatusNotFound)
-		return
-	}
-	// Creator or admin only (same as other session mutations)
-	currentUser := r.Header.Get("X-Current-User")
-	if currentUser == "" {
-		currentUser = r.URL.Query().Get("user")
-	}
-	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
-		// Allow admin
-		if u := UserFromContext(r.Context()); u == nil || u.GlobalRole != models.GlobalRoleAdmin {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-	}
-	if err := h.DB.SetVideoSourceVideoRole(r.Context(), sessionID, videoSourceID, models.VideoRolePrimary); err != nil {
-		log.Printf("SetSessionPrimaryVideoSource: %v", err)
-		http.Error(w, "Failed to set primary video", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video set"})
-}
-
-// MarkSessionMaterialsSeenRequest body for POST /sessions/:id/materials/seen
-type MarkSessionMaterialsSeenRequest struct {
-	ParticipantRef string   `json:"participant_ref"`
-	MaterialIDs    []string `json:"material_ids"`
-}
-
-// MarkSessionMaterialsSeen records that a participant has viewed the given materials (clears "new" marker).
-func (h *Handlers) MarkSessionMaterialsSeen(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 4 || pathParts[0] != "sessions" || pathParts[2] != "materials" || pathParts[3] != "seen" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	var req MarkSessionMaterialsSeenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	if req.ParticipantRef == "" {
-		http.Error(w, "participant_ref is required", http.StatusBadRequest)
-		return
-	}
-	var materialUUIDs []uuid.UUID
-	for _, s := range req.MaterialIDs {
-		if s == "" {
-			continue
-		}
-		id, err := uuid.Parse(s)
-		if err != nil {
-			continue
-		}
-		materialUUIDs = append(materialUUIDs, id)
-	}
-	if err := h.DB.MarkMaterialsSeenByParticipant(r.Context(), sessionID, req.ParticipantRef, materialUUIDs); err != nil {
-		log.Printf("MarkSessionMaterialsSeen: %v", err)
-		http.Error(w, "Failed to mark materials as seen", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// JoinSessionParticipant creates or updates a session participant
-func (h *Handlers) JoinSessionParticipant(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 || pathParts[0] != "sessions" || pathParts[2] != "participants" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Parse request body
-	var req JoinParticipantRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if req.ParticipantRef == "" {
-		http.Error(w, "participant_ref is required", http.StatusBadRequest)
-		return
-	}
-
-	// Upsert participant
-	participant, err := h.DB.UpsertSessionParticipant(r.Context(), sessionID, req.ParticipantRef)
-	if err != nil {
-		log.Printf("Error upserting participant: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to join session: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(participant)
-}
-
-// CreateSessionEvent creates a new session event
-func (h *Handlers) CreateSessionEvent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 || pathParts[0] != "sessions" || pathParts[2] != "events" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Parse request body
-	var req CreateEventRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Validate event type
-	eventType := models.SessionEventType(req.EventType)
-	validTypes := []models.SessionEventType{
-		models.SessionEventTypeJoin,
-		models.SessionEventTypeLeave,
-		models.SessionEventTypePlay,
-		models.SessionEventTypePause,
-		models.SessionEventTypeSeek,
-		models.SessionEventTypeQuestion,
-	}
-	valid := false
-	for _, vt := range validTypes {
-		if eventType == vt {
-			valid = true
-			break
-		}
-	}
-	if !valid {
-		http.Error(w, fmt.Sprintf("Invalid event_type: %s", req.EventType), http.StatusBadRequest)
-		return
-	}
-
-	// Create event
-	event := &models.SessionEvent{
-		ID:               uuid.New(),
-		SessionID:        sessionID,
-		ParticipantRef:   req.ParticipantRef,
-		EventType:        eventType,
-		VideoTimeSeconds: req.VideoTimeSeconds,
-		Payload:          req.Payload,
-	}
-	if event.Payload == nil {
-		event.Payload = make(map[string]interface{})
-	}
-
-	if err := h.DB.CreateSessionEvent(r.Context(), event); err != nil {
-		log.Printf("Error creating session event: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to create event: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(event)
-}
-
-// AskSessionQuestion asks a question in a session context
-func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 || pathParts[0] != "sessions" || pathParts[2] != "questions" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Get artifacts for this session
-	artifacts, err := h.DB.GetArtifactsBySessionID(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get artifacts: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	if len(artifacts) == 0 {
-		http.Error(w, "No artifacts found for this session", http.StatusNotFound)
-		return
-	}
-
-	// Use first artifact for question (or aggregate across all artifacts)
-	artifact := artifacts[0]
-
-	// Parse request body
-	type AskSessionQuestionRequest struct {
-		QuestionText     string `json:"question_text"`
-		VideoTimeSeconds *int   `json:"video_time_seconds,omitempty"`
-	}
-
-	var req AskSessionQuestionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if req.QuestionText == "" {
-		http.Error(w, "question_text is required", http.StatusBadRequest)
-		return
-	}
-
-	// Check for existing question with same text in this session (repeat-question caching)
-	existingQuestion, existingAnswer, err := h.DB.FindExistingQuestionByText(r.Context(), sessionID, req.QuestionText, nil)
-	if err != nil {
-		log.Printf("Error checking for existing session question: %v", err)
-		// Continue with new question creation on error
-	} else if existingQuestion != nil && existingAnswer != nil {
-		// Return cached answer
-		log.Printf("Returning cached answer for duplicate session question: %s", req.QuestionText)
-		response := AskQuestionResponse{
-			Question: existingQuestion,
-			Answer:   existingAnswer,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK) // 200 OK for cached response
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// Enforce per-session question limit
-	count, err := h.DB.CountQuestionsBySessionID(r.Context(), sessionID)
-	if err != nil {
-		log.Printf("Error counting session questions: %v", err)
-		http.Error(w, "Failed to check question limit", http.StatusInternalServerError)
-		return
-	}
-	if count >= auth.Config.MaxQuestionsPerSession {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":          "session question limit reached",
-			"max_questions":  auth.Config.MaxQuestionsPerSession,
-		})
-		return
-	}
-
-	// Create new question with session_id
-	question := &models.Question{
-		ID:               uuid.New(),
-		ArtifactID:       artifact.ID,
-		SessionID:        sessionID, // Questions belong to sessions (required)
-		QuestionText:     req.QuestionText,
-		QuestionSource:   models.QuestionSourceText,
-		VideoTimeSeconds: req.VideoTimeSeconds, // Include timestamp if provided
-	}
-
-	if err := h.DB.CreateQuestion(r.Context(), question); err != nil {
-		log.Printf("Error creating question: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to create question: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Retrieve materials and video sources from session (active only)
-	allMaterials, err := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
-	if err != nil {
-		log.Printf("Warning: Failed to get materials: %v", err)
-		allMaterials = []*models.Material{}
-	}
-
-	allVideoSources, err := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
-	if err != nil {
-		log.Printf("Warning: Failed to get video sources: %v", err)
-		allVideoSources = []*models.VideoSource{}
-	}
-
-	// Use effective primary video for RAG so retrieval prefers primary transcript
-	primaryVideo, _ := resolveEffectivePrimaryAndAdditional(allVideoSources)
-	videoSource := primaryVideo
-
-	// Perform retrieval
-	chunks := utils.RetrieveChunks(req.QuestionText, allMaterials, videoSource, 5)
-
-	// Get prior questions and answers from this session for context accumulation
-	priorQuestions, priorAnswers, err := h.DB.GetQuestionsBySessionID(r.Context(), sessionID, 10)
-	if err != nil {
-		log.Printf("Warning: Failed to get prior questions for context: %v", err)
-		priorQuestions = []*models.Question{}
-		priorAnswers = []*models.Answer{}
-	}
-
-	// Build prior Q&A pairs (excluding the current question we just created)
-	priorQA := make([]utils.PriorQAPair, 0, len(priorQuestions))
-	answerMap := make(map[uuid.UUID]*models.Answer)
-	for _, answer := range priorAnswers {
-		answerMap[answer.QuestionID] = answer
-	}
-
-	for _, priorQuestion := range priorQuestions {
-		// Skip the current question (it won't have an answer yet, but be safe)
-		if priorQuestion.ID == question.ID {
-			continue
-		}
-		if priorAnswer, exists := answerMap[priorQuestion.ID]; exists && priorAnswer != nil {
-			priorQA = append(priorQA, utils.PriorQAPair{
-				Question: priorQuestion.QuestionText,
-				Answer:   priorAnswer.AnswerText,
-			})
-		}
-	}
-
-	// Generate answer using LLM with prior Q&A context
-	qaResponse, _, err := utils.GenerateAnswer(r.Context(), req.QuestionText, chunks, artifact.Title, utils.SessionContext{}, priorQA)
-	if err != nil {
-		log.Printf("Error generating answer: %v", err)
-		// Still create an error answer
-		qaResponse = &utils.QAResponse{
-			AnswerStatus: "error",
-			AnswerText:   fmt.Sprintf("Failed to generate answer: %v", err),
-			Confidence:   0,
-			Citations:    []models.Citation{},
-		}
-	}
-
-	// Convert to Answer model
-	answer, err := utils.ConvertQAResponseToAnswer(question.ID, qaResponse, "gpt-4o-mini")
-	if err != nil {
-		log.Printf("Error converting answer: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to process answer: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Save answer
-	if err := h.DB.CreateAnswer(r.Context(), answer); err != nil {
-		log.Printf("Error creating answer: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to save answer: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Broadcast question created event via WebSocket
-	if h.Hub != nil {
-		h.Hub.BroadcastQuestionCreated(sessionID, question)
-		// Also broadcast answer created since it's created immediately
-		h.Hub.BroadcastAnswerCreated(sessionID, answer)
-	}
-
-	response := AskQuestionResponse{
-		Question: question,
-		Answer:   answer,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
-}
-
-// TranscribeSessionQuestionVoice accepts a short audio recording and returns a transcription.
-// It does not persist audio or create a question. The client must confirm/edit and then call
-// POST /sessions/{id}/questions with the resulting text.
-func (h *Handlers) TranscribeSessionQuestionVoice(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path: /sessions/{id}/questions/voice
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 4 || pathParts[0] != "sessions" || pathParts[2] != "questions" || pathParts[3] != "voice" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	maxBytes := utils.VoiceMaxUploadBytesFromEnv()
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := r.ParseMultipartForm(maxBytes); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid multipart form: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "file is required", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	tempFilePath, cleanup, err := saveMultipartToTempFile(file, header)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store upload: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer cleanup()
-
-	transcriber := utils.NewSpeechToTextFromEnv()
-	if !transcriber.CanTranscribe() {
-		http.Error(w, "Speech-to-text is not available. Configure OPENAI_API_KEY (Whisper API) or WHISPER_CLI (local).", http.StatusServiceUnavailable)
-		return
-	}
-
-	text, confidence, err := transcriber.TranscribeAudio(r.Context(), tempFilePath)
-	if err != nil {
-		if errors.Is(err, utils.ErrAudioTooLong) {
-			http.Error(w, fmt.Sprintf("Audio exceeds maximum duration (STT_MAX_AUDIO_SECONDS). %v", err), http.StatusRequestEntityTooLarge)
-			return
-		}
-		if errors.Is(err, utils.ErrDailyCapExceeded) {
-			http.Error(w, "Daily speech-to-text limit reached. Try again tomorrow.", http.StatusTooManyRequests)
-			return
-		}
-		http.Error(w, fmt.Sprintf("Transcription failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(transcribeVoiceResponse{
-		TranscribedText: text,
-		Confidence:      confidence,
-	})
-}
-
-// CreateSessionAnswer allows admin or session creator to provide an answer to a question (RequireAuth).
-func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	user := UserFromContext(r.Context())
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	// Extract session ID and question ID from URL path: /sessions/{id}/questions/{question_id}/answers
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "questions" || pathParts[4] != "answers" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	questionID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid question ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists and user is admin or session creator
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
-		http.Error(w, "Only the session creator or an admin can add an answer", http.StatusForbidden)
-		return
-	}
-
-	// Verify question exists and belongs to this session
-	question, err := h.DB.GetQuestionByID(r.Context(), questionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Question not found: %v", err), http.StatusNotFound)
-		return
-	}
-	if question.SessionID != sessionID {
-		http.Error(w, "Question does not belong to this session", http.StatusBadRequest)
-		return
-	}
-
-	// Parse request body
-	type CreateAnswerRequest struct {
-		AnswerText string `json:"answer_text"`
-		Status     string `json:"status,omitempty"` // "answered", "not_covered", "error"
-	}
-
-	var req CreateAnswerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	if req.AnswerText == "" {
-		http.Error(w, "answer_text is required", http.StatusBadRequest)
-		return
-	}
-
-	// Determine answer status
-	answerStatus := models.AnswerStatusAnswered
-	if req.Status != "" {
-		answerStatus = models.AnswerStatus(req.Status)
-		// Validate status
-		if answerStatus != models.AnswerStatusAnswered &&
-			answerStatus != models.AnswerStatusNotCovered &&
-			answerStatus != models.AnswerStatusError {
-			answerStatus = models.AnswerStatusAnswered
-		}
-	}
-
-	// Check if answer already exists - delete it to replace with new one
-	existingAnswer, err := h.DB.GetAnswerByQuestionID(r.Context(), questionID)
-	if err == nil && existingAnswer != nil {
-		// Delete existing answer to replace it
-		_ = h.DB.DeleteAnswer(r.Context(), existingAnswer.ID)
-	}
-
-	// Create new answer (human-provided: model=manual, answered_by=user email)
-	answer := &models.Answer{
-		ID:           uuid.New(),
-		QuestionID:   questionID,
-		AnswerText:   req.AnswerText,
-		AnswerStatus: answerStatus,
-		Confidence:   1.0, // Manual answers have full confidence
-		Citations:    []models.Citation{},
-		Model:        stringPtr("manual"),
-		AnsweredBy:   stringPtr(user.Email),
-	}
-
-	if err := h.DB.CreateAnswer(r.Context(), answer); err != nil {
-		log.Printf("Error creating answer: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to create answer: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Broadcast answer created/updated event via WebSocket
-	if h.Hub != nil {
-		if existingAnswer != nil {
-			h.Hub.BroadcastAnswerUpdated(sessionID, answer)
-		} else {
-			h.Hub.BroadcastAnswerCreated(sessionID, answer)
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(answer)
-}
-
-// UpdateAnswerConfirmed updates the confirmed status of an answer (RequireAuth; admin or session creator only).
-func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	user := UserFromContext(r.Context())
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	// Extract session ID and answer ID from URL path: /sessions/{id}/answers/{answer_id}/confirm
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "answers" || pathParts[4] != "confirm" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	answerID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid answer ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists and user is admin or session creator
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
-		http.Error(w, "Only the session creator or an admin can confirm an answer", http.StatusForbidden)
-		return
-	}
-
-	// Get the answer to verify it exists
-	answer, err := h.DB.GetAnswerByID(r.Context(), answerID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Answer not found: %v", err), http.StatusNotFound)
-		return
-	}
-	if answer == nil {
-		http.Error(w, "Answer not found", http.StatusNotFound)
-		return
-	}
-
-	// Verify the question belongs to this session
-	question, err := h.DB.GetQuestionByID(r.Context(), answer.QuestionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Question not found: %v", err), http.StatusNotFound)
-		return
-	}
-	if question.SessionID != sessionID {
-		http.Error(w, "Answer does not belong to this session", http.StatusBadRequest)
-		return
-	}
-
-	// Only allow confirmation for answers with status "answered"
-	if answer.AnswerStatus != models.AnswerStatusAnswered {
-		http.Error(w, "Only answers with status 'answered' can be confirmed", http.StatusBadRequest)
-		return
-	}
-
-	// Parse request body
-	type UpdateConfirmedRequest struct {
-		Confirmed bool `json:"confirmed"`
-	}
-
-	var req UpdateConfirmedRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	// Update confirmed status
-	if err := h.DB.UpdateAnswerConfirmed(r.Context(), answerID, req.Confirmed); err != nil {
-		log.Printf("Error updating answer confirmed status: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to update confirmed status: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Get updated answer
-	updatedAnswer, err := h.DB.GetAnswerByID(r.Context(), answerID)
-	if err != nil || updatedAnswer == nil {
-		log.Printf("Warning: Failed to get updated answer: %v", err)
-		// Still return success, but use the original answer
-		updatedAnswer = answer
-		updatedAnswer.Confirmed = req.Confirmed
-	}
-
-	// Broadcast via WebSocket
-	if h.Hub != nil {
-		h.Hub.BroadcastAnswerUpdated(sessionID, updatedAnswer)
-	}
-
-	// Return updated answer
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(updatedAnswer)
-}
-
-// TranscribeSessionAnswerVoice accepts a short audio recording for an answer and returns a transcription (RequireAuth; admin or creator).
-func (h *Handlers) TranscribeSessionAnswerVoice(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	user := UserFromContext(r.Context())
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	// Extract session ID and question ID from URL path: /sessions/{id}/questions/{question_id}/answers/voice
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 6 || pathParts[0] != "sessions" || pathParts[2] != "questions" || pathParts[4] != "answers" || pathParts[5] != "voice" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	questionID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid question ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists and user is admin or session creator
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil || session == nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
-		http.Error(w, "Only the session creator or an admin can provide an answer", http.StatusForbidden)
-		return
-	}
-
-	// Verify question exists and belongs to this session
-	question, err := h.DB.GetQuestionByID(r.Context(), questionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Question not found: %v", err), http.StatusNotFound)
-		return
-	}
-	if question.SessionID != sessionID {
-		http.Error(w, "Question does not belong to this session", http.StatusBadRequest)
-		return
-	}
-
-	maxBytes := utils.VoiceMaxUploadBytesFromEnv()
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := r.ParseMultipartForm(maxBytes); err != nil {
-		http.Error(w, fmt.Sprintf("Invalid multipart form: %v", err), http.StatusBadRequest)
-		return
-	}
-
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "file is required", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	tempFilePath, cleanup, err := saveMultipartToTempFile(file, header)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to store upload: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer cleanup()
-
-	transcriber := utils.NewSpeechToTextFromEnv()
-	if !transcriber.CanTranscribe() {
-		http.Error(w, "Speech-to-text is not available. Configure OPENAI_API_KEY (Whisper API) or WHISPER_CLI (local).", http.StatusServiceUnavailable)
-		return
-	}
-
-	text, confidence, err := transcriber.TranscribeAudio(r.Context(), tempFilePath)
-	if err != nil {
-		if errors.Is(err, utils.ErrAudioTooLong) {
-			http.Error(w, fmt.Sprintf("Audio exceeds maximum duration (STT_MAX_AUDIO_SECONDS). %v", err), http.StatusRequestEntityTooLarge)
-			return
-		}
-		if errors.Is(err, utils.ErrDailyCapExceeded) {
-			http.Error(w, "Daily speech-to-text limit reached. Try again tomorrow.", http.StatusTooManyRequests)
-			return
-		}
-		http.Error(w, fmt.Sprintf("Transcription failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(transcribeVoiceResponse{
-		TranscribedText: text,
-		Confidence:      confidence,
-	})
-}
-
-func stringPtr(s string) *string {
-	return &s
-}
-
-func saveMultipartToTempFile(file multipart.File, header *multipart.FileHeader) (string, func(), error) {
-	ext := ""
-	if header != nil && header.Filename != "" {
-		ext = filepath.Ext(header.Filename)
-	}
-	if ext == "" {
-		ext = ".webm"
-	}
-
-	// Temp location for voice recording (not under session storage; short-lived, cleaned up).
-	dir := filepath.Join("tmp", "voice")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", nil, err
-	}
-
-	dstPath := filepath.Join(dir, fmt.Sprintf("voice_%d%s", time.Now().UnixNano(), ext))
-	out, err := os.Create(dstPath)
-	if err != nil {
-		return "", nil, err
-	}
-	defer out.Close()
-
-	if _, err := out.ReadFrom(file); err != nil {
-		_ = os.Remove(dstPath)
-		return "", nil, err
-	}
-
-	// Verify it exists and has some content.
-	if info, err := os.Stat(dstPath); err != nil {
-		_ = os.Remove(dstPath)
-		return "", nil, err
-	} else if info.Size() == 0 {
-		_ = os.Remove(dstPath)
-		return "", nil, fmt.Errorf("uploaded audio file is empty")
-	}
-
-	// Use absolute path so downstream tools (whisper) are not sensitive to process working directory.
-	absPath, err := filepath.Abs(dstPath)
-	if err != nil {
-		_ = os.Remove(dstPath)
-		return "", nil, err
-	}
-
-	cleanup := func() {
-		_ = os.Remove(absPath)
-	}
-
-	return absPath, cleanup, nil
-}
-
-// GetSessionQuestions retrieves questions for a session
-func (h *Handlers) GetSessionQuestions(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 || pathParts[0] != "sessions" || pathParts[2] != "questions" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Get questions with answers
-	questions, answers, err := h.DB.GetQuestionsBySessionID(r.Context(), sessionID, 20)
-	if err != nil {
-		log.Printf("Error getting questions: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to get questions: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Enrich citations with source_id from chunks so participant view can open documents (e.g. "Slide 1")
-	chunks, _ := h.DB.ListSessionChunksBySessionID(r.Context(), sessionID)
-	chunkSourceByID := make(map[string]struct{ SourceID, SourceType string })
-	for _, c := range chunks {
-		if c.SourceID != nil {
-			chunkSourceByID[c.ID.String()] = struct{ SourceID, SourceType string }{
-				SourceID:   c.SourceID.String(),
-				SourceType: c.SourceType,
-			}
-		}
-	}
-	for _, a := range answers {
-		if a == nil {
-			continue
-		}
-		for i := range a.Citations {
-			c := &a.Citations[i]
-			if c.SourceID != "" {
-				continue
-			}
-			if info, ok := chunkSourceByID[c.ChunkID]; ok {
-				c.SourceID = info.SourceID
-				if c.SourceType == "" {
-					c.SourceType = info.SourceType
-				}
-			}
-		}
-	}
-	h.enrichAnswersWithDisplayNames(r.Context(), answers)
-
-	response := GetQuestionsResponse{
-		Questions: questions,
-		Answers:   answers,
-	}
-	if participantRef := strings.TrimSpace(r.URL.Query().Get("participant_ref")); participantRef != "" {
-		unread, err := h.DB.GetUnreadQuestionIDs(r.Context(), sessionID, participantRef)
-		if err != nil {
-			log.Printf("Error getting unread question IDs: %v", err)
-		} else {
-			response.UnreadQuestionIDs = make([]string, 0, len(unread))
-			for _, id := range unread {
-				response.UnreadQuestionIDs = append(response.UnreadQuestionIDs, id.String())
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// MarkQuestionViewed records that the participant viewed (expanded) a question. POST body: { "participant_ref": "..." }.
-func (h *Handlers) MarkQuestionViewed(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	// /sessions/{id}/questions/{questionId}/view
-	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "questions" || pathParts[4] != "view" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	questionID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid question ID", http.StatusBadRequest)
-		return
-	}
-	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	var body struct {
-		ParticipantRef string `json:"participant_ref"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ParticipantRef) == "" {
-		http.Error(w, "participant_ref required in body", http.StatusBadRequest)
-		return
-	}
-	participantRef := strings.TrimSpace(body.ParticipantRef)
-	if err := h.DB.MarkQuestionViewed(r.Context(), sessionID, participantRef, questionID); err != nil {
-		log.Printf("Error marking question viewed: %v", err)
-		http.Error(w, "Failed to record view", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// UpdateSessionStatus updates the status of a session (e.g., close it)
+// UpdateSessionStatus updates the status, title, premise, etc. of a session (creator or admin only).
 func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Extract session ID from URL path (e.g., /sessions/{id})
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	// Extract session ID from URL path (/api/sessions/{id} or /sessions/{id})
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 2 || pathParts[0] != "sessions" {
+	var sessionIDStr string
+	if len(pathParts) >= 3 && pathParts[0] == "api" && pathParts[1] == "sessions" {
+		sessionIDStr = pathParts[2]
+	} else if len(pathParts) >= 2 && pathParts[0] == "sessions" {
+		sessionIDStr = pathParts[1]
+	} else {
 		http.Error(w, "Invalid URL path", http.StatusBadRequest)
 		return
 	}
 
-	sessionID, err := uuid.Parse(pathParts[1])
+	sessionID, err := uuid.Parse(sessionIDStr)
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
 
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
+	// Load session (need it for auth and for title uniqueness check)
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
+	}
+
+	// Only creator or admin can update session
+	if user.GlobalRole != models.GlobalRoleAdmin {
+		if session.CreatedBy == nil || *session.CreatedBy != user.Email {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can update this session"})
+			return
+		}
 	}
 
 	// Parse request body
 	type UpdateSessionRequest struct {
-		Status          *string `json:"status"`           // "open" or "closed" (optional)
-		Premise         *string `json:"premise"`           // session premise (optional)
-		PrimaryDecision *string `json:"primary_decision"`  // primary decision (optional)
-		DecisionOutcome *string `json:"decision_outcome"`  // decision outcome (optional)
+		Status          *string `json:"status"`
+		Title           *string `json:"title"`
+		Premise         *string `json:"premise"`
+		PrimaryDecision *string `json:"primary_decision"`
+		DecisionOutcome *string `json:"decision_outcome"`
 	}
 
 	var req UpdateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
 		return
+	}
+
+	// Update title if provided
+	if req.Title != nil {
+		title := strings.TrimSpace(*req.Title)
+		if title == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "title cannot be empty"})
+			return
+		}
+		createdBy := ""
+		if session.CreatedBy != nil {
+			createdBy = *session.CreatedBy
+		}
+		exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), createdBy, title, &sessionID)
+		if err != nil {
+			log.Printf("UpdateSessionStatus SessionWithTitleExistsForCreator: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check session title"})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "A session with this name already exists. Please use a unique name."})
+			return
+		}
+		if err := h.DB.UpdateSessionTitle(r.Context(), sessionID, title); err != nil {
+			log.Printf("UpdateSessionStatus UpdateSessionTitle: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update session title"})
+			return
+		}
 	}
 
 	// Update status if provided
@@ -1899,7 +956,7 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get updated session
-	session, err := h.DB.GetSession(r.Context(), sessionID)
+	session, err = h.DB.GetSession(r.Context(), sessionID)
 	if err != nil {
 		log.Printf("Error getting updated session: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to get updated session: %v", err), http.StatusInternalServerError)
@@ -1909,285 +966,4 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(session)
-}
-
-// GetSessionTimeline retrieves the timeline for a session (ordered questions and answers)
-// This returns questions and answers in chronological order (oldest first) for timeline replay
-func (h *Handlers) GetSessionTimeline(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract session ID from URL path (e.g., /sessions/{id}/timeline)
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 3 || pathParts[0] != "sessions" || pathParts[2] != "timeline" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-
-	// Verify session exists
-	_, err = h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Get limit from query parameter (default 100)
-	limit := 100
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if parsedLimit, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || parsedLimit != 1 || limit <= 0 {
-			limit = 100
-		}
-	}
-
-	// Get timeline (ordered questions and answers)
-	questions, answers, err := h.DB.GetSessionTimeline(r.Context(), sessionID, limit)
-	if err != nil {
-		log.Printf("Error getting session timeline: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to get timeline: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	type TimelineEntry struct {
-		Question      *models.Question `json:"question"`
-		Answer        *models.Answer   `json:"answer,omitempty"`
-		Timestamp     string           `json:"timestamp"`
-		VideoTimeSecs *int             `json:"video_time_seconds,omitempty"`
-	}
-
-	// Build timeline entries (questions and answers paired)
-	timeline := make([]TimelineEntry, 0, len(questions))
-
-	// Create a map of question ID to answer for quick lookup
-	answerMap := make(map[uuid.UUID]*models.Answer)
-	for _, answer := range answers {
-		answerMap[answer.QuestionID] = answer
-	}
-
-	// Create timeline entries in chronological order
-	for _, question := range questions {
-		entry := TimelineEntry{
-			Question:      question,
-			Answer:        answerMap[question.ID],
-			Timestamp:     question.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			VideoTimeSecs: question.VideoTimeSeconds,
-		}
-		timeline = append(timeline, entry)
-	}
-
-	type GetTimelineResponse struct {
-		SessionID string          `json:"session_id"`
-		Timeline  []TimelineEntry `json:"timeline"`
-		Count     int             `json:"count"`
-	}
-
-	response := GetTimelineResponse{
-		SessionID: sessionID.String(),
-		Timeline:  timeline,
-		Count:     len(timeline),
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// ZoomVideoStream is deprecated for playback: app uses in-app player only (primary video from R2/local).
-// When session has primary_video_artifact_id this returns 410. Legacy sessions without primary could use it; frontend no longer requests it for playback.
-// GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream
-func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 5 || pathParts[0] != "sessions" || pathParts[2] != "video-sources" || pathParts[4] != "stream" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-	sessionID, err := uuid.Parse(pathParts[1])
-	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
-	}
-	videoSourceID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid video source ID", http.StatusBadRequest)
-		return
-	}
-	session, err := h.DB.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-	vs, err := h.DB.GetVideoSourceByID(r.Context(), videoSourceID)
-	if err != nil || vs == nil {
-		http.Error(w, "Video source not found", http.StatusNotFound)
-		return
-	}
-	if vs.SessionID != sessionID {
-		http.Error(w, "Video source does not belong to this session", http.StatusBadRequest)
-		return
-	}
-	// Upload sources (e.g. video files from materials): stream from StoredVideoObjectKey (R2 or local).
-	// Try R2 first when configured (e.g. Render) so R2-stored uploads play; fall back to local path when key looks like sessions/ or data/.
-	if vs.SourceType == models.VideoSourceTypeUpload && vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
-		key := *vs.StoredVideoObjectKey
-		w.Header().Set("Content-Type", "video/mp4")
-		w.Header().Set("Accept-Ranges", "bytes")
-		if h.Storage != nil {
-			exists, size, contentType, headErr := h.Storage.Head(r.Context(), key)
-			if headErr == nil && exists {
-				if contentType != "" {
-					w.Header().Set("Content-Type", contentType)
-				}
-				if size > 0 {
-					w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
-				}
-				w.WriteHeader(http.StatusOK)
-				if r.Method == http.MethodHead {
-					return
-				}
-				rc, err := h.Storage.Get(r.Context(), key)
-				if err != nil {
-					log.Printf("ZoomVideoStream R2 Get %s: %v", key, err)
-					return
-				}
-				defer rc.Close()
-				_, _ = io.Copy(w, rc)
-				return
-			}
-		}
-		if strings.HasPrefix(key, "sessions/") || strings.HasPrefix(key, "data/") {
-			absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(key))
-			f, err := os.Open(absPath)
-			if err != nil {
-				if os.IsNotExist(err) {
-					http.Error(w, "Video file not found", http.StatusNotFound)
-					return
-				}
-				log.Printf("ZoomVideoStream open %s: %v", absPath, err)
-				http.Error(w, "Failed to open video", http.StatusInternalServerError)
-				return
-			}
-			defer f.Close()
-			info, err := f.Stat()
-			if err != nil {
-				http.Error(w, "Failed to stat video", http.StatusInternalServerError)
-				return
-			}
-			modTime := info.ModTime()
-			if r.Method == http.MethodHead {
-				w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			http.ServeContent(w, r, "video.mp4", modTime, f)
-			return
-		}
-		http.Error(w, "Video not found", http.StatusNotFound)
-		return
-	}
-	// Playback is only from R2 when primary_video_artifact_id is set; do not proxy Zoom.
-	if session.PrimaryVideoArtifactID != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusGone)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error":   "Video not ingested",
-			"message": "Video is served from R2. Use the session's video_access_url (from GET /api/sessions/:id) for playback.",
-		})
-		return
-	}
-	// Use session creator, or fallback to creator_identity query param (for sessions created before we set CreatedBy)
-	creatorIdentity := ""
-	if session.CreatedBy != nil && *session.CreatedBy != "" {
-		creatorIdentity = *session.CreatedBy
-	}
-	if creatorIdentity == "" {
-		creatorIdentity = r.URL.Query().Get("creator_identity")
-	}
-	if creatorIdentity == "" {
-		http.Error(w, "Session has no creator. Reconnect Zoom and create a new session from Zoom, or append ?creator_identity=your_id to the stream URL.", http.StatusForbidden)
-		return
-	}
-	if vs.Provider != "zoom" {
-		http.Error(w, "Not a Zoom video source", http.StatusBadRequest)
-		return
-	}
-	zoomURL := vs.VideoURL
-	if vs.OriginalURL != nil && *vs.OriginalURL != "" {
-		zoomURL = *vs.OriginalURL
-	}
-	meetingID, err := utils.ParseZoomRecordingURL(zoomURL)
-	if err != nil {
-		log.Printf("Zoom video stream: parse URL %q: %v", zoomURL, err)
-		http.Error(w, "Invalid Zoom recording URL", http.StatusBadRequest)
-		return
-	}
-	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
-	if err != nil {
-		log.Printf("Zoom video stream: get token for creator %q: %v", creatorIdentity, err)
-		msg := "Zoom not connected for this session's creator. The creator should connect (or reconnect) Zoom in TalkBack Settings once; then the video works for everyone without anyone logging into Zoom."
-		if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "revoked") {
-			msg = "Session creator's Zoom connection has expired. Ask the session creator to reconnect Zoom in TalkBack Settings."
-		}
-		http.Error(w, msg, http.StatusForbidden)
-		return
-	}
-	rec, err := utils.GetMeetingRecordingsWithRetry(accessToken, meetingID)
-	if err != nil {
-		log.Printf("Zoom video stream: get recordings: %v", err)
-		if err.Error() == "recording not found" {
-			http.Error(w, "Zoom recording not found. It may have been deleted, expired, or the link may be for a different Zoom account.", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Failed to load Zoom recording", http.StatusInternalServerError)
-		return
-	}
-	mp4 := utils.FindMP4RecordingFile(rec.RecordingFiles)
-	if mp4 == nil || mp4.DownloadURL == "" {
-		http.Error(w, "No MP4 recording available for this meeting", http.StatusNotFound)
-		return
-	}
-	req, err := http.NewRequestWithContext(r.Context(), "GET", mp4.DownloadURL, nil)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	// Forward Range so browser video element can request byte ranges (required for play/seek)
-	if rangeH := r.Header.Get("Range"); rangeH != "" {
-		req.Header.Set("Range", rangeH)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("Zoom video stream: download %s: %v", mp4.DownloadURL, err)
-		http.Error(w, "Failed to stream video from Zoom", http.StatusInternalServerError)
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Zoom video stream: Zoom returned %d: %s", resp.StatusCode, string(body))
-		http.Error(w, "Zoom returned error", resp.StatusCode)
-		return
-	}
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Accept-Ranges", "bytes")
-	if resp.ContentLength >= 0 {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
-	}
-	if resp.Header.Get("Content-Range") != "" {
-		w.Header().Set("Content-Range", resp.Header.Get("Content-Range"))
-	}
-	// Pass through 206 Partial Content so video element can play and seek
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
 }
