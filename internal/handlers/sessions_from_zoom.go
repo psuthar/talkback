@@ -255,11 +255,14 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	title := "Zoom Recording"
-	if req.Title != nil && strings.TrimSpace(*req.Title) != "" {
+	// Require session title from client to avoid duplicate auto-assigned names
+	title := ""
+	if req.Title != nil {
 		title = strings.TrimSpace(*req.Title)
-	} else if rec.Topic != "" {
-		title = rec.Topic
+	}
+	if title == "" {
+		writeJSONError(w, "Session title is required", http.StatusBadRequest)
+		return
 	}
 
 	exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), creatorIdentity, title, nil)

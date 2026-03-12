@@ -105,6 +105,22 @@ func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 		title = "Zoom Recording"
 	}
 
+	// Check for duplicate session title so user can be prompted to choose a unique name
+	exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), creatorIdentity, title, nil)
+	if err != nil {
+		log.Printf("ZoomImport SessionWithTitleExistsForCreator: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to check session title"})
+		return
+	}
+	if exists {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"message": "A session with this name already exists. Please use a unique name."})
+		return
+	}
+
 	// Enforce Zoom max duration before creating session (return 422 so UI can show friendly error).
 	accessToken, _, tokenErr := h.GetValidZoomAccessToken(r, creatorIdentity)
 	if tokenErr == nil {

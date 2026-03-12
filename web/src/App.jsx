@@ -234,6 +234,9 @@ function App() {
   const [zoomRecordingsLoading, setZoomRecordingsLoading] = useState(false)
   const [zoomRecordingsError, setZoomRecordingsError] = useState('')
   const [zoomImportToast, setZoomImportToast] = useState(null) // { message } or null
+  const [zoomImportModalRec, setZoomImportModalRec] = useState(null) // recording to import; when set, show session-name modal
+  const [zoomImportSessionName, setZoomImportSessionName] = useState('') // proposed/edited session name for modal
+  const [zoomImportModalError, setZoomImportModalError] = useState('')
 
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
@@ -1450,6 +1453,8 @@ function App() {
         setZoomTranscriptStatus(data.status ?? 'error')
         setZoomTranscriptMessage(data.message ?? '')
         setZoomTranscriptTopic(data.topic ?? null)
+        // Prefill session title with recording topic so user can confirm or edit (required before create)
+        setZoomTitle((prev) => (prev?.trim() ? prev : (data.topic || 'Zoom Recording')))
       }
     } catch (err) {
       setZoomTranscriptStatus('error')
@@ -1465,11 +1470,16 @@ function App() {
       setZoomImportError('Paste a Zoom recording URL')
       return
     }
+    const title = zoomTitle?.trim()
+    if (!title) {
+      setZoomImportError('Session title is required. Enter a name for this session (you can use the proposed name above).')
+      return
+    }
     setZoomImporting(true)
     setZoomImportError('')
     try {
       const headers = { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity }
-      const body = JSON.stringify({ zoom_url: url, title: zoomTitle?.trim() || undefined })
+      const body = JSON.stringify({ zoom_url: url, title })
       const response = await fetch(`${apiBaseUrl}/sessions/from-zoom`, { method: 'POST', headers, body, credentials: 'include' })
       const text = await response.text()
       let data = {}
@@ -1481,7 +1491,11 @@ function App() {
       }
       if (!response.ok) {
         const msg = data.message || data.error || response.statusText
-        setZoomImportError(msg)
+        if (response.status === 409) {
+          setZoomImportError(msg || 'A session with this name already exists. Please use a unique name.')
+        } else {
+          setZoomImportError(msg)
+        }
         if (data.code === 'transcript_processing') {
           setZoomTranscriptStatus('processing')
           setZoomTranscriptMessage(msg)
@@ -1550,17 +1564,31 @@ function App() {
     }
   }
 
-  const importFromZoomRecording = async (rec) => {
+  const openZoomImportModal = (rec) => {
+    setZoomImportModalRec(rec)
+    setZoomImportSessionName(rec.meeting_topic || 'Zoom Recording')
+    setZoomImportModalError('')
+  }
+
+  const closeZoomImportModal = () => {
+    setZoomImportModalRec(null)
+    setZoomImportSessionName('')
+    setZoomImportModalError('')
+  }
+
+  const importFromZoomRecording = async (rec, sessionTitle) => {
+    const baseTitle = sessionTitle ?? rec.meeting_topic ?? 'Zoom Recording'
+    const title = (baseTitle || 'Zoom Recording').trim()
     setZoomImporting(true)
     setZoomImportError('')
+    setZoomImportModalError('')
     try {
-      // Single endpoint: create session and start Zoom import (avoids "Session not found" from two-step flow)
       const res = await fetch(`${apiBaseUrl}/api/zoom/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
         credentials: 'include',
         body: JSON.stringify({
-          title: rec.meeting_topic || 'Zoom Recording',
+          title,
           meeting_uuid: rec.meeting_uuid,
           instance_uuid: rec.instance_uuid || rec.meeting_uuid
         })
@@ -1570,14 +1598,15 @@ function App() {
         const msg = res.status === 422 && data.message
           ? data.message
           : (data.message || 'Failed to start import')
-        setZoomImportError(msg)
+        setZoomImportModalError(res.status === 409 ? (data.message || 'A session with this name already exists. Please use a unique name.') : msg)
         return
       }
+      closeZoomImportModal()
       setZoomImportToast({ message: 'Import started' })
       setTimeout(() => setZoomImportToast(null), 3000)
       await openSession(data.id, 'creator', true)
     } catch (err) {
-      setZoomImportError(err.message || 'Failed to import')
+      setZoomImportModalError(err.message || 'Failed to import')
     } finally {
       setZoomImporting(false)
     }
@@ -2774,6 +2803,38 @@ function App() {
         </div>
       )}
 
+      {/* Zoom import: prompt for session name (proposed name checked for duplicates) */}
+      {zoomImportModalRec && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={closeZoomImportModal}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Import Zoom recording</h3>
+            <p style={{ marginBottom: '12px', color: '#555', fontSize: '14px' }}>Recording: {zoomImportModalRec.meeting_topic || 'Untitled'}</p>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>Session name (required)</label>
+            <input
+              type="text"
+              value={zoomImportSessionName}
+              onChange={e => { setZoomImportSessionName(e.target.value); setZoomImportModalError('') }}
+              placeholder="e.g., Weekly review"
+              style={{ width: '100%', padding: '8px', marginBottom: '12px', boxSizing: 'border-box' }}
+            />
+            {zoomImportModalError && (
+              <div className="error" style={{ marginBottom: '12px', fontSize: '13px' }}>{zoomImportModalError}</div>
+            )}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={closeZoomImportModal} style={{ padding: '8px 16px' }}>Cancel</button>
+              <button
+                type="button"
+                onClick={() => importFromZoomRecording(zoomImportModalRec, zoomImportSessionName)}
+                disabled={zoomImporting || !zoomImportSessionName?.trim()}
+                style={{ padding: '8px 16px', cursor: zoomImporting || !zoomImportSessionName?.trim() ? 'not-allowed' : 'pointer' }}
+              >
+                {zoomImporting ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Rename session modal */}
       {renameSessionId && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={() => { setRenameSessionId(null); setRenameSessionTitle('') }}>
@@ -3314,11 +3375,11 @@ function App() {
                                   </div>
                                   <button
                                     type="button"
-                                    onClick={() => importFromZoomRecording(rec)}
+                                    onClick={() => openZoomImportModal(rec)}
                                     disabled={zoomImporting || !rec.has_transcript}
                                     style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
                                   >
-                                    {zoomImporting ? 'Importing…' : 'Import'}
+                                    Import
                                   </button>
                                 </div>
                               ))}
@@ -3333,7 +3394,10 @@ function App() {
                         <div>
                           <button
                             type="button"
-                            onClick={() => setZoomPasteUrlExpanded((v) => !v)}
+                            onClick={() => {
+                              setZoomPasteUrlExpanded((v) => !v)
+                              if (!zoomPasteUrlExpanded && !zoomTitle?.trim()) setZoomTitle('Zoom Recording')
+                            }}
                             style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '13px', color: '#2196F3', textDecoration: 'underline', marginBottom: '8px' }}
                           >
                             {zoomPasteUrlExpanded ? '▼' : '▶'} Or paste a Zoom recording URL
@@ -3357,7 +3421,7 @@ function App() {
                                 <button type="button" onClick={checkZoomTranscript} disabled={zoomCheckingTranscript || !zoomUrl?.trim()} style={{ padding: '4px 10px', fontSize: '12px' }}>
                                   {zoomCheckingTranscript ? 'Checking…' : 'Check transcript'}
                                 </button>
-                                <button type="button" onClick={createSessionFromZoom} disabled={zoomImporting}>
+                                <button type="button" onClick={createSessionFromZoom} disabled={zoomImporting || !zoomTitle?.trim()}>
                                   {zoomImporting ? 'Importing…' : 'Create session / Import transcript'}
                                 </button>
                               </div>
@@ -3395,12 +3459,12 @@ function App() {
                                   {zoomTranscriptMessage}
                                 </div>
                               )}
-                              <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', marginTop: '8px' }}>Session title (optional):</label>
+                              <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', marginTop: '8px' }}>Session title (required):</label>
                               <input
                                 type="text"
                                 value={zoomTitle}
                                 onChange={(e) => setZoomTitle(e.target.value)}
-                                placeholder="e.g., Weekly review"
+                                placeholder={zoomTranscriptTopic || 'e.g., Weekly review'}
                                 style={{ width: '100%', marginBottom: '8px', padding: '8px' }}
                               />
                               {zoomImportError && (

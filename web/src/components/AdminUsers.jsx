@@ -40,6 +40,10 @@ export function AdminUsers({
   const [deleteConfirmSessionId, setDeleteConfirmSessionId] = useState(null)
   const [deletingSessionId, setDeletingSessionId] = useState(null)
   const [sessionDeleteError, setSessionDeleteError] = useState('')
+  const [renameSessionId, setRenameSessionId] = useState(null)
+  const [renameSessionTitle, setRenameSessionTitle] = useState('')
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [renameError, setRenameError] = useState('')
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -198,6 +202,53 @@ export function AdminUsers({
       setSessionDeleteError(e.message || 'Network error')
     } finally {
       setDeletingSessionId(null)
+    }
+  }
+
+  const handleOpenRenameSession = (session) => {
+    if (!session) return
+    setRenameSessionId(session.id)
+    setRenameSessionTitle(session.title || '')
+    setRenameError('')
+  }
+
+  const handleSaveRenameSession = async () => {
+    const title = (renameSessionTitle || '').trim()
+    if (!renameSessionId || !title) {
+      setRenameError('Title cannot be empty')
+      return
+    }
+    setRenameSaving(true)
+    setRenameError('')
+    try {
+      const base = apiBaseUrl.replace(/\/$/, '')
+      const res = await fetch(`${base}/api/sessions/${renameSessionId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = data.error || data.message || (res.status === 409
+          ? 'A session with this name already exists. Please use a unique name.'
+          : `Failed to rename: ${res.status}`)
+        setRenameError(msg)
+        return
+      }
+      setSessions(prev => prev.map(item => {
+        const s = item.session || item
+        if (s.id !== renameSessionId) return item
+        const updated = { ...s, title }
+        return item.session ? { ...item, session: updated } : updated
+      }))
+      setRenameSessionId(null)
+      setRenameSessionTitle('')
+      setRenameError('')
+    } catch (e) {
+      setRenameError(e.message || 'Failed to rename session')
+    } finally {
+      setRenameSaving(false)
     }
   }
 
@@ -417,6 +468,14 @@ export function AdminUsers({
                           <button
                             type="button"
                             disabled={isDeleting}
+                            onClick={() => handleOpenRenameSession(session)}
+                            style={{ fontSize: '12px', padding: '4px 10px', marginRight: '8px', backgroundColor: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isDeleting}
                             onClick={() => setDeleteConfirmSessionId(session.id)}
                             style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
                           >
@@ -498,6 +557,63 @@ export function AdminUsers({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Rename session modal */}
+      {renameSessionId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rename-session-modal-title"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(0,0,0,0.5)'
+          }}
+          onClick={() => { if (!renameSaving) { setRenameSessionId(null); setRenameSessionTitle(''); setRenameError('') } }}
+        >
+          <div
+            style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '420px', width: '90%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="rename-session-modal-title" style={{ marginTop: 0, marginBottom: '12px' }}>Rename session</h3>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>New title</label>
+            <input
+              type="text"
+              value={renameSessionTitle}
+              onChange={(e) => { setRenameSessionTitle(e.target.value); setRenameError('') }}
+              placeholder="Session title"
+              style={{ width: '100%', padding: '8px', marginBottom: '10px', boxSizing: 'border-box' }}
+            />
+            {renameError && (
+              <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>
+                {renameError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => { if (!renameSaving) { setRenameSessionId(null); setRenameSessionTitle(''); setRenameError('') } }}
+                disabled={renameSaving}
+                style={{ padding: '8px 16px' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveRenameSession}
+                disabled={renameSaving}
+                style={{ padding: '8px 16px', cursor: renameSaving ? 'not-allowed' : 'pointer' }}
+              >
+                {renameSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
         </div>
       )}
