@@ -130,6 +130,7 @@ func (s *Service) ListPendingForUser(ctx context.Context, emailNormalized string
 			InviterName:  inviterName,
 			InvitedRole:  string(inv.InvitedRole),
 			ExpiresAt:    inv.ExpiresAt.Format(time.RFC3339),
+			CreatedAt:    inv.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	return out, nil

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -82,4 +83,23 @@ func SessionTranscriptsDir(sessionID uuid.UUID) string {
 // SessionTranscriptPath returns sessions/{session_id}/transcripts/{tempID}.mp4.
 func SessionTranscriptPath(sessionID uuid.UUID, tempID uuid.UUID) string {
 	return filepath.Join(SessionStorageRoot, sessionID.String(), "transcripts", tempID.String()+".mp4")
+}
+
+// SlidesPrefixFromArtifactKey returns the prefix for derived slide assets for a given artifact key.
+// If the artifact key is "prefix/sessions/<sid>/data/uploads/Galaxy.pptx",
+// the slides prefix is "prefix/sessions/<sid>/data/uploads/Galaxy.pptx_slides/".
+func SlidesPrefixFromArtifactKey(artifactKey string) string {
+	return artifactKey + "_slides/"
+}
+
+// SlidesManifestKeyFromArtifactKey returns the storage key for the slide manifest JSON for a given artifact key.
+// Using the example above, this would be "prefix/sessions/<sid>/data/uploads/Galaxy.pptx_slides/manifest.json".
+func SlidesManifestKeyFromArtifactKey(artifactKey string) string {
+	return SlidesPrefixFromArtifactKey(artifactKey) + "manifest.json"
+}
+
+// SlideImageKeyFromArtifactKey returns the storage key for a specific slide PNG for a given artifact key and 1-based index.
+// Using the example above and index=1, this would be "prefix/sessions/<sid>/data/uploads/Galaxy.pptx_slides/slide-001.png".
+func SlideImageKeyFromArtifactKey(artifactKey string, index int) string {
+	return fmt.Sprintf("%sslide-%03d.png", SlidesPrefixFromArtifactKey(artifactKey), index)
 }

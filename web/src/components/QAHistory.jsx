@@ -10,7 +10,8 @@ function CitationBadge({ citation, onClick }) {
   const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
   const canNavigate = citation.anchor?.start_ms != null ||
     citation?.source_type === 'material' ||
-    (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc'))
+    citation?.source_type === 'link' ||
+    (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc' || citation.navigation.type === 'url'))
   return (
     <button
       type="button"
@@ -448,6 +449,26 @@ export function QAHistory({
     const rootId = findRootId(questions, replyingToQuestionId)
     setExpandedCards((prev) => ({ ...prev, [rootId]: true, [replyingToQuestionId]: true }))
   }, [replyingToQuestionId, questions])
+
+  // Auto-expand the answer section for questions the current user asked when an answer is provided.
+  useEffect(() => {
+    if (!questions?.length || !currentAskerName) return
+    let next = null
+    for (const q of questions) {
+      if (!q.answer) continue
+      const askedBy = q.asked_by != null ? String(q.asked_by).trim().toLowerCase() : ''
+      const current = String(currentAskerName).trim().toLowerCase()
+      if (askedBy !== current) continue
+      const rootId = findRootId(questions, q.id)
+      if (rootId == null) continue
+      next = next == null ? {} : { ...next }
+      next[q.id] = true
+      next[rootId] = true
+    }
+    if (next != null) {
+      setExpandedCards((prev) => ({ ...prev, ...next }))
+    }
+  }, [questions, currentAskerName])
 
   if (!questions || questions.length === 0) {
     return (

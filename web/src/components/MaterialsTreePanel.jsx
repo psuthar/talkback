@@ -69,16 +69,20 @@ export function MaterialsTreePanel({
   setVideoPlayerKey,
   onSelectDocument,
   onSelectVideo,
+  onSelectLink,
   selectedDocumentId,
   collapsed,
   onCollapsedChange,
-  hideTranscriptSection = false
+  hideTranscriptSection = false,
+  lastSeenLinkCount = 0
 }) {
   const scrollRef = useRef(null)
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], unread_material_ids = [], primary_video, additional_videos = [] } = session
+  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [] } = session
+  const linkCount = Array.isArray(links) ? links.length : 0
+  const newLinkCount = Math.max(0, linkCount - lastSeenLinkCount)
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
   const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
   const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
@@ -266,8 +270,58 @@ export function MaterialsTreePanel({
           )}
         </TreeSection>
 
-        <TreeSection title="Links">
-          <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+        <TreeSection title={newLinkCount > 0 ? `Links • New ${newLinkCount}` : 'Links'}>
+          {!Array.isArray(links) || links.length === 0 ? (
+            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+          ) : (
+            links.map((link) => {
+              const linkDocId = `link-${link.id}`
+              const isSelected = selectedDocumentId === linkDocId
+              return (
+                <button
+                  key={link.id}
+                  type="button"
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      e.preventDefault()
+                      window.open(link.url, '_blank', 'noopener,noreferrer')
+                    } else {
+                      onSelectLink?.(link)
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '8px 10px',
+                    marginBottom: '2px',
+                    border: 'none',
+                    borderRadius: '4px',
+                    background: isSelected ? '#e8f5e9' : 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: '#1976d2'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) e.currentTarget.style.background = '#f0f0f0'
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) e.currentTarget.style.background = 'transparent'
+                  }}
+                >
+                  <span style={{ flexShrink: 0 }}>{ICON_LINK}</span>
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
+                    {link.title || link.url}
+                  </span>
+                  {link.status === 'verified' && (
+                    <span style={{ fontSize: '11px', color: '#2e7d32', flexShrink: 0 }}>Verified</span>
+                  )}
+                </button>
+              )
+            })
+          )}
         </TreeSection>
       </div>
     </div>

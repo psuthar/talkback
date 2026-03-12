@@ -110,6 +110,20 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 		}
 	}
 
+	// 2b) Link chunks (verified session links with extracted text)
+	links, err := db.GetVerifiedSessionLinksBySessionID(ctx, sessionID)
+	if err != nil {
+		log.Printf("IndexSession: get session links: %v", err)
+	} else {
+		for _, link := range links {
+			if link.ExtractedText == nil || *link.ExtractedText == "" {
+				continue
+			}
+			linkChunks := BuildLinkChunks(sessionID, link.ID, *link.ExtractedText, link.URL)
+			allChunkInputs = append(allChunkInputs, linkChunks...)
+		}
+	}
+
 	if len(allChunkInputs) == 0 {
 		_ = setSessionIndexStatus(db, ctx, sessionID, "ready")
 		return nil
@@ -119,21 +133,31 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 	chunkIDs := make([]uuid.UUID, 0, len(allChunkInputs))
 	texts := make([]string, 0, len(allChunkInputs))
 	for _, c := range allChunkInputs {
+		// Ensure valid UTF-8 for PostgreSQL (e.g. link or material content may have invalid sequences)
+		chunkText := strings.ToValidUTF8(c.Text, "\uFFFD")
+		contentHash := c.ContentHash
+		if chunkText != c.Text {
+			sourceIDStr := ""
+			if c.SourceID != nil {
+				sourceIDStr = c.SourceID.String()
+			}
+			contentHash = ContentHash(chunkText, c.AnchorJSON, c.SessionID, c.SourceType, sourceIDStr, c.ChunkIdx)
+		}
 		ins := database.SessionChunkInsert{
 			SessionID:   c.SessionID,
 			SourceType:  c.SourceType,
 			SourceID:    c.SourceID,
 			ChunkIdx:    c.ChunkIdx,
-			Text:        c.Text,
+			Text:        chunkText,
 			AnchorJSON:  c.AnchorJSON,
-			ContentHash: c.ContentHash,
+			ContentHash: contentHash,
 		}
 		id, err := db.UpsertSessionChunk(ctx, ins)
 		if err != nil {
 			return fmt.Errorf("upsert chunk: %w", err)
 		}
 		chunkIDs = append(chunkIDs, id)
-		texts = append(texts, c.Text)
+		texts = append(texts, chunkText)
 	}
 
 	// 4) Replace embeddings: delete existing for session, then embed and insert

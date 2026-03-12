@@ -19,14 +19,37 @@ type Chunk struct {
 	Text       string // the chunk text (~1000 chars)
 }
 
-// RetrieveChunks performs lexical retrieval on artifact content
-// Returns top K chunks sorted by relevance score
-func RetrieveChunks(question string, materials []*models.Material, videoSource *models.VideoSource, topK int) []Chunk {
+// RetrieveChunks performs lexical retrieval on artifact content (materials, video transcript, and optionally session links).
+// Returns top K chunks sorted by relevance score.
+// If links is non-nil, verified links with extracted_text are chunked and included.
+func RetrieveChunks(question string, materials []*models.Material, videoSource *models.VideoSource, links []*models.SessionLink, topK int) []Chunk {
 	if topK <= 0 {
 		topK = 5
 	}
 
 	var allChunks []Chunk
+
+	// Extract chunks from session links (verified with extracted text)
+	for _, link := range links {
+		if link == nil || link.ExtractedText == nil || *link.ExtractedText == "" {
+			continue
+		}
+		text := strings.TrimSpace(*link.ExtractedText)
+		if text == "" {
+			continue
+		}
+		chunks := chunkText(text, 1000, 200)
+		for i, chunk := range chunks {
+			chunkID := fmt.Sprintf("link_%s_%d", link.ID.String(), i)
+			allChunks = append(allChunks, Chunk{
+				ChunkID:    chunkID,
+				SourceType: "link",
+				SourceID:   link.ID.String(),
+				Locator:    link.URL,
+				Text:       chunk,
+			})
+		}
+	}
 
 	// Extract chunks from materials
 	for _, material := range materials {

@@ -9,24 +9,38 @@ import (
 // CitationTarget describes where to navigate when the user clicks a citation.
 // Never error hard — degrade gracefully (e.g. Type="text" when video not available).
 type CitationTarget struct {
-	Type   string `json:"type"` // "video" | "pdf" | "doc" | "text"
-	URL    string `json:"url"`  // deep link or base URL (for materials)
-	SeekMs *int64 `json:"seek_ms,omitempty"`
-	Page   *int   `json:"page,omitempty"`
-	Block  *int   `json:"block,omitempty"`
+	Type     string `json:"type"`               // "video" | "pdf" | "doc" | "text" | "url"
+	URL      string `json:"url"`                // deep link or base URL (for materials or link)
+	Fragment string `json:"fragment,omitempty"`  // optional hash for url (e.g. #section-id)
+	SeekMs   *int64 `json:"seek_ms,omitempty"`
+	Page     *int   `json:"page,omitempty"`
+	Block    *int   `json:"block,omitempty"`
 }
 
 // ResolveCitationTarget maps a citation to a navigation target given session context.
-// videoSources and materials are the session's video sources and materials;
-// if nil, resolution degrades to "text" (show excerpt only).
+// videoSources, materials, and links are the session's sources; if nil, resolution degrades to "text" where needed.
 func ResolveCitationTarget(
 	c models.Citation,
 	videoSources []*models.VideoSource,
 	materials []*models.Material,
+	links []*models.SessionLink,
 ) CitationTarget {
 	out := CitationTarget{Type: "text"}
 
 	switch c.SourceType {
+	case "link":
+		for _, link := range links {
+			if link.ID.String() != c.SourceID {
+				continue
+			}
+			out.Type = "url"
+			out.URL = link.URL
+			if c.Anchor != nil && c.Anchor.Section != "" {
+				out.Fragment = c.Anchor.Section
+			}
+			return out
+		}
+		return out
 	case "transcript":
 		if c.Anchor != nil && c.Anchor.Type == "time_range" && c.Anchor.StartMs != nil {
 			seek := *c.Anchor.StartMs

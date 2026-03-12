@@ -51,6 +51,7 @@ type GetSessionResponse struct {
 	VideoAccessURL         string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
 	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
 	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
+	Links                  []*models.SessionLink `json:"links,omitempty"`                // session links for citation URL resolution
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -421,6 +422,26 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Copy session links (URL, title, status, extracted_text) so the new session has the same links and RAG can index them.
+	sourceLinks, _ := h.DB.GetSessionLinksBySessionID(ctx, sourceSessionID)
+	for _, listLink := range sourceLinks {
+		full, err := h.DB.GetSessionLinkByID(ctx, listLink.ID)
+		if err != nil || full == nil {
+			continue
+		}
+		newLink := &models.SessionLink{
+			ID:            uuid.New(),
+			SessionID:     newSession.ID,
+			URL:           full.URL,
+			Title:         full.Title,
+			Status:        full.Status,
+			ExtractedText: full.ExtractedText,
+			ErrorMessage:  full.ErrorMessage,
+		}
+		if err := h.DB.CreateSessionLink(ctx, newLink); err != nil {
+			log.Printf("CopySession CreateSessionLink: %v", err)
+		}
+	}
 	// Copy video_sources (Zoom/embed sessions: transcript + embed URL so copy has video and transcript even without primary_video_artifact_id).
 	sourceVideoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sourceSessionID)
 	for i, vs := range sourceVideoSources {
@@ -708,6 +729,11 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		allVideoSources = []*models.VideoSource{}
 	}
 
+	links, _ := h.DB.GetSessionLinksBySessionID(r.Context(), sessionID)
+	if links == nil {
+		links = []*models.SessionLink{}
+	}
+
 	// Get recent questions (limit 20)
 	questions, answers, err := h.DB.GetQuestionsBySessionID(r.Context(), sessionID, 20)
 	if err != nil {
@@ -835,6 +861,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		VideoAccessURL:       videoAccessURL,
 		PlaybackReasonCode:   playbackReasonCode,
 		PlaybackMessage:      playbackMessage,
+		Links:                links,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

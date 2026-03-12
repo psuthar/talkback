@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
@@ -73,6 +75,21 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		log.Printf("SessionUploadMaterial ensure artifact: %v", err)
 		http.Error(w, "Failed to prepare session for upload", http.StatusInternalServerError)
+		return
+	}
+	count, err := h.DB.CountActiveMaterialsBySessionID(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("SessionUploadMaterial count materials: %v", err)
+		http.Error(w, "Failed to check materials limit", http.StatusInternalServerError)
+		return
+	}
+	if auth.Config.MaxMaterialsPerSession > 0 && count >= auth.Config.MaxMaterialsPerSession {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":             "session materials limit reached",
+			"max_materials":     auth.Config.MaxMaterialsPerSession,
+		})
 		return
 	}
 
@@ -252,6 +269,11 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
+	// Best-effort slide derivation for PPT/PPTX when stored in R2.
+	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && h.Storage != nil && storageProvider == "r2" && storageKey != "" && filePath != "" {
+		// Run synchronously but never fail the upload if this breaks; helper logs its own errors.
+		h.tryGenerateAndStoreSlides(r.Context(), filePath, storageKey)
+	}
 	// For video files: create a VideoSource so the file appears in "Additional Videos" and is playable.
 	if isVideoForTranscription(ext, contentType) {
 		videoStoredKey := filepath.ToSlash(storageURL)
@@ -354,6 +376,21 @@ func (h *Handlers) SessionPasteMaterial(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		log.Printf("SessionPasteMaterial ensure artifact: %v", err)
 		http.Error(w, "Failed to prepare session", http.StatusInternalServerError)
+		return
+	}
+	count, err := h.DB.CountActiveMaterialsBySessionID(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("SessionPasteMaterial count materials: %v", err)
+		http.Error(w, "Failed to check materials limit", http.StatusInternalServerError)
+		return
+	}
+	if auth.Config.MaxMaterialsPerSession > 0 && count >= auth.Config.MaxMaterialsPerSession {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":          "session materials limit reached",
+			"max_materials":  auth.Config.MaxMaterialsPerSession,
+		})
 		return
 	}
 
@@ -492,6 +529,50 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 		return uuid.Nil, err
 	}
 	return artifact.ID, nil
+}
+
+// tryGenerateAndStoreSlides performs best-effort slide derivation for PPT/PPTX materials.
+// It never returns errors to the caller; failures are logged for debugging.
+func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
+	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	if err != nil {
+		log.Printf("slides conversion failed for %s: %v", localPath, err)
+		return
+	}
+
+	manifest := utils.SlideManifest{
+		Slides: make([]utils.SlideManifestEntry, 0, len(slides)),
+	}
+
+	for _, slide := range slides {
+		key := storage.SlideImageKeyFromArtifactKey(artifactKey, slide.Index)
+
+		_, _, err := h.Storage.Put(ctx, key, bytes.NewReader(slide.Data), "image/png", int64(len(slide.Data)))
+		if err != nil {
+			log.Printf("failed uploading derived slide %d for %s: %v", slide.Index, artifactKey, err)
+			return
+		}
+
+		manifest.Slides = append(manifest.Slides, utils.SlideManifestEntry{
+			Index:      slide.Index,
+			StorageKey: key,
+		})
+	}
+
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		log.Printf("failed marshalling slide manifest for %s: %v", artifactKey, err)
+		return
+	}
+
+	manifestKey := storage.SlidesManifestKeyFromArtifactKey(artifactKey)
+	_, _, err = h.Storage.Put(ctx, manifestKey, bytes.NewReader(manifestBytes), "application/json", int64(len(manifestBytes)))
+	if err != nil {
+		log.Printf("failed uploading slide manifest for %s: %v", artifactKey, err)
+		return
+	}
+
+	log.Printf("generated %d derived slides for %s", len(manifest.Slides), artifactKey)
 }
 
 // sessionIDFromPath parses session ID from path like "api/sessions/:id/..." or "sessions/:id/..."

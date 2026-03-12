@@ -316,16 +316,27 @@ type CitationAnchor struct {
 	Block   *int   `json:"block,omitempty"`
 }
 
+// CitationNavigation is the target when the user clicks a citation (video seek, doc open, or URL).
+type CitationNavigation struct {
+	Type     string `json:"type"`               // "video" | "pdf" | "doc" | "text" | "url"
+	URL      string `json:"url,omitempty"`      // for materials or link citations
+	Fragment string `json:"fragment,omitempty"` // optional hash for url (e.g. #section-id)
+	SeekMs   *int64 `json:"seek_ms,omitempty"`
+	Page     *int   `json:"page,omitempty"`
+	Block    *int   `json:"block,omitempty"`
+}
+
 type Citation struct {
-	CitationID string          `json:"citation_id,omitempty"` // stable within answer: C1, C2, ...
-	ChunkID    string          `json:"chunk_id"`              // unique identifier for the chunk
-	SourceType string          `json:"source_type"`           // "material" or "transcript"
-	SourceID   string          `json:"source_id"`             // material_id or video_id
-	Locator    string          `json:"locator,omitempty"`     // human-readable (legacy)
-	Snippet    string          `json:"snippet,omitempty"`     // ~200-300 chars (legacy)
-	Anchor     *CitationAnchor `json:"anchor,omitempty"`      // structured anchor for navigation
-	Label      string          `json:"label,omitempty"`       // e.g. "Transcript 01:12–04:38", "Document p. 4"
-	Excerpt    string          `json:"excerpt,omitempty"`     // first ~200 chars of chunk text
+	CitationID  string               `json:"citation_id,omitempty"` // stable within answer: C1, C2, ...
+	ChunkID     string               `json:"chunk_id"`              // unique identifier for the chunk
+	SourceType  string               `json:"source_type"`           // "material" or "transcript" or "link"
+	SourceID    string               `json:"source_id"`             // material_id or video_id or link_id
+	Locator     string               `json:"locator,omitempty"`     // human-readable (legacy)
+	Snippet     string               `json:"snippet,omitempty"`      // ~200-300 chars (legacy)
+	Anchor      *CitationAnchor      `json:"anchor,omitempty"`      // structured anchor for navigation
+	Label       string               `json:"label,omitempty"`       // e.g. "Transcript 01:12–04:38", "Document p. 4"
+	Excerpt     string               `json:"excerpt,omitempty"`     // first ~200 chars of chunk text
+	Navigation  *CitationNavigation  `json:"navigation,omitempty"`   // resolved target for click (url, video seek, doc page)
 }
 
 type Answer struct {
@@ -442,11 +453,33 @@ type TranscriptJob struct {
 
 // Mission #3: Session-scoped RAG chunks and embeddings
 
+// SessionLinkStatus is the status of a session link (verification and extraction).
+type SessionLinkStatus string
+
+const (
+	SessionLinkStatusPending   SessionLinkStatus = "pending"
+	SessionLinkStatusVerified  SessionLinkStatus = "verified"
+	SessionLinkStatusFailed    SessionLinkStatus = "failed"
+)
+
+// SessionLink is a URL added to a session; content is extracted and indexed for RAG.
+type SessionLink struct {
+	ID            uuid.UUID         `json:"id"`
+	SessionID     uuid.UUID         `json:"session_id"`
+	URL           string            `json:"url"`
+	Title         *string           `json:"title,omitempty"`
+	Status        SessionLinkStatus `json:"status"`
+	ExtractedText *string           `json:"extracted_text,omitempty"`
+	ErrorMessage  *string           `json:"error_message,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+}
+
 // SessionChunk is a retrievable chunk for session-scoped RAG
 type SessionChunk struct {
 	ID          uuid.UUID              `json:"id"`
 	SessionID   uuid.UUID              `json:"session_id"`
-	SourceType  string                 `json:"source_type"` // "transcript" | "material"
+	SourceType  string                 `json:"source_type"` // "transcript" | "material" | "link"
 	SourceID    *uuid.UUID             `json:"source_id,omitempty"`
 	ChunkIdx    int                    `json:"chunk_idx"`
 	Text        string                 `json:"text"`

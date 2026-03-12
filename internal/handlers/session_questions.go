@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
+	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -166,7 +167,8 @@ func (h *Handlers) AskSessionQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 	primaryVideo, _ := resolveEffectivePrimaryAndAdditional(allVideoSources)
 	videoSource := primaryVideo
-	chunks := utils.RetrieveChunks(req.QuestionText, allMaterials, videoSource, 5)
+	verifiedLinks, _ := h.DB.GetVerifiedSessionLinksBySessionID(r.Context(), sessionID)
+	chunks := utils.RetrieveChunks(req.QuestionText, allMaterials, videoSource, verifiedLinks, 5)
 	priorQuestions, priorAnswers, err := h.DB.GetQuestionsBySessionID(r.Context(), sessionID, 10)
 	if err != nil {
 		log.Printf("Warning: Failed to get prior questions for context: %v", err)
@@ -614,6 +616,27 @@ func (h *Handlers) GetSessionQuestions(w http.ResponseWriter, r *http.Request) {
 				if c.SourceType == "" {
 					c.SourceType = info.SourceType
 				}
+			}
+		}
+	}
+	// Enrich citations with navigation (url for link citations, video seek, doc page) so frontend can open links/sections
+	links, _ := h.DB.GetSessionLinksBySessionID(r.Context(), sessionID)
+	materials, _ := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
+	videoSources, _ := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
+	for _, a := range answers {
+		if a == nil {
+			continue
+		}
+		for i := range a.Citations {
+			c := &a.Citations[i]
+			t := citation.ResolveCitationTarget(*c, videoSources, materials, links)
+			c.Navigation = &models.CitationNavigation{
+				Type:     t.Type,
+				URL:      t.URL,
+				Fragment: t.Fragment,
+				SeekMs:   t.SeekMs,
+				Page:     t.Page,
+				Block:    t.Block,
 			}
 		}
 	}

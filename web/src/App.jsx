@@ -1920,13 +1920,7 @@ function App() {
         setInviteEmail('')
         const inv = data?.invitation
         setLastInvitationDraft(inv || null)
-        const mailtoUrl = inv ? buildInviteMailto(inv) : null
-        if (mailtoUrl) {
-          try {
-            window.location.href = mailtoUrl
-          } catch (_) { /* mailto may be blocked */ }
-        }
-        setInviteFeedback({ type: 'success', message: 'Invitation created. Your email app has been opened with a draft invitation.' })
+        setInviteFeedback({ type: 'success', message: 'Invitation created. Click "Open email draft" to open in your email app.' })
         setTimeout(() => setInviteFeedback({ type: '', message: '' }), 5000)
         fetchSessionInvitations(currentSession.session.id)
       } else if (response.status === 409) {
@@ -2064,24 +2058,11 @@ function App() {
 
   const submitSessionQuestion = async (text, askedVia = 'text', parentQuestionId = null) => {
     clearFeedback(setAskQuestionFeedback)
-    // Show question immediately in the list (optimistic) with a "processing" state until the API returns.
-    const pendingId = `pending-${Date.now()}`
-    const optimisticQuestion = {
-      id: pendingId,
-      question_text: text,
-      created_at: new Date().toISOString(),
-      parent_question_id: parentQuestionId || null,
-      answer: null,
-      _pending: true,
-      asked_by: authUser?.email || null
-    }
-    setPendingSessionQuestions((prev) => [...prev, optimisticQuestion])
     setLoading(true)
 
     try {
       const body = { question_text: text, asked_via: askedVia }
       if (parentQuestionId) body.parent_question_id = parentQuestionId
-      // Ask requires login; backend sets asked_by from authenticated user email.
       const response = await fetch(`${apiBaseUrl}/api/sessions/${currentSession.session.id}/ask`, {
         method: 'POST',
         credentials: 'include',
@@ -2101,7 +2082,6 @@ function App() {
           } catch { /* ignore */ }
         }
         setAskQuestionFeedback({ type: 'error', message: msg })
-        setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
         return
       }
 
@@ -2128,11 +2108,9 @@ function App() {
       setAskQuestionFeedback({ type: 'success', message: isCached ? 'Question answered (cached)!' : 'Question answered!' })
       setQuestionText('')
       setReplyingToQuestionId(null)
-      setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
       await fetchSessionQuestions(currentSession.session.id)
     } catch (err) {
       setAskQuestionFeedback({ type: 'error', message: `Failed to ask question: ${err.message}` })
-      setPendingSessionQuestions((prev) => prev.filter((p) => p.id !== pendingId))
     } finally {
       setLoading(false)
     }
@@ -2616,12 +2594,12 @@ function App() {
     setUnreadQuestionIds([])
   }, [effectiveSessionId])
 
-  // Merge pending + server questions + mock, sorted by created_at so new question appears in order
+  // Server questions + mock, sorted by created_at. No optimistic pending so only one entry per question.
   const displayQuestions = useMemo(() => {
-    const combined = [...pendingSessionQuestions, ...questions, ...mockQuestions]
+    const combined = [...questions, ...mockQuestions]
     combined.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
     return combined
-  }, [pendingSessionQuestions, questions, mockQuestions])
+  }, [questions, mockQuestions])
 
   // Resolve selected video from session using ref (user's chosen id) so selection survives refetches; sync ref when we fall back to primary
   useEffect(() => {
@@ -2747,7 +2725,7 @@ function App() {
   }
 
   return (
-    <div className={`container${showAdminView ? ' admin-full-width' : isParticipantMode && currentSession ? ' participant-full-width' : ''}`}>
+    <div className={`container${showAdminView ? ' admin-full-width' : currentSession ? ' participant-full-width' : ''}`}>
       {zoomImportToast && (
         <div style={{
           position: 'fixed',
@@ -2820,7 +2798,7 @@ function App() {
       )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '20px', minWidth: 0 }}>
-        <h1 style={{ margin: 0, minWidth: 0 }}>TalkBack Phase 3 - Web UI</h1>
+        <h1 style={{ margin: 0, minWidth: 0 }}>TalkBack</h1>
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px', minWidth: 0 }}>
           {/* TalkBack auth: logged-in state + Log out */}
           <span style={{ fontSize: '13px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -3005,7 +2983,9 @@ function App() {
             <div style={{ marginBottom: '20px', padding: '14px', backgroundColor: '#fff3e0', borderRadius: '8px', border: '2px solid #ff9800' }}>
               <h3 style={{ margin: '0 0 10px 0', fontSize: '1.1rem' }}>Pending Invites</h3>
               <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                  {pendingInvitations.map((inv) => (
+                  {[...pendingInvitations]
+                    .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+                    .map((inv) => (
                     <div
                       key={inv.id}
                       style={{
@@ -3024,6 +3004,11 @@ function App() {
                         <div style={{ fontWeight: '600' }}>{inv.session_title || 'Untitled session'}</div>
                         <div style={{ fontSize: '12px', color: '#666' }}>
                           Invited by {inv.inviter_name || '—'} · {inv.invited_role || 'participant'}
+                          {inv.created_at && (
+                            <span style={{ marginLeft: '6px', color: '#888' }}>
+                              · Sent {new Date(inv.created_at).toLocaleString()}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button
@@ -3501,6 +3486,22 @@ function App() {
                 {inviteFeedback.message && (
                   <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
                     {inviteFeedback.message}
+                  </div>
+                )}
+                {lastInvitationDraft && (
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const mailtoUrl = buildInviteMailto(lastInvitationDraft)
+                        if (mailtoUrl) {
+                          try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
+                        }
+                      }}
+                      style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
+                    >
+                      Open email draft
+                    </button>
                   </div>
                 )}
               </div>

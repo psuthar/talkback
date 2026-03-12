@@ -833,8 +833,9 @@ func (h *Handlers) AskQuestion(w http.ResponseWriter, r *http.Request) {
 		videoSource = nil
 	}
 
+	verifiedLinks, _ := h.DB.GetVerifiedSessionLinksBySessionID(r.Context(), artifact.SessionID)
 	// Perform retrieval
-	chunks := utils.RetrieveChunks(req.QuestionText, materials, videoSource, 5)
+	chunks := utils.RetrieveChunks(req.QuestionText, materials, videoSource, verifiedLinks, 5)
 
 	// Get prior questions and answers from this session for context accumulation
 	priorQuestions, priorAnswers, err := h.DB.GetQuestionsBySessionID(r.Context(), artifact.SessionID, 10)

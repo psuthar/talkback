@@ -84,4 +84,5 @@ type PendingInvitationItem struct {
 	InviterName  string `json:"inviter_name"`
 	InvitedRole  string `json:"invited_role"`
 	ExpiresAt    string `json:"expires_at"`
+	CreatedAt    string `json:"created_at"` // when the invite was sent (RFC3339)
 }

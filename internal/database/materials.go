@@ -278,6 +278,19 @@ func (db *DB) GetActiveMaterialsBySessionID(ctx context.Context, sessionID uuid.
 	return materials, nil
 }
 
+// CountActiveMaterialsBySessionID returns the number of active (non-deleted) materials for the session.
+func (db *DB) CountActiveMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM materials WHERE session_id = $1 AND (deleted_at IS NULL)`,
+		sessionID,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count materials: %w", err)
+	}
+	return n, nil
+}
+
 // ExistsMaterialWithFilenameInSession returns true if the session already has an active material with the same filename (case-insensitive).
 func (db *DB) ExistsMaterialWithFilenameInSession(ctx context.Context, sessionID uuid.UUID, filename string) (bool, error) {
 	var exists bool

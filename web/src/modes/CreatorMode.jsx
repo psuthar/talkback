@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsList } from '../components/MaterialsList'
+import { SessionLinksSection } from '../components/SessionLinksSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
@@ -884,7 +885,10 @@ export function CreatorMode({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                <h2 style={{ margin: 0, color: '#1976D2', fontSize: '1.25rem' }}>Session: {currentSession.session.title}</h2>
+                <h2 style={{ margin: 0, color: '#1976D2', fontSize: '1.25rem' }}>
+                  Session: {currentSession.session.title}
+                  <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
+                </h2>
                 {authUser?.email && (
                   <span style={{
                     fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
@@ -896,8 +900,6 @@ export function CreatorMode({
                 )}
               </div>
               <div style={{ fontSize: '13px', color: '#666' }}>
-                ID: <code style={{ fontSize: '11px' }}>{currentSession.session.id}</code>
-                {' | '}
                 <strong>Status:</strong>{' '}
                 <span style={{ color: currentSession.session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>
                   {currentSession.session.status}
@@ -965,6 +967,22 @@ export function CreatorMode({
                       {inviteFeedback.message}
                     </div>
                   )}
+                  {lastInvitationDraft && (
+                    <div style={{ marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const mailtoUrl = buildInviteMailto(lastInvitationDraft)
+                          if (mailtoUrl) {
+                            try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
+                          }
+                        }}
+                        style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
+                      >
+                        Open email draft
+                      </button>
+                    </div>
+                  )}
                   {sessionInvitations?.length > 0 && (
                     <div style={{ marginTop: '14px' }}>
                       <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invitations:</label>
@@ -996,14 +1014,10 @@ export function CreatorMode({
                                           action="resend"
                                           onDone={(data) => {
                                             if (data?.invitation) {
-                                              const mailtoUrl = buildInviteMailto(data.invitation)
-                                              if (mailtoUrl) {
-                                                try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
-                                              }
                                               if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation)
                                               if (typeof setInviteFeedback === 'function') {
-                                                setInviteFeedback({ type: 'success', message: 'A new invitation draft has been opened in your email app.' })
-                                                setTimeout(() => setInviteFeedback({ type: '', message: '' }), 4000)
+                                                setInviteFeedback({ type: 'success', message: 'New invitation link ready. Click "Open email draft" to open in your email app.' })
+                                                setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000)
                                               }
                                             }
                                             fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
@@ -1578,6 +1592,16 @@ export function CreatorMode({
         <MaterialsList
           materials={currentSession.materials}
           sessionId={sessionId}
+          apiBaseUrl={apiBaseUrl}
+          refetchSession={refetchSession}
+        />
+      )}
+
+      {/* Session links: add URLs for RAG and citations */}
+      {sessionId && (
+        <SessionLinksSection
+          sessionId={sessionId}
+          links={currentSession?.links}
           apiBaseUrl={apiBaseUrl}
           refetchSession={refetchSession}
         />

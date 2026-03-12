@@ -92,6 +92,8 @@ export function ParticipantMode({
   const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
+  // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
+  const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
@@ -260,8 +262,64 @@ export function ParticipantMode({
     setSelectedDocumentId(null)
   }
 
+  const handleSelectLink = (link, fragment = null) => {
+    if (!link?.url) return
+    setSelectedDocument({
+      type: 'link',
+      url: link.url,
+      title: link.title || link.url,
+      id: link.id,
+      ...(fragment != null && fragment !== '' && { fragment })
+    })
+    setSelectedDocumentId(`link-${link.id}`)
+    setCitationScrollTarget(null)
+  }
+
   const handleCitationClick = (citation) => {
     onCitationClick?.(citation)
+    // Link citations: select the link in the left pane and show the page in the middle (with fragment if available)
+    const fragment = citation?.navigation?.fragment ?? citation?.anchor?.section ?? ''
+    if (citation?.navigation?.type === 'url' && citation.navigation?.url) {
+      const links = currentSession?.links
+      const link = citation?.source_id && Array.isArray(links)
+        ? links.find(l => String(l?.id) === String(citation.source_id))
+        : null
+      if (link) {
+        handleSelectLink(link, fragment)
+        return
+      }
+      // No link in list: still show URL in middle pane and highlight would be N/A
+      setSelectedDocument({
+        type: 'link',
+        url: citation.navigation.url,
+        title: citation?.label || citation.navigation.url,
+        id: citation.source_id || 'cite',
+        ...(fragment && { fragment })
+      })
+      setSelectedDocumentId(citation.source_id ? `link-${citation.source_id}` : 'link-cite')
+      setCitationScrollTarget(null)
+      return
+    }
+    if (citation?.source_type === 'link' && citation?.source_id) {
+      const links = currentSession?.links
+      const link = Array.isArray(links) ? links?.find(l => String(l?.id) === String(citation.source_id)) : null
+      if (link?.url) {
+        handleSelectLink(link, fragment)
+        return
+      }
+      if (citation?.navigation?.url) {
+        setSelectedDocument({
+          type: 'link',
+          url: citation.navigation.url,
+          title: citation?.label || citation.navigation.url,
+          id: citation.source_id,
+          ...(fragment && { fragment })
+        })
+        setSelectedDocumentId(`link-${citation.source_id}`)
+        setCitationScrollTarget(null)
+        return
+      }
+    }
     const anchor = citation?.anchor
     const startMsVal = anchor?.start_ms ?? anchor?.startMs
     const endMsVal = anchor?.end_ms ?? anchor?.endMs
@@ -367,6 +425,17 @@ export function ParticipantMode({
     }
   }
 
+  // When session first loads, set "last seen" link count so existing links don't show as New; new links added later will show New
+  const sessionIdForLinks = currentSession?.session?.id
+  useEffect(() => {
+    if (!sessionIdForLinks) return
+    const linkCount = currentSession?.links?.length ?? 0
+    setLastSeenLinkCountBySession((prev) => {
+      if (prev[sessionIdForLinks] !== undefined) return prev
+      return { ...prev, [sessionIdForLinks]: linkCount }
+    })
+  }, [sessionIdForLinks, currentSession?.links?.length])
+
   // Refetch session when tab becomes visible or on interval so new materials show without refresh
   const refetchRef = useRef(refetchSession)
   refetchRef.current = refetchSession
@@ -426,19 +495,22 @@ export function ParticipantMode({
   return (
     <>
       <div className="participant-layout-topbar">
-        <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32' }}>
-          {currentSession.session.title}
-        </h2>
-        <span style={{
-          backgroundColor: currentSession.session.created_by === authUser?.email ? '#2e7d32' : '#757575',
-          color: 'white',
-          padding: '4px 12px',
-          borderRadius: '4px',
-          fontWeight: 'bold',
-          fontSize: '14px'
-        }}>
-          {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
+          <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32' }}>
+            {currentSession.session.title}
+            <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
+          </h2>
+          <span style={{
+            backgroundColor: currentSession.session.created_by === authUser?.email ? '#2e7d32' : '#757575',
+            color: 'white',
+            padding: '4px 12px',
+            borderRadius: '4px',
+            fontWeight: 'bold',
+            fontSize: '14px'
+          }}>
+            {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
+          </span>
+        </div>
         {onClearSession && (
           <button
             type="button"
@@ -692,10 +764,18 @@ export function ParticipantMode({
             setVideoPlayerKey={setVideoPlayerKey}
             onSelectDocument={handleSelectDocument}
             onSelectVideo={handleBackToVideo}
+            onSelectLink={(link) => {
+              handleSelectLink(link)
+              const sid = currentSession?.session?.id
+              if (sid && currentSession?.links?.length != null) {
+                setLastSeenLinkCountBySession((prev) => ({ ...prev, [sid]: currentSession.links.length }))
+              }
+            }}
             selectedDocumentId={selectedDocumentId}
             collapsed={materialsCollapsed}
             onCollapsedChange={setMaterialsCollapsed}
             hideTranscriptSection
+            lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
           />
         </aside>
 
@@ -832,23 +912,24 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
   const [docxError, setDocxError] = useState(null)
 
   const isTranscript = doc?.type === 'transcript'
-  const title = isTranscript ? (doc?.title || 'Transcript') : (doc?.filename || doc?.title || 'Document')
-  const meta = isTranscript ? 'Transcript' : (getMaterialTypeLabel(doc) || doc?.content_type || '')
+  const isLink = doc?.type === 'link'
+  const title = isTranscript ? (doc?.title || 'Transcript') : isLink ? (doc?.title || doc?.url || 'Link') : (doc?.filename || doc?.title || 'Document')
+  const meta = isTranscript ? 'Transcript' : isLink ? 'Link' : (getMaterialTypeLabel(doc) || doc?.content_type || '')
   const bodyText = isTranscript ? (doc?.text || '') : (doc?.extracted_text ?? '')
   const contentType = (doc?.content_type || '').toLowerCase()
   const fn = (doc?.filename || '').toLowerCase()
-  const isPdf = !isTranscript && contentType.includes('pdf')
-  const isDocx = !isTranscript && (
+  const isPdf = !isTranscript && !isLink && contentType.includes('pdf')
+  const isDocx = !isTranscript && !isLink && (
     contentType.includes('wordprocessingml') || contentType.includes('msword') ||
     fn.endsWith('.docx') || fn.endsWith('.doc')
   )
-  const storageUrl = !isTranscript && doc?.storage_url
+  const storageUrl = !isTranscript && !isLink && doc?.storage_url
   const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']
-  const isImage = !isTranscript && (
+  const isImage = !isTranscript && !isLink && (
     contentType.startsWith('image/') ||
     imageExts.some(e => fn.endsWith(e))
   )
-  const baseMaterialFileUrl = apiBaseUrl && doc?.artifact_id && doc?.id && !isTranscript
+  const baseMaterialFileUrl = apiBaseUrl && doc?.artifact_id && doc?.id && !isTranscript && !isLink
     ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
     : null
   const materialFileUrl = baseMaterialFileUrl && (initialPage != null && initialPage >= 1)
@@ -908,9 +989,21 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
         <h2 style={{ margin: 0, fontSize: '16px', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {title}
         </h2>
-        {meta && (
-          <span style={{ fontSize: '12px', color: '#666' }}>{meta}</span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
+          {isLink && doc?.url && (
+            <a
+              href={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: '13px', color: '#1976d2', whiteSpace: 'nowrap' }}
+            >
+              Open in new tab
+            </a>
+          )}
+          {meta && (
+            <span style={{ fontSize: '12px', color: '#666' }}>{meta}</span>
+          )}
+        </div>
       </header>
       <div style={{
         flex: 1,
@@ -918,7 +1011,24 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
         overflow: 'auto',
         padding: '16px 0 0'
       }}>
-        {isImage && materialFileUrl ? (
+        {isLink && doc?.url ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
+            <iframe
+              src={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
+              title={title}
+              style={{
+                width: '100%',
+                flex: 1,
+                minHeight: '60vh',
+                border: '1px solid #e0e0e0',
+                borderRadius: '4px'
+              }}
+            />
+            <p style={{ fontSize: '12px', color: '#666', margin: 0 }}>
+              Some sites block embedding. If the page does not load, use &quot;Open in new tab&quot; above.
+            </p>
+          </div>
+        ) : isImage && materialFileUrl ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
             <img
               src={materialFileUrl}

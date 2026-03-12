@@ -3,8 +3,11 @@ package rag
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
+	"os"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
@@ -25,6 +28,9 @@ func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, que
 	chunksWithEmb, err := db.ListChunksWithEmbeddingsBySessionID(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list chunks: %w", err)
+	}
+	if os.Getenv("ASK_TRACE") == "1" {
+		log.Printf("[ASK_TRACE] RetrieveTopK: session_id=%s index_chunks=%d requested_k=%d", sessionID, len(chunksWithEmb), k)
 	}
 	if len(chunksWithEmb) == 0 {
 		return nil, nil
@@ -54,6 +60,17 @@ func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, que
 	out := make([]models.SessionChunk, k)
 	for i := 0; i < k; i++ {
 		out[i] = scoredList[i].chunk
+	}
+	if os.Getenv("ASK_TRACE") == "1" {
+		var sourceCounts []string
+		byType := make(map[string]int)
+		for _, sc := range out {
+			byType[sc.SourceType]++
+		}
+		for t, n := range byType {
+			sourceCounts = append(sourceCounts, fmt.Sprintf("%s=%d", t, n))
+		}
+		log.Printf("[ASK_TRACE] RetrieveTopK: returning %d chunks (%s)", len(out), strings.Join(sourceCounts, ", "))
 	}
 	return out, nil
 }

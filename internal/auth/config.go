@@ -20,7 +20,9 @@ type ConfigStruct struct {
 	BootstrapAdminPassword    string // TALKBACK_BOOTSTRAP_ADMIN_PASSWORD: required for auto-create; used to sync password when user exists
 	BootstrapAdminDisplayName string // TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME: display name for bootstrap admin when creating or fixing "Admin"
 	AllowedOrigins          []string
-	MaxQuestionsPerSession  int    // max questions allowed per session (default 10); set via TB_MAX_QUESTIONS_PER_SESSION
+	MaxQuestionsPerSession  int // max questions allowed per session (default 10); set via TB_MAX_QUESTIONS_PER_SESSION
+	MaxLinksPerSession      int // max links per session (default 20); set via TB_MAX_LINKS_PER_SESSION
+	MaxMaterialsPerSession  int // max materials per session (default 50); set via TB_MAX_MATERIALS_PER_SESSION
 }
 
 func loadConfig() ConfigStruct {
@@ -28,7 +30,9 @@ func loadConfig() ConfigStruct {
 		SessionCookieName:      "tb_login",
 		SessionTTLHours:        168, // 7 days
 		CookieSecure:           false,
-		MaxQuestionsPerSession: 10,
+		MaxQuestionsPerSession:  10,
+		MaxLinksPerSession:      20,
+		MaxMaterialsPerSession:  50,
 	}
 	if v := os.Getenv("TB_SESSION_COOKIE_NAME"); v != "" {
 		c.SessionCookieName = v
@@ -68,6 +72,16 @@ func loadConfig() ConfigStruct {
 	if v := os.Getenv("TB_MAX_QUESTIONS_PER_SESSION"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.MaxQuestionsPerSession = n
+		}
+	}
+	if v := os.Getenv("TB_MAX_LINKS_PER_SESSION"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.MaxLinksPerSession = n
+		}
+	}
+	if v := os.Getenv("TB_MAX_MATERIALS_PER_SESSION"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.MaxMaterialsPerSession = n
 		}
 	}
 	// Fallback: use CORS_ALLOWED_ORIGINS so one env var works for both CORS and cookie SameSite on Render

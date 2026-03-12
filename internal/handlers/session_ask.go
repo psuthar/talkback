@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
@@ -173,8 +174,8 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("SessionAsk RetrieveTopK: %v", err)
 		}
-		// If no chunks but session has transcript content, index may have been built before transcript was ready — force reindex and retry once
-		if len(sessionChunks) == 0 && sessionHasTranscriptContent(ctx, h.DB, sessionID) {
+		// If no chunks but session has indexable content (transcript or links), index may not be ready — force reindex and retry once
+		if len(sessionChunks) == 0 && sessionHasIndexableContent(ctx, h.DB, sessionID) {
 			_ = h.DB.DeleteChunkEmbeddingsBySessionID(ctx, sessionID)
 			_ = h.DB.DeleteSessionChunksBySessionID(ctx, sessionID)
 			if reindexErr := rag.IndexSession(ctx, h.DB, embedder, sessionID, h.Storage); reindexErr != nil {
@@ -229,6 +230,11 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		log.Printf("SessionAsk CreateQuestion: %v", err)
 		http.Error(w, "Failed to create question", http.StatusInternalServerError)
 		return
+	}
+
+	// Temporary tracing: show what lookup is being used to answer (set ASK_TRACE=1)
+	if os.Getenv("ASK_TRACE") == "1" {
+		traceAskLookup(req.QuestionText, sessionChunks)
 	}
 
 	// Convert to utils.Chunk for GenerateAnswer
@@ -311,6 +317,32 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		},
 		Answer: h.sessionAskAnswerFromModelWithContext(ctx, sessionID, answer),
 	})
+}
+
+// traceAskLookup logs the question and retrieved chunks (including link content) when ASK_TRACE=1.
+const tracePreviewLen = 400
+
+func traceAskLookup(question string, chunks []models.SessionChunk) {
+	log.Printf("[ASK_TRACE] question: %q", question)
+	log.Printf("[ASK_TRACE] retrieved %d chunks", len(chunks))
+	for i, c := range chunks {
+		sourceID := ""
+		if c.SourceID != nil {
+			sourceID = c.SourceID.String()
+		}
+		url := ""
+		if c.AnchorJSON != nil {
+			if u, _ := c.AnchorJSON["url"].(string); u != "" {
+				url = u
+			}
+		}
+		preview := c.Text
+		if len(preview) > tracePreviewLen {
+			preview = preview[:tracePreviewLen] + "..."
+		}
+		log.Printf("[ASK_TRACE]   chunk %d: source_type=%s source_id=%s url=%s", i+1, c.SourceType, sourceID, url)
+		log.Printf("[ASK_TRACE]     text_preview: %s", preview)
+	}
 }
 
 func sessionChunksToUtilsChunks(chunks []models.SessionChunk) []utils.Chunk {
@@ -430,10 +462,11 @@ func buildPriorQA(questions []*models.Question, answers []*models.Answer, exclud
 func (h *Handlers) sessionAskAnswerFromModelWithContext(ctx context.Context, sessionID uuid.UUID, a *models.Answer) SessionAskAnswerResponse {
 	videoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sessionID)
 	materials, _ := h.DB.GetActiveMaterialsBySessionID(ctx, sessionID)
-	return sessionAskAnswerFromAnswer(a, videoSources, materials)
+	links, _ := h.DB.GetSessionLinksBySessionID(ctx, sessionID)
+	return sessionAskAnswerFromAnswer(a, videoSources, materials, links)
 }
 
-func sessionAskAnswerFromAnswer(a *models.Answer, videoSources []*models.VideoSource, materials []*models.Material) SessionAskAnswerResponse {
+func sessionAskAnswerFromAnswer(a *models.Answer, videoSources []*models.VideoSource, materials []*models.Material, links []*models.SessionLink) SessionAskAnswerResponse {
 	citations := make([]SessionAskCitation, 0, len(a.Citations))
 	for _, c := range a.Citations {
 		cite := SessionAskCitation{
@@ -456,7 +489,7 @@ func sessionAskAnswerFromAnswer(a *models.Answer, videoSources []*models.VideoSo
 		if c.Anchor != nil {
 			cite.Anchor = citationAnchorToMap(c.Anchor)
 		}
-		cite.Navigation = ptr(citation.ResolveCitationTarget(c, videoSources, materials))
+		cite.Navigation = ptr(citation.ResolveCitationTarget(c, videoSources, materials, links))
 		citations = append(citations, cite)
 	}
 	modelStr := ""
@@ -512,8 +545,9 @@ func sessionEmptyChunkMessage(ctx context.Context, db *database.DB, sessionID uu
 	return ""
 }
 
-// sessionHasTranscriptContent returns true if the session has transcript content (transcripts table or video_sources) so reindex might yield chunks.
-func sessionHasTranscriptContent(ctx context.Context, db *database.DB, sessionID uuid.UUID) bool {
+// sessionHasIndexableContent returns true if the session has content that could yield RAG chunks (transcript, materials with text, or verified links with extracted text).
+func sessionHasIndexableContent(ctx context.Context, db *database.DB, sessionID uuid.UUID) bool {
+	// Transcript
 	trans, err := db.GetTranscriptBySessionID(ctx, sessionID, "")
 	if err == nil && trans != nil && trans.Status == models.TranscriptStatusReady {
 		segments, err := db.ListSegmentsByTranscriptID(ctx, trans.ID)
@@ -522,15 +556,32 @@ func sessionHasTranscriptContent(ctx context.Context, db *database.DB, sessionID
 		}
 	}
 	videoSources, err := db.GetVideoSourcesBySessionID(ctx, sessionID)
-	if err != nil {
-		return false
-	}
-	for _, vs := range videoSources {
-		if vs.TranscriptText != nil && *vs.TranscriptText != "" {
-			return true
+	if err == nil {
+		for _, vs := range videoSources {
+			if vs.TranscriptText != nil && *vs.TranscriptText != "" {
+				return true
+			}
+			if len(vs.TranscriptSegments) > 0 {
+				return true
+			}
 		}
-		if len(vs.TranscriptSegments) > 0 {
-			return true
+	}
+	// Verified links with extracted text
+	links, err := db.GetVerifiedSessionLinksBySessionID(ctx, sessionID)
+	if err == nil {
+		for _, link := range links {
+			if link.ExtractedText != nil && *link.ExtractedText != "" {
+				return true
+			}
+		}
+	}
+	// Materials with extracted text
+	mats, err := db.GetActiveMaterialsBySessionID(ctx, sessionID)
+	if err == nil {
+		for _, m := range mats {
+			if m.ExtractedText != nil && *m.ExtractedText != "" {
+				return true
+			}
 		}
 	}
 	return false

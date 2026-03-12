@@ -96,6 +96,33 @@ func BuildMaterialChunks(sessionID, materialID uuid.UUID, text string) []ChunkIn
 	return out
 }
 
+// BuildLinkChunks chunks extracted text from a session link; anchor includes url for citation navigation.
+func BuildLinkChunks(sessionID, linkID uuid.UUID, extractedText, linkURL string) []ChunkInput {
+	text := strings.TrimSpace(extractedText)
+	if text == "" {
+		return nil
+	}
+	chunks := chunkText(text, MaterialChunkSize, MaterialChunkOverlap)
+	var out []ChunkInput
+	for i, c := range chunks {
+		anchor := map[string]interface{}{
+			"type": "link",
+			"url":  linkURL,
+		}
+		hash := ContentHash(c, anchor, sessionID, "link", linkID.String(), i)
+		out = append(out, ChunkInput{
+			SessionID:   sessionID,
+			SourceType:  "link",
+			SourceID:    &linkID,
+			ChunkIdx:    i,
+			Text:        c,
+			AnchorJSON:  anchor,
+			ContentHash: hash,
+		})
+	}
+	return out
+}
+
 func chunkText(text string, chunkSize, overlap int) []string {
 	if len(text) <= chunkSize {
 		return []string{text}

@@ -10,11 +10,20 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /go/bin/app -v ./cmd/api
 RUN CGO_ENABLED=0 go build -o /go/bin/reset-db -v ./cmd/reset-db
 
-#final stage
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates poppler-utils
+# Final stage: runtime image
+# Use debian-slim so we can install LibreOffice (soffice) for PPTX -> slides/image/text processing
+FROM debian:stable-slim
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      poppler-utils \
+      libreoffice && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /go/bin/app /app
 COPY --from=builder /go/bin/reset-db /reset-db
+
 ENTRYPOINT ["/app"]
 LABEL Name=talkback Version=0.0.1
 EXPOSE 8080
