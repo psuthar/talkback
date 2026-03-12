@@ -281,7 +281,7 @@ export function ParticipantMode({
     const fragment = citation?.navigation?.fragment ?? citation?.anchor?.section ?? ''
     // Resolve session links from either top-level or nested session (Render / different response shapes)
     const sessionLinks = Array.isArray(currentSession?.links) ? currentSession.links : (Array.isArray(currentSession?.session?.links) ? currentSession.session.links : null)
-    const linkUrlFromCitation = citation?.navigation?.url || (typeof citation?.label === 'string' && /^https?:\/\//i.test(citation.label.trim()) ? citation.label.trim() : null)
+    const linkUrlFromCitation = citation?.navigation?.url || citation?.anchor?.url || (typeof citation?.label === 'string' && /^https?:\/\//i.test(citation.label.trim()) ? citation.label.trim() : null)
     if (citation?.navigation?.type === 'url' && citation.navigation?.url) {
       const link = citation?.source_id && sessionLinks
         ? sessionLinks.find(l => String(l?.id) === String(citation.source_id))

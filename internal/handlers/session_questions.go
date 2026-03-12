@@ -623,13 +623,21 @@ func (h *Handlers) GetSessionQuestions(w http.ResponseWriter, r *http.Request) {
 	links, _ := h.DB.GetSessionLinksBySessionID(r.Context(), sessionID)
 	materials, _ := h.DB.GetActiveMaterialsBySessionID(r.Context(), sessionID)
 	videoSources, _ := h.DB.GetVideoSourcesBySessionID(r.Context(), sessionID)
+	chunkURLByChunkID := make(citation.ChunkURLByChunkID)
+	for _, ch := range chunks {
+		if ch.SourceType == "link" && ch.AnchorJSON != nil {
+			if u, ok := ch.AnchorJSON["url"].(string); ok && u != "" {
+				chunkURLByChunkID[ch.ID.String()] = u
+			}
+		}
+	}
 	for _, a := range answers {
 		if a == nil {
 			continue
 		}
 		for i := range a.Citations {
 			c := &a.Citations[i]
-			t := citation.ResolveCitationTarget(*c, videoSources, materials, links)
+			t := citation.ResolveCitationTarget(*c, videoSources, materials, links, chunkURLByChunkID)
 			c.Navigation = &models.CitationNavigation{
 				Type:     t.Type,
 				URL:      t.URL,

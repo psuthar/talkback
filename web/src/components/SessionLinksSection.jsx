@@ -119,14 +119,17 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
                 <div style={{ fontSize: '12px', color: '#666', wordBreak: 'break-all' }}>
                   {link.url}
                 </div>
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  Status:{' '}
-                  <span style={{
-                    color: link.status === 'verified' ? '#4CAF50' : link.status === 'failed' ? '#f44336' : '#ff9800',
-                    fontWeight: 'bold'
-                  }}>
-                    {link.status}
+                <div style={{ fontSize: '12px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : 'Not verified'}>
+                    {link.status === 'verified' ? (
+                      <span style={{ color: '#4CAF50' }} aria-hidden>✓</span>
+                    ) : (
+                      <span style={{ color: '#c62828' }} aria-hidden>✕</span>
+                    )}
                   </span>
+                  {link.status !== 'verified' && (
+                    <span style={{ color: '#666' }}>{link.status}</span>
+                  )}
                   {link.error_message && (
                     <span style={{ color: '#c62828', marginLeft: '8px' }} title={link.error_message}>
                       {link.error_message.length > 60 ? link.error_message.slice(0, 60) + '…' : link.error_message}

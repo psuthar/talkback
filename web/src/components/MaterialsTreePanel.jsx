@@ -315,9 +315,13 @@ export function MaterialsTreePanel({
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
                     {link.title || link.url}
                   </span>
-                  {link.status === 'verified' && (
-                    <span style={{ fontSize: '11px', color: '#2e7d32', flexShrink: 0 }}>Verified</span>
-                  )}
+                  <span style={{ flexShrink: 0, fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : 'Not verified'}>
+                    {link.status === 'verified' ? (
+                      <span style={{ color: '#2e7d32' }} aria-hidden>✓</span>
+                    ) : (
+                      <span style={{ color: '#c62828' }} aria-hidden>✕</span>
+                    )}
+                  </span>
                 </button>
               )
             })

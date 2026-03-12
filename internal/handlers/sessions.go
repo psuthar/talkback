@@ -771,13 +771,21 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Enrich citations with navigation (url for link citations, video seek, doc page) so frontend can open links/sections
+	chunkURLByChunkID := make(citation.ChunkURLByChunkID)
+	for _, ch := range chunks {
+		if ch.SourceType == "link" && ch.AnchorJSON != nil {
+			if u, ok := ch.AnchorJSON["url"].(string); ok && u != "" {
+				chunkURLByChunkID[ch.ID.String()] = u
+			}
+		}
+	}
 	for _, a := range answers {
 		if a == nil {
 			continue
 		}
 		for i := range a.Citations {
 			c := &a.Citations[i]
-			t := citation.ResolveCitationTarget(*c, allVideoSources, allMaterials, links)
+			t := citation.ResolveCitationTarget(*c, allVideoSources, allMaterials, links, chunkURLByChunkID)
 			c.Navigation = &models.CitationNavigation{
 				Type:     t.Type,
 				URL:      t.URL,

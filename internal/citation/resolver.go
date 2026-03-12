@@ -17,13 +17,18 @@ type CitationTarget struct {
 	Block    *int   `json:"block,omitempty"`
 }
 
+// ChunkURLByChunkID maps chunk ID to URL for link chunks when the citation's source_id cannot be resolved (e.g. LLM returned a wrong id). Pass nil to skip chunk-URL fallback.
+type ChunkURLByChunkID map[string]string
+
 // ResolveCitationTarget maps a citation to a navigation target given session context.
 // videoSources, materials, and links are the session's sources; if nil, resolution degrades to "text" where needed.
+// chunkURLByChunkID is optional: when set, link citations that don't match a session link by source_id will use the URL from the chunk's anchor so the citation still opens (e.g. when source_id is wrong).
 func ResolveCitationTarget(
 	c models.Citation,
 	videoSources []*models.VideoSource,
 	materials []*models.Material,
 	links []*models.SessionLink,
+	chunkURLByChunkID ChunkURLByChunkID,
 ) CitationTarget {
 	out := CitationTarget{Type: "text"}
 
@@ -39,6 +44,17 @@ func ResolveCitationTarget(
 				out.Fragment = c.Anchor.Section
 			}
 			return out
+		}
+		// Fallback: use URL from chunk anchor when source_id didn't match (e.g. stored as "source_1")
+		if c.ChunkID != "" && chunkURLByChunkID != nil {
+			if u := chunkURLByChunkID[c.ChunkID]; u != "" {
+				out.Type = "url"
+				out.URL = u
+				if c.Anchor != nil && c.Anchor.Section != "" {
+					out.Fragment = c.Anchor.Section
+				}
+				return out
+			}
 		}
 		return out
 	case "transcript":

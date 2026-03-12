@@ -97,6 +97,11 @@ func anchorFromMap(m map[string]interface{}) *models.CitationAnchor {
 		a.Type = "section"
 		return a
 	}
+	if url, ok := m["url"].(string); ok && url != "" {
+		a.URL = url
+		a.Type = "link"
+		return a
+	}
 	return a
 }
 

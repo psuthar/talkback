@@ -489,7 +489,7 @@ func sessionAskAnswerFromAnswer(a *models.Answer, videoSources []*models.VideoSo
 		if c.Anchor != nil {
 			cite.Anchor = citationAnchorToMap(c.Anchor)
 		}
-		cite.Navigation = ptr(citation.ResolveCitationTarget(c, videoSources, materials, links))
+		cite.Navigation = ptr(citation.ResolveCitationTarget(c, videoSources, materials, links, nil))
 		citations = append(citations, cite)
 	}
 	modelStr := ""

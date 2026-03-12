@@ -3546,14 +3546,7 @@ function App() {
                   <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                     {inviteLoading ? 'Sending…' : 'Invite'}
                   </button>
-                </div>
-                {inviteFeedback.message && (
-                  <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
-                    {inviteFeedback.message}
-                  </div>
-                )}
-                {lastInvitationDraft && (
-                  <div style={{ marginTop: '8px' }}>
+                  {lastInvitationDraft && (
                     <button
                       type="button"
                       onClick={() => {
@@ -3566,6 +3559,11 @@ function App() {
                     >
                       Open email draft
                     </button>
+                  )}
+                </div>
+                {inviteFeedback.message && (
+                  <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
+                    {inviteFeedback.message}
                   </div>
                 )}
               </div>

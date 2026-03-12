@@ -305,10 +305,11 @@ const (
 	AnswerStatusError      AnswerStatus = "error"
 )
 
-// CitationAnchor holds navigation anchor (time range, page, section, block).
+// CitationAnchor holds navigation anchor (time range, page, section, block, or link URL).
 // Fields not relevant to the anchor type may be omitted.
 type CitationAnchor struct {
-	Type    string `json:"type"` // "time_range" | "page" | "section" | "block" | "none"
+	Type    string `json:"type"`    // "time_range" | "page" | "section" | "block" | "none" | "link"
+	URL     string `json:"url,omitempty"` // for link chunks: URL so citation can open even when source_id is wrong
 	StartMs *int64 `json:"start_ms,omitempty"`
 	EndMs   *int64 `json:"end_ms,omitempty"`
 	Page    *int   `json:"page,omitempty"`

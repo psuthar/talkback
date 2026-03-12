@@ -961,14 +961,7 @@ export function CreatorMode({
                     <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                       {inviteLoading ? 'Sending…' : 'Invite'}
                     </button>
-                  </div>
-                  {inviteFeedback?.message && (
-                    <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
-                      {inviteFeedback.message}
-                    </div>
-                  )}
-                  {lastInvitationDraft && (
-                    <div style={{ marginTop: '8px' }}>
+                    {lastInvitationDraft && (
                       <button
                         type="button"
                         onClick={() => {
@@ -981,6 +974,11 @@ export function CreatorMode({
                       >
                         Open email draft
                       </button>
+                    )}
+                  </div>
+                  {inviteFeedback?.message && (
+                    <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
+                      {inviteFeedback.message}
                     </div>
                   )}
                   {sessionInvitations?.length > 0 && (
@@ -1765,7 +1763,14 @@ export function CreatorMode({
                                 }
                               }}
                             />
-                            <span>{q.answer.confirmed ? '✓ Verified' : 'Verify this answer'}</span>
+                            <span>
+                              {q.answer.confirmed ? (
+                                <span style={{ color: '#2e7d32' }} title="Verified">✓</span>
+                              ) : (
+                                <span style={{ color: '#c62828' }} title="Not verified">✕</span>
+                              )}
+                              <span style={{ marginLeft: '4px' }}>{q.answer.confirmed ? 'Verified' : 'Verify this answer'}</span>
+                            </span>
                           </label>
                         )}
                         {answeringQuestionId !== q.id && (

@@ -1,5 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 
+function dispatchWebSocketPayload(raw, handler) {
+  if (!handler) return
+  // Backend may batch multiple JSON messages in one frame separated by newlines.
+  const text = typeof raw === 'string' ? raw : String(raw ?? '')
+  const parts = text.split('\n')
+  for (const part of parts) {
+    const trimmed = part.trim()
+    if (!trimmed) continue
+    try {
+      const data = JSON.parse(trimmed)
+      console.log('WebSocket: Raw message received:', data)
+      handler(data)
+    } catch (err) {
+      console.error('Error parsing WebSocket message chunk:', err, 'Raw chunk:', trimmed)
+    }
+  }
+}
+
 export function useWebSocket(url, onMessage, onError) {
   const [connected, setConnected] = useState(false)
   const wsRef = useRef(null)
@@ -28,17 +46,7 @@ export function useWebSocket(url, onMessage, onError) {
       
       // Update onmessage handler
       ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          console.log('WebSocket: Raw message received:', data)
-          if (onMessageRef.current) {
-            onMessageRef.current(data)
-          } else {
-            console.warn('WebSocket: No message handler registered')
-          }
-        } catch (err) {
-          console.error('Error parsing WebSocket message:', err, 'Raw data:', event.data)
-        }
+        dispatchWebSocketPayload(event.data, onMessageRef.current)
       }
       
       // Update onerror handler
@@ -82,17 +90,7 @@ export function useWebSocket(url, onMessage, onError) {
         }
 
         ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            console.log('WebSocket: Raw message received:', data)
-            if (onMessageRef.current) {
-              onMessageRef.current(data)
-            } else {
-              console.warn('WebSocket: No message handler registered')
-            }
-          } catch (err) {
-            console.error('Error parsing WebSocket message:', err, 'Raw data:', event.data)
-          }
+          dispatchWebSocketPayload(event.data, onMessageRef.current)
         }
 
         ws.onerror = (error) => {
