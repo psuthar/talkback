@@ -279,10 +279,12 @@ export function ParticipantMode({
     onCitationClick?.(citation)
     // Link citations: select the link in the left pane and show the page in the middle (with fragment if available)
     const fragment = citation?.navigation?.fragment ?? citation?.anchor?.section ?? ''
+    // Resolve session links from either top-level or nested session (Render / different response shapes)
+    const sessionLinks = Array.isArray(currentSession?.links) ? currentSession.links : (Array.isArray(currentSession?.session?.links) ? currentSession.session.links : null)
+    const linkUrlFromCitation = citation?.navigation?.url || (typeof citation?.label === 'string' && /^https?:\/\//i.test(citation.label.trim()) ? citation.label.trim() : null)
     if (citation?.navigation?.type === 'url' && citation.navigation?.url) {
-      const links = currentSession?.links
-      const link = citation?.source_id && Array.isArray(links)
-        ? links.find(l => String(l?.id) === String(citation.source_id))
+      const link = citation?.source_id && sessionLinks
+        ? sessionLinks.find(l => String(l?.id) === String(citation.source_id))
         : null
       if (link) {
         handleSelectLink(link, fragment)
@@ -301,17 +303,16 @@ export function ParticipantMode({
       return
     }
     if (citation?.source_type === 'link' && citation?.source_id) {
-      const links = currentSession?.links
-      const link = Array.isArray(links) ? links?.find(l => String(l?.id) === String(citation.source_id)) : null
+      const link = sessionLinks ? sessionLinks.find(l => String(l?.id) === String(citation.source_id)) : null
       if (link?.url) {
         handleSelectLink(link, fragment)
         return
       }
-      if (citation?.navigation?.url) {
+      if (linkUrlFromCitation) {
         setSelectedDocument({
           type: 'link',
-          url: citation.navigation.url,
-          title: citation?.label || citation.navigation.url,
+          url: linkUrlFromCitation,
+          title: citation?.label || linkUrlFromCitation,
           id: citation.source_id,
           ...(fragment && { fragment })
         })

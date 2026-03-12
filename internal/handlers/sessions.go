@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
@@ -766,6 +767,24 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 				if c.SourceType == "" {
 					c.SourceType = info.SourceType
 				}
+			}
+		}
+	}
+	// Enrich citations with navigation (url for link citations, video seek, doc page) so frontend can open links/sections
+	for _, a := range answers {
+		if a == nil {
+			continue
+		}
+		for i := range a.Citations {
+			c := &a.Citations[i]
+			t := citation.ResolveCitationTarget(*c, allVideoSources, allMaterials, links)
+			c.Navigation = &models.CitationNavigation{
+				Type:     t.Type,
+				URL:      t.URL,
+				Fragment: t.Fragment,
+				SeekMs:   t.SeekMs,
+				Page:     t.Page,
+				Block:    t.Block,
 			}
 		}
 	}
