@@ -174,3 +174,30 @@ func BuildMaterialChunksFromPDF(sessionID, materialID uuid.UUID, filePath string
 	}
 	return out
 }
+
+// BuildMaterialChunksFromSlides builds chunks from per-slide text (e.g. PPTX) with page anchors.
+// slideTexts[i] is the text of slide i+1. Each chunk gets anchor "page" (1-based) so citations open the correct slide.
+func BuildMaterialChunksFromSlides(sessionID, materialID uuid.UUID, slideTexts []string) []ChunkInput {
+	var out []ChunkInput
+	for i, text := range slideTexts {
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		pageNum := i + 1 // 1-based for citation navigation (Slide 1, 2, ...)
+		anchor := map[string]interface{}{
+			"type": "page",
+			"page": pageNum,
+		}
+		hash := ContentHash(text, anchor, sessionID, "material", materialID.String(), i)
+		out = append(out, ChunkInput{
+			SessionID:   sessionID,
+			SourceType:  "material",
+			SourceID:    &materialID,
+			ChunkIdx:    i,
+			Text:        text,
+			AnchorJSON:  anchor,
+			ContentHash: hash,
+		})
+	}
+	return out
+}

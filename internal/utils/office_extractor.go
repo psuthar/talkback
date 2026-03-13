@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
@@ -141,37 +143,64 @@ func extractXlsx(filePath string) (string, error) {
 	return strings.Join(parts, "\n"), nil
 }
 
-// extractPptx reads a .pptx (ZIP) and extracts text from ppt/slides/slideN.xml (a:t elements).
-func extractPptx(filePath string) (string, error) {
+// ExtractPptxTextPerSlide returns text for each slide in order (slide 1, 2, 3, ...).
+// Used by RAG to create per-slide chunks so citations can navigate to the correct slide.
+func ExtractPptxTextPerSlide(filePath string) ([]string, error) {
 	r, err := zip.OpenReader(filePath)
 	if err != nil {
-		return "", fmt.Errorf("open pptx: %w", err)
+		return nil, fmt.Errorf("open pptx: %w", err)
 	}
 	defer r.Close()
 
-	var allParts []string
 	slidePrefix := "ppt/slides/slide"
+	type slideEntry struct {
+		num  int
+		file *zip.File
+	}
+	var entries []slideEntry
 	for _, f := range r.File {
 		if !strings.HasPrefix(f.Name, slidePrefix) || !strings.HasSuffix(f.Name, ".xml") {
 			continue
 		}
-		rc, err := f.Open()
+		base := strings.TrimPrefix(f.Name, slidePrefix)
+		base = strings.TrimSuffix(base, ".xml")
+		n, _ := strconv.Atoi(base)
+		if n < 1 {
+			continue
+		}
+		entries = append(entries, slideEntry{num: n, file: f})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].num < entries[j].num })
+
+	var out []string
+	for _, e := range entries {
+		rc, err := e.file.Open()
 		if err != nil {
 			continue
 		}
 		parts := extractPptxSlideText(rc)
 		rc.Close()
+		var slideText []string
 		for _, p := range parts {
 			if strings.TrimSpace(p) != "" {
-				allParts = append(allParts, strings.TrimSpace(p))
+				slideText = append(slideText, strings.TrimSpace(p))
 			}
 		}
+		out = append(out, strings.Join(slideText, " "))
 	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("pptx text extraction produced no text")
+	}
+	return out, nil
+}
 
-	if len(allParts) == 0 {
-		return "", fmt.Errorf("pptx text extraction produced no text")
+// extractPptx reads a .pptx (ZIP) and extracts text from ppt/slides/slideN.xml (a:t elements).
+func extractPptx(filePath string) (string, error) {
+	slides, err := ExtractPptxTextPerSlide(filePath)
+	if err != nil {
+		return "", err
 	}
-	return strings.Join(allParts, "\n"), nil
+	return strings.Join(slides, "\n"), nil
 }
 
 func extractPptxSlideText(r io.Reader) []string {

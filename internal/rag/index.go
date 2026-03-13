@@ -13,6 +13,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
+	"github.com/psuthar/talkback/internal/utils"
 )
 
 // IndexSession builds chunks from transcript + materials, embeds them, and stores (idempotent).
@@ -101,6 +102,39 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 				} else if m.StorageURL != "" {
 					absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
 					matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, absPath)
+				}
+			}
+			// PPTX/slides: per-slide chunks with page anchor so citations open the correct slide
+			isPptx := matChunks == nil && (strings.HasSuffix(strings.ToLower(m.Filename), ".pptx") || strings.HasSuffix(strings.ToLower(m.Filename), ".ppt") || strings.Contains(strings.ToLower(m.ContentType), "presentation") || strings.Contains(strings.ToLower(m.ContentType), "powerpoint"))
+			if isPptx {
+				var pptxPath string
+				if m.StorageProvider == "r2" && m.StorageKey != "" && store != nil {
+					rc, err := store.Get(ctx, m.StorageKey)
+					if err != nil {
+						log.Printf("IndexSession: get R2 material %s: %v", m.ID, err)
+					} else {
+						tmpF, err := os.CreateTemp(os.TempDir(), "talkback-rag-pptx-*.pptx")
+						if err != nil {
+							_ = rc.Close()
+							log.Printf("IndexSession: create temp file: %v", err)
+						} else {
+							_, _ = io.Copy(tmpF, rc)
+							_ = rc.Close()
+							pptxPath = tmpF.Name()
+							_ = tmpF.Close()
+							slideTexts, err := utils.ExtractPptxTextPerSlide(pptxPath)
+							_ = os.Remove(pptxPath)
+							if err == nil && len(slideTexts) > 0 {
+								matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
+							}
+						}
+					}
+				} else if m.StorageURL != "" {
+					absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
+					slideTexts, err := utils.ExtractPptxTextPerSlide(absPath)
+					if err == nil && len(slideTexts) > 0 {
+						matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
+					}
 				}
 			}
 			if matChunks == nil {

@@ -36,6 +36,48 @@ type SessionContext struct {
 	PrimaryDecision *string
 }
 
+// extractFirstJSONObject returns the first complete JSON object (from first '{' to matching '}').
+// This avoids parse failures when the model appends extra text after the JSON (e.g. "From the slides...").
+func extractFirstJSONObject(s string) string {
+	start := strings.Index(s, "{")
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	inString := false
+	escape := false
+	quote := byte(0)
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			if c == '\\' && (quote == '"' || quote == '\'') {
+				escape = true
+			} else if c == quote {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' || c == '\'' {
+			inString = true
+			quote = c
+			continue
+		}
+		if c == '{' {
+			depth++
+		} else if c == '}' {
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return ""
+}
+
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
 // priorQA is an optional list of previous question-answer pairs from the same session for context accumulation
 // Returns the QAResponse and the chunks that were used (for debugging)
@@ -213,6 +255,11 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 		content = strings.TrimPrefix(content, "```")
 		content = strings.TrimSuffix(content, "```")
 		content = strings.TrimSpace(content)
+	}
+
+	// Extract first complete JSON object so trailing model text (e.g. "From the slides...") does not break parsing
+	if extracted := extractFirstJSONObject(content); extracted != "" {
+		content = extracted
 	}
 
 	var qaResponse QAResponse

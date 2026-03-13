@@ -68,7 +68,7 @@ func ResolveCitationTarget(
 		}
 		return out
 	case "material":
-		// Previewable: PDF or doc with page/block
+		// Previewable: PDF, slides, or doc with page/block
 		for _, m := range materials {
 			if m.ID.String() != c.SourceID {
 				continue
@@ -86,9 +86,23 @@ func ResolveCitationTarget(
 				}
 				return out
 			}
+			// Slides/PPTX: use page anchor so frontend opens correct slide (SlideDeckViewer uses initialSlide=page)
+			if strings.Contains(ct, "presentation") || strings.Contains(ct, "powerpoint") || strings.HasSuffix(strings.ToLower(m.Filename), ".pptx") || strings.HasSuffix(strings.ToLower(m.Filename), ".ppt") {
+				out.Type = "doc"
+				if c.Anchor != nil && c.Anchor.Page != nil {
+					out.Page = c.Anchor.Page
+				}
+				if c.Anchor != nil && c.Anchor.Block != nil {
+					out.Block = c.Anchor.Block
+				}
+				return out
+			}
 			out.Type = "doc"
 			if c.Anchor != nil && c.Anchor.Block != nil {
 				out.Block = c.Anchor.Block
+			}
+			if c.Anchor != nil && c.Anchor.Page != nil {
+				out.Page = c.Anchor.Page
 			}
 			return out
 		}
