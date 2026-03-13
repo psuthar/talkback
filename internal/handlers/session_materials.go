@@ -771,7 +771,7 @@ func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
 	manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
 	rc, err := h.Storage.Get(ctx, manifestKey)
 	if err != nil {
-		log.Printf("slides manifest missing or unreadable for material %s key %s: %v", materialID, manifestKey, err)
+		log.Printf("slides manifest missing or unreadable for material %s key %s: %v (slide generation may still be running or have failed — check logs for 'slide generation started' / 'slides conversion failed' / 'generated N derived slides')", materialID, manifestKey, err)
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
