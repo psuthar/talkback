@@ -141,8 +141,9 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	var storageProvider string
 	var storageKey string
 
+	var removeTempWhenDone bool
 	if h.Storage != nil {
-		// R2 path: write to temp file, upload to R2, extract from temp, then remove temp
+		// R2 path: write to temp file, upload to R2, extract from temp, then remove temp (unless slide gen runs in background)
 		// Temp file MUST have the original extension so ExtractTextFromFile can detect PDF/DOCX/etc.
 		tmpDir := os.TempDir()
 		tmpPattern := "talkback-upload-*" + ext
@@ -152,7 +153,8 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		filePath = tmpFile.Name()
-		defer func() { _ = os.Remove(filePath) }()
+		removeTempWhenDone = true
+		defer func() { if removeTempWhenDone { _ = os.Remove(filePath) } }()
 		if _, err := io.Copy(tmpFile, file); err != nil {
 			_ = tmpFile.Close()
 			http.Error(w, "Failed to write temp file", http.StatusInternalServerError)
@@ -281,12 +283,30 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
-	// Best-effort slide derivation for PPT/PPTX (R2 or local storage).
+	// Best-effort slide derivation for PPT/PPTX (R2 or local): always run in background so code path is the same everywhere.
+	// R2: goroutine keeps temp file and removes it when done; request returns before Render's ~30s timeout.
 	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && filePath != "" {
 		if storageProvider == "r2" && h.Storage != nil && storageKey != "" {
-			h.tryGenerateAndStoreSlides(r.Context(), filePath, storageKey)
+			removeTempWhenDone = false
+			pathCopy := filePath
+			keyCopy := storageKey
+			sidCopy := sessionID
+			go func() {
+				defer func() { _ = os.Remove(pathCopy) }()
+				h.tryGenerateAndStoreSlides(context.Background(), pathCopy, keyCopy)
+				if h.Hub != nil {
+					h.Hub.BroadcastSessionUpdated(sidCopy)
+				}
+			}()
 		} else if storageProvider == "local" {
-			h.tryGenerateAndStoreSlidesLocal(r.Context(), filePath)
+			pathCopy := filePath
+			sidCopy := sessionID
+			go func() {
+				h.tryGenerateAndStoreSlidesLocal(context.Background(), pathCopy)
+				if h.Hub != nil {
+					h.Hub.BroadcastSessionUpdated(sidCopy)
+				}
+			}()
 		}
 	}
 	// For video files: create a VideoSource so the file appears in "Additional Videos" and is playable.

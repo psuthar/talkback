@@ -219,6 +219,7 @@ func TestSessionUploadMaterial(t *testing.T) {
 		ext, ok := m["extracted_text"].(string)
 		require.True(t, ok)
 		assert.True(t, strings.Contains(ext, "Session PPTX content"), "extracted_text should contain expected string: %q", ext)
+		// Slide derivation runs asynchronously (same for R2 and local); this test only asserts upload + text extraction.
 	})
 }
 
@@ -358,7 +359,8 @@ func TestGetMaterialSlides(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("returns 200 with empty slides when storage unavailable", func(t *testing.T) {
+	t.Run("returns 200 with empty slides when no manifest yet (e.g. async slide gen not done or failed)", func(t *testing.T) {
+		// Material has kind=slides but no StorageURL/StorageKey and no _slides manifest; GetMaterialSlides returns 200 + empty list.
 		slideMat := &models.Material{
 			ID:            uuid.New(),
 			ArtifactID:    artifact.ID,

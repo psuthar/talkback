@@ -86,8 +86,25 @@ func uploadRootForTemp() string {
 	return filepath.Join(uploadRoot(), ".tmp")
 }
 
+// slideDPI returns the resolution (DPI) for PDF→PNG conversion. Lower = faster and smaller files.
+// TALKBACK_SLIDE_DPI env (default 100); clamped to 72–300. 100 is a good balance for in-browser preview.
+func slideDPI() int {
+	const defaultDPI = 100
+	const minDPI, maxDPI = 72, 300
+	if s := os.Getenv("TALKBACK_SLIDE_DPI"); s != "" {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n >= minDPI && n <= maxDPI {
+			return n
+		}
+	}
+	return defaultDPI
+}
+
 // runPdfToPpm runs pdftoppm -png to produce one PNG per page. When TALKBACK_SOFFICE_CMD is set, runs pdftoppm in Docker.
+// Uses slideDPI() for resolution; lower DPI speeds up conversion and reduces file size.
 func runPdfToPpm(pdfPath, outPrefix string) error {
+	dpi := slideDPI()
+	dpiStr := strconv.Itoa(dpi)
 	root := uploadRoot()
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		rel, err := filepath.Rel(root, pdfPath)
@@ -99,7 +116,7 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 		containerPrefix := "/data/" + filepath.ToSlash(relDir) + "/slide"
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm", "-v", root+":/data", "talkback-api", "-png", "-r", "150", containerPDF, containerPrefix)
+		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm", "-v", root+":/data", "talkback-api", "-png", "-r", dpiStr, containerPDF, containerPrefix)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("pdftoppm (Docker) failed: %w; output=%s", err, string(out))
 		}
@@ -107,7 +124,7 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", "150", pdfPath, outPrefix)
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, pdfPath, outPrefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pdftoppm failed: %w; output=%s", err, string(out))
 	}

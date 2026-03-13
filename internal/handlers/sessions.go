@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
+	"github.com/psuthar/talkback/internal/utils"
 )
 
 // Phase 3: Session Handlers
@@ -236,7 +238,7 @@ type CopySessionResponse struct {
 	CreatedAt string  `json:"created_at"`
 }
 
-// CopySession creates a new session with the same artifacts and materials as the source (Creator or Admin only). Files are copied in R2/local for isolation. Questions, answers, unread state, and video are not copied. RAG is reprocessed for the new session.
+// CopySession creates a new session with the same artifacts and materials as the source (Creator or Admin only). Everything in the new session is a standalone copy: new IDs, new storage keys, and new file paths; nothing references the source session's storage or records. Questions, answers, and unread state are not copied. RAG is reprocessed for the new session.
 func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -329,6 +331,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
 		return
 	}
+	// Everything below is a standalone copy: new IDs, new storage keys, new paths. No references to source session storage or records.
 	artifacts, err := h.DB.GetArtifactsBySessionID(ctx, sourceSessionID)
 	if err != nil {
 		log.Printf("CopySession GetArtifactsBySessionID: %v", err)
@@ -418,6 +421,57 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				_ = dstF.Close()
 				newMaterial.StorageURL = storage.SessionArtifactPath(newSession.ID, m.Filename)
 			}
+			// Copy slide assets (manifest + PNGs) so the cloned session has slide previews.
+			if m.Kind == "slides" {
+				if m.StorageProvider == "r2" && m.StorageKey != "" && newMaterial.StorageKey != "" && h.Storage != nil {
+					rc, err := h.Storage.Get(ctx, storage.SlidesManifestKeyFromArtifactKey(m.StorageKey))
+					if err == nil {
+						var manifest utils.SlideManifest
+						if json.NewDecoder(rc).Decode(&manifest) == nil {
+							rc.Close()
+							newSlides := make([]utils.SlideManifestEntry, 0, len(manifest.Slides))
+							for _, entry := range manifest.Slides {
+								slideRc, err := h.Storage.Get(ctx, entry.StorageKey)
+								if err != nil {
+									continue
+								}
+								newSlideKey := storage.SlideImageKeyFromArtifactKey(newMaterial.StorageKey, entry.Index)
+								_, _, err = h.Storage.Put(ctx, newSlideKey, slideRc, "image/png", 0)
+								slideRc.Close()
+								if err != nil {
+									continue
+								}
+								newSlides = append(newSlides, utils.SlideManifestEntry{Index: entry.Index, StorageKey: newSlideKey})
+							}
+							newManifestBytes, _ := json.Marshal(utils.SlideManifest{Slides: newSlides})
+							_, _, _ = h.Storage.Put(ctx, storage.SlidesManifestKeyFromArtifactKey(newMaterial.StorageKey), bytes.NewReader(newManifestBytes), "application/json", int64(len(newManifestBytes)))
+						} else {
+							rc.Close()
+						}
+					}
+				} else if m.StorageProvider == "local" && newMaterial.StorageURL != "" && m.StorageURL != "" {
+					srcSlidesDir := filepath.Join(storage.UploadRoot(), m.StorageURL+"_slides")
+					dstSlidesDir := filepath.Join(storage.UploadRoot(), newMaterial.StorageURL+"_slides")
+					if info, err := os.Stat(srcSlidesDir); err == nil && info.IsDir() {
+						_ = os.MkdirAll(dstSlidesDir, 0755)
+						entries, _ := os.ReadDir(srcSlidesDir)
+						for _, e := range entries {
+							srcF, err := os.Open(filepath.Join(srcSlidesDir, e.Name()))
+							if err != nil {
+								continue
+							}
+							dstF, err := os.Create(filepath.Join(dstSlidesDir, e.Name()))
+							if err != nil {
+								srcF.Close()
+								continue
+							}
+							_, _ = io.Copy(dstF, srcF)
+							srcF.Close()
+							_ = dstF.Close()
+						}
+					}
+				}
+			}
 			if err := h.DB.CreateMaterial(ctx, newMaterial); err != nil {
 				log.Printf("CopySession CreateMaterial: %v", err)
 			}
@@ -443,7 +497,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			log.Printf("CopySession CreateSessionLink: %v", err)
 		}
 	}
-	// Copy video_sources (Zoom/embed sessions: transcript + embed URL so copy has video and transcript even without primary_video_artifact_id).
+	// Copy video_sources (Zoom/embed/upload: transcript, URLs, and stored video file so copy has playable video).
 	sourceVideoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sourceSessionID)
 	for i, vs := range sourceVideoSources {
 		newArtifactID, ok := oldToNewArtifact[vs.ArtifactID]
@@ -462,14 +516,45 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			DurationSeconds:     vs.DurationSeconds,
 			PosterURL:            vs.PosterURL,
 			SourceType:           vs.SourceType,
-			StoredVideoObjectKey: nil, // do not copy stored key; use embed/media URL on copy
+			StoredVideoObjectKey: nil,
 			OriginalURL:          vs.OriginalURL,
 			FailureReason:        vs.FailureReason,
 			TranscriptStatus:     vs.TranscriptStatus,
 			AutoTranscribeEnabled: vs.AutoTranscribeEnabled,
 			TranscriptionSource:  vs.TranscriptionSource,
-			TranscriptionJobID:   nil, // job belongs to source session
+			TranscriptionJobID:   nil,
 			VideoRole:            vs.VideoRole,
+		}
+		// Copy stored video object (R2 or local) so the clone has the actual file for playback.
+		if vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
+			oldKey := *vs.StoredVideoObjectKey
+			newKey := strings.Replace(oldKey, sourceSessionID.String(), newSession.ID.String(), 1)
+			if newKey != oldKey {
+				if h.Storage != nil {
+					rc, err := h.Storage.Get(ctx, oldKey)
+					if err == nil {
+						_, _, err = h.Storage.Put(ctx, newKey, rc, "video/mp4", 0)
+						rc.Close()
+						if err == nil {
+							copyVS.StoredVideoObjectKey = &newKey
+						}
+					}
+				}
+				if copyVS.StoredVideoObjectKey == nil && strings.HasPrefix(oldKey, "sessions/") {
+					absSrc := filepath.Join(storage.UploadRoot(), filepath.FromSlash(oldKey))
+					absDst := filepath.Join(storage.UploadRoot(), filepath.FromSlash(newKey))
+					if srcF, err := os.Open(absSrc); err == nil {
+						if err := os.MkdirAll(filepath.Dir(absDst), 0755); err == nil {
+							if dstF, err := os.Create(absDst); err == nil {
+								_, _ = io.Copy(dstF, srcF)
+								dstF.Close()
+								copyVS.StoredVideoObjectKey = &newKey
+							}
+						}
+						srcF.Close()
+					}
+				}
+			}
 		}
 		if err := h.DB.CreateVideoSource(ctx, copyVS); err != nil {
 			log.Printf("CopySession CreateVideoSource: %v", err)
@@ -483,9 +568,9 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			_ = h.DB.SetVideoSourceVideoRole(ctx, newSession.ID, copyVS.ID, models.VideoRolePrimary)
 		}
 	}
-	// Copy primary video (file_artifact) if present: copy R2 object and create new file_artifact, set session primary.
+	// Copy primary video (file_artifact) if present: copy R2 object or local file and create new file_artifact, set session primary.
 	copiedPrimaryVideo := false
-	if sourceSession.PrimaryVideoArtifactID != nil && h.Storage != nil {
+	if sourceSession.PrimaryVideoArtifactID != nil {
 		fa, err := h.DB.GetFileArtifactByID(ctx, *sourceSession.PrimaryVideoArtifactID)
 		if err == nil && fa != nil && fa.Status == models.FileArtifactStatusReady && fa.StorageKey != "" {
 			filename := "video"
@@ -493,41 +578,87 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				filename = *fa.Filename
 			}
 			newFAID := uuid.New()
-			r2Prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
-			newKey := storage.BuildArtifactStorageKey(r2Prefix, newSession.ID, newFAID, filename)
-			rc, err := h.Storage.Get(ctx, fa.StorageKey)
-			if err != nil {
-				log.Printf("CopySession primary video R2 Get %s: %v", fa.StorageKey, err)
-			} else {
-				var size int64
-				if fa.SizeBytes != nil {
-					size = *fa.SizeBytes
-				}
-				_, _, err = h.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
-				_ = rc.Close()
+			if fa.StorageProvider == "r2" && h.Storage != nil {
+				newKey := storage.BuildArtifactStorageKey(strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/"), newSession.ID, newFAID, filename)
+				rc, err := h.Storage.Get(ctx, fa.StorageKey)
 				if err != nil {
-					log.Printf("CopySession primary video R2 Put %s: %v", newKey, err)
+					log.Printf("CopySession primary video R2 Get %s: %v", fa.StorageKey, err)
 				} else {
-					newFA := &models.FileArtifact{
-						ID:              newFAID,
-						SessionID:       &newSession.ID,
-						OwnerUserID:     nil,
-						Kind:            fa.Kind,
-						Filename:        fa.Filename,
-						ContentType:     fa.ContentType,
-						SizeBytes:       fa.SizeBytes,
-						Sha256:          fa.Sha256,
-						StorageProvider: fa.StorageProvider,
-						StorageBucket:   fa.StorageBucket,
-						StorageKey:      newKey,
-						Status:          models.FileArtifactStatusReady,
+					var size int64
+					if fa.SizeBytes != nil {
+						size = *fa.SizeBytes
 					}
-					if err := h.DB.CreateFileArtifact(ctx, newFA); err != nil {
-						log.Printf("CopySession CreateFileArtifact: %v", err)
-					} else if err := h.DB.SetSessionPrimaryVideoArtifact(ctx, newSession.ID, &newFAID); err != nil {
-						log.Printf("CopySession SetSessionPrimaryVideoArtifact: %v", err)
+					_, _, err = h.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
+					_ = rc.Close()
+					if err != nil {
+						log.Printf("CopySession primary video R2 Put %s: %v", newKey, err)
 					} else {
-						copiedPrimaryVideo = true
+						newFA := &models.FileArtifact{
+							ID:              newFAID,
+							SessionID:       &newSession.ID,
+							OwnerUserID:     nil,
+							Kind:            fa.Kind,
+							Filename:        fa.Filename,
+							ContentType:     fa.ContentType,
+							SizeBytes:       fa.SizeBytes,
+							Sha256:          fa.Sha256,
+							StorageProvider: "r2",
+							StorageBucket:   fa.StorageBucket,
+							StorageKey:      newKey,
+							Status:          models.FileArtifactStatusReady,
+						}
+						if err := h.DB.CreateFileArtifact(ctx, newFA); err != nil {
+							log.Printf("CopySession CreateFileArtifact: %v", err)
+						} else if err := h.DB.SetSessionPrimaryVideoArtifact(ctx, newSession.ID, &newFAID); err != nil {
+							log.Printf("CopySession SetSessionPrimaryVideoArtifact: %v", err)
+						} else {
+							copiedPrimaryVideo = true
+						}
+					}
+				}
+			} else if fa.StorageProvider == "local" {
+				baseName := filepath.Base(fa.StorageKey)
+				if baseName == "" || baseName == "." {
+					baseName = "zoom.mp4"
+				}
+				newRelKey := filepath.Join(storage.SessionStorageRoot, newSession.ID.String(), "videos", baseName)
+				absSrc := filepath.Join(storage.UploadRoot(), filepath.FromSlash(fa.StorageKey))
+				absDst := filepath.Join(storage.UploadRoot(), filepath.FromSlash(newRelKey))
+				if srcF, err := os.Open(absSrc); err != nil {
+					log.Printf("CopySession primary video local Open %s: %v", absSrc, err)
+				} else {
+					if err := os.MkdirAll(filepath.Dir(absDst), 0755); err != nil {
+						srcF.Close()
+						log.Printf("CopySession primary video MkdirAll: %v", err)
+					} else if dstF, err := os.Create(absDst); err != nil {
+						srcF.Close()
+						log.Printf("CopySession primary video Create %s: %v", absDst, err)
+					} else {
+						n, _ := io.Copy(dstF, srcF)
+						srcF.Close()
+						_ = dstF.Close()
+						sizeBytes := n
+						newFA := &models.FileArtifact{
+							ID:              newFAID,
+							SessionID:       &newSession.ID,
+							OwnerUserID:     nil,
+							Kind:            fa.Kind,
+							Filename:        fa.Filename,
+							ContentType:     fa.ContentType,
+							SizeBytes:       &sizeBytes,
+							Sha256:          fa.Sha256,
+							StorageProvider: "local",
+							StorageBucket:   "local",
+							StorageKey:      filepath.ToSlash(newRelKey),
+							Status:          models.FileArtifactStatusReady,
+						}
+						if err := h.DB.CreateFileArtifact(ctx, newFA); err != nil {
+							log.Printf("CopySession CreateFileArtifact: %v", err)
+						} else if err := h.DB.SetSessionPrimaryVideoArtifact(ctx, newSession.ID, &newFAID); err != nil {
+							log.Printf("CopySession SetSessionPrimaryVideoArtifact: %v", err)
+						} else {
+							copiedPrimaryVideo = true
+						}
 					}
 				}
 			}

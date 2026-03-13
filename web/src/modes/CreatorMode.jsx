@@ -982,7 +982,7 @@ export function CreatorMode({
               </button>
               {membersPanelExpanded && (
                 <>
-                  <label style={{ display: 'block', marginBottom: '6px', marginTop: '8px', fontSize: '13px', fontWeight: '500' }}>Invite by email:</label>
+                  <label style={{ display: 'block', marginBottom: '6px', marginTop: '8px', fontSize: '13px', fontWeight: '500' }}>invite user by their email address</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <input
                       type="email"
