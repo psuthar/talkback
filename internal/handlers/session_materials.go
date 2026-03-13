@@ -569,6 +569,7 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 // tryGenerateAndStoreSlides performs best-effort slide derivation for PPT/PPTX materials.
 // It never returns errors to the caller; failures are logged for debugging.
 func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
+	log.Printf("slide generation started for %s (key=%s)", localPath, artifactKey)
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
@@ -613,6 +614,7 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 // tryGenerateAndStoreSlidesLocal performs best-effort slide derivation for PPT/PPTX stored on local disk.
 // Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
 func (h *Handlers) tryGenerateAndStoreSlidesLocal(ctx context.Context, localPath string) {
+	log.Printf("slide generation started (local) for %s", localPath)
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)

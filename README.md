@@ -408,6 +408,18 @@ Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is no
 - **Frontend:** Ensure `VITE_API_BASE_URL` is set to your API URL so the app and docx viewer (mammoth) fetch from the API. `mammoth` is in `dependencies` and is installed by `npm ci`; commit `package-lock.json` so Render installs it.  
 - **Invitations:** On the **API** service, set `APP_BASE_URL` to your **frontend** URL (e.g. `https://talkback-ux.onrender.com`), not the API URL. Invite links and emails use this for the accept-invite page.  
 - **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
+- **PPTX slide preview:** The API must use **Docker** runtime (as in `render.yaml`: `runtime: docker`) so the image includes LibreOffice and poppler-utils. If the service uses a buildpack/native runtime, slide conversion will fail and participant view will show "No slide preview". See below for debugging.
+
+**Debugging PPTX slide preview on Render**  
+If upload succeeds but participant view shows "No slide preview is available for this deck yet":
+
+1. **Confirm Docker runtime** — In Render dashboard, the API service must be set to **Docker** (from the repo’s `Dockerfile`). The Dockerfile installs LibreOffice and pdftoppm; a buildpack runtime does not.
+2. **Check logs** — In the API service logs, look for:
+   - `slide generation started for ...` — background job started.
+   - `slides conversion failed for ...` — conversion error (e.g. soffice not found, timeout).
+   - `generated N derived slides for ...` — success; slides were written to R2.
+3. **Wait and refresh** — Slide generation runs in the background and can take 30–60+ seconds. Refresh the participant view after a minute.
+4. **Startup healthcheck** — On boot you should see `LibreOffice healthcheck: LibreOffice X.Y...`. If you see `LibreOffice healthcheck: unavailable`, the runtime does not have LibreOffice (wrong image or buildpack).
 
 **TalkBack Auth (users + login sessions)**  
 - Native user accounts and cookie-based sessions. Endpoints: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me` (requires auth).
