@@ -16,6 +16,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # API (optional): use for local debugging when slide conversion (LibreOffice) is needed.
+  # Run from repo root: docker compose -f deploy/docker-compose.yml up -d postgres && docker compose -f deploy/docker-compose.yml up --build api
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: talkback-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://talkback:talkback@postgres:5432/talkback?sslmode=disable"
+      RUN_MIGRATIONS: "true"
+      # Upload root in container; sessions dir mounted from host so PPT uploads + soffice conversion work
+      TALKBACK_UPLOAD_ROOT: "/data"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../sessions:/data/sessions
+
 volumes:
   postgres_data:
 

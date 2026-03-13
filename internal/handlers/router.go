@@ -519,6 +519,16 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(parts) == 5 && parts[2] == "materials" {
+		// /sessions/{id}/materials/{material_id}/slides - GET
+		if parts[4] == "slides" && r.Method == http.MethodGet {
+			h.GetMaterialSlides(w, r)
+			return
+		}
+		// /sessions/{id}/materials/{material_id}/slide-image - GET
+		if parts[4] == "slide-image" && r.Method == http.MethodGet {
+			h.GetMaterialSlideImage(w, r)
+			return
+		}
 		// /sessions/{id}/materials/{material_id} - DELETE
 		if r.Method == http.MethodDelete {
 			h.DeleteSessionMaterial(w, r)
@@ -526,6 +536,16 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
+	}
+	if len(parts) == 6 && parts[0] == "api" && parts[1] == "sessions" && parts[3] == "materials" && r.Method == http.MethodGet {
+		if parts[5] == "slides" {
+			h.GetMaterialSlides(w, r)
+			return
+		}
+		if parts[5] == "slide-image" {
+			h.GetMaterialSlideImage(w, r)
+			return
+		}
 	}
 
 	if len(parts) == 5 {

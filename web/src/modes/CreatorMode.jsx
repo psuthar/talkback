@@ -103,6 +103,43 @@ function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError 
   )
 }
 
+function OpenEmailDraftButton({ apiBaseUrl, invitationId, invitation, sessionTitle, inviterEmail, inviterDisplayName, onError }) {
+  const [loading, setLoading] = useState(false)
+  const base = (apiBaseUrl || '').replace(/\/$/, '')
+  const handleClick = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${base}/api/invitations/${invitationId}/link`, { method: 'GET', credentials: 'include' })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.accept_url) {
+        const draft = {
+          invited_email: invitation?.invited_email,
+          accept_url: data.accept_url,
+          session_title: sessionTitle || 'a session',
+          inviter_email: inviterEmail,
+          inviter_name: inviterDisplayName,
+          expires_at: invitation?.expires_at
+        }
+        const mailtoUrl = buildInviteMailto(draft)
+        if (mailtoUrl) {
+          try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
+        }
+      } else {
+        if (typeof onError === 'function') onError(data.error || 'Failed to get link')
+      }
+    } catch (_) {
+      if (typeof onError === 'function') onError('Failed to get link')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '11px' }}>
+      {loading ? '…' : 'Open email draft'}
+    </button>
+  )
+}
+
 export function CreatorMode({
   currentSession,
   sessionProcessingReadyVersion = 0,
@@ -961,20 +998,6 @@ export function CreatorMode({
                     <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                       {inviteLoading ? 'Sending…' : 'Invite'}
                     </button>
-                    {lastInvitationDraft && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const mailtoUrl = buildInviteMailto(lastInvitationDraft)
-                          if (mailtoUrl) {
-                            try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
-                          }
-                        }}
-                        style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
-                      >
-                        Open email draft
-                      </button>
-                    )}
                   </div>
                   {inviteFeedback?.message && (
                     <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
@@ -1014,7 +1037,7 @@ export function CreatorMode({
                                             if (data?.invitation) {
                                               if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation)
                                               if (typeof setInviteFeedback === 'function') {
-                                                setInviteFeedback({ type: 'success', message: 'New invitation link ready. Click "Open email draft" to open in your email app.' })
+                                                setInviteFeedback({ type: 'success', message: 'New invitation link ready. Use "Open email draft" in the row to open in your email app.' })
                                                 setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000)
                                               }
                                             }
@@ -1036,6 +1059,17 @@ export function CreatorMode({
                                               setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
                                             }
                                           }}
+                                          onError={(msg) => {
+                                            if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
+                                          }}
+                                        />
+                                        <OpenEmailDraftButton
+                                          apiBaseUrl={apiBaseUrl}
+                                          invitationId={inv.id}
+                                          invitation={{ invited_email: inv.invited_email, expires_at: inv.expires_at }}
+                                          sessionTitle={currentSession?.session?.title}
+                                          inviterEmail={currentSession?.session?.created_by}
+                                          inviterDisplayName={currentSession?.created_by_display_name}
                                           onError={(msg) => {
                                             if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
                                           }}

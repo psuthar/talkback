@@ -7,6 +7,9 @@ data/
 # Local sessions (e.g. dev)
 sessions/
 
+# Temp dir for slide conversion when using TALKBACK_SOFFICE_CMD (Docker wrapper)
+.tmp/
+
 # Go
 *.exe
 *.exe~

@@ -305,4 +305,99 @@ func TestDeleteSessionMaterial(t *testing.T) {
 	})
 }
 
+func TestGetMaterialSlides(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	session := createTestSessionForHandlers(t, h.DB, "Test Session")
+	artifact, err := h.DB.CreateArtifact(ctx, session.ID, "Session materials", nil)
+	require.NoError(t, err)
+
+	t.Run("returns 404 when material not found", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/"+uuid.New().String()+"/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 404 for non-slides material", func(t *testing.T) {
+		doc := &models.Material{
+			ID:            uuid.New(),
+			ArtifactID:    artifact.ID,
+			SessionID:     session.ID,
+			Kind:          string(models.MaterialKindDocument),
+			Filename:      "doc.pdf",
+			TextStatus:    models.MaterialTextStatusReady,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, doc))
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/"+doc.ID.String()+"/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 404 when session does not match material", func(t *testing.T) {
+		otherSession := createTestSessionForHandlers(t, h.DB, "Other Session")
+		otherArtifact, err := h.DB.CreateArtifact(ctx, otherSession.ID, "Other", nil)
+		require.NoError(t, err)
+		slideMat := &models.Material{
+			ID:            uuid.New(),
+			ArtifactID:    otherArtifact.ID,
+			SessionID:     otherSession.ID,
+			Kind:          string(models.MaterialKindSlides),
+			Filename:      "deck.pptx",
+			TextStatus:    models.MaterialTextStatusReady,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, slideMat))
+		// Request with session ID that does not own the material
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/"+slideMat.ID.String()+"/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("returns 200 with empty slides when storage unavailable", func(t *testing.T) {
+		slideMat := &models.Material{
+			ID:            uuid.New(),
+			ArtifactID:    artifact.ID,
+			SessionID:     session.ID,
+			Kind:          string(models.MaterialKindSlides),
+			Filename:      "deck.pptx",
+			TextStatus:    models.MaterialTextStatusReady,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, slideMat))
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/"+slideMat.ID.String()+"/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			MaterialID string `json:"material_id"`
+			Slides     []struct {
+				Index    int    `json:"index"`
+				ImageURL string `json:"image_url"`
+			} `json:"slides"`
+		}
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, slideMat.ID.String(), resp.MaterialID)
+		assert.Len(t, resp.Slides, 0)
+	})
+
+	t.Run("returns 400 for invalid session ID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sessions/bad-session-id/materials/"+uuid.New().String()+"/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("returns 400 for invalid material ID", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/bad-material-id/slides", nil)
+		w := httptest.NewRecorder()
+		h.GetMaterialSlides(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
 func strPtr(s string) *string { return &s }

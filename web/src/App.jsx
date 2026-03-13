@@ -1949,7 +1949,7 @@ function App() {
         setInviteEmail('')
         const inv = data?.invitation
         setLastInvitationDraft(inv || null)
-        setInviteFeedback({ type: 'success', message: 'Invitation created. Click "Open email draft" to open in your email app.' })
+        setInviteFeedback({ type: 'success', message: 'Invitation created. Use "Open email draft" in the Invitations table to open in your email app.' })
         setTimeout(() => setInviteFeedback({ type: '', message: '' }), 5000)
         fetchSessionInvitations(currentSession.session.id)
       } else if (response.status === 409) {
@@ -3546,20 +3546,6 @@ function App() {
                   <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                     {inviteLoading ? 'Sending…' : 'Invite'}
                   </button>
-                  {lastInvitationDraft && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const mailtoUrl = buildInviteMailto(lastInvitationDraft)
-                        if (mailtoUrl) {
-                          try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
-                        }
-                      }}
-                      style={{ padding: '6px 12px', fontSize: '13px', cursor: 'pointer' }}
-                    >
-                      Open email draft
-                    </button>
-                  )}
                 </div>
                 {inviteFeedback.message && (
                   <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>

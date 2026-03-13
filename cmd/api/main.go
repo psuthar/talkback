@@ -100,6 +100,8 @@ func main() {
 	uploadRoot := storage.UploadRoot()
 	log.Printf("Uploads will be written to: %s (path: sessions/{session_id}/data/uploads/{filename})", uploadRoot)
 
+	log.Println(utils.LibreOfficeHealthcheck())
+
 	// Storage (R2 when STORAGE_DRIVER=r2)
 	var store storage.Interface
 	if os.Getenv("STORAGE_DRIVER") == "r2" {

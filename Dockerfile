@@ -18,12 +18,17 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
       poppler-utils \
-      libreoffice && \
+      libreoffice-nogui && \
     rm -rf /var/lib/apt/lists/*
+
+# Ensure soffice is on PATH and verify headless conversion works (build fails if missing)
+ENV PATH="/usr/bin:${PATH}"
+RUN which soffice && soffice --version
 
 COPY --from=builder /go/bin/app /app
 COPY --from=builder /go/bin/reset-db /reset-db
 
+WORKDIR /
 ENTRYPOINT ["/app"]
 LABEL Name=talkback Version=0.0.1
 EXPOSE 8080

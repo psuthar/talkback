@@ -60,6 +60,22 @@
    - Run database migrations on startup (if `RUN_MIGRATIONS=true`)
    - Start on port `8080` by default (or the port specified in the `PORT` environment variable)
 
+   **PPT/slides (LibreOffice):** Slide conversion needs `soffice` (LibreOffice). On Windows/macOS the host often has no LibreOffice. You can either:
+
+   - **Option A – Run the API in Docker** (LibreOffice is in the image):
+     ```bash
+     docker compose -f deploy/docker-compose.yml up -d postgres
+     docker compose -f deploy/docker-compose.yml up --build api
+     ```
+     The API container uses port `8080` and mounts `./sessions`.
+
+   - **Option B – Keep running the API on the host** and use a Docker-based soffice only for conversions. In `.env` set (use your actual repo path):
+     ```
+     TALKBACK_UPLOAD_ROOT=C:\Users\YourName\code\talkback
+     TALKBACK_SOFFICE_CMD=C:\Users\YourName\code\talkback\scripts\soffice-docker.cmd
+     ```
+     Then build the image once: `docker build -t talkback-api .`. PPT uploads will run soffice inside a container; the API and UI stay on the host.
+
 ### Web UI (Phase 2)
 
 A minimal React SPA is available in the `web/` directory.

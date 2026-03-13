@@ -21,6 +21,18 @@ import (
 	"github.com/psuthar/talkback/internal/utils"
 )
 
+// MaterialSlidesResponse is the JSON response for GET .../materials/{material_id}/slides.
+type MaterialSlidesResponse struct {
+	MaterialID string                 `json:"material_id"`
+	Slides     []MaterialSlidePayload `json:"slides"`
+}
+
+// MaterialSlidePayload is one slide entry in MaterialSlidesResponse.
+type MaterialSlidePayload struct {
+	Index    int    `json:"index"`
+	ImageURL string `json:"image_url"`
+}
+
 // ListSessionMaterials handles GET /api/sessions/:id/materials and GET /sessions/:id/materials
 func (h *Handlers) ListSessionMaterials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -269,10 +281,13 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
-	// Best-effort slide derivation for PPT/PPTX when stored in R2.
-	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && h.Storage != nil && storageProvider == "r2" && storageKey != "" && filePath != "" {
-		// Run synchronously but never fail the upload if this breaks; helper logs its own errors.
-		h.tryGenerateAndStoreSlides(r.Context(), filePath, storageKey)
+	// Best-effort slide derivation for PPT/PPTX (R2 or local storage).
+	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && filePath != "" {
+		if storageProvider == "r2" && h.Storage != nil && storageKey != "" {
+			h.tryGenerateAndStoreSlides(r.Context(), filePath, storageKey)
+		} else if storageProvider == "local" {
+			h.tryGenerateAndStoreSlidesLocal(r.Context(), filePath)
+		}
 	}
 	// For video files: create a VideoSource so the file appears in "Additional Videos" and is playable.
 	if isVideoForTranscription(ext, contentType) {
@@ -575,6 +590,44 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 	log.Printf("generated %d derived slides for %s", len(manifest.Slides), artifactKey)
 }
 
+// tryGenerateAndStoreSlidesLocal performs best-effort slide derivation for PPT/PPTX stored on local disk.
+// Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
+func (h *Handlers) tryGenerateAndStoreSlidesLocal(ctx context.Context, localPath string) {
+	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	if err != nil {
+		log.Printf("slides conversion failed for %s: %v", localPath, err)
+		return
+	}
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("slides local mkdir failed for %s: %v", localPath, err)
+		return
+	}
+	manifest := utils.SlideManifest{Slides: make([]utils.SlideManifestEntry, 0, len(slides))}
+	for _, slide := range slides {
+		name := fmt.Sprintf("slide-%03d.png", slide.Index)
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, slide.Data, 0644); err != nil {
+			log.Printf("failed writing slide %d for %s: %v", slide.Index, localPath, err)
+			return
+		}
+		manifest.Slides = append(manifest.Slides, utils.SlideManifestEntry{
+			Index:      slide.Index,
+			StorageKey: name,
+		})
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		log.Printf("failed marshalling slide manifest for %s: %v", localPath, err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifestBytes, 0644); err != nil {
+		log.Printf("failed writing slide manifest for %s: %v", localPath, err)
+		return
+	}
+	log.Printf("generated %d derived slides (local) for %s", len(manifest.Slides), localPath)
+}
+
 // sessionIDFromPath parses session ID from path like "api/sessions/:id/..." or "sessions/:id/..."
 func sessionIDFromPath(path string, minParts int) (uuid.UUID, error) {
 	path = strings.Trim(path, "/")
@@ -603,4 +656,197 @@ func isVideoForTranscription(ext, contentType string) bool {
 		return true
 	}
 	return false
+}
+
+// GetMaterialSlides handles GET /sessions/{session_id}/materials/{material_id}/slides.
+// Returns ordered slide image URLs (presigned) from the derived slides manifest, or 200 with empty slides if manifest is missing.
+func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var sessionIDStr, materialIDStr string
+	switch {
+	case len(pathParts) >= 6 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "materials" && pathParts[5] == "slides":
+		sessionIDStr = pathParts[2]
+		materialIDStr = pathParts[4]
+	case len(pathParts) >= 5 && pathParts[0] == "sessions" && pathParts[2] == "materials" && pathParts[4] == "slides":
+		sessionIDStr = pathParts[1]
+		materialIDStr = pathParts[3]
+	default:
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	materialID, err := uuid.Parse(materialIDStr)
+	if err != nil {
+		http.Error(w, "Invalid material ID", http.StatusBadRequest)
+		return
+	}
+	mat, err := h.DB.GetMaterialByID(ctx, materialID)
+	if err != nil || mat == nil {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.SessionID != sessionID {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.Kind != string(models.MaterialKindSlides) {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	resp := MaterialSlidesResponse{
+		MaterialID: materialID.String(),
+		Slides:     []MaterialSlidePayload{},
+	}
+
+	// Local storage: read manifest from disk and return slide-image API URLs
+	if mat.StorageProvider == "local" && strings.TrimSpace(mat.StorageURL) != "" {
+		manifestPath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", "manifest.json")
+		manifestBytes, err := os.ReadFile(manifestPath)
+		if err != nil {
+			log.Printf("slides manifest missing or unreadable for material %s path %s: %v", materialID, manifestPath, err)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		var manifest utils.SlideManifest
+		if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+			log.Printf("failed to decode slides manifest for material %s: %v", materialID, err)
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		if s := r.Header.Get("X-Forwarded-Proto"); s != "" {
+			scheme = s
+		}
+		baseURL := scheme + "://" + r.Host
+		for _, entry := range manifest.Slides {
+			slideURL := fmt.Sprintf("%s/sessions/%s/materials/%s/slide-image?index=%d", baseURL, sessionID.String(), materialID.String(), entry.Index)
+			resp.Slides = append(resp.Slides, MaterialSlidePayload{
+				Index:    entry.Index,
+				ImageURL: slideURL,
+			})
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// R2 storage: read manifest from storage and presign each slide
+	if h.Storage == nil || strings.TrimSpace(mat.StorageKey) == "" {
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
+	rc, err := h.Storage.Get(ctx, manifestKey)
+	if err != nil {
+		log.Printf("slides manifest missing or unreadable for material %s key %s: %v", materialID, manifestKey, err)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	defer rc.Close()
+	var manifest utils.SlideManifest
+	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
+		log.Printf("failed to decode slides manifest for material %s key %s: %v", materialID, manifestKey, err)
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+	presignTTL := time.Hour
+	resp.Slides = make([]MaterialSlidePayload, 0, len(manifest.Slides))
+	for _, entry := range manifest.Slides {
+		url, err := h.Storage.PresignGet(ctx, entry.StorageKey, presignTTL)
+		if err != nil {
+			log.Printf("failed to presign slide %d for material %s key %s: %v", entry.Index, materialID, entry.StorageKey, err)
+			continue
+		}
+		resp.Slides = append(resp.Slides, MaterialSlidePayload{
+			Index:    entry.Index,
+			ImageURL: url,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// GetMaterialSlideImage serves a single slide PNG for local-storage materials (GET .../materials/:id/slide-image?index=N).
+func (h *Handlers) GetMaterialSlideImage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var sessionIDStr, materialIDStr string
+	switch {
+	case len(pathParts) >= 6 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "materials" && pathParts[5] == "slide-image":
+		sessionIDStr = pathParts[2]
+		materialIDStr = pathParts[4]
+	case len(pathParts) >= 5 && pathParts[0] == "sessions" && pathParts[2] == "materials" && pathParts[4] == "slide-image":
+		sessionIDStr = pathParts[1]
+		materialIDStr = pathParts[3]
+	default:
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	indexStr := r.URL.Query().Get("index")
+	if indexStr == "" {
+		http.Error(w, "index query required", http.StatusBadRequest)
+		return
+	}
+	var index int
+	if _, err := fmt.Sscanf(indexStr, "%d", &index); err != nil || index < 1 {
+		http.Error(w, "index must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	materialID, err := uuid.Parse(materialIDStr)
+	if err != nil {
+		http.Error(w, "Invalid material ID", http.StatusBadRequest)
+		return
+	}
+	mat, err := h.DB.GetMaterialByID(ctx, materialID)
+	if err != nil || mat == nil {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.SessionID != sessionID {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.Kind != string(models.MaterialKindSlides) {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.StorageProvider != "local" || strings.TrimSpace(mat.StorageURL) == "" {
+		http.Error(w, "Slide images only available for local-storage materials", http.StatusNotFound)
+		return
+	}
+	slideName := fmt.Sprintf("slide-%03d.png", index)
+	slidePath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", slideName)
+	data, err := os.ReadFile(slidePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Slide not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("GetMaterialSlideImage read %s: %v", slidePath, err)
+		http.Error(w, "Failed to read slide", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
 }

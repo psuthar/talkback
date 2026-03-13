@@ -4,6 +4,7 @@ import { QAHistory } from '../components/QAHistory'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
+import { SlideDeckViewer } from '../components/SlideDeckViewer'
 import mammoth from 'mammoth'
 import { getDefaultApiBaseUrl } from '../config'
 import { getMaterialTypeLabel } from '../utils/materialIcons'
@@ -786,6 +787,7 @@ export function ParticipantMode({
               <ParticipantDocumentView
                 doc={selectedDocument}
                 apiBaseUrl={apiBaseUrl}
+                sessionId={currentSession?.session?.id || currentSession?.id}
                 initialPage={citationScrollTarget?.page}
                 initialBlock={citationScrollTarget?.block}
               />
@@ -905,7 +907,7 @@ function chunkTextForDisplay(text, chunkSize = MATERIAL_CHUNK_SIZE, overlap = MA
   return chunks
 }
 
-function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock }) {
+function ParticipantDocumentView({ doc, apiBaseUrl, sessionId, initialPage, initialBlock }) {
   const contentRef = useRef(null)
   const blockRefs = useRef([])
   const [docxHtml, setDocxHtml] = useState(null)
@@ -975,6 +977,18 @@ function ParticipantDocumentView({ doc, apiBaseUrl, initialPage, initialBlock })
       el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [initialBlock, textChunks?.length])
+
+  if (doc?.kind === 'slides' && sessionId && doc?.id) {
+    return (
+      <SlideDeckViewer
+        apiBaseUrl={apiBaseUrl}
+        sessionId={sessionId}
+        materialId={doc.id}
+        artifactId={doc.artifact_id}
+        initialSlide={initialPage}
+      />
+    )
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
