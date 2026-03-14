@@ -58,12 +58,12 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
   }
 
   return (
-    <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd' }}>
+    <div className="section session-links-section" style={{ marginBottom: '12px', backgroundColor: '#f9f9f9', border: '1px solid #ddd' }}>
       <h2>Links {Array.isArray(links) && links.length > 0 ? `(${links.length})` : ''}</h2>
-      <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>
+      <p style={{ fontSize: '13px', color: '#666', marginBottom: '6px' }}>
         Add URLs to include their content in session Q&A. Each link is verified and indexed for citations.
       </p>
-      <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           type="url"
           placeholder="https://..."

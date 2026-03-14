@@ -3,7 +3,6 @@ import { VideoPlayer, PlayerEvent } from './VideoPlayer'
 import { CreatorMode } from './modes/CreatorMode'
 import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
-import { MaterialsList } from './components/MaterialsList'
 import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
@@ -116,6 +115,7 @@ function App() {
   const voiceContextRef = useRef(null)
   const voiceRecorderRef = useRef(null)
   const materialFileInputRef = useRef(null)
+  const lastMaterialUploadAtRef = useRef(0) // skip session_updated refetch for a few seconds after upload so new material doesn't disappear
 
   // Phase 3: Session states
   const [sessionTitle, setSessionTitle] = useState('')
@@ -733,6 +733,7 @@ function App() {
       }
 
       const data = await response.json()
+      lastMaterialUploadAtRef.current = Date.now()
       // Add to uploaded materials list
       setUploadedMaterials(prev => [...prev, { ...data, uploadedAt: new Date().toISOString() }])
       // Remove file from materialFiles array
@@ -2555,6 +2556,10 @@ function App() {
     } else if (message.type === 'session_updated') {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
       if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
+        const now = Date.now()
+        if (now - lastMaterialUploadAtRef.current < 4000) {
+          return
+        }
         console.log('WebSocket: Session updated (e.g. materials), refetching session...')
         refetchSession()
       }
@@ -2754,7 +2759,7 @@ function App() {
   }
 
   return (
-    <div className={`container${showAdminView ? ' admin-full-width' : currentSession ? ' participant-full-width' : ''}`}>
+    <div className={`container${showAdminView ? ' admin-full-width' : currentSession && isParticipantMode ? ' participant-full-width' : currentSession && !isParticipantMode ? ' creator-session-pinned' : ''}`}>
       {zoomImportToast && (
         <div style={{
           position: 'fixed',
@@ -3674,6 +3679,7 @@ function App() {
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
               stanceVersion={stanceVersion}
+              sessionInvitations={sessionInvitations}
               onClearSession={() => {
                 setCurrentSession(null)
                 setSessionSelectFeedback({ type: '', message: '' })

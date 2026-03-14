@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
-import { MaterialsList } from '../components/MaterialsList'
-import { SessionLinksSection } from '../components/SessionLinksSection'
+import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
+import { DocumentViewer } from '../components/DocumentViewer'
+import { AddContentSection } from '../components/AddContentSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
@@ -190,6 +191,10 @@ export function CreatorMode({
   const [materialUploading, setMaterialUploading] = useState(false)
   const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
   const materialFileInputRef = useRef(null)
+  const materialUploadFeedbackTimeoutRef = useRef(null)
+  useEffect(() => () => {
+    if (materialUploadFeedbackTimeoutRef.current) clearTimeout(materialUploadFeedbackTimeoutRef.current)
+  }, [])
   const [answeringQuestionId, setAnsweringQuestionId] = useState(null)
   const [answerText, setAnswerText] = useState('')
   const [answerStatus, setAnswerStatus] = useState('answered')
@@ -230,8 +235,8 @@ export function CreatorMode({
     return { roots, byParent }
   }, [questions])
 
-  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false) // collapsed by default
-  const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
+  const [membersPanelExpanded, setMembersPanelExpanded] = useState(true) // expanded by default so prominent at top
+  const [contextPanelExpanded, setContextPanelExpanded] = useState(true)
   const [contextPremise, setContextPremise] = useState('')
   const [contextDecision, setContextDecision] = useState('')
   const [contextOutcome, setContextOutcome] = useState('')
@@ -239,6 +244,36 @@ export function CreatorMode({
   const [contextFeedback, setContextFeedback] = useState({ type: '', message: '' })
   const [stanceData, setStanceData] = useState(null)
   const [stancePanelExpanded, setStancePanelExpanded] = useState(true)
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
+  const [selectedDocument, setSelectedDocument] = useState(null)
+  const [selectedDocumentId, setSelectedDocumentId] = useState(null)
+
+  const handleSelectDocument = (doc) => {
+    setSelectedDocument(doc)
+    setSelectedDocumentId(doc?.id ?? doc?.transcriptId ?? (doc?.type === 'link' && doc?.id ? `link-${doc.id}` : null))
+  }
+  const handleBackToVideo = () => {
+    setSelectedDocument(null)
+    setSelectedDocumentId(null)
+  }
+  const handleSelectVideo = (v) => {
+    setSelectedDocument(null)
+    setSelectedDocumentId(null)
+    setSelectedVideo(v)
+    setVideoId(v?.id)
+    setVideoPlayerKey((prev) => prev + 1)
+  }
+  const handleSelectLink = (link) => {
+    if (!link?.url) return
+    setSelectedDocument({
+      type: 'link',
+      url: link.url,
+      title: link.title || link.url,
+      id: link.id
+    })
+    setSelectedDocumentId(`link-${link.id}`)
+  }
 
   const startAnswering = (questionId, existingAnswer = null) => {
     setAnsweringQuestionId(questionId)
@@ -842,6 +877,11 @@ export function CreatorMode({
         return
       }
       setMaterialUploadFeedback({ type: 'success', message: `Uploaded ${file.name}` })
+      if (materialUploadFeedbackTimeoutRef.current) clearTimeout(materialUploadFeedbackTimeoutRef.current)
+      materialUploadFeedbackTimeoutRef.current = setTimeout(() => {
+        setMaterialUploadFeedback({ type: '', message: '' })
+        materialUploadFeedbackTimeoutRef.current = null
+      }, 4000)
       if (refetchSession) await refetchSession()
       if (materialFileInputRef.current) materialFileInputRef.current.value = ''
     } catch (err) {
@@ -855,6 +895,28 @@ export function CreatorMode({
   const handleMaterialFileChange = (e) => {
     const files = Array.from(e?.target?.files || [])
     if (files.length > 0) uploadMaterialToSession(files[0])
+  }
+
+  const [deletingMaterialId, setDeletingMaterialId] = useState(null)
+  const [deleteMaterialError, setDeleteMaterialError] = useState(null)
+
+  const deleteMaterial = async (materialId) => {
+    if (!sessionId || !materialId || !apiBaseUrl) return
+    setDeleteMaterialError(null)
+    setDeletingMaterialId(String(materialId))
+    try {
+      const base = (apiBaseUrl || '').replace(/\/$/, '')
+      const res = await fetch(`${base}/sessions/${sessionId}/materials/${materialId}`, { method: 'DELETE', credentials: 'include' })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      if (refetchSession) await refetchSession()
+    } catch (err) {
+      setDeleteMaterialError(err?.message || 'Delete failed')
+    } finally {
+      setDeletingMaterialId(null)
+    }
   }
 
   // Sync context form fields when session changes
@@ -916,310 +978,42 @@ export function CreatorMode({
 
   return (
     <>
-      {/* Session header: single combined panel (replaces duplicate Active Session panel from App) */}
-      {currentSession.session && (
-        <div style={{ marginBottom: '20px', padding: '15px', backgroundColor: '#e8f4f8', borderRadius: '5px', border: '2px solid #2196F3' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                <h2 style={{ margin: 0, color: '#1976D2', fontSize: '1.25rem' }}>
-                  Session: {currentSession.session.title}
-                  <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
-                </h2>
-                {authUser?.email && (
-                  <span style={{
-                    fontSize: '10px', padding: '2px 6px', borderRadius: '4px',
-                    backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575',
-                    color: '#fff', fontWeight: '600', textTransform: 'capitalize'
-                  }}>
-                    {currentSession.session.created_by === authUser.email ? 'Creator' : 'Participant'}
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: '13px', color: '#666' }}>
-                <strong>Status:</strong>{' '}
-                <span style={{ color: currentSession.session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>
-                  {currentSession.session.status}
+      {/* Topbar */}
+      <div className="creator-layout-topbar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+          <button type="button" className="creator-panel-toggle" onClick={() => setLeftPanelCollapsed(v => !v)} title={leftPanelCollapsed ? 'Expand materials panel' : 'Collapse materials panel'}>
+            {leftPanelCollapsed ? '›' : '‹'}
+          </button>
+          {currentSession?.session && (
+            <>
+              <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {currentSession.session.title}
+                <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
+              </h2>
+              {authUser?.email && (
+                <span style={{ fontSize: '14px', padding: '4px 12px', borderRadius: '4px', backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575', color: '#fff', fontWeight: 'bold', flexShrink: 0 }}>
+                  {currentSession.session.created_by === authUser.email ? 'Creator' : 'Participant'}
                 </span>
-                {currentSession.session.created_by && ` | Created by: ${currentSession.session.created_by}`}
-                {' | '}
-                <strong>Created:</strong> {new Date(currentSession.session.created_at).toLocaleString()}
-              </div>
-            </div>
-            {onClearSession && (
-              <button
-                type="button"
-                onClick={onClearSession}
-                style={{ backgroundColor: '#f44336', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
-              >
-                Clear Session
-              </button>
-            )}
-          </div>
-          {authUser && inviteUserToSession && (
-            <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
-              <button
-                type="button"
-                onClick={() => setMembersPanelExpanded((e) => !e)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  width: '100%',
-                  padding: '8px 0',
-                  border: 'none',
-                  background: 'none',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  color: '#1565C0',
-                  textAlign: 'left'
-                }}
-                aria-expanded={membersPanelExpanded}
-              >
-                <span style={{ transform: membersPanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
-                Members{sessionInvitations?.length != null && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
-              </button>
-              {membersPanelExpanded && (
-                <>
-                  <label style={{ display: 'block', marginBottom: '6px', marginTop: '8px', fontSize: '13px', fontWeight: '500' }}>invite user by their email address</label>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input
-                      type="email"
-                      value={inviteEmail ?? ''}
-                      onChange={(e) => setInviteEmail?.(e.target.value)}
-                      placeholder="user@example.com"
-                      style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
-                    />
-                    <select value={inviteRole ?? 'participant'} onChange={(e) => setInviteRole?.(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
-                      <option value="participant">Participant</option>
-                      <option value="creator">Creator</option>
-                    </select>
-                    <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
-                      {inviteLoading ? 'Sending…' : 'Invite'}
-                    </button>
-                  </div>
-                  {inviteFeedback?.message && (
-                    <div className={inviteFeedback.type} style={{ marginTop: '8px', fontSize: '13px' }}>
-                      {inviteFeedback.message}
-                    </div>
-                  )}
-                  {sessionInvitations?.length > 0 && (
-                    <div style={{ marginTop: '14px' }}>
-                      <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: '500' }}>Invitations:</label>
-                      <div style={{ fontSize: '12px', overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <thead>
-                            <tr style={{ borderBottom: '1px solid #ddd', textAlign: 'left' }}>
-                              <th style={{ padding: '6px 8px' }}>Email</th>
-                              <th style={{ padding: '6px 8px' }}>Role</th>
-                              <th style={{ padding: '6px 8px' }}>Status</th>
-                              <th style={{ padding: '6px 8px' }}>Expires</th>
-                              {typeof fetchSessionInvitations === 'function' && <th style={{ padding: '6px 8px' }}>Actions</th>}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sessionInvitations.map((inv) => (
-                              <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
-                                <td style={{ padding: '6px 8px' }}>{inv.invited_email}</td>
-                                <td style={{ padding: '6px 8px' }}>{inv.invited_role || 'participant'}</td>
-                                <td style={{ padding: '6px 8px' }}>{inv.status}</td>
-                                <td style={{ padding: '6px 8px' }}>{(inv.status === 'accepted' || inv.status === 'revoked') ? '—' : (inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : '—')}</td>
-                                {typeof fetchSessionInvitations === 'function' && (
-                                  <td style={{ padding: '6px 8px' }}>
-                                    {inv.status === 'pending' && (
-                                      <>
-                                        <InvitationActionButton
-                                          apiBaseUrl={apiBaseUrl}
-                                          invitationId={inv.id}
-                                          action="resend"
-                                          onDone={(data) => {
-                                            if (data?.invitation) {
-                                              if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation)
-                                              if (typeof setInviteFeedback === 'function') {
-                                                setInviteFeedback({ type: 'success', message: 'New invitation link ready. Use "Open email draft" in the row to open in your email app.' })
-                                                setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000)
-                                              }
-                                            }
-                                            fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
-                                          }}
-                                        />
-                                        <InvitationActionButton
-                                          apiBaseUrl={apiBaseUrl}
-                                          invitationId={inv.id}
-                                          action="revoke"
-                                          onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)}
-                                        />
-                                        <CopyInvitationLinkButton
-                                          apiBaseUrl={apiBaseUrl}
-                                          invitationId={inv.id}
-                                          onCopied={() => {
-                                            if (typeof setInviteFeedback === 'function') {
-                                              setInviteFeedback({ type: 'success', message: 'Link copied to clipboard.' })
-                                              setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000)
-                                            }
-                                          }}
-                                          onError={(msg) => {
-                                            if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
-                                          }}
-                                        />
-                                        <OpenEmailDraftButton
-                                          apiBaseUrl={apiBaseUrl}
-                                          invitationId={inv.id}
-                                          invitation={{ invited_email: inv.invited_email, expires_at: inv.expires_at }}
-                                          sessionTitle={currentSession?.session?.title}
-                                          inviterEmail={currentSession?.session?.created_by}
-                                          inviterDisplayName={currentSession?.created_by_display_name}
-                                          onError={(msg) => {
-                                            if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed to get link' })
-                                          }}
-                                        />
-                                      </>
-                                    )}
-                                  </td>
-                                )}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </>
               )}
-            </div>
+              <span style={{ fontSize: '12px', color: currentSession.session.status === 'open' ? '#2e7d32' : '#999', fontWeight: 'bold', flexShrink: 0 }}>
+                {currentSession.session.status}
+              </span>
+            </>
           )}
-          {/* Context: premise and primary decision */}
-          <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #2196F3' }}>
-            <button
-              type="button"
-              onClick={() => setContextPanelExpanded((e) => !e)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                width: '100%',
-                padding: '8px 0',
-                border: 'none',
-                background: 'none',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: '600',
-                color: '#1565C0',
-                textAlign: 'left'
-              }}
-              aria-expanded={contextPanelExpanded}
-            >
-              <span style={{ transform: contextPanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
-              Context
-            </button>
-            {contextPanelExpanded && (
-              <div style={{ marginTop: '8px' }}>
-                <label style={{ display: 'block', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Premise</label>
-                <textarea
-                  value={contextPremise}
-                  onChange={(e) => setContextPremise(e.target.value)}
-                  placeholder="Describe the session premise…"
-                  rows={3}
-                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-                <label style={{ display: 'block', marginTop: '10px', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Primary Decision</label>
-                <textarea
-                  value={contextDecision}
-                  onChange={(e) => setContextDecision(e.target.value)}
-                  placeholder="What is the primary decision being discussed…"
-                  rows={3}
-                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-                <label style={{ display: 'block', marginTop: '10px', marginBottom: '4px', fontSize: '13px', fontWeight: '500' }}>Decision Outcome</label>
-                <textarea
-                  value={contextOutcome}
-                  onChange={(e) => setContextOutcome(e.target.value)}
-                  placeholder="What was actually decided…"
-                  rows={3}
-                  style={{ width: '100%', padding: '6px 10px', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={saveSessionContext}
-                    disabled={contextSaving}
-                    style={{ padding: '6px 16px', fontSize: '13px', fontWeight: '500' }}
-                  >
-                    {contextSaving ? 'Saving…' : 'Save'}
-                  </button>
-                  {contextFeedback.message && (
-                    <span style={{ fontSize: '12px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
-                      {contextFeedback.message}
-                    </span>
-                  )}
-                </div>
-                {currentSession?.session?.primary_decision && stanceData?.aggregate && (
-                  <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #e0e0e0' }}>
-                    <button
-                      type="button"
-                      onClick={() => setStancePanelExpanded((e) => !e)}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '6px',
-                        width: '100%', padding: '4px 0', border: 'none', background: 'none',
-                        cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: '#1565C0',
-                        textAlign: 'left'
-                      }}
-                    >
-                      <span style={{ transform: stancePanelExpanded ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
-                      Stance Summary ({stanceData.aggregate.total})
-                    </button>
-                    {stancePanelExpanded && (
-                      <div style={{ marginTop: '8px' }}>
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                          {[
-                            ['Agree', stanceData.aggregate.agree, '#2e7d32', '#e8f5e9'],
-                            ['Disagree', stanceData.aggregate.disagree, '#c62828', '#ffebee'],
-                            ['Conditional', stanceData.aggregate.conditional, '#e65100', '#fff3e0'],
-                            ['Abstain', stanceData.aggregate.abstain, '#546e7a', '#eceff1'],
-                            ['Need More Info', stanceData.aggregate.need_more_info, '#1565C0', '#e3f2fd']
-                          ].map(([label, count, color, bg]) => (
-                            <span key={label} style={{
-                              padding: '3px 10px', borderRadius: '12px', fontSize: '12px',
-                              fontWeight: count > 0 ? 700 : 400,
-                              color: count > 0 ? color : '#999',
-                              backgroundColor: count > 0 ? bg : '#f5f5f5',
-                              border: `1px solid ${count > 0 ? color : '#e0e0e0'}`
-                            }}>
-                              {label}: {count}
-                            </span>
-                          ))}
-                        </div>
-                        {stanceData.responses?.length > 0 && (
-                          <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            {stanceData.responses.map((r) => (
-                              <div key={r.id} style={{
-                                padding: '6px 10px', backgroundColor: '#fafafa',
-                                border: '1px solid #e0e0e0', borderRadius: '4px', fontSize: '12px'
-                              }}>
-                                <span style={{ fontWeight: 600 }}>{r.user_email}</span>
-                                {' — '}
-                                <span style={{ textTransform: 'capitalize' }}>{r.stance.replace(/_/g, ' ')}</span>
-                                {r.rationale && (
-                                  <span style={{ color: '#666', marginLeft: '6px' }}>
-                                    "{r.rationale.length > 80 ? r.rationale.slice(0, 80) + '…' : r.rationale}"
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
         </div>
-      )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <button type="button" className="creator-panel-toggle" onClick={() => setRightPanelCollapsed(v => !v)} title={rightPanelCollapsed ? 'Expand Q&A panel' : 'Collapse Q&A panel'}>
+            {rightPanelCollapsed ? '‹' : '›'}
+          </button>
+          {onClearSession && (
+            <button type="button" onClick={onClearSession} style={{ backgroundColor: '#f44336', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', margin: 0 }}>
+              Clear Session
+            </button>
+          )}
+        </div>
+      </div>
 
-      {/* Processing progression: show until video is on screen (and delay passed). Once we've seen a job, keep showing until primary video is ready so the panel never disappears mid-import. */}
+      {/* Processing progression: flex-shrink 0, sits above grid */}
       {showPanel && (() => {
         const runningStates = ['queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding']
         const hasJob = processingStatus?.state != null && processingStatus.state !== ''
@@ -1228,19 +1022,19 @@ export function CreatorMode({
         const isWaiting = hasJob && processingStatus.state === 'waiting'
         const readyButNoVideoYet = hasJob && processingStatus.state === 'ready' && !hasPrimaryR2Video
         const allComplete = hasJob && processingStatus.state === 'ready' && hasPrimaryR2Video
-        // Use displayStepIndex so each step is shown for at least STEP_DWELL_MS (step-by-step feel)
         const activeStepIndex = displayStepIndex
         return (
           <div style={{
-            marginBottom: '20px',
-            padding: '18px 20px',
-            borderRadius: '10px',
+            flexShrink: 0,
+            padding: '12px 16px',
+            borderRadius: 0,
+            borderBottom: '1px solid #e0e0e0',
             backgroundColor: allComplete ? '#e8f5e9' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : isWaiting ? '#e3f2fd' : '#fff8e1',
-            border: allComplete ? '1px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '1px solid #f44336' : isWaiting ? '1px solid #2196F3' : '1px solid #ff9800'
+            borderLeft: allComplete ? '3px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '3px solid #f44336' : isWaiting ? '3px solid #2196F3' : '3px solid #ff9800'
           }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '12px', fontSize: '15px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '6px', fontSize: '13px' }}>
                   {PROCESSING_STEPS.map((label, idx) => {
                     const completed = idx < activeStepIndex || allComplete
                     const active = idx === activeStepIndex && !completed
@@ -1249,21 +1043,21 @@ export function CreatorMode({
                     const showWarning = active && isFailed
                     const activeWeight = 700
                     return (
-                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                         <span style={{
-                          fontSize: '16px',
+                          fontSize: '13px',
                           color: completed ? '#4CAF50' : active ? (showWarning ? '#f44336' : '#1976D2') : '#9e9e9e',
                           fontWeight: active ? activeWeight : 400
                         }}>
                           {completed ? '✓' : showSpinner ? '⌛' : showWaiting ? '⏸' : showWarning ? '⚠' : '○'}
                         </span>
-                        <span style={{ color: completed ? '#2e7d32' : active ? '#1a1a1a' : '#9e9e9e', fontSize: '15px', fontWeight: active ? activeWeight : 400 }}>{label}</span>
-                        {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '2px', marginRight: '2px', color: '#bdbdbd', fontSize: '14px' }}>→</span>}
+                        <span style={{ color: completed ? '#2e7d32' : active ? '#1a1a1a' : '#9e9e9e', fontSize: '13px', fontWeight: active ? activeWeight : 400 }}>{label}</span>
+                        {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '1px', marginRight: '1px', color: '#bdbdbd', fontSize: '12px' }}>→</span>}
                       </div>
                     )
                   })}
                 </div>
-                <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px', color: '#333' }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#333' }}>
                   {!hasJob
                     ? 'Checking import status…'
                     : isRunning
@@ -1290,13 +1084,14 @@ export function CreatorMode({
                     onClick={retryProcessing}
                     disabled={processingRetrying}
                     style={{
-                      padding: '6px 12px',
-                      fontSize: '13px',
+                      padding: '4px 10px',
+                      fontSize: '12px',
                       backgroundColor: '#2196F3',
                       color: 'white',
                       border: 'none',
                       borderRadius: '4px',
-                      cursor: processingRetrying ? 'not-allowed' : 'pointer'
+                      cursor: processingRetrying ? 'not-allowed' : 'pointer',
+                      margin: 0
                     }}
                   >
                     {processingRetrying ? 'Retrying…' : 'Retry now'}
@@ -1305,7 +1100,7 @@ export function CreatorMode({
                 {hasJob && processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
                   <a
                     href={`${window.location.origin}${window.location.pathname}?session=${sessionId}&zoom=connect`}
-                    style={{ fontSize: '13px', color: '#1976D2', fontWeight: 500 }}
+                    style={{ fontSize: '12px', color: '#1976D2', fontWeight: 500 }}
                   >
                     Reconnect Zoom
                   </a>
@@ -1315,25 +1110,26 @@ export function CreatorMode({
           </div>
         )
       })()}
-      {/* Legacy ingestion banner (when no processing job) */}
+
+      {/* Legacy ingestion banner */}
       {!(processingStatus?.state != null && processingStatus.state !== '') && ingestionStatus?.source === 'zoom' && (
         <div style={{
-          marginBottom: '20px',
-          padding: '12px 16px',
-          borderRadius: '6px',
+          flexShrink: 0,
+          padding: '10px 16px',
+          borderBottom: '1px solid #e0e0e0',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           flexWrap: 'wrap',
-          gap: '10px',
+          gap: '8px',
           backgroundColor: ingestionStatus.state === 'ready' ? '#e8f5e9' : ingestionStatus.state === 'failed' ? '#ffebee' : '#fff8e1',
-          border: ingestionStatus.state === 'ready' ? '1px solid #4CAF50' : ingestionStatus.state === 'failed' ? '1px solid #f44336' : '1px solid #ff9800'
+          borderLeft: ingestionStatus.state === 'ready' ? '3px solid #4CAF50' : ingestionStatus.state === 'failed' ? '3px solid #f44336' : '3px solid #ff9800'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {(ingestionStatus.state === 'queued' || ingestionStatus.state === 'fetching') && (
-              <span style={{ fontSize: '18px' }}>⏳</span>
+              <span style={{ fontSize: '16px' }}>⏳</span>
             )}
-            <span style={{ fontSize: '14px', fontWeight: 500 }}>
+            <span style={{ fontSize: '13px', fontWeight: 500 }}>
               {ingestionStatus.state === 'queued' || ingestionStatus.state === 'fetching'
                 ? 'Import in progress…'
                 : ingestionStatus.state === 'ready'
@@ -1343,7 +1139,7 @@ export function CreatorMode({
                     : ''}
             </span>
             {ingestionStatus.updated_at && (
-              <span style={{ fontSize: '12px', color: '#666' }}>
+              <span style={{ fontSize: '11px', color: '#666' }}>
                 Updated: {new Date(ingestionStatus.updated_at).toLocaleString()}
               </span>
             )}
@@ -1354,13 +1150,14 @@ export function CreatorMode({
               onClick={retryIngestion}
               disabled={ingestionRetrying}
               style={{
-                padding: '6px 12px',
-                fontSize: '13px',
+                padding: '4px 10px',
+                fontSize: '12px',
                 backgroundColor: '#2196F3',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
-                cursor: ingestionRetrying ? 'not-allowed' : 'pointer'
+                cursor: ingestionRetrying ? 'not-allowed' : 'pointer',
+                margin: 0
               }}
             >
               {ingestionRetrying ? 'Retrying…' : 'Retry'}
@@ -1369,90 +1166,303 @@ export function CreatorMode({
         </div>
       )}
 
-      {/* Session Video: in-app playback only. Placed high so it appears right after progress. */}
-      {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
-        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f8f9fa', border: '1px solid #dee2e6' }}>
-          <h2>Session Video</h2>
-          {/* Explicit non-ready states when primary_video_artifact_id is set but no playable URL (R2-only playback) */}
-          {currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code && (
-            <div style={{
-              padding: '24px',
-              backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? '#ffebee' : '#f5f5f5',
-              borderRadius: '8px',
-              textAlign: 'center',
-              border: '1px solid #e0e0e0'
-            }}>
-              <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
-                {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? 'Video ingest failed. Creator can retry import.' : 'Video not available for this session.')}
-              </p>
-              {currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' && (
-                <button
-                  type="button"
-                  onClick={retryProcessing}
-                  disabled={processingRetrying}
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '14px',
-                    backgroundColor: '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: processingRetrying ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {processingRetrying ? 'Retrying…' : 'Retry ingest'}
+      {/* Three-panel grid */}
+      <div className={`creator-layout-grid${leftPanelCollapsed ? ' left-collapsed' : ''}${rightPanelCollapsed ? ' right-collapsed' : ''}`}>
+
+        {/* ===== LEFT PANEL ===== */}
+        <div className={`creator-left-panel${leftPanelCollapsed ? ' collapsed' : ''}`}>
+          <div className="creator-panel-header">
+            <button type="button" onClick={() => setLeftPanelCollapsed(v => !v)} className="creator-panel-toggle-inner" title={leftPanelCollapsed ? 'Expand' : 'Collapse'}>
+              <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: leftPanelCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }}>‹</span>
+              {!leftPanelCollapsed && <span style={{ marginLeft: '6px' }}>Materials</span>}
+            </button>
+          </div>
+          {!leftPanelCollapsed && (
+            <div className="creator-left-scroll">
+
+              {/* Context: Premise, Decision, Outcome — prominent at top */}
+              <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+                <button type="button" onClick={() => setContextPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={contextPanelExpanded}>
+                  <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: contextPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                  {' '}<strong>Context</strong>
                 </button>
+                {contextPanelExpanded && (
+                  <div style={{ marginTop: '8px' }}>
+                    <label style={{ display: 'block', marginBottom: '3px', fontSize: '12px', fontWeight: '500' }}>Premise</label>
+                    <textarea value={contextPremise} onChange={e => setContextPremise(e.target.value)} placeholder="Describe the session premise…" rows={2} style={{ width: '100%', padding: '4px 6px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box', border: '1px solid #ddd', borderRadius: '3px' }} />
+                    <label style={{ display: 'block', marginTop: '6px', marginBottom: '3px', fontSize: '12px', fontWeight: '500' }}>Primary Decision</label>
+                    <textarea value={contextDecision} onChange={e => setContextDecision(e.target.value)} placeholder="What is the primary decision being discussed…" rows={2} style={{ width: '100%', padding: '4px 6px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box', border: '1px solid #ddd', borderRadius: '3px' }} />
+                    <label style={{ display: 'block', marginTop: '6px', marginBottom: '3px', fontSize: '12px', fontWeight: '500' }}>Decision Outcome</label>
+                    <textarea value={contextOutcome} onChange={e => setContextOutcome(e.target.value)} placeholder="What was actually decided…" rows={2} style={{ width: '100%', padding: '4px 6px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box', border: '1px solid #ddd', borderRadius: '3px' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+                      <button type="button" onClick={saveSessionContext} disabled={contextSaving} style={{ padding: '4px 12px', fontSize: '12px', margin: 0 }}>
+                        {contextSaving ? 'Saving…' : 'Save'}
+                      </button>
+                      {contextFeedback.message && (
+                        <span style={{ fontSize: '11px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{contextFeedback.message}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Members — prominent at top */}
+              {authUser && inviteUserToSession && (
+                <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+                  <button type="button" onClick={() => setMembersPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={membersPanelExpanded}>
+                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: membersPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                    {' '}<strong>Members</strong>{sessionInvitations?.length > 0 ? ` (${sessionInvitations.length})` : ''}
+                  </button>
+                  {membersPanelExpanded && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
+                        <input type="email" value={inviteEmail ?? ''} onChange={e => setInviteEmail?.(e.target.value)} placeholder="user@example.com" style={{ flex: '1', minWidth: '120px', padding: '4px 8px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }} />
+                        <select value={inviteRole ?? 'participant'} onChange={e => setInviteRole?.(e.target.value)} style={{ padding: '4px 6px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }}>
+                          <option value="participant">Participant</option>
+                          <option value="creator">Creator</option>
+                        </select>
+                        <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading} style={{ padding: '4px 10px', fontSize: '12px', margin: 0 }}>
+                          {inviteLoading ? '…' : 'Invite'}
+                        </button>
+                      </div>
+                      {inviteFeedback?.message && (
+                        <div className={inviteFeedback.type} style={{ fontSize: '12px', padding: '4px 6px', marginBottom: '6px' }}>{inviteFeedback.message}</div>
+                      )}
+                      {sessionInvitations?.length > 0 && (
+                        <div style={{ fontSize: '11px', overflowX: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '1px solid #ddd', textAlign: 'left' }}>
+                                <th style={{ padding: '4px 6px' }}>Email</th>
+                                <th style={{ padding: '4px 6px' }}>Role</th>
+                                <th style={{ padding: '4px 6px' }}>Status</th>
+                                {typeof fetchSessionInvitations === 'function' && <th style={{ padding: '4px 6px' }}>Actions</th>}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sessionInvitations.map((inv) => (
+                                <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
+                                  <td style={{ padding: '4px 6px' }}>{inv.invited_email}</td>
+                                  <td style={{ padding: '4px 6px' }}>{inv.invited_role || 'participant'}</td>
+                                  <td style={{ padding: '4px 6px' }}>{inv.status}</td>
+                                  {typeof fetchSessionInvitations === 'function' && (
+                                    <td style={{ padding: '4px 6px' }}>
+                                      {inv.status === 'pending' && (
+                                        <>
+                                          <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="resend" onDone={(data) => { if (data?.invitation) { if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation); if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'New link ready.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000) } } fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id) }} />
+                                          <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="revoke" onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)} />
+                                          <CopyInvitationLinkButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} onCopied={() => { if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'Copied.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000) } }} onError={(msg) => { if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed' }) }} />
+                                          <OpenEmailDraftButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} invitation={{ invited_email: inv.invited_email, expires_at: inv.expires_at }} sessionTitle={currentSession?.session?.title} inviterEmail={currentSession?.session?.created_by} inviterDisplayName={currentSession?.created_by_display_name} onError={(msg) => { if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed' }) }} />
+                                        </>
+                                      )}
+                                    </td>
+                                  )}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
+
+              {/* Hidden file input for material uploads */}
+              {sessionId && (
+                <input
+                  ref={materialFileInputRef}
+                  type="file"
+                  accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,video/mp4,.mp4,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
+                  onChange={handleMaterialFileChange}
+                  disabled={materialUploading}
+                  style={{ display: 'none' }}
+                />
+              )}
+
+              {/* Add content at top: upload files + add links */}
+              {sessionId && (
+                <AddContentSection
+                  sessionId={sessionId}
+                  apiBaseUrl={apiBaseUrl}
+                  refetchSession={refetchSession}
+                  onUploadClick={() => materialFileInputRef.current?.click()}
+                  uploading={materialUploading}
+                  uploadFeedback={materialUploadFeedback}
+                  defaultExpanded={
+                    !currentSession?.materials?.length && !currentSession?.links?.length
+                  }
+                />
+              )}
+
+              {/* Materials tree: view + manage (upload/delete) for creator */}
+              <MaterialsTreePanel
+                session={currentSession}
+                selectedVideo={selectedVideo}
+                setSelectedVideo={setSelectedVideo}
+                setVideoId={setVideoId}
+                setVideoPlayerKey={setVideoPlayerKey}
+                onSelectDocument={handleSelectDocument}
+                onSelectVideo={handleBackToVideo}
+                onSelectLink={handleSelectLink}
+                selectedDocumentId={selectedDocumentId}
+                collapsed={leftPanelCollapsed}
+                onCollapsedChange={setLeftPanelCollapsed}
+                hideTranscriptSection
+                lastSeenLinkCount={0}
+                canManage={!!sessionId}
+                onDeleteMaterial={deleteMaterial}
+                deletingId={deletingMaterialId}
+                deleteError={deleteMaterialError}
+              />
+
+              {/* Stance summary */}
+              {currentSession?.session?.primary_decision && stanceData?.aggregate && (
+                <div style={{ padding: '8px 12px', borderTop: '1px solid #e0e0e0' }}>
+                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded}>
+                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: stancePanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                    {' '}Stance Summary ({stanceData.aggregate.total})
+                  </button>
+                  {stancePanelExpanded && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        {[
+                          ['Agree', stanceData.aggregate.agree, '#2e7d32', '#e8f5e9'],
+                          ['Disagree', stanceData.aggregate.disagree, '#c62828', '#ffebee'],
+                          ['Conditional', stanceData.aggregate.conditional, '#e65100', '#fff3e0'],
+                          ['Abstain', stanceData.aggregate.abstain, '#546e7a', '#eceff1'],
+                          ['Need More Info', stanceData.aggregate.need_more_info, '#1565C0', '#e3f2fd']
+                        ].map(([label, count, color, bg]) => (
+                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
+                            {label}: {count}
+                          </span>
+                        ))}
+                      </div>
+                      {stanceData.responses?.length > 0 && (
+                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {stanceData.responses.map((r) => (
+                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
+                              <span style={{ fontWeight: 600 }}>{r.user_email}</span>
+                              {' — '}
+                              <span style={{ textTransform: 'capitalize' }}>{r.stance.replace(/_/g, ' ')}</span>
+                              {r.rationale && <span style={{ color: '#666', marginLeft: '4px' }}>"{r.rationale.length > 60 ? r.rationale.slice(0, 60) + '…' : r.rationale}"</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
             </div>
           )}
-          {hasPrimaryR2Video && (
-            <div style={{ marginBottom: '10px', fontSize: '14px', color: '#495057' }}>
-              <strong>Transcript:</strong>{' '}
-              <span style={{
-                color: video.transcript_status === 'ready' ? '#4CAF50' :
-                       video.transcript_status === 'pending' ? '#ff9800' :
-                       video.transcript_status === 'failed' ? '#f44336' : '#999',
-                fontWeight: 'bold'
-              }}>
-                {video.transcript_status === 'missing' ? 'No transcript' :
-                 video.transcript_status === 'pending' ? 'Pending...' :
-                 video.transcript_status === 'processing' ? 'Processing...' :
-                 video.transcript_status === 'ready' ? 'Ready' :
-                 video.transcript_status === 'failed' ? 'Failed' :
-                 video.transcript_status || 'Unknown'}
-              </span>
-              {transcriptJobs[video?.id] && (
-                <>
-                  {' | '}
-                  <strong>Job:</strong>{' '}
+        </div>
+
+        {/* ===== CENTER PANEL ===== */}
+        <div className="creator-center-panel">
+          {selectedDocument ? (
+            /* Document/slides/link viewer (same as participant); navigate via left panel */
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px' }}>
+              <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+                <DocumentViewer
+                  doc={selectedDocument}
+                  apiBaseUrl={apiBaseUrl}
+                  sessionId={sessionId}
+                />
+              </div>
+            </div>
+          ) : (
+          <>
+          {/* Video player section */}
+          {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
+            <div className="creator-video-container">
+              {/* Explicit non-ready states when primary_video_artifact_id is set but no playable URL */}
+              {currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code && (
+                <div style={{
+                  padding: '24px',
+                  backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? '#ffebee' : '#f5f5f5',
+                  textAlign: 'center',
+                  border: '1px solid #e0e0e0'
+                }}>
+                  <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
+                    {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? 'Video ingest failed. Creator can retry import.' : 'Video not available for this session.')}
+                  </p>
+                  {currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' && (
+                    <button
+                      type="button"
+                      onClick={retryProcessing}
+                      disabled={processingRetrying}
+                      style={{
+                        padding: '8px 16px',
+                        fontSize: '14px',
+                        backgroundColor: '#2196F3',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: processingRetrying ? 'not-allowed' : 'pointer',
+                        margin: 0
+                      }}
+                    >
+                      {processingRetrying ? 'Retrying…' : 'Retry ingest'}
+                    </button>
+                  )}
+                </div>
+              )}
+              {hasPrimaryR2Video && (
+                <div style={{ padding: '6px 12px', fontSize: '13px', color: '#ccc', backgroundColor: '#1a1a1a' }}>
+                  <strong style={{ color: '#999' }}>Transcript:</strong>{' '}
                   <span style={{
-                    color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' :
-                           transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
+                    color: video.transcript_status === 'ready' ? '#4CAF50' :
+                           video.transcript_status === 'pending' ? '#ff9800' :
+                           video.transcript_status === 'failed' ? '#f44336' : '#999',
                     fontWeight: 'bold'
                   }}>
-                    {transcriptJobs[video.id].status}
+                    {video.transcript_status === 'missing' ? 'No transcript' :
+                     video.transcript_status === 'pending' ? 'Pending...' :
+                     video.transcript_status === 'processing' ? 'Processing...' :
+                     video.transcript_status === 'ready' ? 'Ready' :
+                     video.transcript_status === 'failed' ? 'Failed' :
+                     video.transcript_status || 'Unknown'}
                   </span>
-                </>
+                  {transcriptJobs[video?.id] && (
+                    <>
+                      {' | '}
+                      <strong style={{ color: '#999' }}>Job:</strong>{' '}
+                      <span style={{
+                        color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' :
+                               transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
+                        fontWeight: 'bold'
+                      }}>
+                        {transcriptJobs[video.id].status}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+              {video && !(currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code) && (
+                <VideoPlayer
+                  video={video}
+                  onEvent={handleVideoPlayerEvent}
+                  onTimeUpdate={handleVideoTimeUpdate}
+                  currentTime={currentVideoTime}
+                  playing={isVideoPlaying}
+                  sessionId={currentSession?.session?.id || currentSession?.id}
+                  apiBaseUrl={apiBaseUrl}
+                  creatorIdentity={creatorIdentity}
+                  primaryVideoAccessUrl={primaryVideoAccessUrl}
+                  primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
+                  onPrimaryVideoMounted={handlePrimaryVideoMounted}
+                />
               )}
             </div>
           )}
 
-          {video && !(currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code) && (
-            <>
-              <VideoPlayer
-                video={video}
-                onEvent={handleVideoPlayerEvent}
-                onTimeUpdate={handleVideoTimeUpdate}
-                currentTime={currentVideoTime}
-                playing={isVideoPlaying}
-                sessionId={currentSession?.session?.id || currentSession?.id}
-                apiBaseUrl={apiBaseUrl}
-                creatorIdentity={creatorIdentity}
-                primaryVideoAccessUrl={primaryVideoAccessUrl}
-                primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
-                onPrimaryVideoMounted={handlePrimaryVideoMounted}
-              />
-              <div style={{ flexShrink: 0, marginTop: '6px' }}>
+          {/* Transcript and other content — scrollable */}
+          <div className="creator-center-scroll">
+            {/* Inline transcript from video source */}
+            {video && !(currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code) && ((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
+              <div style={{ marginBottom: '12px' }}>
                 {video.transcript_text || (video.transcript_segments && video.transcript_segments.length > 0) ? (
                   <TranscriptViewer
                     transcriptText={video.transcript_text}
@@ -1465,493 +1475,406 @@ export function CreatorMode({
                   </div>
                 )}
               </div>
-            </>
-          )}
-        </div>
-      )}
+            )}
 
-      {/* Transcript tab: only show when transcript is not already shown below Session Video (avoids duplication) */}
-      {sessionId && !(hasPrimaryR2Video && (video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0))) && (
-        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '16px' }}>
-          <h2 style={{ marginTop: 0 }}>Transcript</h2>
-          {!transcriptData ? (
-            <div style={{ color: '#666' }}>Loading…</div>
-          ) : transcriptData.status === 'none' ? (
-            <div style={{ color: '#666', fontStyle: 'italic' }}>No transcript yet. Import a Zoom recording to add one.</div>
-          ) : transcriptData.status === 'parsing' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '18px' }}>⏳</span>
-              <span>Parsing transcript…</span>
-            </div>
-          ) : transcriptData.status === 'failed' ? (
-            <div>
-              <div style={{ color: '#c62828', marginBottom: '10px' }}>
-                {transcriptData.error_message || 'Transcript failed.'}
-              </div>
-              {(processingStatus?.state != null && processingStatus.state !== '') ? (
-                <button
-                  type="button"
-                  onClick={retryProcessing}
-                  disabled={processingRetrying}
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '14px',
-                    backgroundColor: '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: processingRetrying ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {processingRetrying ? 'Retrying…' : 'Retry now'}
-                </button>
-              ) : ingestionStatus?.meeting_uuid ? (
-                <button
-                  type="button"
-                  onClick={retryIngestion}
-                  disabled={ingestionRetrying}
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '14px',
-                    backgroundColor: '#2196F3',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: ingestionRetrying ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {ingestionRetrying ? 'Retrying…' : 'Retry import'}
-                </button>
-              ) : null}
-            </div>
-          ) : transcriptData.status === 'ready' && transcriptData.segments?.length > 0 ? (
-            <div style={{ maxHeight: '400px', overflow: 'auto' }}>
-              {transcriptData.segments.map((seg) => {
-                const mmSs = (ms) => {
-                  const m = Math.floor(ms / 60000)
-                  const s = Math.floor((ms % 60000) / 1000)
-                  return `${m}:${s.toString().padStart(2, '0')}`
-                }
-                return (
-                  <div key={seg.idx} style={{ marginBottom: '12px', padding: '8px 0', borderBottom: '1px solid #eee' }}>
-                    <span style={{ fontSize: '12px', color: '#666', marginRight: '8px' }}>
-                      {mmSs(seg.start_ms)}–{mmSs(seg.end_ms)}
-                    </span>
-                    <span style={{ fontSize: '14px' }}>{seg.text}</span>
+            {/* Session-level transcript (when no inline transcript from video) */}
+            {sessionId && !(hasPrimaryR2Video && (video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0))) && (
+              <div style={{ marginBottom: '12px' }}>
+                <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '8px', color: '#555' }}>Transcript</div>
+                {!transcriptData ? (
+                  <div style={{ color: '#666', fontSize: '13px' }}>Loading…</div>
+                ) : transcriptData.status === 'none' ? (
+                  <div style={{ color: '#666', fontStyle: 'italic', fontSize: '13px' }}>No transcript yet. Import a Zoom recording to add one.</div>
+                ) : transcriptData.status === 'parsing' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+                    <span style={{ fontSize: '16px' }}>⏳</span>
+                    <span>Parsing transcript…</span>
                   </div>
-                )
-              })}
-            </div>
-          ) : transcriptData.status === 'ready' ? (
-            <div style={{ color: '#666', fontStyle: 'italic' }}>Transcript ready (no segments).</div>
-          ) : null}
-        </div>
-      )}
-
-      {/* Upload Material */}
-      {sessionId && (
-        <div className="section" style={{ marginBottom: '20px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: 8, padding: 16 }}>
-          <h2 style={{ marginTop: 0 }}>Upload Material</h2>
-          <input
-            ref={materialFileInputRef}
-            type="file"
-            accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,video/mp4,.mp4,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
-            onChange={handleMaterialFileChange}
-            disabled={materialUploading}
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            onClick={() => materialFileInputRef.current?.click()}
-            disabled={materialUploading}
-            style={{ padding: '8px 16px', backgroundColor: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: materialUploading ? 'not-allowed' : 'pointer', fontWeight: 500 }}
-          >
-            {materialUploading ? 'Uploading…' : 'Upload Material'}
-          </button>
-          {materialUploadFeedback.message && (
-            <div className={materialUploadFeedback.type} style={{ marginTop: 10, fontSize: 14 }}>
-              {materialUploadFeedback.message}
-            </div>
+                ) : transcriptData.status === 'failed' ? (
+                  <div>
+                    <div style={{ color: '#c62828', marginBottom: '10px', fontSize: '13px' }}>
+                      {transcriptData.error_message || 'Transcript failed.'}
+                    </div>
+                    {(processingStatus?.state != null && processingStatus.state !== '') ? (
+                      <button
+                        type="button"
+                        onClick={retryProcessing}
+                        disabled={processingRetrying}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '13px',
+                          backgroundColor: '#2196F3',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: processingRetrying ? 'not-allowed' : 'pointer',
+                          margin: 0
+                        }}
+                      >
+                        {processingRetrying ? 'Retrying…' : 'Retry now'}
+                      </button>
+                    ) : ingestionStatus?.meeting_uuid ? (
+                      <button
+                        type="button"
+                        onClick={retryIngestion}
+                        disabled={ingestionRetrying}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '13px',
+                          backgroundColor: '#2196F3',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: ingestionRetrying ? 'not-allowed' : 'pointer',
+                          margin: 0
+                        }}
+                      >
+                        {ingestionRetrying ? 'Retrying…' : 'Retry import'}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : transcriptData.status === 'ready' && transcriptData.segments?.length > 0 ? (
+                  <div>
+                    {transcriptData.segments.map((seg) => {
+                      const mmSs = (ms) => {
+                        const m = Math.floor(ms / 60000)
+                        const s = Math.floor((ms % 60000) / 1000)
+                        return `${m}:${s.toString().padStart(2, '0')}`
+                      }
+                      return (
+                        <div key={seg.idx} style={{ marginBottom: '10px', padding: '6px 0', borderBottom: '1px solid #eee' }}>
+                          <span style={{ fontSize: '11px', color: '#666', marginRight: '8px' }}>
+                            {mmSs(seg.start_ms)}–{mmSs(seg.end_ms)}
+                          </span>
+                          <span style={{ fontSize: '13px' }}>{seg.text}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : transcriptData.status === 'ready' ? (
+                  <div style={{ color: '#666', fontStyle: 'italic', fontSize: '13px' }}>Transcript ready (no segments).</div>
+                ) : null}
+              </div>
+            )}
+          </div>
+          </>
           )}
         </div>
-      )}
 
-      {/* Session videos: primary + additional with "Set as Primary" for creator */}
-      {(currentSession?.primary_video || (currentSession?.additional_videos?.length > 0) || (currentSession?.video_sources?.length > 1)) && setPrimaryVideoSource && (
-        <div className="section" style={{ marginBottom: 16 }}>
-          <h3 style={{ margin: '0 0 8px 0', fontSize: 14 }}>Presentation video</h3>
-          <div style={{ fontSize: 13 }}>
-            {(() => {
-              const primary = currentSession?.primary_video ?? currentSession?.video_sources?.[0]
-              const additional = currentSession?.additional_videos ?? (currentSession?.video_sources?.length > 1 ? currentSession.video_sources.slice(1) : [])
-              const videoDisplayName = (v) => {
-                try { if (v?.original_url) return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() || v.provider || 'Video' } catch (_) {}
-                if (v?.stored_video_object_key) return v.stored_video_object_key.split('/').filter(Boolean).pop() || v.provider || 'Video'
-                return v?.provider || 'Video'
-              }
-              return (
-                <>
-                  {primary && (
-                    <div style={{ marginBottom: 6 }}>
-                      <span style={{ fontWeight: 600 }}>Primary:</span> {videoDisplayName(primary)} {primary.transcript_status === 'ready' ? '(Ready)' : ''}
-                    </div>
-                  )}
-                  {additional?.length > 0 && (
-                    <div style={{ marginTop: 6 }}>
-                      {additional.map((v) => (
-                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <span>{videoDisplayName(v)} {v.transcript_status === 'ready' ? '(Ready)' : ''}</span>
-                          <button
-                            type="button"
-                            onClick={() => setPrimaryVideoSource(v.id)}
-                            style={{ padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}
-                          >
-                            Set as Primary
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )
-            })()}
-          </div>
-        </div>
-      )}
-
-      {/* Materials list (above Share Session) */}
-      {currentSession?.materials && currentSession.materials.length > 0 && (
-        <MaterialsList
-          materials={currentSession.materials}
-          sessionId={sessionId}
-          apiBaseUrl={apiBaseUrl}
-          refetchSession={refetchSession}
-        />
-      )}
-
-      {/* Session links: add URLs for RAG and citations */}
-      {sessionId && (
-        <SessionLinksSection
-          sessionId={sessionId}
-          links={currentSession?.links}
-          apiBaseUrl={apiBaseUrl}
-          refetchSession={refetchSession}
-        />
-      )}
-
-      {/* Q&A History with Answer Input – thread tree matches participant view (roots then nested replies) */}
-      <div className="section">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '10px' }}>
-          <h2 style={{ margin: 0 }}>Participant Questions</h2>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {debugMode && (
-              <button 
-                onClick={createMockQuestion} 
-                disabled={mockQuestionLoading || loading || !currentSession?.session?.id}
-                style={{ 
-                  backgroundColor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? '#ccc' : '#9c27b0', 
-                  color: 'white',
-                  padding: '8px 16px',
-                  borderRadius: '4px',
-                  border: 'none',
-                  cursor: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'not-allowed' : 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '14px',
-                  boxShadow: (mockQuestionLoading || loading || !currentSession?.session?.id) ? 'none' : '0 2px 4px rgba(0,0,0,0.2)',
-                  transition: 'all 0.2s'
-                }}
-                title={!currentSession?.session?.id ? 'Please select a session first' : 'Create a mock question to test WebSocket functionality (not persisted to database)'}
-              >
-                {mockQuestionLoading ? 'Creating...' : '🧪 Test WebSocket'}
+        {/* ===== RIGHT PANEL: Q&A ===== */}
+        <div className={`creator-right-panel${rightPanelCollapsed ? ' collapsed' : ''}`}>
+          <div className="creator-panel-header">
+            <button type="button" onClick={() => setRightPanelCollapsed(v => !v)} className="creator-panel-toggle-inner">
+              <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: rightPanelCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }}>›</span>
+              {!rightPanelCollapsed && (
+                <span style={{ marginLeft: '6px' }}>
+                  Q&A{questions.length > 0 ? ` (${questions.length})` : ''}
+                  {unreadQuestionIds.length > 0 && <span style={{ marginLeft: '4px', display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#f44336', verticalAlign: 'middle' }} />}
+                </span>
+              )}
+            </button>
+            {!rightPanelCollapsed && debugMode && (
+              <button onClick={createMockQuestion} disabled={mockQuestionLoading || loading || !currentSession?.session?.id} style={{ fontSize: '11px', padding: '2px 6px', marginLeft: 'auto', margin: '0 0 0 auto' }}>
+                {mockQuestionLoading ? '…' : '🧪'}
               </button>
             )}
           </div>
-        </div>
-        {(questions.length > 0) && (
-          <div style={{ marginBottom: '10px', fontSize: '14px', color: '#666' }}>
-            {questions.length} question{questions.length !== 1 ? 's' : ''} from participants
-          </div>
-        )}
-        
-        {creatorRoots.length === 0 ? (
-          <div className="info">No questions yet from participants.</div>
-        ) : (
-          <div>
-            {(() => {
-              const renderList = (roots, byParent, depth = 0) => (roots || []).map((q) => {
-                const isExpanded = questionCardsExpanded[q.id] === true
-                const hasReplies = (byParent[q.id]?.length ?? 0) > 0
-                const showReplies = isExpanded && hasReplies
-                return (
-                  <div key={q.id} style={{ marginBottom: depth === 0 ? '8px' : 0 }}>
-                    <div style={{
-                      marginBottom: '20px',
-                      padding: '15px',
-                      border: '1px solid #ddd',
-                      borderRadius: '5px',
-                      backgroundColor: q.answer ? '#f9f9f9' : '#fff',
-                      ...(depth > 0 && { marginLeft: 28, borderLeft: '3px solid #90caf9' })
-                    }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuestionCardsExpanded((prev) => {
-                        const next = { ...prev, [q.id]: !prev[q.id] }
-                        if (!prev[q.id] && next[q.id] && markQuestionViewed) {
-                          const sid = currentSession?.session?.id || currentSession?.id
-                          if (sid) markQuestionViewed(sid, q.id)
-                        }
-                        return next
-                      })
-                    }}
-                    aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                    style={{
-                      flexShrink: 0,
-                      marginTop: '2px',
-                      padding: '2px 6px',
-                      fontSize: '12px',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      color: '#666'
-                    }}
-                  >
-                    {isExpanded ? '▼' : '▶'}
-                  </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    {!isExpanded ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
-                        {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                          <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
-                        )}
-                      </div>
-                    ) : (
-                      <>
-                <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  Q: {q.question_text}
-                  {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
-                  )}
+          {!rightPanelCollapsed && (
+            <div className="creator-qa-scroll">
+              {questions.length > 0 && (
+                <div style={{ padding: '4px 12px', fontSize: '12px', color: '#666', borderBottom: '1px solid #e0e0e0' }}>
+                  {questions.length} question{questions.length !== 1 ? 's' : ''}
                 </div>
-                <div style={{ fontSize: '11px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
-                  Asked: {new Date(q.created_at).toLocaleString()}
-                  {' · asked by '}
-                  {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
-                  {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-                    <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
-                      | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
-                    </span>
-                  )}
-                </div>
-                
-                {q.answer ? (
-                  <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
-                    <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
-                    <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-                      <div style={{ marginBottom: '5px' }}>
-                        From: <span style={{ fontWeight: 'bold' }}>
-                          {q.answer.model && q.answer.model !== 'manual'
-                            ? 'System Generated'
-                            : (q.answer.answered_by_display_name ?? q.answer.answered_by ?? currentSession?.created_by_display_name ?? '—')}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '5px' }}>
-                        <span>
-                          Status: <span style={{ 
-                            color: q.answer.answer_status === 'answered' ? '#4CAF50' : 
-                                   q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
-                            fontWeight: 'bold'
-                          }}>{q.answer.answer_status}</span>
-                        </span>
-                        {q.answer.model !== 'manual' && q.answer.confidence !== undefined && q.answer.confidence !== null && (
-                          <span>
-                            Confidence: <span style={{ fontWeight: 'bold' }}>{(q.answer.confidence * 100).toFixed(1)}%</span>
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
-                        {q.answer && q.answer.answer_status === 'answered' && q.answer.model !== 'manual' && (
-                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={q.answer.confirmed || false}
-                              disabled={confirmingAnswerId === q.answer.id}
-                              onChange={async (e) => {
-                                const sessionId = currentSession?.session?.id || currentSession?.id
-                                const answerId = q.answer?.id
-                                if (!sessionId || !answerId) return
-                                const confirmed = e.target.checked
-                                setConfirmingAnswerId(answerId)
-                                try {
-                                  const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`, {
-                                    method: 'PATCH',
-                                    credentials: 'include',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ confirmed })
+              )}
+              {creatorRoots.length === 0 ? (
+                <div className="info" style={{ margin: '12px', fontSize: '13px' }}>No questions yet from participants.</div>
+              ) : (
+                <div>
+                  {(() => {
+                    const renderList = (roots, byParent, depth = 0) => (roots || []).map((q) => {
+                      const isExpanded = questionCardsExpanded[q.id] === true
+                      const hasReplies = (byParent[q.id]?.length ?? 0) > 0
+                      const showReplies = isExpanded && hasReplies
+                      return (
+                        <div key={q.id} style={{ marginBottom: depth === 0 ? '8px' : 0 }}>
+                          <div style={{
+                            marginBottom: '20px',
+                            padding: '15px',
+                            border: '1px solid #ddd',
+                            borderRadius: '5px',
+                            backgroundColor: q.answer ? '#f9f9f9' : '#fff',
+                            ...(depth > 0 && { marginLeft: 28, borderLeft: '3px solid #90caf9' })
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setQuestionCardsExpanded((prev) => {
+                                    const next = { ...prev, [q.id]: !prev[q.id] }
+                                    if (!prev[q.id] && next[q.id] && markQuestionViewed) {
+                                      const sid = currentSession?.session?.id || currentSession?.id
+                                      if (sid) markQuestionViewed(sid, q.id)
+                                    }
+                                    return next
                                   })
-                                  if (res.ok && fetchSessionQuestions) fetchSessionQuestions(sessionId)
-                                } finally {
-                                  setConfirmingAnswerId(null)
-                                }
-                              }}
-                            />
-                            <span>
-                              {q.answer.confirmed ? (
-                                <span style={{ color: '#2e7d32' }} title="Verified">✓</span>
-                              ) : (
-                                <span style={{ color: '#c62828' }} title="Not verified">✕</span>
-                              )}
-                              <span style={{ marginLeft: '4px' }}>{q.answer.confirmed ? 'Verified' : 'Verify this answer'}</span>
-                            </span>
-                          </label>
-                        )}
-                        {answeringQuestionId !== q.id && (
-                          <button
-                            type="button"
-                            onClick={() => startAnswering(q.id, q.answer)}
-                            style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: '#1565c0', backgroundColor: '#e3f2fd', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer' }}
-                          >
-                            {q.answer ? 'Replace answer' : 'Answer'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
-                    No answer yet
-                    {answeringQuestionId !== q.id && (
-                      <button 
-                        onClick={() => startAnswering(q.id)}
-                        style={{ marginLeft: '10px', fontSize: '12px', padding: '4px 8px' }}
-                      >
-                        Answer This Question
-                      </button>
-                    )}
-                  </div>
-                )}
+                                }}
+                                aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                                style={{
+                                  flexShrink: 0,
+                                  marginTop: '2px',
+                                  padding: '2px 6px',
+                                  fontSize: '12px',
+                                  background: 'none',
+                                  border: 'none',
+                                  cursor: 'pointer',
+                                  color: '#666',
+                                  margin: 0
+                                }}
+                              >
+                                {isExpanded ? '▼' : '▶'}
+                              </button>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {!isExpanded ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
+                                    {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
+                                      <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                      Q: {q.question_text}
+                                      {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
+                                      Asked: {new Date(q.created_at).toLocaleString()}
+                                      {' · asked by '}
+                                      {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
+                                      {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
+                                        <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
+                                          | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
+                                        </span>
+                                      )}
+                                    </div>
 
-                {/* Answer Input Form */}
-                {answeringQuestionId === q.id ? (
-                  <div style={{ marginTop: '15px', padding: '15px', border: '2px solid #2196F3', borderRadius: '5px', backgroundColor: '#f0f8ff' }}>
-                    <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>
-                      {q.answer ? 'Replace answer' : 'Your answer'}
-                    </div>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
-                      <button
-                        onClick={toggleAnswerVoiceRecording}
-                        disabled={loading || answerSubmitting || answerVoiceUploading}
-                        type="button"
-                        style={{
-                          marginTop: 0,
-                          backgroundColor: answerVoiceRecording ? '#d32f2f' : '#1976D2',
-                          padding: '8px 12px'
-                        }}
-                      >
-                        {answerVoiceRecording ? 'Stop Mic' : (answerVoiceUploading ? 'Processing…' : 'Mic')}
-                      </button>
-                      <div style={{ fontSize: '13px', color: answerVoiceRecording ? '#d32f2f' : '#666' }}>
-                        {answerVoiceRecording ? 'Listening…' : answerVoiceUploading ? 'Processing…' : ''}
-                      </div>
-                    </div>
-                    {answerVoiceFeedback.message && (
-                      <div className={answerVoiceFeedback.type} style={{ marginBottom: '10px' }}>
-                        {answerVoiceFeedback.message}
-                      </div>
-                    )}
-                    
-                    {showAnswerVoiceConfirm ? (
-                      <div style={{ marginBottom: '10px' }}>
-                        <div style={{ fontWeight: 600, marginBottom: '8px' }}>Review transcription:</div>
-                        <textarea
-                          value={answerVoiceTranscribedText}
-                          onChange={(e) => setAnswerVoiceTranscribedText(e.target.value)}
-                          rows={3}
-                          style={{ width: '100%', marginBottom: '10px' }}
-                        />
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <button
-                            onClick={confirmAnswerVoice}
-                            disabled={!answerVoiceTranscribedText.trim() || loading || answerSubmitting}
-                            style={{ marginTop: 0 }}
-                          >
-                            Confirm & Submit
-                          </button>
-                          <button
-                            onClick={() => { setShowAnswerVoiceConfirm(false); setAnswerVoiceTranscribedText('') }}
-                            disabled={loading || answerSubmitting}
-                            style={{ marginTop: 0, backgroundColor: '#757575' }}
-                          >
-                            Cancel
-                          </button>
+                                    {q.answer ? (
+                                      <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
+                                        <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
+                                        <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+                                          <div style={{ marginBottom: '5px' }}>
+                                            From: <span style={{ fontWeight: 'bold' }}>
+                                              {q.answer.model && q.answer.model !== 'manual'
+                                                ? 'System Generated'
+                                                : (q.answer.answered_by_display_name ?? q.answer.answered_by ?? currentSession?.created_by_display_name ?? '—')}
+                                            </span>
+                                          </div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '5px' }}>
+                                            <span>
+                                              Status: <span style={{
+                                                color: q.answer.answer_status === 'answered' ? '#4CAF50' :
+                                                       q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
+                                                fontWeight: 'bold'
+                                              }}>{q.answer.answer_status}</span>
+                                            </span>
+                                            {q.answer.model !== 'manual' && q.answer.confidence !== undefined && q.answer.confidence !== null && (
+                                              <span>
+                                                Confidence: <span style={{ fontWeight: 'bold' }}>{(q.answer.confidence * 100).toFixed(1)}%</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+                                            {q.answer && q.answer.answer_status === 'answered' && q.answer.model !== 'manual' && (
+                                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: confirmingAnswerId === q.answer.id ? 'wait' : 'pointer' }}>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={q.answer.confirmed || false}
+                                                  disabled={confirmingAnswerId === q.answer.id}
+                                                  onChange={async (e) => {
+                                                    const sessionId = currentSession?.session?.id || currentSession?.id
+                                                    const answerId = q.answer?.id
+                                                    if (!sessionId || !answerId) return
+                                                    const confirmed = e.target.checked
+                                                    setConfirmingAnswerId(answerId)
+                                                    try {
+                                                      const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`, {
+                                                        method: 'PATCH',
+                                                        credentials: 'include',
+                                                        headers: { 'Content-Type': 'application/json' },
+                                                        body: JSON.stringify({ confirmed })
+                                                      })
+                                                      if (res.ok && fetchSessionQuestions) fetchSessionQuestions(sessionId)
+                                                    } finally {
+                                                      setConfirmingAnswerId(null)
+                                                    }
+                                                  }}
+                                                />
+                                                <span>
+                                                  {q.answer.confirmed ? (
+                                                    <span style={{ color: '#2e7d32' }} title="Verified">✓</span>
+                                                  ) : (
+                                                    <span style={{ color: '#c62828' }} title="Not verified">✕</span>
+                                                  )}
+                                                  <span style={{ marginLeft: '4px' }}>{q.answer.confirmed ? 'Verified' : 'Verify this answer'}</span>
+                                                </span>
+                                              </label>
+                                            )}
+                                            {answeringQuestionId !== q.id && (
+                                              <button
+                                                type="button"
+                                                onClick={() => startAnswering(q.id, q.answer)}
+                                                style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: '#1565c0', backgroundColor: '#e3f2fd', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer', margin: 0 }}
+                                              >
+                                                {q.answer ? 'Replace answer' : 'Answer'}
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div style={{ marginTop: '10px', padding: '10px', backgroundColor: '#fff3cd', borderRadius: '3px', fontSize: '13px' }}>
+                                        No answer yet
+                                        {answeringQuestionId !== q.id && (
+                                          <button
+                                            onClick={() => startAnswering(q.id)}
+                                            style={{ marginLeft: '10px', fontSize: '12px', padding: '4px 8px' }}
+                                          >
+                                            Answer This Question
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Answer Input Form */}
+                                    {answeringQuestionId === q.id ? (
+                                      <div style={{ marginTop: '15px', padding: '15px', border: '2px solid #2196F3', borderRadius: '5px', backgroundColor: '#f0f8ff' }}>
+                                        <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>
+                                          {q.answer ? 'Replace answer' : 'Your answer'}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
+                                          <button
+                                            onClick={toggleAnswerVoiceRecording}
+                                            disabled={loading || answerSubmitting || answerVoiceUploading}
+                                            type="button"
+                                            style={{
+                                              marginTop: 0,
+                                              backgroundColor: answerVoiceRecording ? '#d32f2f' : '#1976D2',
+                                              padding: '8px 12px'
+                                            }}
+                                          >
+                                            {answerVoiceRecording ? 'Stop Mic' : (answerVoiceUploading ? 'Processing…' : 'Mic')}
+                                          </button>
+                                          <div style={{ fontSize: '13px', color: answerVoiceRecording ? '#d32f2f' : '#666' }}>
+                                            {answerVoiceRecording ? 'Listening…' : answerVoiceUploading ? 'Processing…' : ''}
+                                          </div>
+                                        </div>
+                                        {answerVoiceFeedback.message && (
+                                          <div className={answerVoiceFeedback.type} style={{ marginBottom: '10px' }}>
+                                            {answerVoiceFeedback.message}
+                                          </div>
+                                        )}
+
+                                        {showAnswerVoiceConfirm ? (
+                                          <div style={{ marginBottom: '10px' }}>
+                                            <div style={{ fontWeight: 600, marginBottom: '8px' }}>Review transcription:</div>
+                                            <textarea
+                                              value={answerVoiceTranscribedText}
+                                              onChange={(e) => setAnswerVoiceTranscribedText(e.target.value)}
+                                              rows={3}
+                                              style={{ width: '100%', marginBottom: '10px' }}
+                                            />
+                                            <div style={{ display: 'flex', gap: '10px' }}>
+                                              <button
+                                                onClick={confirmAnswerVoice}
+                                                disabled={!answerVoiceTranscribedText.trim() || loading || answerSubmitting}
+                                                style={{ marginTop: 0 }}
+                                              >
+                                                Confirm & Submit
+                                              </button>
+                                              <button
+                                                onClick={() => { setShowAnswerVoiceConfirm(false); setAnswerVoiceTranscribedText('') }}
+                                                disabled={loading || answerSubmitting}
+                                                style={{ marginTop: 0, backgroundColor: '#757575' }}
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <textarea
+                                              value={answerText}
+                                              onChange={(e) => setAnswerText(e.target.value)}
+                                              placeholder="Type your answer here..."
+                                              rows={4}
+                                              style={{ width: '100%', marginBottom: '10px' }}
+                                            />
+                                            <div style={{ marginBottom: '10px' }}>
+                                              <label style={{ marginRight: '10px' }}>Status:</label>
+                                              <select
+                                                value={answerStatus}
+                                                onChange={(e) => setAnswerStatus(e.target.value)}
+                                                style={{ padding: '4px 8px' }}
+                                              >
+                                                <option value="answered">Answered</option>
+                                                <option value="not_covered">Not Covered</option>
+                                                <option value="error">Error</option>
+                                              </select>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '10px' }}>
+                                              <button
+                                                onClick={() => submitAnswer(answerText)}
+                                                disabled={!answerText.trim() || loading || answerSubmitting}
+                                                style={{ marginTop: 0 }}
+                                              >
+                                                Submit Answer
+                                              </button>
+                                              <button
+                                                onClick={cancelAnswering}
+                                                disabled={loading || answerSubmitting}
+                                                style={{ marginTop: 0, backgroundColor: '#757575' }}
+                                              >
+                                                Cancel
+                                              </button>
+                                            </div>
+                                          </>
+                                        )}
+
+                                        {answerFeedback.message && (
+                                          <div className={answerFeedback.type} style={{ marginTop: '10px' }}>
+                                            {answerFeedback.message}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : null}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          {showReplies && (
+                            <div style={{ paddingLeft: '28px', borderLeft: '2px solid #e0e0e0', marginTop: '4px' }}>
+                              {renderList(byParent[q.id], byParent, depth + 1)}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <>
-                        <textarea
-                          value={answerText}
-                          onChange={(e) => setAnswerText(e.target.value)}
-                          placeholder="Type your answer here..."
-                          rows={4}
-                          style={{ width: '100%', marginBottom: '10px' }}
-                        />
-                        <div style={{ marginBottom: '10px' }}>
-                          <label style={{ marginRight: '10px' }}>Status:</label>
-                          <select 
-                            value={answerStatus} 
-                            onChange={(e) => setAnswerStatus(e.target.value)}
-                            style={{ padding: '4px 8px' }}
-                          >
-                            <option value="answered">Answered</option>
-                            <option value="not_covered">Not Covered</option>
-                            <option value="error">Error</option>
-                          </select>
-                        </div>
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                          <button
-                            onClick={() => submitAnswer(answerText)}
-                            disabled={!answerText.trim() || loading || answerSubmitting}
-                            style={{ marginTop: 0 }}
-                          >
-                            Submit Answer
-                          </button>
-                          <button
-                            onClick={cancelAnswering}
-                            disabled={loading || answerSubmitting}
-                            style={{ marginTop: 0, backgroundColor: '#757575' }}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </>
-                    )}
-                    
-                    {answerFeedback.message && (
-                      <div className={answerFeedback.type} style={{ marginTop: '10px' }}>
-                        {answerFeedback.message}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-                      </>
-                    )}
-                  </div>
+                      )
+                    })
+                    return renderList(creatorRoots, creatorByParent, 0)
+                  })()}
                 </div>
+              )}
+              {answerFeedback.message && (
+                <div className={answerFeedback.type} style={{ margin: '0 12px 12px' }}>
+                  {answerFeedback.message}
                 </div>
-                    {showReplies && (
-                      <div style={{ paddingLeft: '28px', borderLeft: '2px solid #e0e0e0', marginTop: '4px' }}>
-                        {renderList(byParent[q.id], byParent, depth + 1)}
-                      </div>
-                    )}
-                  </div>
-                )
-              })
-              return renderList(creatorRoots, creatorByParent, 0)
-            })()}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
+
       </div>
     </>
   )

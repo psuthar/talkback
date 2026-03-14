@@ -4,10 +4,8 @@ import { QAHistory } from '../components/QAHistory'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
-import { SlideDeckViewer } from '../components/SlideDeckViewer'
-import mammoth from 'mammoth'
+import { DocumentViewer } from '../components/DocumentViewer'
 import { getDefaultApiBaseUrl } from '../config'
-import { getMaterialTypeLabel } from '../utils/materialIcons'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
@@ -63,7 +61,8 @@ export function ParticipantMode({
   currentAskerName,
   onCitationClick,
   onClearSession,
-  stanceVersion = 0
+  stanceVersion = 0,
+  sessionInvitations = []
 }) {
   const hasSession = currentSession && currentSession.session
 
@@ -95,6 +94,8 @@ export function ParticipantMode({
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
+  const [contextPanelExpanded, setContextPanelExpanded] = useState(true)
+  const [membersPanelExpanded, setMembersPanelExpanded] = useState(true)
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
@@ -758,6 +759,101 @@ export function ParticipantMode({
           className={`participant-materials-panel ${materialsCollapsed ? 'materials-panel-collapsed' : 'materials-panel-expanded'}`}
           aria-expanded={!materialsCollapsed}
         >
+          {!materialsCollapsed && (
+            <>
+              {/* Context: read-only Premise, Decision, Outcome */}
+              {(currentSession?.session?.premise || currentSession?.session?.primary_decision || currentSession?.session?.decision_outcome) && (
+                <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+                  <button
+                    type="button"
+                    onClick={() => setContextPanelExpanded((e) => !e)}
+                    aria-expanded={contextPanelExpanded}
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '4px 0',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontSize: '13px',
+                      fontWeight: 'bold',
+                      color: '#2e7d32'
+                    }}
+                  >
+                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: contextPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                    Context
+                  </button>
+                  {contextPanelExpanded && (
+                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#333' }}>
+                      {currentSession.session.premise && (
+                        <div style={{ marginBottom: '10px' }}>
+                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Premise</div>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.premise}</div>
+                        </div>
+                      )}
+                      {currentSession.session.primary_decision && (
+                        <div style={{ marginBottom: '10px' }}>
+                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Primary Decision</div>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.primary_decision}</div>
+                        </div>
+                      )}
+                      {currentSession.session.decision_outcome && (
+                        <div>
+                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Decision Outcome</div>
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.decision_outcome}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Members: read-only list of invited members */}
+              <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+                <button
+                  type="button"
+                  onClick={() => setMembersPanelExpanded((e) => !e)}
+                  aria-expanded={membersPanelExpanded}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 0',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    color: '#2e7d32'
+                  }}
+                >
+                  <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: membersPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                  Members{Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
+                </button>
+                {membersPanelExpanded && (
+                  <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                    {Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? (
+                      <ul style={{ margin: 0, paddingLeft: '18px', color: '#333' }}>
+                        {sessionInvitations.map((inv) => (
+                          <li key={inv.id} style={{ marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 500 }}>{inv.invited_email}</span>
+                            <span style={{ color: '#666', marginLeft: '4px' }}>({inv.invited_role || 'participant'}, {inv.status})</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div style={{ color: '#666', fontStyle: 'italic' }}>No invited members listed.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <MaterialsTreePanel
             session={currentSession}
             selectedVideo={selectedVideo}
@@ -784,7 +880,7 @@ export function ParticipantMode({
         <main className="participant-video-stage">
           <div style={{ padding: '12px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
             {selectedDocument ? (
-              <ParticipantDocumentView
+              <DocumentViewer
                 doc={selectedDocument}
                 apiBaseUrl={apiBaseUrl}
                 sessionId={currentSession?.session?.id || currentSession?.id}
@@ -888,277 +984,3 @@ export function ParticipantMode({
   )
 }
 
-// Match backend MaterialChunkSize / MaterialChunkOverlap for block highlighting
-const MATERIAL_CHUNK_SIZE = 1200
-const MATERIAL_CHUNK_OVERLAP = 150
-
-function chunkTextForDisplay(text, chunkSize = MATERIAL_CHUNK_SIZE, overlap = MATERIAL_CHUNK_OVERLAP) {
-  const t = (text || '').trim()
-  if (t.length <= chunkSize) return [t]
-  const chunks = []
-  let start = 0
-  while (start < t.length) {
-    let end = start + chunkSize
-    if (end > t.length) end = t.length
-    chunks.push(t.slice(start, end))
-    if (end >= t.length) break
-    start = end - overlap
-  }
-  return chunks
-}
-
-function ParticipantDocumentView({ doc, apiBaseUrl, sessionId, initialPage, initialBlock }) {
-  const contentRef = useRef(null)
-  const blockRefs = useRef([])
-  const [docxHtml, setDocxHtml] = useState(null)
-  const [docxLoading, setDocxLoading] = useState(false)
-  const [docxError, setDocxError] = useState(null)
-
-  const isTranscript = doc?.type === 'transcript'
-  const isLink = doc?.type === 'link'
-  const title = isTranscript ? (doc?.title || 'Transcript') : isLink ? (doc?.title || doc?.url || 'Link') : (doc?.filename || doc?.title || 'Document')
-  const meta = isTranscript ? 'Transcript' : isLink ? 'Link' : (getMaterialTypeLabel(doc) || doc?.content_type || '')
-  const bodyText = isTranscript ? (doc?.text || '') : (doc?.extracted_text ?? '')
-  const contentType = (doc?.content_type || '').toLowerCase()
-  const fn = (doc?.filename || '').toLowerCase()
-  const isPdf = !isTranscript && !isLink && contentType.includes('pdf')
-  const isDocx = !isTranscript && !isLink && (
-    contentType.includes('wordprocessingml') || contentType.includes('msword') ||
-    fn.endsWith('.docx') || fn.endsWith('.doc')
-  )
-  const storageUrl = !isTranscript && !isLink && doc?.storage_url
-  const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg']
-  const isImage = !isTranscript && !isLink && (
-    contentType.startsWith('image/') ||
-    imageExts.some(e => fn.endsWith(e))
-  )
-  const baseMaterialFileUrl = apiBaseUrl && doc?.artifact_id && doc?.id && !isTranscript && !isLink
-    ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
-    : null
-  const materialFileUrl = baseMaterialFileUrl && (initialPage != null && initialPage >= 1)
-    ? `${baseMaterialFileUrl}#page=${Number(initialPage)}`
-    : baseMaterialFileUrl
-
-  // Load .docx and convert to HTML for formatted display
-  useEffect(() => {
-    if (!isDocx || !baseMaterialFileUrl) {
-      setDocxHtml(null)
-      setDocxError(null)
-      return
-    }
-    let cancelled = false
-    setDocxLoading(true)
-    setDocxError(null)
-    setDocxHtml(null)
-    fetch(baseMaterialFileUrl)
-      .then(res => res.arrayBuffer())
-      .then(arrayBuffer => mammoth.convertToHtml({ arrayBuffer }))
-      .then(({ value }) => {
-        if (!cancelled) setDocxHtml(value)
-      })
-      .catch(err => {
-        if (!cancelled) setDocxError(err?.message || 'Failed to load formatted view')
-      })
-      .finally(() => {
-        if (!cancelled) setDocxLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [isDocx, baseMaterialFileUrl, doc?.id])
-
-  // For text-based docs (Office, etc.): chunk and scroll/highlight block when opened from citation with block index
-  const textChunks = (bodyText && initialBlock != null && !isPdf && !isImage && !docxHtml)
-    ? chunkTextForDisplay(bodyText)
-    : null
-
-  useEffect(() => {
-    if (initialBlock == null || !contentRef.current || !Array.isArray(textChunks) || initialBlock < 0 || initialBlock >= textChunks.length) return
-    const el = blockRefs.current[initialBlock]
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }, [initialBlock, textChunks?.length])
-
-  if (doc?.kind === 'slides' && sessionId && doc?.id) {
-    return (
-      <SlideDeckViewer
-        apiBaseUrl={apiBaseUrl}
-        sessionId={sessionId}
-        materialId={doc.id}
-        artifactId={doc.artifact_id}
-        initialSlide={initialPage}
-      />
-    )
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <header style={{
-        flexShrink: 0,
-        padding: '8px 0 12px',
-        borderBottom: '1px solid #e0e0e0',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '12px'
-      }}>
-        <h2 style={{ margin: 0, fontSize: '16px', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {title}
-        </h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-          {isLink && doc?.url && (
-            <a
-              href={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ fontSize: '13px', color: '#1976d2', whiteSpace: 'nowrap' }}
-            >
-              Open in new tab
-            </a>
-          )}
-          {meta && (
-            <span style={{ fontSize: '12px', color: '#666' }}>{meta}</span>
-          )}
-        </div>
-      </header>
-      <div style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'auto',
-        padding: '16px 0 0'
-      }}>
-        {isLink && doc?.url ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
-            <iframe
-              src={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
-              title={title}
-              style={{
-                width: '100%',
-                flex: 1,
-                minHeight: '60vh',
-                border: '1px solid #e0e0e0',
-                borderRadius: '4px'
-              }}
-            />
-            <p style={{ fontSize: '12px', color: '#666', margin: 0 }}>
-              Some sites block embedding. If the page does not load, use &quot;Open in new tab&quot; above.
-            </p>
-          </div>
-        ) : isImage && materialFileUrl ? (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
-            <img
-              src={materialFileUrl}
-              alt={title}
-              style={{ maxWidth: '100%', height: 'auto', borderRadius: '8px', border: '1px solid #e0e0e0' }}
-            />
-          </div>
-        ) : isPdf && materialFileUrl ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <iframe
-              src={materialFileUrl}
-              title={title}
-              style={{
-                width: '100%',
-                flex: 1,
-                minHeight: '60vh',
-                border: '1px solid #e0e0e0',
-                borderRadius: '4px'
-              }}
-            />
-            {bodyText && (
-              <details style={{ marginTop: '12px' }}>
-                <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Extracted text</summary>
-                <div style={{
-                  marginTop: '8px',
-                  padding: '12px',
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  whiteSpace: 'pre-wrap',
-                  maxHeight: '300px',
-                  overflowY: 'auto'
-                }}>
-                  {bodyText}
-                </div>
-              </details>
-            )}
-          </div>
-        ) : isPdf && storageUrl && (storageUrl.startsWith('http') || storageUrl.startsWith('blob')) ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <iframe
-              src={initialPage != null && initialPage >= 1 ? `${storageUrl}#page=${Number(initialPage)}` : storageUrl}
-              title={title}
-              style={{
-                width: '100%',
-                flex: 1,
-                minHeight: '60vh',
-                border: '1px solid #e0e0e0',
-                borderRadius: '4px'
-              }}
-            />
-            {bodyText && (
-              <details style={{ marginTop: '12px' }}>
-                <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Extracted text</summary>
-                <div style={{
-                  marginTop: '8px',
-                  padding: '12px',
-                  backgroundColor: '#f5f5f5',
-                  borderRadius: '4px',
-                  fontSize: '14px',
-                  whiteSpace: 'pre-wrap',
-                  maxHeight: '300px',
-                  overflowY: 'auto'
-                }}>
-                  {bodyText}
-                </div>
-              </details>
-            )}
-          </div>
-        ) : isDocx && docxHtml ? (
-          <div
-            className="docx-rendered"
-            style={{ fontSize: '14px', lineHeight: 1.6 }}
-            dangerouslySetInnerHTML={{ __html: docxHtml }}
-          />
-        ) : isDocx && docxLoading ? (
-          <div style={{ padding: '24px', color: '#666' }}>Loading document…</div>
-        ) : textChunks && textChunks.length > 0 ? (
-          <div ref={contentRef} style={{
-            flex: 1,
-            minHeight: 0,
-            overflow: 'auto',
-            fontSize: '14px',
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap',
-            fontFamily: 'inherit'
-          }}>
-            {textChunks.map((chunk, i) => (
-              <div
-                key={i}
-                ref={(el) => { blockRefs.current[i] = el }}
-                data-block-index={i}
-                style={{
-                  marginBottom: '1em',
-                  padding: initialBlock === i ? '10px 12px' : '6px 0',
-                  borderRadius: 4,
-                  backgroundColor: initialBlock === i ? 'rgba(33, 150, 243, 0.08)' : 'transparent',
-                  borderLeft: initialBlock === i ? '3px solid #2196F3' : '3px solid transparent'
-                }}
-              >
-                {chunk}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{
-            fontSize: '14px',
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap',
-            fontFamily: 'inherit'
-          }}>
-            {bodyText || (isTranscript ? 'No transcript text.' : 'No extracted text for this document.')}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}

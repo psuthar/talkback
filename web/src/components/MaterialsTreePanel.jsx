@@ -23,41 +23,76 @@ function TreeSection({ title, children }) {
   )
 }
 
-function TreeItem({ icon, title, meta, selected, onClick }) {
+function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       style={{
-        width: '100%',
-        textAlign: 'left',
-        padding: '8px 10px',
-        marginBottom: '2px',
-        border: 'none',
-        borderRadius: '4px',
-        background: selected ? '#e8f5e9' : 'transparent',
-        cursor: 'pointer',
-        fontSize: '13px',
         display: 'flex',
         alignItems: 'center',
-        gap: '8px',
-        color: '#1a1a1a'
+        marginBottom: '2px',
+        borderRadius: '4px',
+        background: selected ? '#e8f5e9' : 'transparent',
       }}
       onMouseEnter={(e) => {
         if (!selected) e.currentTarget.style.background = '#f0f0f0'
       }}
       onMouseLeave={(e) => {
-        if (!selected) e.currentTarget.style.background = 'transparent'
+        if (!selected) e.currentTarget.style.background = selected ? '#e8f5e9' : 'transparent'
       }}
     >
-      <span style={{ flexShrink: 0 }}>{icon}</span>
-      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
-        {title}
-      </span>
-      {meta && (
-        <span style={{ fontSize: '11px', color: '#555', flexShrink: 0 }}>{meta}</span>
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          textAlign: 'left',
+          padding: '8px 10px',
+          border: 'none',
+          borderRadius: '4px',
+          background: 'transparent',
+          cursor: 'pointer',
+          fontSize: '13px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          color: '#1a1a1a'
+        }}
+      >
+        <span style={{ flexShrink: 0 }}>{icon}</span>
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
+          {title}
+        </span>
+        {meta && (
+          <span style={{ fontSize: '11px', color: '#555', flexShrink: 0, ...metaStyle }}>{meta}</span>
+        )}
+      </button>
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete() }}
+          disabled={deleting}
+          aria-label={`Remove ${title}`}
+          title={`Remove ${title}`}
+          style={{
+            flexShrink: 0,
+            padding: '4px 6px',
+            marginRight: '4px',
+            border: 'none',
+            borderRadius: '3px',
+            background: 'transparent',
+            color: deleting ? '#bbb' : '#999',
+            cursor: deleting ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+            lineHeight: 1,
+          }}
+          onMouseEnter={(e) => { if (!deleting) e.currentTarget.style.color = '#c62828' }}
+          onMouseLeave={(e) => { if (!deleting) e.currentTarget.style.color = '#999' }}
+        >
+          {deleting ? '…' : '×'}
+        </button>
       )}
-    </button>
+    </div>
   )
 }
 
@@ -74,7 +109,11 @@ export function MaterialsTreePanel({
   collapsed,
   onCollapsedChange,
   hideTranscriptSection = false,
-  lastSeenLinkCount = 0
+  lastSeenLinkCount = 0,
+  canManage = false,
+  onDeleteMaterial,
+  deletingId,
+  deleteError,
 }) {
   const scrollRef = useRef(null)
 
@@ -100,8 +139,14 @@ export function MaterialsTreePanel({
     const fn = (m.filename || '').toLowerCase()
     return ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(e => fn.endsWith(e))
   }
-  const materialStatusMeta = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : (m.content_type || '')))
-  const materialStatusMetaSlides = (m) => (isMaterialImage(m) ? 'N/A' : (m.text_status === 'ready' ? 'Ready' : ''))
+  const materialStatusMeta = (m) => {
+    if (isMaterialImage(m)) return null
+    if (m.text_status === 'ready') return { label: 'Ready', color: '#2e7d32' }
+    if (m.text_status === 'pending' || m.text_status === 'processing') return { label: 'Processing…', color: '#e65100' }
+    if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
+    return null
+  }
+  const materialStatusMetaSlides = materialStatusMeta
   const videoDisplayTitle = (v) => {
     try { if (v?.original_url) return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() || v.provider || 'Video' } catch (_) {}
     if (v?.stored_video_object_key) return v.stored_video_object_key.split('/').filter(Boolean).pop() || v.provider || 'Video'
@@ -163,6 +208,11 @@ export function MaterialsTreePanel({
         </button>
       </div>
       <div ref={scrollRef} className="materials-tree-content" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
+        {deleteError && (
+          <div className="error" style={{ marginBottom: 8, fontSize: 12, padding: '4px 6px' }}>
+            {deleteError}
+          </div>
+        )}
         <TreeSection title="Presentation">
           {!presentationVideo ? (
             <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>No presentation video selected yet.</div>
@@ -171,7 +221,7 @@ export function MaterialsTreePanel({
               key={presentationVideo.id}
               icon={ICON_VIDEO}
               title={videoDisplayTitle(presentationVideo)}
-              meta={[presentationVideo.transcript_status === 'ready' ? 'Ready' : (presentationVideo.transcript_status || ''), 'Primary'].filter(Boolean).join(' • ')}
+              meta="Primary"
               selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
               onClick={() => {
                 setSelectedVideo(presentationVideo)
@@ -238,35 +288,53 @@ export function MaterialsTreePanel({
 
         <TreeSection title="Documents">
           {documents.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
+              None
+            </div>
           ) : (
-            documents.map(m => (
-              <TreeItem
-                key={m.id}
-                icon={getMaterialIcon(m)}
-                title={m.filename || 'Untitled'}
-                meta={[materialStatusMeta(m), unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean).join(' • ')}
-                selected={selectedDocumentId === m.id}
-                onClick={(e) => onSelectDocument(m, e)}
-              />
-            ))
+            documents.map(m => {
+              const statusInfo = materialStatusMeta(m)
+              const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
+              return (
+                <TreeItem
+                  key={m.id}
+                  icon={getMaterialIcon(m)}
+                  title={m.filename || 'Untitled'}
+                  meta={metaParts.join(' • ')}
+                  metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                  selected={selectedDocumentId === m.id}
+                  onClick={(e) => onSelectDocument(m, e)}
+                  onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                  deleting={deletingId === String(m.id)}
+                />
+              )
+            })
           )}
         </TreeSection>
 
         <TreeSection title="Slides / Images">
           {slidesImages.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
+              None
+            </div>
           ) : (
-            slidesImages.map(m => (
-              <TreeItem
-                key={m.id}
-                icon={getMaterialIcon(m)}
-                title={m.filename || 'Untitled'}
-                meta={[materialStatusMetaSlides(m), unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean).join(' • ')}
-                selected={selectedDocumentId === m.id}
-                onClick={(e) => onSelectDocument(m, e)}
-              />
-            ))
+            slidesImages.map(m => {
+              const statusInfo = materialStatusMetaSlides(m)
+              const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
+              return (
+                <TreeItem
+                  key={m.id}
+                  icon={getMaterialIcon(m)}
+                  title={m.filename || 'Untitled'}
+                  meta={metaParts.join(' • ')}
+                  metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                  selected={selectedDocumentId === m.id}
+                  onClick={(e) => onSelectDocument(m, e)}
+                  onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                  deleting={deletingId === String(m.id)}
+                />
+              )
+            })
           )}
         </TreeSection>
 
