@@ -124,3 +124,9 @@ func (db *DB) GetStanceAggregate(ctx context.Context, sessionID uuid.UUID) (*mod
 	}
 	return agg, nil
 }
+
+// DeleteStance removes the current user's stance for the session. Idempotent (no error if no row).
+func (db *DB) DeleteStance(ctx context.Context, sessionID, userID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM decision_stances WHERE session_id = $1 AND user_id = $2`, sessionID, userID)
+	return err
+}

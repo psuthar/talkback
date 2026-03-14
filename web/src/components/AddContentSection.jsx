@@ -64,7 +64,7 @@ export function AddContentSection({
           aria-expanded={expanded}
           aria-controls="add-content-body"
         >
-          <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: expanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+          <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{expanded ? '▼' : '▷'}</span>
           {' '}Add content
         </button>
       </div>

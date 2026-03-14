@@ -172,6 +172,10 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 			h.RequireAuth(h.SessionSubmitStance)(w, r)
 			return
 		}
+		if r.Method == http.MethodDelete {
+			h.RequireAuth(h.SessionDeleteStance)(w, r)
+			return
+		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}

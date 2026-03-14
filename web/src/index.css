@@ -376,8 +376,9 @@ button:disabled {
   display: none;
 }
 
-.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header span,
-.participant-materials-panel.materials-panel-collapsed .materials-tree-header span {
+/* When collapsed, hide only the label/badge so the expand chevron (first span) stays visible */
+.participant-layout-grid.materials-collapsed .participant-materials-panel .materials-tree-header span:not(:first-child),
+.participant-materials-panel.materials-panel-collapsed .materials-tree-header span:not(:first-child) {
   display: none;
 }
 

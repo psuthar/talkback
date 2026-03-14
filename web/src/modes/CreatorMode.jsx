@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
-import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
+import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
@@ -244,6 +244,9 @@ export function CreatorMode({
   const [contextFeedback, setContextFeedback] = useState({ type: '', message: '' })
   const [stanceData, setStanceData] = useState(null)
   const [stancePanelExpanded, setStancePanelExpanded] = useState(true)
+  const [stanceRationale, setStanceRationale] = useState('')
+  const [stanceSubmitting, setStanceSubmitting] = useState(false)
+  const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState(null)
@@ -941,13 +944,75 @@ export function CreatorMode({
     fetchStances()
   }, [fetchStances, stanceVersion])
 
+  useEffect(() => {
+    if (stanceData?.my_stance?.rationale != null) {
+      setStanceRationale(typeof stanceData.my_stance.rationale === 'string' ? stanceData.my_stance.rationale : '')
+    }
+  }, [stanceData?.my_stance?.rationale])
+
+  const submitStance = async (stanceValue) => {
+    if (!currentSession?.session?.id || stanceSubmitting || !apiBaseUrl) return
+    if (currentSession.session.decision_outcome) return
+    setStanceSubmitting(true)
+    setStanceFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const body = { stance: stanceValue }
+      const trimmedRationale = stanceRationale.trim().slice(0, 500)
+      if (trimmedRationale) body.rationale = trimmedRationale
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stance`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = data.error || `HTTP ${res.status}`
+        setStanceFeedback({ type: 'error', message: msg })
+        return
+      }
+      setStanceFeedback({ type: 'success', message: 'Position recorded' })
+      await fetchStances()
+    } catch (err) {
+      setStanceFeedback({ type: 'error', message: err?.message || 'Failed to submit stance' })
+    } finally {
+      setStanceSubmitting(false)
+    }
+  }
+
+  const clearStance = async () => {
+    if (!currentSession?.session?.id || stanceSubmitting || currentSession.session.decision_outcome) return
+    setStanceSubmitting(true)
+    setStanceFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stance`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setStanceFeedback({ type: 'error', message: data.error || `HTTP ${res.status}` })
+        return
+      }
+      setStanceRationale('')
+      setStanceFeedback({ type: 'success', message: 'Decision cleared' })
+      await fetchStances()
+    } catch (err) {
+      setStanceFeedback({ type: 'error', message: err?.message || 'Failed to clear stance' })
+    } finally {
+      setStanceSubmitting(false)
+    }
+  }
+
   const saveSessionContext = async () => {
     if (!currentSession?.session?.id || contextSaving) return
     setContextSaving(true)
     setContextFeedback({ type: '', message: '' })
     const base = (apiBaseUrl || '').replace(/\/$/, '')
     try {
-      const res = await fetch(`${base}/sessions/${currentSession.session.id}`, {
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}`, {
         method: 'PATCH',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -981,20 +1046,12 @@ export function CreatorMode({
       {/* Topbar */}
       <div className="creator-layout-topbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
-          <button type="button" className="creator-panel-toggle" onClick={() => setLeftPanelCollapsed(v => !v)} title={leftPanelCollapsed ? 'Expand materials panel' : 'Collapse materials panel'}>
-            {leftPanelCollapsed ? '›' : '‹'}
-          </button>
           {currentSession?.session && (
             <>
               <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {currentSession.session.title}
                 <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
               </h2>
-              {authUser?.email && (
-                <span style={{ fontSize: '14px', padding: '4px 12px', borderRadius: '4px', backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575', color: '#fff', fontWeight: 'bold', flexShrink: 0 }}>
-                  {currentSession.session.created_by === authUser.email ? 'Creator' : 'Participant'}
-                </span>
-              )}
               <span style={{ fontSize: '12px', color: currentSession.session.status === 'open' ? '#2e7d32' : '#999', fontWeight: 'bold', flexShrink: 0 }}>
                 {currentSession.session.status}
               </span>
@@ -1012,6 +1069,31 @@ export function CreatorMode({
           )}
         </div>
       </div>
+
+      {/* Premise / Decision / Outcome: always visible like participant view */}
+      {currentSession?.session && (currentSession.session.premise || currentSession.session.primary_decision || currentSession.session.decision_outcome) && (
+        <div style={{
+          flexShrink: 0,
+          display: 'flex',
+          gap: '20px',
+          flexWrap: 'wrap',
+          padding: '4px 20px',
+          backgroundColor: '#f1f8e9',
+          borderBottom: '1px solid #c8e6c9',
+          fontSize: '13px',
+          color: '#333'
+        }}>
+          {currentSession.session.premise && (
+            <span><strong>Premise:</strong> {currentSession.session.premise}</span>
+          )}
+          {currentSession.session.primary_decision && (
+            <span><strong>Decision:</strong> {currentSession.session.primary_decision}</span>
+          )}
+          {currentSession.session.decision_outcome && (
+            <span><strong>Outcome:</strong> {currentSession.session.decision_outcome}</span>
+          )}
+        </div>
+      )}
 
       {/* Processing progression: flex-shrink 0, sits above grid */}
       {showPanel && (() => {
@@ -1172,18 +1254,129 @@ export function CreatorMode({
         {/* ===== LEFT PANEL ===== */}
         <div className={`creator-left-panel${leftPanelCollapsed ? ' collapsed' : ''}`}>
           <div className="creator-panel-header">
-            <button type="button" onClick={() => setLeftPanelCollapsed(v => !v)} className="creator-panel-toggle-inner" title={leftPanelCollapsed ? 'Expand' : 'Collapse'}>
-              <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: leftPanelCollapsed ? 'rotate(0deg)' : 'rotate(180deg)' }}>‹</span>
-              {!leftPanelCollapsed && <span style={{ marginLeft: '6px' }}>Materials</span>}
-            </button>
+            <MaterialsPanelHeader
+              collapsed={leftPanelCollapsed}
+              onCollapsedChange={setLeftPanelCollapsed}
+              unreadCount={Array.isArray(currentSession?.unread_material_ids) ? currentSession.unread_material_ids.length : 0}
+            />
           </div>
           {!leftPanelCollapsed && (
             <div className="creator-left-scroll">
 
-              {/* Context: Premise, Decision, Outcome — prominent at top */}
+              {/* Decisions: at top so creator can see/capture stance first */}
+              {currentSession?.session?.primary_decision && (
+                <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded}>
+                    <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
+                    {' '}Decisions ({stanceData?.aggregate?.total ?? 0})
+                  </button>
+                  {stancePanelExpanded && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
+                      {currentSession.session.decision_outcome ? (
+                        <p style={{ margin: 0, fontSize: '11px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
+                                const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
+                                const bg = s === 'agree' ? '#e8f5e9' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : '#e3f2fd'
+                                const border = s === 'agree' ? '#81c784' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
+                                const myStance = stanceData?.my_stance
+                                return (
+                                  <button
+                                    key={s}
+                                    type="button"
+                                    onClick={() => submitStance(s)}
+                                    disabled={stanceSubmitting}
+                                    style={{
+                                      padding: '4px 10px',
+                                      fontSize: '11px',
+                                      borderRadius: '6px',
+                                      border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
+                                      backgroundColor: bg,
+                                      fontWeight: myStance?.stance === s ? 700 : 500,
+                                      cursor: stanceSubmitting ? 'default' : 'pointer',
+                                      margin: 0
+                                    }}
+                                  >
+                                    {label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                            {(stanceData?.my_stance?.stance || stanceRationale?.trim()) && (
+                              <button
+                                type="button"
+                                onClick={clearStance}
+                                disabled={stanceSubmitting}
+                                style={{
+                                  marginLeft: 'auto',
+                                  padding: '4px 10px',
+                                  fontSize: '11px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #9e9e9e',
+                                  backgroundColor: '#fff',
+                                  color: '#616161',
+                                  fontWeight: 500,
+                                  cursor: stanceSubmitting ? 'default' : 'pointer'
+                                }}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Rationale (optional)"
+                            value={stanceRationale}
+                            onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+                            onBlur={() => { if (stanceData?.my_stance?.stance && !stanceSubmitting) submitStance(stanceData.my_stance.stance) }}
+                            style={{ width: '100%', padding: '4px 8px', fontSize: '11px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
+                          />
+                          {stanceFeedback.message && (
+                            <p style={{ margin: 0, fontSize: '11px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                          )}
+                        </>
+                      )}
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        {[
+                          ['Agree', stanceData?.aggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
+                          ['Disagree', stanceData?.aggregate?.disagree ?? 0, '#c62828', '#ffebee'],
+                          ['Conditional', stanceData?.aggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
+                          ['Abstain', stanceData?.aggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
+                          ['Need More Info', stanceData?.aggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
+                        ].map(([label, count, color, bg]) => (
+                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
+                            {label}: {count}
+                          </span>
+                        ))}
+                      </div>
+                      {(stanceData?.responses?.length > 0) ? (
+                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {stanceData.responses.map((r) => (
+                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
+                              <span style={{ fontWeight: 600 }}>{r.user_email}</span>
+                              {' — '}
+                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
+                              {r.rationale && r.rationale.trim() && <span style={{ color: '#666', marginLeft: '4px' }}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: '11px', color: '#888' }}>No responses yet.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Context: Premise, Decision, Outcome */}
               <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
                 <button type="button" onClick={() => setContextPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={contextPanelExpanded}>
-                  <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: contextPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                  <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
                   {' '}<strong>Context</strong>
                 </button>
                 {contextPanelExpanded && (
@@ -1210,7 +1403,7 @@ export function CreatorMode({
               {authUser && inviteUserToSession && (
                 <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
                   <button type="button" onClick={() => setMembersPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={membersPanelExpanded}>
-                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: membersPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                    <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                     {' '}<strong>Members</strong>{sessionInvitations?.length > 0 ? ` (${sessionInvitations.length})` : ''}
                   </button>
                   {membersPanelExpanded && (
@@ -1295,7 +1488,7 @@ export function CreatorMode({
                 />
               )}
 
-              {/* Materials tree: view + manage (upload/delete) for creator */}
+              {/* Materials tree (no duplicate header; topmost Materials is shared) */}
               <MaterialsTreePanel
                 session={currentSession}
                 selectedVideo={selectedVideo}
@@ -1309,51 +1502,13 @@ export function CreatorMode({
                 collapsed={leftPanelCollapsed}
                 onCollapsedChange={setLeftPanelCollapsed}
                 hideTranscriptSection
+                hideHeader
                 lastSeenLinkCount={0}
                 canManage={!!sessionId}
                 onDeleteMaterial={deleteMaterial}
                 deletingId={deletingMaterialId}
                 deleteError={deleteMaterialError}
               />
-
-              {/* Stance summary */}
-              {currentSession?.session?.primary_decision && stanceData?.aggregate && (
-                <div style={{ padding: '8px 12px', borderTop: '1px solid #e0e0e0' }}>
-                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded}>
-                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: stancePanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
-                    {' '}Stance Summary ({stanceData.aggregate.total})
-                  </button>
-                  {stancePanelExpanded && (
-                    <div style={{ marginTop: '8px' }}>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                        {[
-                          ['Agree', stanceData.aggregate.agree, '#2e7d32', '#e8f5e9'],
-                          ['Disagree', stanceData.aggregate.disagree, '#c62828', '#ffebee'],
-                          ['Conditional', stanceData.aggregate.conditional, '#e65100', '#fff3e0'],
-                          ['Abstain', stanceData.aggregate.abstain, '#546e7a', '#eceff1'],
-                          ['Need More Info', stanceData.aggregate.need_more_info, '#1565C0', '#e3f2fd']
-                        ].map(([label, count, color, bg]) => (
-                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
-                            {label}: {count}
-                          </span>
-                        ))}
-                      </div>
-                      {stanceData.responses?.length > 0 && (
-                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {stanceData.responses.map((r) => (
-                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
-                              <span style={{ fontWeight: 600 }}>{r.user_email}</span>
-                              {' — '}
-                              <span style={{ textTransform: 'capitalize' }}>{r.stance.replace(/_/g, ' ')}</span>
-                              {r.rationale && <span style={{ color: '#666', marginLeft: '4px' }}>"{r.rationale.length > 60 ? r.rationale.slice(0, 60) + '…' : r.rationale}"</span>}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
 
             </div>
           )}
@@ -1631,7 +1786,7 @@ export function CreatorMode({
                                   margin: 0
                                 }}
                               >
-                                {isExpanded ? '▼' : '▶'}
+                                {isExpanded ? '▼' : '▷'}
                               </button>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 {!isExpanded ? (

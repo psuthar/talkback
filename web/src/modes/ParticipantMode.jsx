@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { VideoPlayer } from '../VideoPlayer'
 import { QAHistory } from '../components/QAHistory'
-import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
+import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
@@ -94,15 +94,13 @@ export function ParticipantMode({
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
-  const [contextPanelExpanded, setContextPanelExpanded] = useState(true)
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(true)
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
   const [stanceAggregate, setStanceAggregate] = useState(null)
   const [stanceResponses, setStanceResponses] = useState([]) // per-person list with user_email
-  const [stanceResponsesCollapsed, setStanceResponsesCollapsed] = useState(false) // default expanded so responses are visible
-  const [stancePanelExpanded, setStancePanelExpanded] = useState(false) // Your Position section: closed by default
+  const [stancePanelExpanded, setStancePanelExpanded] = useState(true) // Left-panel Decisions section: expanded by default
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -169,6 +167,41 @@ export function ParticipantMode({
       fetchMyStance() // refetch to get updated responses list
     } catch (err) {
       setStanceFeedback({ type: 'error', message: err?.message || 'Failed to submit stance' })
+    } finally {
+      setStanceSubmitting(false)
+    }
+  }
+
+  const clearStance = async () => {
+    if (!currentSession?.session?.id || currentSession.session.decision_outcome) return
+    setStanceSubmitting(true)
+    setStanceFeedback({ type: '', message: '' })
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stance`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      if (!res.ok) {
+        let msg = 'Failed to clear stance'
+        const text = await res.text()
+        try {
+          const errBody = JSON.parse(text)
+          if (errBody?.error) msg = errBody.error
+        } catch {
+          if (text) msg = text
+        }
+        setStanceFeedback({ type: 'error', message: msg })
+        return
+      }
+      setStanceRationale('')
+      setMyStance(null)
+      const data = await res.json()
+      setStanceAggregate(data.aggregate ?? null)
+      setStanceFeedback({ type: 'success', message: 'Decision cleared' })
+      fetchMyStance()
+    } catch (err) {
+      setStanceFeedback({ type: 'error', message: err?.message || 'Failed to clear stance' })
     } finally {
       setStanceSubmitting(false)
     }
@@ -531,7 +564,7 @@ export function ParticipantMode({
           display: 'flex',
           gap: '20px',
           flexWrap: 'wrap',
-          padding: '6px 20px',
+          padding: '4px 20px',
           backgroundColor: '#f1f8e9',
           borderBottom: '1px solid #c8e6c9',
           fontSize: '13px',
@@ -549,262 +582,121 @@ export function ParticipantMode({
         </div>
       )}
 
-      {currentSession.session.primary_decision && (
-        <div style={{ flexShrink: 0, backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0' }}>
-          <button
-            type="button"
-            onClick={() => setStancePanelExpanded((e) => !e)}
-            style={{
-              width: '100%',
-              padding: '10px 20px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'stretch',
-              gap: '0',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              textAlign: 'left',
-              fontSize: '13px'
-            }}
-            aria-expanded={stancePanelExpanded}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-              <strong>Your Position</strong>
-              <span style={{ transform: stancePanelExpanded ? 'rotate(180deg)' : 'rotate(0deg)', display: 'inline-block', transition: 'transform 0.15s ease', flexShrink: 0 }}>▼</span>
-            </div>
-            {!stancePanelExpanded && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px', minWidth: 0 }}>
-                {(myStance?.stance || stanceRationale?.trim()) ? (
-                  <>
-                    <span style={{ fontSize: '13px', color: '#333', fontWeight: 500 }}>
-                      Your decision:
-                    </span>
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '4px 10px',
-                        borderRadius: '6px',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        backgroundColor: myStance?.stance === 'agree' ? '#e8f5e9' : myStance?.stance === 'disagree' ? '#ffebee' : myStance?.stance === 'conditional' ? '#fff3e0' : myStance?.stance === 'abstain' ? '#eceff1' : '#e3f2fd',
-                        color: myStance?.stance === 'agree' ? '#2e7d32' : myStance?.stance === 'disagree' ? '#c62828' : myStance?.stance === 'conditional' ? '#e65100' : myStance?.stance === 'abstain' ? '#546e7a' : '#1565c0',
-                        border: `2px solid ${myStance?.stance === 'agree' ? '#81c784' : myStance?.stance === 'disagree' ? '#e57373' : myStance?.stance === 'conditional' ? '#ffb74d' : myStance?.stance === 'abstain' ? '#90a4ae' : '#64b5f6'}`
-                      }}
-                    >
-                      {myStance?.stance ? (myStance.stance === 'need_more_info' ? 'Need More Info' : myStance.stance.charAt(0).toUpperCase() + myStance.stance.slice(1)) : '—'}
-                    </span>
-                    {stanceRationale?.trim() && (
-                      <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
-                        {stanceRationale.trim().slice(0, 60)}{stanceRationale.trim().length > 60 ? '…' : ''}
-                      </span>
-                    )}
-                    {!currentSession.session.decision_outcome && (
-                      <span style={{ fontSize: '12px', color: '#1976d2', fontWeight: 600, flexShrink: 0 }}>
-                        Change →
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  !currentSession.session.decision_outcome ? (
-                    <>
-                      <span style={{ fontSize: '13px', color: '#666', fontWeight: 500 }}>Your decision:</span>
-                      <span style={{ fontSize: '12px', color: '#1976d2', fontWeight: 600 }}>
-                        not made yet — Add your response →
-                      </span>
-                    </>
-                  ) : null
-                )}
-              </div>
-            )}
-          </button>
-          {stancePanelExpanded && (
-            <div style={{ padding: '0 20px 10px 20px' }}>
-              {currentSession.session.decision_outcome ? (
-                <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#888', fontStyle: 'italic' }}>
-                  Stances are locked — the outcome has been recorded.
-                </p>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setStancePanelExpanded(false)}
-                    style={{
-                      display: 'block',
-                      width: '100%',
-                      marginTop: '6px',
-                      marginBottom: '4px',
-                      padding: '6px 0',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontSize: '13px',
-                      color: myStance?.stance ? '#1565c0' : '#666',
-                      fontWeight: myStance?.stance ? 600 : 400
-                    }}
-                  >
-                    Your decision: {myStance?.stance
-                      ? (myStance.stance === 'need_more_info' ? 'Need More Info' : myStance.stance.charAt(0).toUpperCase() + myStance.stance.slice(1))
-                      : 'not made yet'}
-                    <span style={{ marginLeft: '6px', fontSize: '11px', color: '#888', fontWeight: 'normal' }}>— click to collapse</span>
-                  </button>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-            {[
-              { value: 'agree', bg: '#e8f5e9', border: '#81c784', color: '#2e7d32' },
-              { value: 'disagree', bg: '#ffebee', border: '#e57373', color: '#c62828' },
-              { value: 'conditional', bg: '#fff3e0', border: '#ffb74d', color: '#e65100' },
-              { value: 'abstain', bg: '#eceff1', border: '#90a4ae', color: '#546e7a' },
-              { value: 'need_more_info', bg: '#e3f2fd', border: '#64b5f6', color: '#1565c0' }
-            ].map(({ value: s, bg, border, color }) => (
-              <button
-                key={s}
-                type="button"
-                disabled={stanceSubmitting || !!currentSession.session.decision_outcome}
-                onClick={() => submitStance(s)}
-                style={{
-                  padding: '5px 12px', fontSize: '12px', borderRadius: '4px',
-                  border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
-                  backgroundColor: bg,
-                  color,
-                  fontWeight: myStance?.stance === s ? 700 : 500,
-                  cursor: (stanceSubmitting || currentSession.session.decision_outcome) ? 'default' : 'pointer'
-                }}
-              >
-                {s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-                  </div>
-                  <textarea
-                    value={stanceRationale}
-                    onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                    onBlur={() => {
-                      if (myStance?.stance && !stanceSubmitting && !currentSession.session.decision_outcome) {
-                        submitStance(myStance.stance)
-                      }
-                    }}
-                    placeholder="Optional: briefly explain your position (max 500 chars)…"
-                    rows={2}
-                    style={{ width: '100%', marginTop: '8px', padding: '6px 8px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box' }}
-                  />
-                  <div style={{ fontSize: '11px', color: '#999', textAlign: 'right' }}>{stanceRationale.length}/500</div>
-                </>
-              )}
-              {stanceFeedback.message && (
-                <p style={{ margin: '4px 0 0', fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>
-                  {stanceFeedback.message}
-                </p>
-              )}
-              {(stanceAggregate?.total > 0 || stanceResponses?.length > 0) && (
-                <div style={{ marginTop: '10px', fontSize: '12px', color: '#555' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStanceResponsesCollapsed((c) => {
-                        const next = !c
-                        if (next) fetchMyStance() // refetch when expanding so responses list is populated
-                        return next
-                      })
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      padding: '2px 0',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontSize: '12px',
-                      color: '#555',
-                      fontWeight: 600
-                    }}
-                    aria-expanded={!stanceResponsesCollapsed}
-                  >
-                    <span style={{ transform: stanceResponsesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', display: 'inline-block', transition: 'transform 0.15s ease' }}>▶</span>
-                    All responses ({stanceAggregate?.total ?? stanceResponses.length})
-                  </button>
-                  {!stanceResponsesCollapsed && (
-                    <>
-                      {stanceResponses.length > 0 ? (
-                        <ul style={{ margin: '6px 0 0 16px', paddingLeft: '4px' }}>
-                          {stanceResponses.map((r, i) => (
-                            <li key={r.id || `${r.user_id}-${i}`} style={{ marginBottom: '4px' }}>
-                              <strong>{r.user_email || 'Unknown'}</strong>
-                              {' — '}
-                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
-                              {r.rationale && r.rationale.trim() && (
-                                <span style={{ color: '#666', fontStyle: 'italic' }}> ({r.rationale.trim().slice(0, 80)}{r.rationale.trim().length > 80 ? '…' : ''})</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p style={{ margin: '6px 0 0 16px', fontSize: '12px', color: '#888' }}>
-                          {stanceAggregate?.total > 0 ? `${stanceAggregate.total} response(s) recorded. Refreshing…` : 'No responses yet.'}
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
       <div className={gridClassName}>
         <aside
           className={`participant-materials-panel ${materialsCollapsed ? 'materials-panel-collapsed' : 'materials-panel-expanded'}`}
           aria-expanded={!materialsCollapsed}
         >
+          <MaterialsPanelHeader
+            collapsed={materialsCollapsed}
+            onCollapsedChange={setMaterialsCollapsed}
+            unreadCount={Array.isArray(currentSession?.unread_material_ids) ? currentSession.unread_material_ids.length : 0}
+          />
           {!materialsCollapsed && (
             <>
-              {/* Context: read-only Premise, Decision, Outcome */}
-              {(currentSession?.session?.premise || currentSession?.session?.primary_decision || currentSession?.session?.decision_outcome) && (
+              {/* Decisions: same section as creator — Your decision + Members' decisions */}
+              {currentSession?.session?.primary_decision && (
                 <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                  <button
-                    type="button"
-                    onClick={() => setContextPanelExpanded((e) => !e)}
-                    aria-expanded={contextPanelExpanded}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '4px 0',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontSize: '13px',
-                      fontWeight: 'bold',
-                      color: '#2e7d32'
-                    }}
-                  >
-                    <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: contextPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
-                    Context
+                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold', color: '#1565c0' }}>
+                    <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
+                    {' '}Decisions ({stanceAggregate?.total ?? stanceResponses?.length ?? 0})
                   </button>
-                  {contextPanelExpanded && (
-                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#333' }}>
-                      {currentSession.session.premise && (
-                        <div style={{ marginBottom: '10px' }}>
-                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Premise</div>
-                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.premise}</div>
-                        </div>
+                  {stancePanelExpanded && (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
+                      {currentSession.session.decision_outcome ? (
+                        <p style={{ margin: 0, fontSize: '11px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
+                                const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
+                                const bg = s === 'agree' ? '#e8f5e9' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : '#e3f2fd'
+                                const border = s === 'agree' ? '#81c784' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
+                                return (
+                                  <button
+                                    key={s}
+                                    type="button"
+                                    onClick={() => submitStance(s)}
+                                    disabled={stanceSubmitting}
+                                    style={{
+                                      padding: '4px 10px',
+                                      fontSize: '11px',
+                                      borderRadius: '6px',
+                                      border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
+                                      backgroundColor: bg,
+                                      fontWeight: myStance?.stance === s ? 700 : 500,
+                                      cursor: stanceSubmitting ? 'default' : 'pointer',
+                                      margin: 0
+                                    }}
+                                  >
+                                    {label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                            {(myStance?.stance || stanceRationale?.trim()) && (
+                              <button
+                                type="button"
+                                onClick={clearStance}
+                                disabled={stanceSubmitting}
+                                style={{
+                                  marginLeft: 'auto',
+                                  padding: '4px 10px',
+                                  fontSize: '11px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #9e9e9e',
+                                  backgroundColor: '#fff',
+                                  color: '#616161',
+                                  fontWeight: 500,
+                                  cursor: stanceSubmitting ? 'default' : 'pointer'
+                                }}
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder="Rationale (optional)"
+                            value={stanceRationale}
+                            onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+                            onBlur={() => { if (myStance?.stance && !stanceSubmitting) submitStance(myStance.stance) }}
+                            style={{ width: '100%', padding: '4px 8px', fontSize: '11px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
+                          />
+                          {stanceFeedback.message && (
+                            <p style={{ margin: 0, fontSize: '11px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                          )}
+                        </>
                       )}
-                      {currentSession.session.primary_decision && (
-                        <div style={{ marginBottom: '10px' }}>
-                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Primary Decision</div>
-                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.primary_decision}</div>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                        {[
+                          ['Agree', stanceAggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
+                          ['Disagree', stanceAggregate?.disagree ?? 0, '#c62828', '#ffebee'],
+                          ['Conditional', stanceAggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
+                          ['Abstain', stanceAggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
+                          ['Need More Info', stanceAggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
+                        ].map(([label, count, color, bg]) => (
+                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
+                            {label}: {count}
+                          </span>
+                        ))}
+                      </div>
+                      {(stanceResponses?.length > 0) ? (
+                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {stanceResponses.map((r, i) => (
+                            <div key={r.id || `r-${i}`} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
+                              <span style={{ fontWeight: 600 }}>{r.user_email || 'Unknown'}</span>
+                              {' — '}
+                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
+                              {r.rationale && r.rationale.trim() && <span style={{ color: '#666', marginLeft: '4px' }}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
+                            </div>
+                          ))}
                         </div>
-                      )}
-                      {currentSession.session.decision_outcome && (
-                        <div>
-                          <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Decision Outcome</div>
-                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{currentSession.session.decision_outcome}</div>
-                        </div>
+                      ) : (
+                        <p style={{ margin: 0, fontSize: '11px', color: '#888' }}>No responses yet.</p>
                       )}
                     </div>
                   )}
@@ -832,7 +724,7 @@ export function ParticipantMode({
                     color: '#2e7d32'
                   }}
                 >
-                  <span style={{ display: 'inline-block', transition: 'transform 0.15s ease', transform: membersPanelExpanded ? 'rotate(90deg)' : 'none' }}>▶</span>
+                  <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                   Members{Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
                 </button>
                 {membersPanelExpanded && (
@@ -852,33 +744,43 @@ export function ParticipantMode({
                   </div>
                 )}
               </div>
+
+              <MaterialsTreePanel
+                session={currentSession}
+                selectedVideo={selectedVideo}
+                setSelectedVideo={setSelectedVideo}
+                setVideoId={setVideoId}
+                setVideoPlayerKey={setVideoPlayerKey}
+                onSelectDocument={handleSelectDocument}
+                onSelectVideo={handleBackToVideo}
+                onSelectLink={(link) => {
+                  handleSelectLink(link)
+                  const sid = currentSession?.session?.id
+                  if (sid && currentSession?.links?.length != null) {
+                    setLastSeenLinkCountBySession((prev) => ({ ...prev, [sid]: currentSession.links.length }))
+                  }
+                }}
+                selectedDocumentId={selectedDocumentId}
+                collapsed={materialsCollapsed}
+                onCollapsedChange={setMaterialsCollapsed}
+                hideTranscriptSection
+                hideHeader
+                lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
+              />
             </>
           )}
-          <MaterialsTreePanel
-            session={currentSession}
-            selectedVideo={selectedVideo}
-            setSelectedVideo={setSelectedVideo}
-            setVideoId={setVideoId}
-            setVideoPlayerKey={setVideoPlayerKey}
-            onSelectDocument={handleSelectDocument}
-            onSelectVideo={handleBackToVideo}
-            onSelectLink={(link) => {
-              handleSelectLink(link)
-              const sid = currentSession?.session?.id
-              if (sid && currentSession?.links?.length != null) {
-                setLastSeenLinkCountBySession((prev) => ({ ...prev, [sid]: currentSession.links.length }))
-              }
-            }}
-            selectedDocumentId={selectedDocumentId}
-            collapsed={materialsCollapsed}
-            onCollapsedChange={setMaterialsCollapsed}
-            hideTranscriptSection
-            lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
-          />
         </aside>
 
         <main className="participant-video-stage">
           <div style={{ padding: '12px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+            {/* Decision outcome only (Your decision lives in top "Your Position" bar) */}
+            {currentSession?.session?.decision_outcome?.trim() && (
+              <div style={{ flexShrink: 0, marginBottom: '16px', padding: '12px', backgroundColor: '#f1f8e9', border: '1px solid #c8e6c9', borderRadius: '8px' }}>
+                <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Decision Outcome</div>
+                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px', color: '#333' }}>{currentSession.session.decision_outcome.trim()}</div>
+              </div>
+            )}
+
             {selectedDocument ? (
               <DocumentViewer
                 doc={selectedDocument}

@@ -164,3 +164,54 @@ func (h *Handlers) SessionGetStances(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
+
+// SessionDeleteStance handles DELETE /api/sessions/{id}/stance — clears the current user's stance for the session.
+func (h *Handlers) SessionDeleteStance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(parts[2])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	session, err := h.DB.GetSession(ctx, sessionID)
+	if err != nil || session == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "session not found"})
+		return
+	}
+	if session.DecisionOutcome != nil && *session.DecisionOutcome != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "stances are locked after decision outcome is recorded"})
+		return
+	}
+	user := UserFromContext(r.Context())
+	if err := h.DB.DeleteStance(ctx, sessionID, user.ID); err != nil {
+		log.Printf("SessionDeleteStance DeleteStance: %v", err)
+		http.Error(w, "Failed to clear stance", http.StatusInternalServerError)
+		return
+	}
+	agg, _ := h.DB.GetStanceAggregate(ctx, sessionID)
+	if agg == nil {
+		agg = &models.StanceAggregate{}
+	}
+	if h.Hub != nil {
+		h.Hub.BroadcastStanceUpdated(sessionID, agg)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(stancesResponse{
+		Aggregate: agg,
+		MyStance:  nil,
+	})
+}

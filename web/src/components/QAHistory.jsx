@@ -442,6 +442,8 @@ export function QAHistory({
 }) {
   // Per-question collapse/expand. Default all collapsed when user loads the list.
   const [expandedCards, setExpandedCards] = useState({})
+  // Track which question IDs we've already auto-expanded so refetches don't re-expand (participant mode).
+  const autoExpandedIdsRef = useRef(new Set())
 
   // When user clicks Reply, expand that card and its root so the inline form is visible.
   useEffect(() => {
@@ -450,24 +452,24 @@ export function QAHistory({
     setExpandedCards((prev) => ({ ...prev, [rootId]: true, [replyingToQuestionId]: true }))
   }, [replyingToQuestionId, questions])
 
-  // Auto-expand the answer section for questions the current user asked when an answer is provided.
+  // Auto-expand only when a *new* answer appears for a question the current user asked (once per question).
+  // Do not re-expand on every refetch so participant view doesn't auto-expand after a few seconds.
   useEffect(() => {
     if (!questions?.length || !currentAskerName) return
-    let next = null
+    const current = String(currentAskerName).trim().toLowerCase()
+    const toExpand = {}
     for (const q of questions) {
       if (!q.answer) continue
       const askedBy = q.asked_by != null ? String(q.asked_by).trim().toLowerCase() : ''
-      const current = String(currentAskerName).trim().toLowerCase()
       if (askedBy !== current) continue
       const rootId = findRootId(questions, q.id)
       if (rootId == null) continue
-      next = next == null ? {} : { ...next }
-      next[q.id] = true
-      next[rootId] = true
+      if (!autoExpandedIdsRef.current.has(q.id)) toExpand[q.id] = true
+      if (!autoExpandedIdsRef.current.has(rootId)) toExpand[rootId] = true
     }
-    if (next != null) {
-      setExpandedCards((prev) => ({ ...prev, ...next }))
-    }
+    if (Object.keys(toExpand).length === 0) return
+    Object.keys(toExpand).forEach((id) => autoExpandedIdsRef.current.add(id))
+    setExpandedCards((prev) => ({ ...prev, ...toExpand }))
   }, [questions, currentAskerName])
 
   if (!questions || questions.length === 0) {

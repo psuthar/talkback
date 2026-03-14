@@ -1,9 +1,48 @@
 import { useRef } from 'react'
-import { getMaterialIcon } from '../utils/materialIcons'
 
-const ICON_VIDEO = '▶'
-const ICON_TRANSCRIPT = '📝'
-const ICON_LINK = '🔗'
+/** Shared "Materials" header with chevron for creator and participant left panel */
+export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0 }) {
+  return (
+    <div
+      className={`materials-tree-header ${collapsed ? 'materials-tree-header-collapsed' : ''}`}
+      style={{
+        flexShrink: 0,
+        padding: collapsed ? '8px 4px' : '10px 12px',
+        borderBottom: '1px solid #e0e0e0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+        gap: '6px',
+        cursor: 'pointer',
+        ...(collapsed && { minHeight: '36px' }),
+      }}
+      onClick={() => onCollapsedChange(!collapsed)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCollapsedChange(!collapsed); } }}
+      role="button"
+      tabIndex={0}
+      aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
+    >
+      <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{collapsed ? '▷' : '▼'}</span>
+      {!collapsed && (
+        <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          Materials
+          {unreadCount > 0 && (
+            <span style={{
+              background: '#e65100',
+              color: '#fff',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              padding: '2px 6px',
+              borderRadius: '10px',
+            }} title="New documents added by creator">
+              New {unreadCount}
+            </span>
+          )}
+        </span>
+      )}
+    </div>
+  )
+}
 
 function TreeSection({ title, children }) {
   return (
@@ -59,7 +98,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
           color: '#1a1a1a'
         }}
       >
-        <span style={{ flexShrink: 0 }}>{icon}</span>
+        {icon != null && icon !== '' && <span style={{ flexShrink: 0 }}>{icon}</span>}
         <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
           {title}
         </span>
@@ -109,6 +148,7 @@ export function MaterialsTreePanel({
   collapsed,
   onCollapsedChange,
   hideTranscriptSection = false,
+  hideHeader = false,
   lastSeenLinkCount = 0,
   canManage = false,
   onDeleteMaterial,
@@ -153,61 +193,8 @@ export function MaterialsTreePanel({
     return v?.provider || 'Video'
   }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
-      <div
-        className={`materials-tree-header ${collapsed ? 'materials-tree-header-collapsed' : ''}`}
-        style={{
-          flexShrink: 0,
-          padding: collapsed ? '8px 4px' : '10px 12px',
-          borderBottom: '1px solid #e0e0e0',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'space-between',
-          gap: '8px',
-          ...(collapsed && { cursor: 'pointer', minHeight: '36px' })
-        }}
-        onClick={collapsed ? () => onCollapsedChange(false) : undefined}
-        onKeyDown={collapsed ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCollapsedChange(false); } } : undefined}
-        role={collapsed ? 'button' : undefined}
-        tabIndex={collapsed ? 0 : undefined}
-        aria-label={collapsed ? 'Expand materials panel' : undefined}
-      >
-        {!collapsed && (
-          <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            Materials
-            {unreadSet.size > 0 && (
-              <span style={{
-                background: '#e65100',
-                color: '#fff',
-                fontSize: '10px',
-                fontWeight: 'bold',
-                padding: '2px 6px',
-                borderRadius: '10px'
-              }} title="New documents added by creator">
-                New {unreadSet.size}
-              </span>
-            )}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onCollapsedChange(!collapsed); }}
-          aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
-          style={{
-            padding: '4px 8px',
-            fontSize: '12px',
-            border: '1px solid #ccc',
-            borderRadius: '4px',
-            background: '#fff',
-            cursor: 'pointer',
-            flexShrink: 0
-          }}
-        >
-          {collapsed ? '▶' : '◀'}
-        </button>
-      </div>
-      <div ref={scrollRef} className="materials-tree-content" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
+  const content = (
+    <div ref={scrollRef} className="materials-tree-content" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
         {deleteError && (
           <div className="error" style={{ marginBottom: 8, fontSize: 12, padding: '4px 6px' }}>
             {deleteError}
@@ -219,7 +206,7 @@ export function MaterialsTreePanel({
           ) : (
             <TreeItem
               key={presentationVideo.id}
-              icon={ICON_VIDEO}
+              icon={null}
               title={videoDisplayTitle(presentationVideo)}
               meta="Primary"
               selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
@@ -240,7 +227,7 @@ export function MaterialsTreePanel({
             otherVideos.map((v) => (
               <TreeItem
                 key={v.id}
-                icon={ICON_VIDEO}
+                icon={null}
                 title={videoDisplayTitle(v)}
                 meta={v.transcript_status === 'ready' ? 'Ready' : v.transcript_status || ''}
                 selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
@@ -267,7 +254,7 @@ export function MaterialsTreePanel({
                 return (
                   <TreeItem
                     key={transcriptId}
-                    icon={ICON_TRANSCRIPT}
+                    icon={null}
                     title={video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript'}
                     meta=""
                     selected={isSelected}
@@ -298,7 +285,7 @@ export function MaterialsTreePanel({
               return (
                 <TreeItem
                   key={m.id}
-                  icon={getMaterialIcon(m)}
+                  icon={null}
                   title={m.filename || 'Untitled'}
                   meta={metaParts.join(' • ')}
                   metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
@@ -324,7 +311,7 @@ export function MaterialsTreePanel({
               return (
                 <TreeItem
                   key={m.id}
-                  icon={getMaterialIcon(m)}
+                  icon={null}
                   title={m.filename || 'Untitled'}
                   meta={metaParts.join(' • ')}
                   metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
@@ -379,7 +366,6 @@ export function MaterialsTreePanel({
                     if (!isSelected) e.currentTarget.style.background = 'transparent'
                   }}
                 >
-                  <span style={{ flexShrink: 0 }}>{ICON_LINK}</span>
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
                     {link.title || link.url}
                   </span>
@@ -396,6 +382,14 @@ export function MaterialsTreePanel({
           )}
         </TreeSection>
       </div>
+  )
+
+  if (hideHeader) return content
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+      <MaterialsPanelHeader collapsed={collapsed} onCollapsedChange={onCollapsedChange} unreadCount={unreadSet.size} />
+      {content}
     </div>
   )
 }
