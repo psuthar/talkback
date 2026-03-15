@@ -721,8 +721,8 @@ export function CreatorMode({
   const isRunningForPanel = hasJobForPanel && runningStatesForPanel.includes(processingStatus.state)
   const readyButNoVideoYetForPanel = hasJobForPanel && processingStatus?.state === 'ready' && !hasPrimaryR2Video
   const processingInProgress = isRunningForPanel || readyButNoVideoYetForPanel
-  // Show panel while processing OR until video player has mounted and the 2.5s grace has elapsed (don't hide the moment we get video URL)
-  const showPanel = processingInProgress || (hasPrimaryR2Video && (!primaryVideoMounted || hideProgressPanelAfter != null))
+  // Show panel only while processing or preparing playback; hide once session is ready with video (e.g. on login we don't reshow)
+  const showPanel = processingInProgress
 
   // Legacy ingestion status (fallback when no processing job)
   const [ingestionStatus, setIngestionStatus] = useState(null)
@@ -1283,6 +1283,7 @@ export function CreatorMode({
                                 const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
                                 const bg = s === 'agree' ? '#e8f5e9' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : '#e3f2fd'
                                 const border = s === 'agree' ? '#81c784' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
+                                const textColor = s === 'agree' ? '#2e7d32' : s === 'disagree' ? '#c62828' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : '#1565c0'
                                 const myStance = stanceData?.my_stance
                                 return (
                                   <button
@@ -1296,6 +1297,7 @@ export function CreatorMode({
                                       borderRadius: '6px',
                                       border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
                                       backgroundColor: bg,
+                                      color: textColor,
                                       fontWeight: myStance?.stance === s ? 700 : 500,
                                       cursor: stanceSubmitting ? 'default' : 'pointer',
                                       margin: 0
