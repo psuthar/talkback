@@ -109,6 +109,16 @@ func (db *DB) CountQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID
 	return n, nil
 }
 
+// DeleteQuestionsBySessionID deletes all questions for a session (answers cascade from questions).
+// Call this before DeleteSession when the questions.session_id FK uses ON DELETE SET NULL, to avoid NOT NULL violation.
+func (db *DB) DeleteQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM questions WHERE session_id = $1`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete questions by session_id: %w", err)
+	}
+	return nil
+}
+
 // GetQuestionsByArtifactID retrieves questions for an artifact with their latest answers
 func (db *DB) GetQuestionsByArtifactID(ctx context.Context, artifactID uuid.UUID, limit int) ([]*models.Question, []*models.Answer, error) {
 	if limit <= 0 {

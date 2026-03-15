@@ -749,7 +749,12 @@ func (h *Handlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	if err := os.RemoveAll(localDir); err != nil {
 		log.Printf("DeleteSession RemoveAll %s: %v", localDir, err)
 	}
-	// 3. DB: file_artifacts first (session_id has ON DELETE SET NULL), then session (cascades do the rest)
+	// 3. DB: delete questions first (avoids NOT NULL on questions.session_id if FK is ON DELETE SET NULL), then file_artifacts, then session
+	if err := h.DB.DeleteQuestionsBySessionID(ctx, sessionID); err != nil {
+		log.Printf("DeleteSession DeleteQuestionsBySessionID: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session data"})
+		return
+	}
 	if err := h.DB.DeleteFileArtifactsBySessionID(ctx, sessionID); err != nil {
 		log.Printf("DeleteSession DeleteFileArtifactsBySessionID: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session data"})
