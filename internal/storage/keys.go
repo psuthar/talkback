@@ -2,14 +2,52 @@ package storage
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 )
+
+// NormalizeFilename decodes URL-encoded characters (e.g. %20) and replaces spaces and other
+// problematic characters with underscores so filenames are safe and display consistently.
+func NormalizeFilename(raw string) string {
+	if raw == "" {
+		return "file"
+	}
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		decoded = raw
+	}
+	base := path.Base(decoded)
+	ext := strings.ToLower(path.Ext(base))
+	if ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsNumber(r) || r == '.' || r == '-' || r == '_':
+			b.WriteRune(r)
+		case r == ' ' || unicode.IsSpace(r):
+			b.WriteByte('_')
+		default:
+			b.WriteByte('_')
+		}
+	}
+	out := strings.Trim(b.String(), "._")
+	for strings.Contains(out, "__") {
+		out = strings.ReplaceAll(out, "__", "_")
+	}
+	if out == "" {
+		out = "file"
+	}
+	return out + ext
+}
 
 // UploadRoot returns the base directory for session uploads. Use this when resolving
 // SessionArtifactDir/SessionArtifactPath so writes and reads use the same root.

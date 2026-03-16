@@ -235,15 +235,15 @@ export function CreatorMode({
     return { roots, byParent }
   }, [questions])
 
-  const [membersPanelExpanded, setMembersPanelExpanded] = useState(true) // expanded by default so prominent at top
-  const [contextPanelExpanded, setContextPanelExpanded] = useState(true)
+  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
+  const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
   const [contextPremise, setContextPremise] = useState('')
   const [contextDecision, setContextDecision] = useState('')
   const [contextOutcome, setContextOutcome] = useState('')
   const [contextSaving, setContextSaving] = useState(false)
   const [contextFeedback, setContextFeedback] = useState({ type: '', message: '' })
   const [stanceData, setStanceData] = useState(null)
-  const [stancePanelExpanded, setStancePanelExpanded] = useState(true)
+  const [stancePanelExpanded, setStancePanelExpanded] = useState(false)
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -1484,9 +1484,7 @@ export function CreatorMode({
                   onUploadClick={() => materialFileInputRef.current?.click()}
                   uploading={materialUploading}
                   uploadFeedback={materialUploadFeedback}
-                  defaultExpanded={
-                    !currentSession?.materials?.length && !currentSession?.links?.length
-                  }
+                  defaultExpanded={false}
                 />
               )}
 

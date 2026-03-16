@@ -136,13 +136,14 @@ func (h *Handlers) PresignPut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
+	filename := storage.NormalizeFilename(req.Filename)
 	bucket := os.Getenv("R2_BUCKET")
 	if bucket == "" {
 		bucket = "talkback-r2-bucket"
 	}
 	prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
 	artifactID := uuid.New()
-	storageKey := storage.BuildArtifactStorageKey(prefix, *sessionID, artifactID, req.Filename)
+	storageKey := storage.BuildArtifactStorageKey(prefix, *sessionID, artifactID, filename)
 	ttl := 15 * time.Minute
 	if s := os.Getenv("R2_PRESIGN_PUT_TTL_SECONDS"); s != "" {
 		if sec, _ := strconv.Atoi(s); sec > 0 {
@@ -160,7 +161,7 @@ func (h *Handlers) PresignPut(w http.ResponseWriter, r *http.Request) {
 		SessionID:       sessionID,
 		OwnerUserID:     ownerUserID,
 		Kind:            kind,
-		Filename:        trimStringPtr(req.Filename),
+		Filename:        trimStringPtr(filename),
 		ContentType:     strings.TrimSpace(req.ContentType),
 		SizeBytes:       req.SizeBytes,
 		StorageProvider: "r2",

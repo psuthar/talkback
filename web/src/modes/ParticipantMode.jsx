@@ -91,16 +91,16 @@ export function ParticipantMode({
   const useR2Primary = hasPrimaryR2Video && syntheticR2Video && (!resolvedFromSession || String(resolvedFromSession.id) === String(primarySourceId))
   const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
-  const [materialsCollapsed, setMaterialsCollapsedState] = useState(false)
+  const [materialsCollapsed, setMaterialsCollapsedState] = useState(true) // collapsed on initial load and refresh
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
-  const [membersPanelExpanded, setMembersPanelExpanded] = useState(true)
+  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
   const [stanceAggregate, setStanceAggregate] = useState(null)
   const [stanceResponses, setStanceResponses] = useState([]) // per-person list with user_email
-  const [stancePanelExpanded, setStancePanelExpanded] = useState(true) // Left-panel Decisions section: expanded by default
+  const [stancePanelExpanded, setStancePanelExpanded] = useState(false) // Left-panel Decisions section: collapsed on load
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -251,7 +251,7 @@ export function ParticipantMode({
     if (sid) {
       try {
         const stored = localStorage.getItem(`${STORAGE_KEY_MATERIALS_COLLAPSED}.${sid}`)
-        setMaterialsCollapsedState(stored === 'true')
+        if (stored !== null) setMaterialsCollapsedState(stored === 'true')
       } catch {
         // ignore
       }

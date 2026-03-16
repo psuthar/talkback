@@ -262,14 +262,15 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, header.Filename)
+	filename := storage.NormalizeFilename(header.Filename)
+	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, filename)
 	if err != nil {
 		log.Printf("UploadMaterial check duplicate: %v", err)
 		http.Error(w, "Failed to check existing files", http.StatusInternalServerError)
 		return
 	}
 	if exists {
-		http.Error(w, fmt.Sprintf("A file named %q is already in this session", header.Filename), http.StatusConflict)
+		http.Error(w, fmt.Sprintf("A file named %q is already in this session", filename), http.StatusConflict)
 		return
 	}
 
@@ -277,8 +278,8 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
-	ext := strings.ToLower(filepath.Ext(header.Filename))
+	storageURL := storage.SessionArtifactPath(sessionID, filename)
+	ext := strings.ToLower(filepath.Ext(filename))
 	isImage := strings.HasPrefix(contentType, "image/") ||
 		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
 	kind := deriveMaterialKind(ext, contentType, isImage)
@@ -307,7 +308,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
-		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, header.Filename)
+		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, filename)
 		f, err := os.Open(filePath)
 		if err != nil {
 			http.Error(w, "Failed to open temp file for upload", http.StatusInternalServerError)
@@ -328,7 +329,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Failed to create uploads directory: %v", err), http.StatusInternalServerError)
 			return
 		}
-		filePath = filepath.Join(uploadsDir, header.Filename)
+		filePath = filepath.Join(uploadsDir, filename)
 		if err := utils.SaveFile(file, filePath); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to save file: %v", err), http.StatusInternalServerError)
 			return
@@ -349,16 +350,16 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 			textStatus = models.MaterialTextStatusReady
 		} else {
 			textStatus = models.MaterialTextStatusFailed
-			log.Printf("Failed to read text file %s: %v", header.Filename, err)
+			log.Printf("Failed to read text file %s: %v", filename, err)
 		}
 	case contentType == "application/pdf" || ext == ".pdf":
 		text, err := utils.ExtractTextFromFile(filePath)
 		if err != nil {
 			textStatus = models.MaterialTextStatusFailed
-			log.Printf("PDF text extraction failed for file %s: %v", header.Filename, err)
+			log.Printf("PDF text extraction failed for file %s: %v", filename, err)
 		} else if strings.TrimSpace(text) == "" {
 			textStatus = models.MaterialTextStatusFailed
-			log.Printf("PDF text extraction produced empty text for file %s", header.Filename)
+			log.Printf("PDF text extraction produced empty text for file %s", filename)
 		} else {
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady
@@ -367,10 +368,10 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		text, err := utils.ExtractTextFromFile(filePath)
 		if err != nil {
 			textStatus = models.MaterialTextStatusFailed
-			log.Printf("Office extraction failed for file %s: %v", header.Filename, err)
+			log.Printf("Office extraction failed for file %s: %v", filename, err)
 		} else if strings.TrimSpace(text) == "" {
 			textStatus = models.MaterialTextStatusFailed
-			log.Printf("Office extraction produced empty text for file %s", header.Filename)
+			log.Printf("Office extraction produced empty text for file %s", filename)
 		} else {
 			extractedText = &text
 			textStatus = models.MaterialTextStatusReady
@@ -383,7 +384,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 		ArtifactID:      artifactID,
 		SessionID:       artifact.SessionID,
 		Kind:            kind,
-		Filename:        header.Filename,
+		Filename:        filename,
 		ContentType:     contentType,
 		StorageURL:      storageURL,
 		StorageProvider: storageProvider,

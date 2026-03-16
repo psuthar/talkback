@@ -116,14 +116,15 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	}
 	defer file.Close()
 
-	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, header.Filename)
+	filename := storage.NormalizeFilename(header.Filename)
+	exists, err := h.DB.ExistsMaterialWithFilenameInSession(r.Context(), sessionID, filename)
 	if err != nil {
 		log.Printf("SessionUploadMaterial check duplicate: %v", err)
 		http.Error(w, "Failed to check existing files", http.StatusInternalServerError)
 		return
 	}
 	if exists {
-		http.Error(w, fmt.Sprintf("A file named %q is already in this session", header.Filename), http.StatusConflict)
+		http.Error(w, fmt.Sprintf("A file named %q is already in this session", filename), http.StatusConflict)
 		return
 	}
 
@@ -131,8 +132,8 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	storageURL := storage.SessionArtifactPath(sessionID, header.Filename)
-	ext := strings.ToLower(filepath.Ext(header.Filename))
+	storageURL := storage.SessionArtifactPath(sessionID, filename)
+	ext := strings.ToLower(filepath.Ext(filename))
 	isImage := strings.HasPrefix(contentType, "image/") ||
 		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
 	kind := deriveMaterialKind(ext, contentType, isImage)
@@ -165,7 +166,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
-		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, header.Filename)
+		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, filename)
 		f, err := os.Open(filePath)
 		if err != nil {
 			http.Error(w, "Failed to open temp file for upload", http.StatusInternalServerError)
@@ -187,7 +188,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "Failed to create uploads directory", http.StatusInternalServerError)
 			return
 		}
-		filePath = filepath.Join(uploadsDir, header.Filename)
+		filePath = filepath.Join(uploadsDir, filename)
 		if err := utils.SaveFile(file, filePath); err != nil {
 			http.Error(w, "Failed to save file", http.StatusInternalServerError)
 			return
@@ -218,7 +219,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			textStatus = models.MaterialTextStatusFailed
 			s := err.Error()
 			errMsg = &s
-			log.Printf("PDF extraction failed for %s: %v", header.Filename, err)
+			log.Printf("PDF extraction failed for %s: %v", filename, err)
 		} else if strings.TrimSpace(text) == "" {
 			textStatus = models.MaterialTextStatusFailed
 			s := "PDF produced empty text"
@@ -233,7 +234,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			textStatus = models.MaterialTextStatusFailed
 			s := err.Error()
 			errMsg = &s
-			log.Printf("Office extraction failed for %s: %v", header.Filename, err)
+			log.Printf("Office extraction failed for %s: %v", filename, err)
 		} else if strings.TrimSpace(text) == "" {
 			textStatus = models.MaterialTextStatusFailed
 			s := "Office extraction produced empty text"
@@ -252,7 +253,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	if titleFromForm != "" {
 		title = &titleFromForm
 	} else {
-		title = &header.Filename
+		title = &filename
 	}
 
 	sizeBytes := header.Size
@@ -261,7 +262,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		ArtifactID:       artifactID,
 		SessionID:        sessionID,
 		Kind:             kind,
-		Filename:         header.Filename,
+		Filename:         filename,
 		ContentType:      contentType,
 		StorageURL:       storageURL,
 		StorageProvider:  storageProvider,
@@ -316,7 +317,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			videoStoredKey = storageKey
 		}
 		videoID := uuid.New()
-		originalURL := "file:///" + header.Filename
+		originalURL := "file:///" + filename
 		videoSource := &models.VideoSource{
 			ID:                   videoID,
 			ArtifactID:           artifactID,
