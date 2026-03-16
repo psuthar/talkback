@@ -188,8 +188,28 @@ export function MaterialsTreePanel({
   }
   const materialStatusMetaSlides = materialStatusMeta
   const videoDisplayTitle = (v) => {
-    try { if (v?.original_url) return new URL(v.original_url).pathname.split('/').filter(Boolean).pop() || v.provider || 'Video' } catch (_) {}
-    if (v?.stored_video_object_key) return v.stored_video_object_key.split('/').filter(Boolean).pop() || v.provider || 'Video'
+    const decodeSegment = (seg) => {
+      if (!seg) return seg
+      try {
+        // Decode URL-encoded sequences like %20 so names show spaces instead of %20.
+        return decodeURIComponent(seg)
+      } catch {
+        return seg
+      }
+    }
+    try {
+      if (v?.original_url) {
+        const seg = new URL(v.original_url).pathname.split('/').filter(Boolean).pop()
+        const decoded = decodeSegment(seg)
+        if (decoded) return decoded
+      }
+    } catch (_) {}
+    if (v?.stored_video_object_key) {
+      const seg = v.stored_video_object_key.split('/').filter(Boolean).pop()
+      const decoded = decodeSegment(seg)
+      if (decoded) return decoded
+      return seg || v.provider || 'Video'
+    }
     return v?.provider || 'Video'
   }
 

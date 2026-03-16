@@ -12,6 +12,7 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/psuthar/talkback/internal/models"
+	"github.com/openai/openai-go/shared"
 )
 
 // QAResponse represents the structured response from the LLM
@@ -223,6 +224,9 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 			openai.UserMessage(userPrompt),
 		},
 	}
+	// Force valid JSON output to prevent intermittent parse failures.
+	rf := shared.NewResponseFormatJSONObjectParam()
+	params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &rf}
 
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
