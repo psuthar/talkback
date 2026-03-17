@@ -1,7 +1,7 @@
 import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
 
-/** Backend API base URL — must match the running go API server. */
-export const API_BASE = 'http://localhost:8081'
+/** Backend API base URL. Default: localhost:8081 (matches debugger PORT=8081). Set TALKBACK_API_BASE for Render or if API runs on 8080. */
+export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8081'
 
 /**
  * Parse Set-Cookie response header and inject cookies into the browser context.
@@ -19,6 +19,10 @@ export async function injectCookiesFromResponse(
     .map((line) => line.trim())
     .filter(Boolean)
 
+  const apiUrl = new URL(API_BASE)
+  const cookieDomain = apiUrl.hostname
+  const isHttps = apiUrl.protocol === 'https:'
+
   const parsed = cookieDefs.map((line) => {
     const parts = line.split(';').map((p) => p.trim())
     const [nameVal] = parts
@@ -26,12 +30,18 @@ export async function injectCookiesFromResponse(
     const name = nameVal.slice(0, eqIdx).trim()
     const value = nameVal.slice(eqIdx + 1).trim()
     const pathPart = parts.find((p) => p.toLowerCase().startsWith('path='))
-    return {
+    const cookie: { name: string; value: string; domain: string; path: string; secure?: boolean; sameSite?: 'Strict' | 'Lax' | 'None' } = {
       name,
       value,
-      domain: 'localhost',
+      domain: cookieDomain,
       path: pathPart ? pathPart.split('=')[1].trim() : '/',
     }
+    // Cross-origin (e.g. Render): browser only sends cookie to API if Secure + SameSite=None
+    if (isHttps) {
+      cookie.secure = true
+      cookie.sameSite = 'None'
+    }
+    return cookie
   })
 
   await context.addCookies(parsed)

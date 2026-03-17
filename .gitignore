@@ -1,5 +1,7 @@
 # Environment variables
 .env
+web/.env.e2e
+web/.env.e2e.local
 
 # Data directory (uploaded files)
 data/
@@ -42,6 +44,9 @@ ops/bundles/*.json
 # Baseline storage (keep ops/baselines/ via .gitkeep)
 ops/baselines/*.json
 !ops/baselines/.gitkeep
+
+# Test output (e.g. Playwright)
+test-results/
 
 # OS
 .DS_Store

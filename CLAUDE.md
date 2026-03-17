@@ -82,4 +82,18 @@ Use the `e2e-tests` skill for browser-test authoring conventions.
 
 ---
 
+## Test routing
+
+Use the `smoke-tests` skill for creating or refining deterministic backend smoke/integration tests.
+
+Use the `talkback-smoke-fixer` subagent for:
+- running smoke tests
+- diagnosing smoke test failures
+- fixing smoke tests or small backend issues revealed by them
+- expanding smoke coverage while following repo smoke-test conventions
+
+Use the `e2e-tests` skill and `talkback-e2e-fixer` subagent for browser-based workflow validation.
+
+---
+
 *This file is part of the Claude Code configuration for TalkBack. See README.md and `docs/architecture.md` for full product and architecture details.*

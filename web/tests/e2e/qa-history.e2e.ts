@@ -30,8 +30,9 @@ test('previously asked question is visible in QA history panel', async ({ page, 
   })
   expect(askRes.ok()).toBe(true)
 
-  // --- Navigate to session in view mode ---
-  await page.goto(`/?session=${session.id}&mode=view`)
+  // --- Navigate to session in view mode (api= so app uses same backend on Render) ---
+  const params = new URLSearchParams({ session: session.id, mode: 'view', api: API_BASE })
+  await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 
   // --- The question item must be visible in the QA panel ---

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
+  API_BASE,
   createUserAndLogin,
   createSession,
   pasteMaterial,
@@ -25,8 +26,9 @@ test(
     const session = await createSession(request, 'E2E Happy Path Session')
     await pasteMaterial(request, session.id, 'Meridian Report', FIXTURE_TEXT)
 
-    // --- 1. Navigate to session in participant view ---
-    await page.goto(`/?session=${session.id}&mode=view`)
+    // --- 1. Navigate to session in participant view (api= so app uses same backend on Render) ---
+    const params = new URLSearchParams({ session: session.id, mode: 'view', api: API_BASE })
+    await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
 
     // --- 2. Expand materials panel if collapsed ---

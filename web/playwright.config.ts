@@ -1,4 +1,12 @@
+import 'dotenv/config'
 import { defineConfig, devices } from '@playwright/test'
+import dotenv from 'dotenv'
+
+// When E2E_TARGET=render, load .env.e2e so tests hit Render (API + app) instead of localhost
+if (process.env.E2E_TARGET === 'render') {
+  dotenv.config({ path: '.env.e2e' })
+  dotenv.config({ path: '.env.e2e.local' })
+}
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -9,7 +17,8 @@ export default defineConfig({
   workers: 1,
   reporter: 'html',
   use: {
-    baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
+    // Only use E2E_BASE_URL when targeting Render; otherwise local runs always use localhost (avoids .env or shell env leaking Render URL).
+    baseURL: process.env.E2E_TARGET === 'render' ? (process.env.E2E_BASE_URL || 'http://localhost:3000') : 'http://localhost:3000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -19,7 +28,6 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  // Requires both dev stacks to be running before invoking:
-  //   go run ./cmd/api   (port 8081 per local .env)
-  //   cd web && npm run dev   (port 3000)
+  // Local (npm run test:e2e): API at localhost:8081 (match debugger PORT=8081 or .env), app at localhost:3000. Start both first.
+  // If API runs on 8080 (go run without PORT), set TALKBACK_API_BASE=http://localhost:8080. Render: npm run test:e2e:render.
 })
