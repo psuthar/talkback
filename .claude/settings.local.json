@@ -8,7 +8,12 @@
       "Bash(find /c/Users/pares/code/talkback/web/src -type f -name \"*.jsx\" | head -3 | xargs -I {} grep -l \"fetch\\\\|http\\\\|api\" {} 2>/dev/null | head -2)",
       "Bash(npx vite:*)",
       "Bash(cd \"C:\\\\Users\\\\pares\\\\code\\\\talkback\\\\.claude\\\\worktrees\\\\agent-ab31cc22\\\\web\" && node_modules/.bin/vite build --mode development 2>&1)",
-      "Bash(cd \"C:\\\\Users\\\\pares\\\\code\\\\talkback\\\\.claude\\\\worktrees\\\\agent-ab31cc22\\\\web\" && npm install 2>&1 | tail -5)"
+      "Bash(cd \"C:\\\\Users\\\\pares\\\\code\\\\talkback\\\\.claude\\\\worktrees\\\\agent-ab31cc22\\\\web\" && npm install 2>&1 | tail -5)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(cd:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

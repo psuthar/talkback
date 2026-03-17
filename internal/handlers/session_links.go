@@ -122,7 +122,7 @@ func (h *Handlers) AddSessionLink(w http.ResponseWriter, r *http.Request) {
 			log.Printf("AddSessionLink IndexSession: %v", indexErr)
 		}
 	} else {
-		rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+		h.triggerIndex(sessionID)
 	}
 	if h.Hub != nil {
 		h.Hub.BroadcastSessionUpdated(sessionID)
@@ -216,7 +216,7 @@ func (h *Handlers) DeleteSessionLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to delete link", http.StatusInternalServerError)
 		return
 	}
-	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+	h.triggerIndex(sessionID)
 	if h.Hub != nil {
 		h.Hub.BroadcastSessionUpdated(sessionID)
 	}

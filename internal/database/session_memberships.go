@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -32,6 +33,33 @@ func (db *DB) CreateSessionMembership(ctx context.Context, sessionID, userID uui
 		return fmt.Errorf("create session membership: %w", err)
 	}
 	return nil
+}
+
+// GetSessionMemberships returns all membership rows for a session, ordered by created_at.
+func (db *DB) GetSessionMemberships(ctx context.Context, sessionID uuid.UUID) ([]*SessionMembership, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, session_id, user_id, role, invited_by_user_id, joined_at, created_at, updated_at
+		FROM session_memberships
+		WHERE session_id = $1
+		ORDER BY created_at ASC
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get session memberships: %w", err)
+	}
+	defer rows.Close()
+	var memberships []*SessionMembership
+	for rows.Next() {
+		m := &SessionMembership{}
+		var joinedAt, createdAt, updatedAt time.Time
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.UserID, &m.Role, &m.InvitedByUserID, &joinedAt, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan session membership: %w", err)
+		}
+		m.JoinedAt = joinedAt.Format(time.RFC3339)
+		m.CreatedAt = createdAt.Format(time.RFC3339)
+		m.UpdatedAt = updatedAt.Format(time.RFC3339)
+		memberships = append(memberships, m)
+	}
+	return memberships, rows.Err()
 }
 
 // UserIsSessionMember returns true if the user has a session_memberships row for the session.

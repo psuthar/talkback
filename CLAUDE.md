@@ -70,4 +70,16 @@ When working in this repository, Claude must:
 
 ---
 
+## Subagent routing
+
+Use the `talkback-e2e-fixer` subagent for tasks that involve:
+- running Playwright tests
+- diagnosing E2E failures
+- fixing selectors, waits, fixture/setup issues, or minor UI bugs revealed by browser tests
+
+Use the `smoke-tests` skill for API/integration test creation.
+Use the `e2e-tests` skill for browser-test authoring conventions.
+
+---
+
 *This file is part of the Claude Code configuration for TalkBack. See README.md and `docs/architecture.md` for full product and architecture details.*

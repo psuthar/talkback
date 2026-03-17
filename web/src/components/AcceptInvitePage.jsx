@@ -311,8 +311,10 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
               />
             </div>
             <div style={{ marginBottom: '12px' }}>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Display name</label>
+              <label htmlFor="signup-display-name" style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Display name</label>
               <input
+                id="signup-display-name"
+                data-testid="signup-display-name"
                 type="text"
                 value={signupName}
                 onChange={(e) => setSignupName(e.target.value)}
@@ -322,8 +324,10 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
               />
             </div>
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Password</label>
+              <label htmlFor="signup-password" style={{ display: 'block', marginBottom: '4px', fontWeight: '500', fontSize: '14px' }}>Password</label>
               <input
+                id="signup-password"
+                data-testid="signup-password"
                 type="password"
                 value={signupPassword}
                 onChange={(e) => setSignupPassword(e.target.value)}

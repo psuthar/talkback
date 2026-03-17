@@ -74,6 +74,7 @@ export function QAPanel({
           {!showVoiceConfirm && (
             <>
               <textarea
+                data-testid="question-input"
                 value={questionText}
                 onChange={(e) => setQuestionText(e.target.value)}
                 placeholder="Ask a question..."
@@ -87,6 +88,7 @@ export function QAPanel({
                 }}
               />
               <button
+                data-testid="ask-button"
                 type="button"
                 onClick={askSessionQuestion}
                 disabled={!questionText?.trim() || loading}

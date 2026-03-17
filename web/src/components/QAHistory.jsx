@@ -219,7 +219,8 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
   const replyIndentPx = 28
   return (
     <div
-      key={q.id}
+      data-testid="question-item"
+      className="question-item"
       style={{
         marginBottom: '15px',
         marginLeft: isReply ? replyIndentPx : 0,
@@ -294,15 +295,19 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
               </div>
       {q.answer ? (
         <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
-          <div style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
+          <div data-testid="answer-text" className="answer-text" style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
           <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
             From: {answerFromLabel ? <strong>{answerFromLabel}</strong> : <strong>—</strong>}
             {' | '}
-            Status: <span style={{
-              color: q.answer.answer_status === 'answered' ? '#4CAF50' :
-                q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
-              fontWeight: 'bold'
-            }}>{q.answer.answer_status}</span>
+            Status: <span
+              data-testid="answer-status"
+              className={`answer-status ${q.answer.answer_status}`}
+              style={{
+                color: q.answer.answer_status === 'answered' ? '#4CAF50' :
+                  q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
+                fontWeight: 'bold'
+              }}
+            >{q.answer.answer_status}</span>
             {q.answer.model !== 'manual' && (
               <>
                 {' | '}

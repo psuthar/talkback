@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -376,7 +375,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if material.ExtractedText != nil && *material.ExtractedText != "" {
-		rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+		h.triggerIndex(sessionID)
 	}
 	if h.Hub != nil {
 		h.Hub.BroadcastSessionUpdated(sessionID)
@@ -461,7 +460,7 @@ func (h *Handlers) SessionPasteMaterial(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to create material", http.StatusInternalServerError)
 		return
 	}
-	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+	h.triggerIndex(sessionID)
 	if h.Hub != nil {
 		h.Hub.BroadcastSessionUpdated(sessionID)
 	}

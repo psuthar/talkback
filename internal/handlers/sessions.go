@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -688,9 +687,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if h.Storage != nil {
-		rag.IndexSessionAsync(newSession.ID, h.DB, h.Storage)
-	}
+	h.triggerIndex(newSession.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(CopySessionResponse{

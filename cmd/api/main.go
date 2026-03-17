@@ -152,6 +152,7 @@ func main() {
 	invSvc := &invitations.Service{Repo: invRepo, Lookup: lookup, Config: invitations.Config{AppBaseURL: appBaseURL, ExpiryHours: expiryHours}, Send: sendFn}
 	log.Println("Invitation service enabled (mailto delivery; set RESEND_API_KEY for email sending)")
 	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
+	h.IndexAsync = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
 
 	// When a transcript job completes: reindex session for RAG; if it was Zoom Whisper fallback, mark processing job ready and broadcast
 	onJobReady := func(sessionID uuid.UUID) { h.Hub.BroadcastSessionProcessingReady(sessionID) }

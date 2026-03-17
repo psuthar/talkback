@@ -15,7 +15,6 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/invitations"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -26,6 +25,17 @@ type Handlers struct {
 	Hub               *SessionHub
 	Storage           storage.Interface
 	InvitationService *invitations.Service
+	// IndexAsync triggers async RAG re-indexing for a session. nil means no-op (used in tests).
+	// In production, set to: func(id uuid.UUID) { rag.IndexSessionAsync(id, db, store) }
+	IndexAsync func(sessionID uuid.UUID)
+}
+
+// triggerIndex calls IndexAsync if set; otherwise a no-op. All handler code should use this
+// instead of calling rag.IndexSessionAsync directly so tests can opt out.
+func (h *Handlers) triggerIndex(sessionID uuid.UUID) {
+	if h.IndexAsync != nil {
+		h.IndexAsync(sessionID)
+	}
 }
 
 func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor, store storage.Interface, invSvc *invitations.Service) *Handlers {
@@ -406,7 +416,7 @@ func (h *Handlers) UploadMaterial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if material.ExtractedText != nil && *material.ExtractedText != "" {
-		rag.IndexSessionAsync(material.SessionID, h.DB, h.Storage)
+		h.triggerIndex(material.SessionID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -718,7 +728,7 @@ func (h *Handlers) UploadTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rag.IndexSessionAsync(videoSource.SessionID, h.DB, h.Storage)
+	h.triggerIndex(videoSource.SessionID)
 
 	// Get updated video source
 	updatedVideoSource, _ := h.DB.GetVideoSourceByID(r.Context(), videoID)
@@ -936,6 +946,13 @@ func (h *Handlers) GetQuestions(w http.ResponseWriter, r *http.Request) {
 		// This allows the endpoint to return 200 with empty data for non-existent artifacts
 		log.Printf("Warning: Failed to get questions for artifact %s: %v", artifactID, err)
 		questions = []*models.Question{}
+		answers = []*models.Answer{}
+	}
+	// Normalize nil slices to empty: JSON null vs [] matters to callers.
+	if questions == nil {
+		questions = []*models.Question{}
+	}
+	if answers == nil {
 		answers = []*models.Answer{}
 	}
 

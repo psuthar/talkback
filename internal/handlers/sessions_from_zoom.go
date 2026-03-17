@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/transcript"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -369,7 +368,7 @@ func (h *Handlers) CreateSessionFromZoom(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	rag.IndexSessionAsync(sessionID, h.DB, h.Storage)
+	h.triggerIndex(sessionID)
 
 	vsIDStr := videoID.String()
 	response := CreateSessionFromZoomResponse{

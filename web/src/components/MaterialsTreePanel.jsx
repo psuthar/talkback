@@ -62,7 +62,7 @@ function TreeSection({ title, children }) {
   )
 }
 
-function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting }) {
+function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId }) {
   return (
     <div
       style={{
@@ -80,6 +80,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
       }}
     >
       <button
+        data-testid={testId}
         type="button"
         onClick={onClick}
         style={{
@@ -305,8 +306,9 @@ export function MaterialsTreePanel({
               return (
                 <TreeItem
                   key={m.id}
+                  testId="material-item"
                   icon={null}
-                  title={m.filename || 'Untitled'}
+                  title={m.title || m.filename || 'Untitled'}
                   meta={metaParts.join(' • ')}
                   metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
                   selected={selectedDocumentId === m.id}
