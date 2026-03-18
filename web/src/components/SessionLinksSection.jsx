@@ -120,20 +120,21 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
                   {link.url}
                 </div>
                 <div style={{ fontSize: '12px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : 'Not verified'}>
-                    {link.status === 'verified' ? (
-                      <span style={{ color: '#4CAF50' }} aria-hidden>✓</span>
-                    ) : (
-                      <span style={{ color: '#c62828' }} aria-hidden>✕</span>
-                    )}
-                  </span>
-                  {link.status !== 'verified' && (
-                    <span style={{ color: '#666' }}>{link.status}</span>
+                  {link.status === 'verified' && (
+                    <span style={{ fontSize: '14px', color: '#4CAF50' }} title="Verified" aria-hidden>✓</span>
                   )}
-                  {link.error_message && (
-                    <span style={{ color: '#c62828', marginLeft: '8px' }} title={link.error_message}>
-                      {link.error_message.length > 60 ? link.error_message.slice(0, 60) + '…' : link.error_message}
-                    </span>
+                  {(link.status === 'pending' || link.status === 'processing') && (
+                    <span style={{ fontSize: '14px', color: '#ed6c02' }} title="Processing">Processing…</span>
+                  )}
+                  {link.status === 'failed' && (
+                    <>
+                      <span style={{ fontSize: '14px', color: '#c62828' }} title="Failed" aria-hidden>✕</span>
+                      {link.error_message && (
+                        <span style={{ color: '#c62828', marginLeft: '4px' }} title={link.error_message}>
+                          {link.error_message.length > 60 ? link.error_message.slice(0, 60) + '…' : link.error_message}
+                        </span>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

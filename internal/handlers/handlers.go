@@ -157,14 +157,14 @@ func (h *Handlers) GetArtifact(w http.ResponseWriter, r *http.Request) {
 		videoSource = nil
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"artifact":      artifact,
 		"materials":     materials,
-		"video_sources": []interface{}{},
+		"video_sources": []any{},
 	}
 
 	if videoSource != nil {
-		response["video_sources"] = []interface{}{videoSource}
+		response["video_sources"] = []any{videoSource}
 	}
 
 	// Optionally include questions if ?include_questions=true
@@ -997,7 +997,7 @@ func (h *Handlers) GetTranscriptJob(w http.ResponseWriter, r *http.Request) {
 	if videoSource.TranscriptionJobID == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"video_source_id": videoSource.ID.String(),
 			"job":             nil,
 			"status":          "no_job",
@@ -1015,7 +1015,7 @@ func (h *Handlers) GetTranscriptJob(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"video_source_id": videoSource.ID.String(),
 		"job":             job,
 		"status":          string(job.Status),

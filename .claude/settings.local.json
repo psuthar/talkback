@@ -13,7 +13,14 @@
       "Bash(find:*)",
       "Bash(cd:*)",
       "Bash(npx playwright:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(curl -s http://localhost:8081/api/health)",
+      "Bash(curl -s http://localhost:8080/api/health)",
+      "Bash(curl -s http://localhost:3000/ -o /dev/null -w \"%{http_code}\")",
+      "Bash(docker ps:*)",
+      "Bash(curl -s http://localhost:8081/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8081/)",
+      "Bash(npm run:*)"
     ]
   }
 }

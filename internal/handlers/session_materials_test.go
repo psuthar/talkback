@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -133,7 +132,7 @@ func TestSessionUploadMaterial(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("uploads docx and extracts text", func(t *testing.T) {
+	t.Run("uploads docx and returns 201 with pending (extraction is async)", func(t *testing.T) {
 		tmp := t.TempDir()
 		docxPath := filepath.Join(tmp, "minimal.docx")
 		createMinimalDocx(t, docxPath, "Session DOCX content")
@@ -155,13 +154,11 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "ready", m["text_status"])
-		ext, ok := m["extracted_text"].(string)
-		require.True(t, ok)
-		assert.True(t, strings.Contains(ext, "Session DOCX content"), "extracted_text should contain expected string: %q", ext)
+		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async; response returns pending")
+		assert.Nil(t, m["extracted_text"], "extracted_text is set by job processor when extraction completes")
 	})
 
-	t.Run("uploads xlsx and extracts text", func(t *testing.T) {
+	t.Run("uploads xlsx and returns 201 with pending (extraction is async)", func(t *testing.T) {
 		tmp := t.TempDir()
 		xlsxPath := filepath.Join(tmp, "minimal.xlsx")
 		f := excelize.NewFile()
@@ -187,13 +184,11 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "ready", m["text_status"])
-		ext, ok := m["extracted_text"].(string)
-		require.True(t, ok)
-		assert.True(t, strings.Contains(ext, "Session XLSX content"), "extracted_text should contain expected string: %q", ext)
+		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async")
+		assert.Nil(t, m["extracted_text"])
 	})
 
-	t.Run("uploads pptx and extracts text", func(t *testing.T) {
+	t.Run("uploads pptx and returns 201 with pending (extraction is async)", func(t *testing.T) {
 		tmp := t.TempDir()
 		pptxPath := filepath.Join(tmp, "minimal.pptx")
 		createMinimalPptx(t, pptxPath, "Session PPTX content")
@@ -215,11 +210,8 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "ready", m["text_status"])
-		ext, ok := m["extracted_text"].(string)
-		require.True(t, ok)
-		assert.True(t, strings.Contains(ext, "Session PPTX content"), "extracted_text should contain expected string: %q", ext)
-		// Slide derivation runs asynchronously (same for R2 and local); this test only asserts upload + text extraction.
+		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async")
+		assert.Nil(t, m["extracted_text"])
 	})
 }
 

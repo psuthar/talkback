@@ -435,8 +435,9 @@ const (
 
 type TranscriptJob struct {
 	ID               uuid.UUID           `json:"id"`
-	VideoSourceID    uuid.UUID           `json:"video_source_id"`    // nil (uuid.Nil) when job is for a material
-	MaterialID       *uuid.UUID          `json:"material_id,omitempty"` // set when transcribing an uploaded material (e.g. MP4)
+	VideoSourceID    uuid.UUID           `json:"video_source_id"`    // nil (uuid.Nil) when job is for a material or link
+	MaterialID       *uuid.UUID          `json:"material_id,omitempty"` // set when extracting material (PDF/Office)
+	SessionLinkID    *uuid.UUID          `json:"session_link_id,omitempty"` // set when fetching/extracting a session link
 	SessionID        uuid.UUID           `json:"session_id"`
 	Status           TranscriptJobStatus `json:"status"`
 	ErrorMessage     *string             `json:"error_message,omitempty"`
@@ -458,9 +459,10 @@ type TranscriptJob struct {
 type SessionLinkStatus string
 
 const (
-	SessionLinkStatusPending   SessionLinkStatus = "pending"
-	SessionLinkStatusVerified  SessionLinkStatus = "verified"
-	SessionLinkStatusFailed    SessionLinkStatus = "failed"
+	SessionLinkStatusPending    SessionLinkStatus = "pending"
+	SessionLinkStatusProcessing SessionLinkStatus = "processing"
+	SessionLinkStatusVerified   SessionLinkStatus = "verified"
+	SessionLinkStatusFailed     SessionLinkStatus = "failed"
 )
 
 // SessionLink is a URL added to a session; content is extracted and indexed for RAG.

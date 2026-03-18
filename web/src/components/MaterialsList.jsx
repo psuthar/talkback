@@ -75,7 +75,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                 Type: <strong>{material.content_type}</strong> |
                 Status: <span style={{
                   color: status === 'N/A' ? '#666' : status === 'ready' ? '#4CAF50' :
-                         material.text_status === 'pending' ? '#ff9800' : '#f44336',
+                         (material.text_status === 'pending' || material.text_status === 'processing') ? '#ff9800' : material.text_status === 'failed' ? '#f44336' : '#666',
                   fontWeight: 'bold'
                 }}>{status}</span>
               </div>
@@ -84,11 +84,11 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   Storage: <code>{material.storage_url}</code>
                 </div>
               )}
-              {(material.extracted_text || material.kind === 'video') && (
+              {(material.extracted_text || material.kind === 'video' || material.text_status === 'pending' || material.text_status === 'processing' || material.text_status === 'failed') && (
                 <div style={{
                   marginTop: '10px',
                   padding: '10px',
-                  backgroundColor: '#f5f5f5',
+                  backgroundColor: material.text_status === 'failed' ? '#ffebee' : '#f5f5f5',
                   borderRadius: '3px',
                   fontSize: '13px',
                   maxHeight: '150px',
@@ -96,12 +96,14 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   border: '1px solid #e0e0e0'
                 }}>
                   <strong>{material.kind === 'video' ? 'Transcript:' : 'Extracted Text Preview:'}</strong>
-                  <div style={{ marginTop: '5px', fontStyle: material.extracted_text ? 'italic' : 'normal', color: '#555' }}>
+                  <div style={{ marginTop: '5px', fontStyle: material.extracted_text ? 'italic' : 'normal', color: material.text_status === 'failed' ? '#c62828' : '#555' }}>
                     {material.extracted_text
                       ? (material.extracted_text.length > 500
                         ? material.extracted_text.substring(0, 500) + '...'
                         : material.extracted_text)
-                      : (material.text_status === 'pending' || material.text_status === 'processing' ? 'Processing…' : 'No transcript yet.')}
+                      : material.text_status === 'failed'
+                        ? (material.error_message || 'Extraction failed.')
+                        : (material.text_status === 'pending' || material.text_status === 'processing' ? 'Processing…' : 'No transcript yet.')}
                   </div>
                 </div>
               )}

@@ -172,6 +172,12 @@ func main() {
 			log.Printf("Zoom Whisper fallback: marked processing job ready for session %s", sessionID)
 		}
 	}
+	// When a material extraction job fails (or other session update without reindex): broadcast so UI shows failed state
+	jobProcessor.OnSessionUpdated = func(sessionID uuid.UUID) {
+		if h.Hub != nil {
+			h.Hub.BroadcastSessionUpdated(sessionID)
+		}
+	}
 
 	// Mission #4: processing worker and reconciler for Zoom import pipeline
 	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {

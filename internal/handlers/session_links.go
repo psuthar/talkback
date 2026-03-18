@@ -5,11 +5,11 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
-	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/urlextract"
 )
 
@@ -18,7 +18,7 @@ type AddSessionLinkRequest struct {
 	URL string `json:"url"`
 }
 
-// AddSessionLink handles POST /api/sessions/:id/links — validate URL, verify accessibility, extract content, store, reindex.
+// AddSessionLink handles POST /api/sessions/:id/links — validate URL, create link with status pending, enqueue extraction job, return 201.
 func (h *Handlers) AddSessionLink(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -83,47 +83,34 @@ func (h *Handlers) AddSessionLink(w http.ResponseWriter, r *http.Request) {
 		URL:       normalizedURL,
 		Status:    models.SessionLinkStatusPending,
 	}
-	result, err := urlextract.FetchAndExtract(r.Context(), normalizedURL, urlextract.DefaultMaxBytes)
-	if err != nil {
-		link.Status = models.SessionLinkStatusFailed
-		errMsg := err.Error()
-		if len(errMsg) > 500 {
-			errMsg = errMsg[:500]
-		}
-		link.ErrorMessage = &errMsg
-		if createErr := h.DB.CreateSessionLink(r.Context(), link); createErr != nil {
-			log.Printf("AddSessionLink CreateSessionLink (failed): %v", createErr)
-			http.Error(w, "Failed to save link", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		json.NewEncoder(w).Encode(link)
-		return
-	}
-	link.URL = result.FinalURL
-	link.Status = models.SessionLinkStatusVerified
-	if result.Title != "" {
-		link.Title = &result.Title
-	}
-	bodyTrim := strings.TrimSpace(result.Body)
-	if len(bodyTrim) > 0 {
-		link.ExtractedText = &bodyTrim
-	}
 	if err := h.DB.CreateSessionLink(r.Context(), link); err != nil {
 		log.Printf("AddSessionLink CreateSessionLink: %v", err)
 		http.Error(w, "Failed to save link", http.StatusInternalServerError)
 		return
 	}
-	// Index synchronously so the link is searchable before we return; avoids "no answer" when user asks immediately
-	if link.ExtractedText != nil && *link.ExtractedText != "" {
-		embedder := &rag.OpenAIEmbedder{}
-		if indexErr := rag.IndexSession(r.Context(), h.DB, embedder, sessionID, h.Storage); indexErr != nil {
-			log.Printf("AddSessionLink IndexSession: %v", indexErr)
+
+	// Enqueue link extraction job (same pattern as PDF/Office material extraction)
+	if h.JobProcessor != nil {
+		jobKey := "link_extract:" + link.ID.String()
+		existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
+		if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+			job := &models.TranscriptJob{
+				ID:            uuid.New(),
+				SessionLinkID: &link.ID,
+				SessionID:     sessionID,
+				Status:        models.TranscriptJobStatusQueued,
+				SourceURL:     normalizedURL,
+				JobKey:        jobKey,
+				QueuedAt:      time.Now(),
+			}
+			if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
+				log.Printf("AddSessionLink CreateTranscriptJob: %v", err)
+			} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+				log.Printf("AddSessionLink Enqueue link extraction: %v", err)
+			}
 		}
-	} else {
-		h.triggerIndex(sessionID)
 	}
+
 	if h.Hub != nil {
 		h.Hub.BroadcastSessionUpdated(sessionID)
 	}

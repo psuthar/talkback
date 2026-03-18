@@ -97,7 +97,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	if auth.Config.MaxMaterialsPerSession > 0 && count >= auth.Config.MaxMaterialsPerSession {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"error":             "session materials limit reached",
 			"max_materials":     auth.Config.MaxMaterialsPerSession,
 		})
@@ -212,36 +212,9 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			s := err.Error()
 			errMsg = &s
 		}
-	case contentType == "application/pdf" || ext == ".pdf":
-		text, err := utils.ExtractTextFromFile(filePath)
-		if err != nil {
-			textStatus = models.MaterialTextStatusFailed
-			s := err.Error()
-			errMsg = &s
-			log.Printf("PDF extraction failed for %s: %v", filename, err)
-		} else if strings.TrimSpace(text) == "" {
-			textStatus = models.MaterialTextStatusFailed
-			s := "PDF produced empty text"
-			errMsg = &s
-		} else {
-			extractedText = &text
-			textStatus = models.MaterialTextStatusReady
-		}
-	case isOfficeFile(ext, contentType):
-		text, err := utils.ExtractTextFromFile(filePath)
-		if err != nil {
-			textStatus = models.MaterialTextStatusFailed
-			s := err.Error()
-			errMsg = &s
-			log.Printf("Office extraction failed for %s: %v", filename, err)
-		} else if strings.TrimSpace(text) == "" {
-			textStatus = models.MaterialTextStatusFailed
-			s := "Office extraction produced empty text"
-			errMsg = &s
-		} else {
-			extractedText = &text
-			textStatus = models.MaterialTextStatusReady
-		}
+	case contentType == "application/pdf" || ext == ".pdf", isOfficeFile(ext, contentType):
+		// PDF and Office: extraction runs async via job processor; return 201 immediately with text_status=pending
+		textStatus = models.MaterialTextStatusPending
 	case isVideoForTranscription(ext, contentType):
 		// Video: transcript is handled by VideoSource + job; material is just the file reference — show ready so it doesn't stay "pending"
 		textStatus = models.MaterialTextStatusReady
@@ -283,6 +256,43 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Failed to create material record", http.StatusInternalServerError)
 		return
 	}
+
+	// Enqueue material extraction job for PDF/Office so extraction runs async (worker sets processing → ready/failed, then index + broadcast).
+	needsExtraction := (contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)
+	if needsExtraction && h.JobProcessor != nil {
+		jobKey := "material_extract:" + material.ID.String()
+		existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
+		if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
+			var sourceURL string
+			if storageProvider == "local" {
+				sourceURL = filepath.ToSlash(storageURL)
+			} else if storageProvider == "r2" && storageKey != "" && h.Storage != nil {
+				presigned, err := h.Storage.PresignGet(r.Context(), storageKey, 24*time.Hour)
+				if err != nil {
+					log.Printf("SessionUploadMaterial PresignGet for material extraction: %v", err)
+				} else {
+					sourceURL = presigned
+				}
+			}
+			if sourceURL != "" {
+				job := &models.TranscriptJob{
+					ID:         uuid.New(),
+					MaterialID: &material.ID,
+					SessionID:  sessionID,
+					Status:     models.TranscriptJobStatusQueued,
+					SourceURL:  sourceURL,
+					JobKey:     jobKey,
+					QueuedAt:   time.Now(),
+				}
+				if err := h.DB.CreateTranscriptJob(r.Context(), job); err != nil {
+					log.Printf("SessionUploadMaterial CreateTranscriptJob: %v", err)
+				} else if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+					log.Printf("SessionUploadMaterial Enqueue material extraction: %v", err)
+				}
+			}
+		}
+	}
+
 	// Best-effort slide derivation for PPT/PPTX (R2 or local): always run in background so code path is the same everywhere.
 	// R2: goroutine keeps temp file and removes it when done; request returns before Render's ~30s timeout.
 	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && filePath != "" {
@@ -422,7 +432,7 @@ func (h *Handlers) SessionPasteMaterial(w http.ResponseWriter, r *http.Request) 
 	if auth.Config.MaxMaterialsPerSession > 0 && count >= auth.Config.MaxMaterialsPerSession {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"error":          "session materials limit reached",
 			"max_materials":  auth.Config.MaxMaterialsPerSession,
 		})
@@ -613,7 +623,7 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 
 // tryGenerateAndStoreSlidesLocal performs best-effort slide derivation for PPT/PPTX stored on local disk.
 // Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
-func (h *Handlers) tryGenerateAndStoreSlidesLocal(ctx context.Context, localPath string) {
+func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath string) {
 	log.Printf("slide generation started (local) for %s", localPath)
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
 	if err != nil {

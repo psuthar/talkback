@@ -391,9 +391,11 @@ export function MaterialsTreePanel({
                   <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
                     {link.title || link.url}
                   </span>
-                  <span style={{ flexShrink: 0, fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : 'Not verified'}>
+                  <span style={{ flexShrink: 0, fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
                     {link.status === 'verified' ? (
                       <span style={{ color: '#2e7d32' }} aria-hidden>✓</span>
+                    ) : link.status === 'pending' || link.status === 'processing' ? (
+                      <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
                     ) : (
                       <span style={{ color: '#c62828' }} aria-hidden>✕</span>
                     )}
