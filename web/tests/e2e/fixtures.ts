@@ -1,7 +1,7 @@
 import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
 
-/** Backend API base URL. Default: localhost:8081 (matches debugger PORT=8081). Set TALKBACK_API_BASE for Render or if API runs on 8080. */
-export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8081'
+/** Backend API base URL. Default: localhost:8080. Set TALKBACK_API_BASE for Render or if API runs elsewhere. */
+export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8080'
 
 /**
  * Parse Set-Cookie response header and inject cookies into the browser context.
@@ -120,4 +120,74 @@ export async function createInvitation(
 /** Unique per-test email — prevents collision between test runs. */
 export function uniqueEmail(prefix = 'e2e'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@smoke.test`
+}
+
+/**
+ * Admin credentials for teardown operations.
+ * Reads from env vars (set in .env or CI); falls back to local bootstrap defaults.
+ */
+export const ADMIN_EMAIL = process.env.TALKBACK_ADMIN_EMAIL || 'paresh@suthar.com'
+export const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'your-secure-password'
+
+/**
+ * Delete a session via admin API. Requires a request context authenticated as admin.
+ * Safe to call with a context that is already logged in as admin.
+ * Returns true on success or 404 (already gone).
+ */
+export async function deleteSession(
+  request: APIRequestContext,
+  sessionId: string
+): Promise<boolean> {
+  const res = await request.delete(`${API_BASE}/api/sessions/${sessionId}`)
+  return res.ok() || res.status() === 404
+}
+
+/**
+ * Delete a user via admin API. Requires a request context authenticated as admin.
+ * Returns true on success, 404 (already gone), or 204.
+ */
+export async function deleteUserViaAdmin(
+  request: APIRequestContext,
+  userId: string
+): Promise<boolean> {
+  const res = await request.delete(`${API_BASE}/api/admin/users/${userId}`)
+  return res.ok() || res.status() === 404 || res.status() === 204
+}
+
+/**
+ * Login as admin and return a request context cookie-authenticated as admin.
+ * Caller must call context.dispose() when done.
+ * Returns null if admin login fails.
+ */
+export async function loginAsAdmin(request: APIRequestContext): Promise<boolean> {
+  const res = await request.post(`${API_BASE}/api/auth/login`, {
+    data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+  })
+  return res.ok()
+}
+
+/**
+ * Sign up a new user and return their user ID.
+ * Also injects session cookies so the browser context is authenticated.
+ */
+export async function createUserAndLoginWithId(
+  context: BrowserContext,
+  request: APIRequestContext,
+  email: string,
+  password = 'SmokePass123!',
+  displayName?: string
+): Promise<string> {
+  const signupRes = await request.post(`${API_BASE}/api/auth/signup`, {
+    data: {
+      email,
+      password,
+      display_name: displayName ?? email.split('@')[0],
+    },
+  })
+  const signupData = await signupRes.json()
+  const loginRes = await request.post(`${API_BASE}/api/auth/login`, {
+    data: { email, password },
+  })
+  await injectCookiesFromResponse(context, loginRes)
+  return signupData.id as string
 }

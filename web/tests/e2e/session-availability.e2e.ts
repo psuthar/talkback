@@ -1,15 +1,35 @@
 import { test, expect } from '@playwright/test'
-import { API_BASE, createSession, createUserAndLogin, pasteMaterial, uniqueEmail } from './fixtures'
+import {
+  API_BASE,
+  createSession,
+  createUserAndLoginWithId,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
+  pasteMaterial,
+  uniqueEmail,
+} from './fixtures'
 
 // Page load + materials panel — no LLM call.
 test.setTimeout(20_000)
 
+// Track seeded IDs for afterAll cleanup.
+let seededUserId = ''
+let seededSessionId = ''
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
+})
+
 test('participant opens prepared session, sees materials panel and QA input', async ({ page, context, request }) => {
   // --- Seed: user + session + material via API ---
   const email = uniqueEmail('session-avail')
-  await createUserAndLogin(context, request, email, 'SmokePass123!', 'Availability User')
+  seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Availability User')
 
   const session = await createSession(request, 'E2E Session Availability Test')
+  seededSessionId = session.id
   await pasteMaterial(request, session.id, 'Overview Doc', 'This document covers project scope and timeline.')
 
   // --- Navigate to session in view mode (api= so app uses same backend on Render) ---

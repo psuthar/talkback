@@ -9,7 +9,7 @@ A minimal single-page React application for interacting with the TalkBack API.
   - Choose the LTS (Long Term Support) version
   - The installer includes npm automatically
   - Verify installation: `node --version` and `npm --version`
-- The TalkBack API server (default: `http://localhost:8081`; set `VITE_API_BASE_URL` in `web/.env` or `web/.env.example` to override)
+- The TalkBack API server (default: `http://localhost:8080`)
 
 ## Setup
 
@@ -30,8 +30,9 @@ A minimal single-page React application for interacting with the TalkBack API.
 
 ## Usage
 
-1. **Set API Base URL** (default: from `VITE_API_BASE_URL` or `http://localhost:8081`)
-   - In debug mode you can override in the UI; for production builds set `VITE_API_BASE_URL` (see root README "Deploying on Render")
+1. **Set API Base URL** (optional for local dev)
+   - When `VITE_API_BASE_URL` is unset, the UI uses same-origin-relative paths (Vite proxy -> `http://localhost:8080`).
+   - In debug mode you can override in the UI; for production builds set `VITE_API_BASE_URL` to your API URL (see root README "Deploying on Render")
 
 2. **Create an Artifact**
    - Enter a title (required) and optional description
@@ -90,7 +91,7 @@ The built files will be in the `dist/` directory.
 - Check that the API Base URL is correct
 
 **API Connection Errors:**
-- Verify the API server is running: `curl http://localhost:8081/health` (or your API URL)
+- Verify the API server is running: `curl http://localhost:8080/health` (or your API URL)
 - Check the API Base URL in the UI (debug panel) matches your server, or set `VITE_API_BASE_URL` in `web/.env`
 
 **Missing Artifact ID:**

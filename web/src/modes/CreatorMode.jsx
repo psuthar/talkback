@@ -597,7 +597,7 @@ export function CreatorMode({
     }
   }, [sessionProcessingReadyVersion, sessionId])
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl) return
+    if (!sessionId || apiBaseUrl == null) return
     if (processingIntervalRef.current) {
       clearInterval(processingIntervalRef.current)
       processingIntervalRef.current = null
@@ -729,7 +729,7 @@ export function CreatorMode({
   const [ingestionRetrying, setIngestionRetrying] = useState(false)
   const ingestionIntervalRef = useRef(null)
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl || (processingStatus?.state != null && processingStatus.state !== '')) return
+    if (!sessionId || apiBaseUrl == null || (processingStatus?.state != null && processingStatus.state !== '')) return
     const fetchIngestion = () => {
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/ingestion`, {
         headers: { 'X-Creator-Identity': creatorIdentity }
@@ -786,7 +786,7 @@ export function CreatorMode({
   const VIDEO_POLL_MAX_ATTEMPTS = 20
   const VIDEO_POLL_INTERVAL_MS = 2500
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl || !refetchSession) return
+    if (!sessionId || apiBaseUrl == null || !refetchSession) return
     if (hasPlayableVideo) return
     if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) return
     const t = setInterval(() => {
@@ -801,7 +801,7 @@ export function CreatorMode({
   const [transcriptData, setTranscriptData] = useState(null) // { status, source, updated_at, error_message, segments }
   const transcriptIntervalRef = useRef(null)
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl) return
+    if (!sessionId || apiBaseUrl == null) return
     setTranscriptData(null) // reset so we show Loading when session changes; avoids stale transcript
     const fetchTranscript = () => {
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/transcript`)
@@ -866,7 +866,7 @@ export function CreatorMode({
   }
 
   const uploadMaterialToSession = async (file) => {
-    if (!sessionId || !apiBaseUrl || !file) return
+    if (!sessionId || apiBaseUrl == null || !file) return
     setMaterialUploading(true)
     setMaterialUploadFeedback({ type: '', message: '' })
     const base = (apiBaseUrl || '').replace(/\/$/, '')
@@ -904,7 +904,7 @@ export function CreatorMode({
   const [deleteMaterialError, setDeleteMaterialError] = useState(null)
 
   const deleteMaterial = async (materialId) => {
-    if (!sessionId || !materialId || !apiBaseUrl) return
+    if (!sessionId || !materialId || apiBaseUrl == null) return
     setDeleteMaterialError(null)
     setDeletingMaterialId(String(materialId))
     try {
@@ -930,7 +930,7 @@ export function CreatorMode({
   }, [currentSession?.session?.id, currentSession?.session?.premise, currentSession?.session?.primary_decision, currentSession?.session?.decision_outcome])
 
   const fetchStances = useCallback(async () => {
-    if (!currentSession?.session?.id || !apiBaseUrl) return
+    if (!currentSession?.session?.id || apiBaseUrl == null) return
     const base = (apiBaseUrl || '').replace(/\/$/, '')
     try {
       const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stances`, { credentials: 'include' })
@@ -951,7 +951,7 @@ export function CreatorMode({
   }, [stanceData?.my_stance?.rationale])
 
   const submitStance = async (stanceValue) => {
-    if (!currentSession?.session?.id || stanceSubmitting || !apiBaseUrl) return
+    if (!currentSession?.session?.id || stanceSubmitting || apiBaseUrl == null) return
     if (currentSession.session.decision_outcome) return
     setStanceSubmitting(true)
     setStanceFeedback({ type: '', message: '' })

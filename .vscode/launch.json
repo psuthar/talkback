@@ -9,7 +9,7 @@
             "program": "${workspaceFolder}/cmd/api",
             "cwd": "${workspaceFolder}",
             "env": {
-                "PORT": "8081",
+                "PORT": "8080",
                 "DATABASE_URL": "postgres://talkback:talkback@127.0.0.1:5432/talkback?sslmode=disable",
                 "BIND_ADDRESS": "127.0.0.1",
                 "TALKBACK_UPLOAD_ROOT": "${workspaceFolder}",
@@ -31,7 +31,7 @@
             "cwd": "${workspaceFolder}",
             "envFile": "${workspaceFolder}/.env",
             "env": {
-                "PORT": "8081",
+                "PORT": "8080",
                 "DATABASE_URL": "postgres://talkback:talkback@127.0.0.1:5432/talkback?sslmode=disable",
                 "BIND_ADDRESS": "127.0.0.1",
                 "TALKBACK_UPLOAD_ROOT": "${workspaceFolder}",

@@ -1,8 +1,11 @@
 import { test, expect } from '@playwright/test'
 import {
   API_BASE,
-  createUserAndLogin,
+  createUserAndLoginWithId,
   createSession,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
   pasteMaterial,
   uniqueEmail,
 } from './fixtures'
@@ -15,15 +18,26 @@ const FIXTURE_TEXT =
 // 90 s covers: page load (5 s) + material wait (10 s) + answer wait (45 s) + margin.
 test.setTimeout(90_000)
 
+// Track seeded IDs for afterAll cleanup.
+let seededUserId = ''
+let seededSessionId = ''
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
+})
+
 test(
   'participant opens prepared session, sees material, asks question, sees answer',
   async ({ page, context, request }) => {
     // --- Setup: seed user + session + material entirely via API ---
     const email = uniqueEmail('happy-path')
     const displayName = 'Happy Path User'
-    await createUserAndLogin(context, request, email, 'SmokePass123!', displayName)
+    seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', displayName)
 
     const session = await createSession(request, 'E2E Happy Path Session')
+    seededSessionId = session.id
     await pasteMaterial(request, session.id, 'Meridian Report', FIXTURE_TEXT)
 
     // --- 1. Navigate to session in participant view (api= so app uses same backend on Render) ---

@@ -12,7 +12,7 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
 
   const addLink = async () => {
     const url = (urlInput || '').trim()
-    if (!url || !sessionId || !base) return
+    if (!url || !sessionId) return
     setAddError(null)
     setAdding(true)
     try {
@@ -40,7 +40,7 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
   }
 
   const deleteLink = async (linkId) => {
-    if (!sessionId || !linkId || !base) return
+    if (!sessionId || !linkId) return
     setDeleteError(null)
     setDeletingId(linkId)
     try {

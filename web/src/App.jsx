@@ -18,7 +18,7 @@ function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry,
   const [retrying, setRetrying] = useState(false)
   const intervalRef = useRef(null)
   useEffect(() => {
-    if (!sessionId || !apiBaseUrl) return
+    if (!sessionId || apiBaseUrl == null) return
     const base = apiBaseUrl.replace(/\/$/, '')
     const fetchProcessing = () => {
       fetch(`${base}/api/sessions/${sessionId}/processing`, { headers: { 'X-Creator-Identity': creatorIdentity } })
@@ -386,7 +386,7 @@ function App() {
 
   // Check health when API URL changes (with debounce and cleanup)
   useEffect(() => {
-    if (!apiBaseUrl) {
+    if (apiBaseUrl == null) {
       return
     }
 
@@ -412,7 +412,7 @@ function App() {
 
   // Fetch /api/me (TalkBack auth) when API URL or acceptToken changes — cookie or Bearer token (incognito)
   useEffect(() => {
-    if (!apiBaseUrl) {
+    if (apiBaseUrl == null) {
       setAuthUser(null)
       setAuthChecked(true)
       return
@@ -519,7 +519,7 @@ function App() {
   }, [authUser?.global_role, apiBaseUrl])
 
   const fetchPendingInvitations = useCallback(async () => {
-    if (!authUser?.email || !apiBaseUrl) {
+    if (!authUser?.email || apiBaseUrl == null) {
       setPendingInvitations([])
       setPendingInvitationsFetched(false)
       return
@@ -549,7 +549,7 @@ function App() {
 
   // Fetch "my sessions" and pending invitations when no session selected and user is logged in (same conditions so both APIs run together)
   useEffect(() => {
-    if (!authUser || !apiBaseUrl || currentSession) {
+    if (!authUser || apiBaseUrl == null || currentSession) {
       if (!authUser && !currentSession) {
         setMySessions([])
         setMySessionsError('')
@@ -1351,7 +1351,7 @@ function App() {
   const duplicateTitleMessage = 'A session with this name already exists. Please use a unique name.'
 
   const copySession = async (sourceSessionId, optionalTitle) => {
-    if (!apiBaseUrl || !sourceSessionId) return
+    if (apiBaseUrl == null || !sourceSessionId) return
     setCopyingSessionId(sourceSessionId)
     try {
       const base = apiBaseUrl.replace(/\/$/, '')
@@ -1383,7 +1383,7 @@ function App() {
   }
 
   const saveRenameSession = async () => {
-    if (!renameSessionId || !apiBaseUrl) return
+    if (!renameSessionId || apiBaseUrl == null) return
     const title = renameSessionTitle.trim()
     if (!title) {
       setCreateSessionFeedback({ type: 'error', message: 'Title cannot be empty' })
@@ -1651,7 +1651,7 @@ function App() {
 
   // Fetch Zoom connection status when creator identity is set (uses /api/zoom/status)
   useEffect(() => {
-    if (!creatorIdentity || !apiBaseUrl) return
+    if (!creatorIdentity || apiBaseUrl == null) return
     const ac = new AbortController()
     fetch(`${apiBaseUrl}/api/zoom/status`, {
       signal: ac.signal,
@@ -1905,7 +1905,7 @@ function App() {
   }
 
   const acceptPendingInvitation = useCallback(async (invitationId) => {
-    if (!apiBaseUrl || !invitationId) return
+    if (apiBaseUrl == null || !invitationId) return
     setAcceptingInvitationId(invitationId)
     try {
       const base = apiBaseUrl.replace(/\/$/, '')
@@ -1995,7 +1995,7 @@ function App() {
 
   const setPrimaryVideoSource = useCallback(async (videoSourceId) => {
     const sessionId = currentSession?.session?.id ?? currentSession?.id
-    if (!sessionId || !apiBaseUrl || !videoSourceId) return
+    if (!sessionId || apiBaseUrl == null || !videoSourceId) return
     const base = apiBaseUrl.replace(/\/$/, '')
     const res = await fetch(`${base}/api/sessions/${sessionId}/set-primary-video`, {
       method: 'POST',
@@ -3612,7 +3612,6 @@ function App() {
               inviteUserToSession={inviteUserToSession}
               sessionInvitations={sessionInvitations}
               fetchSessionInvitations={fetchSessionInvitations}
-              apiBaseUrl={apiBaseUrl}
               lastInvitationDraft={lastInvitationDraft}
               setLastInvitationDraft={setLastInvitationDraft}
               setPrimaryVideoSource={setPrimaryVideoSource}

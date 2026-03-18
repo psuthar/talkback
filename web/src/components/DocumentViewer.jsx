@@ -50,7 +50,8 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
     contentType.startsWith('image/') ||
     imageExts.some(e => fn.endsWith(e))
   )
-  const baseMaterialFileUrl = apiBaseUrl && doc?.artifact_id && doc?.id && !isTranscript && !isLink
+  // apiBaseUrl can be '' for same-origin-relative requests; treat null/undefined as missing.
+  const baseMaterialFileUrl = apiBaseUrl != null && doc?.artifact_id && doc?.id && !isTranscript && !isLink
     ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
     : null
   const effectiveMaterialFileUrl = baseMaterialFileUrl && (initialPage != null && initialPage >= 1)

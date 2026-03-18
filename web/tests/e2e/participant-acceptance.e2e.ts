@@ -1,8 +1,38 @@
 import { test, expect } from '@playwright/test'
-import { API_BASE, createSession, createInvitation, uniqueEmail } from './fixtures'
+import {
+  API_BASE,
+  createSession,
+  createInvitation,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
+  uniqueEmail,
+} from './fixtures'
 
 // Page load + invite resolve + registration — no LLM call needed, 30 s is generous.
 test.setTimeout(30_000)
+
+// Track seeded IDs for afterAll cleanup.
+let seededCreatorId = ''
+let seededSessionId = ''
+// Participant ID is resolved after registration via admin user list lookup in afterAll.
+let seededParticipantEmail = ''
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  // Delete creator by ID and participant by email lookup
+  if (seededCreatorId) await deleteUserViaAdmin(request, seededCreatorId)
+  if (seededParticipantEmail) {
+    // Look up participant user ID via admin list
+    const usersRes = await request.get(`${API_BASE}/api/admin/users?limit=500`)
+    if (usersRes.ok()) {
+      const users: Array<{ id: string; email: string }> = await usersRes.json()
+      const participant = users.find((u) => u.email === seededParticipantEmail)
+      if (participant) await deleteUserViaAdmin(request, participant.id)
+    }
+  }
+})
 
 test(
   'new participant accepts invite via token link, signs up, and lands on session',
@@ -12,16 +42,20 @@ test(
     // and are NOT injected into the browser — the browser stays unauthenticated throughout
     // seeding so the invite form renders for an anonymous visitor.
     const creatorEmail = uniqueEmail('invite-creator')
-    await request.post(`${API_BASE}/api/auth/signup`, {
+    const signupRes = await request.post(`${API_BASE}/api/auth/signup`, {
       data: { email: creatorEmail, password: 'SmokePass123!', display_name: 'Invite Creator' },
     })
+    const signupData = await signupRes.json()
+    seededCreatorId = signupData.id as string
     await request.post(`${API_BASE}/api/auth/login`, {
       data: { email: creatorEmail, password: 'SmokePass123!' },
     })
 
     const session = await createSession(request, 'Invite Acceptance E2E Session')
+    seededSessionId = session.id
 
     const participantEmail = uniqueEmail('invite-participant')
+    seededParticipantEmail = participantEmail
     const invitation = await createInvitation(request, session.id, participantEmail)
 
     // accept_url is a full URL like "http://localhost:3000/accept-invite?token=XXX".

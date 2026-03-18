@@ -291,7 +291,7 @@ export function SessionMaterialsTab({
   }
 
   const fileUrl = (m) => {
-    if (!m?.artifact_id || !m?.id || !base) return null
+    if (!m?.artifact_id || !m?.id) return null
     return `${base}/artifacts/${m.artifact_id}/materials/${m.id}/file`
   }
 

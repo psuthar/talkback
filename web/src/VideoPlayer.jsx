@@ -60,7 +60,7 @@ export function Html5VideoPlayer({
   const [manualRefreshLoading, setManualRefreshLoading] = useState(false)
 
   const handleManualRefreshUrl = () => {
-    if (!artifactIdForRefresh || !apiBaseUrlForRefresh || !videoRef.current || manualRefreshLoading) return
+    if (!artifactIdForRefresh || apiBaseUrlForRefresh == null || !videoRef.current || manualRefreshLoading) return
     setManualRefreshLoading(true)
     fetchVideoAccessUrl(apiBaseUrlForRefresh, artifactIdForRefresh)
       .then(({ url }) => {
@@ -138,7 +138,7 @@ export function Html5VideoPlayer({
       const err = video.error
       const code = err?.code
       const isExpiredOrNetwork = code === 4 || code === 2 // MEDIA_ERR_SRC_NOT_SUPPORTED, MEDIA_ERR_NETWORK
-      if (isExpiredOrNetwork && artifactIdForRefresh && apiBaseUrlForRefresh) {
+      if (isExpiredOrNetwork && artifactIdForRefresh && apiBaseUrlForRefresh != null) {
         if (isRefreshingUrlRef.current) return
         isRefreshingUrlRef.current = true
         const lastTime = lastKnownTimeRef.current || video.currentTime || 0
@@ -289,7 +289,7 @@ export function Html5VideoPlayer({
         <p style={{ margin: '0 0 16px', color: '#718096', fontSize: '13px' }}>
           If this is a Zoom recording, the creator may need to reconnect Zoom, or the recording may have expired.
         </p>
-        {artifactIdForRefresh && apiBaseUrlForRefresh && (
+        {artifactIdForRefresh && apiBaseUrlForRefresh != null && (
           <button
             type="button"
             onClick={handleManualRefreshUrl}
@@ -525,8 +525,9 @@ export function VideoPlayer({
   }
   
   // Prefer in-app MP4 playback: use primary stream only when this video is the primary; otherwise use media_url or session stream for uploads.
-  const baseForSessions = apiBaseUrl ? apiBaseUrl.replace(/\/$/, '').replace(/\/api\/?$/, '') : ''
-  const streamUrlForUpload = (video.source_type === 'upload' && sessionId && baseForSessions)
+  // apiBaseUrl can be '' for same-origin-relative requests; build relative stream URLs in that case.
+  const baseForSessions = (apiBaseUrl ?? '').replace(/\/$/, '').replace(/\/api\/?$/, '')
+  const streamUrlForUpload = (video.source_type === 'upload' && sessionId)
     ? `${baseForSessions}/sessions/${sessionId}/video-sources/${video.id}/stream`
     : null
   const isPrimaryR2Video = primaryVideoAccessUrl && primaryVideoArtifactId && (String(video.id) === String(primaryVideoArtifactId) || video.id === 'primary')

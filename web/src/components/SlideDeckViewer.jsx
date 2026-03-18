@@ -68,7 +68,7 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     )
   }
   if (slides.length === 0) {
-    const originalFileUrl = (apiBaseUrl && artifactId && materialId)
+    const originalFileUrl = (apiBaseUrl != null && artifactId && materialId)
       ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${artifactId}/materials/${materialId}/file`
       : null
     return (

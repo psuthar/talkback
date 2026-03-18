@@ -14,11 +14,12 @@ function materialStatusDisplay(m) {
 export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession }) {
   const [deletingId, setDeletingId] = useState(null)
   const [deleteError, setDeleteError] = useState(null)
-  const canDelete = Boolean(sessionId && apiBaseUrl && refetchSession)
+  // apiBaseUrl can be '' for same-origin-relative requests; treat only null/undefined as missing.
+  const canDelete = Boolean(sessionId && apiBaseUrl != null && refetchSession)
 
   const deleteMaterial = async (material) => {
     const materialId = material?.id != null ? String(material.id) : null
-    if (!sessionId || !materialId || !apiBaseUrl || !refetchSession) return
+    if (!sessionId || !materialId || apiBaseUrl == null || !refetchSession) return
     setDeleteError(null)
     setDeletingId(materialId)
     try {

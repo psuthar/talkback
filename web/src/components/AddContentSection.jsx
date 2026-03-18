@@ -18,7 +18,7 @@ export function AddContentSection({
 
   const addLink = async () => {
     const url = (urlInput || '').trim()
-    if (!url || !sessionId || !base) return
+    if (!url || !sessionId) return
     setAddError(null)
     setAdding(true)
     try {

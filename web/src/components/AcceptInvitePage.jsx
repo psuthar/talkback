@@ -34,7 +34,7 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
   const base = (apiBaseUrl || '').replace(/\/$/, '')
 
   useEffect(() => {
-    if (!token || !base) {
+    if (!token) {
       setResolveLoading(false)
       if (!token) setResolveError('invalid link: missing token')
       return

@@ -106,7 +106,7 @@ export function ParticipantMode({
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
 
   const fetchMyStance = useCallback(async () => {
-    if (!currentSession?.session?.id || !apiBaseUrl) return
+    if (!currentSession?.session?.id || apiBaseUrl == null) return
     const base = (apiBaseUrl || '').replace(/\/$/, '')
     try {
       const res = await fetch(`${base}/api/sessions/${currentSession.session.id}/stances`, { credentials: 'include' })
@@ -267,7 +267,7 @@ export function ParticipantMode({
     const sid = currentSession?.session?.id
     const hasVideoTranscript = video?.transcript_text
     const hasVideoSegments = Array.isArray(video?.transcript_segments) && video.transcript_segments.length > 0
-    if (!sid || !hasVideoTranscript || hasVideoSegments || !apiBaseUrl) {
+    if (!sid || !hasVideoTranscript || hasVideoSegments || apiBaseUrl == null) {
       if (!hasVideoTranscript || hasVideoSegments) setSessionTranscriptSegments(null)
       return
     }
@@ -500,7 +500,7 @@ export function ParticipantMode({
         </div>
         {isFailedFetch && (
           <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>
-            The app could not reach the API server at <strong>{apiBaseUrl || 'API Base URL'}</strong>. Check that the API is running at that URL (e.g. the debugger often uses port 8081). In app settings, set <strong>API Base URL</strong> to match your server. If you opened a shared link, you can add <code>?api={apiBaseUrl || getDefaultApiBaseUrl()}</code> to the link so the correct server is used.
+            The app could not reach the API server at <strong>{apiBaseUrl || 'same origin (Vite proxy)'}</strong>. Check that the API is running on <code>http://localhost:8080</code>. If you're using the Vite dev server, you can leave <strong>API Base URL</strong> unset. For unusual setups (or shared links), you can add <code>?api=http://localhost:8080</code> to the link.
           </p>
         )}
         {sessionIdFromUrl && onRetryLoadSession && (

@@ -401,7 +401,7 @@ To deploy the React SPA as a Render **Static Site**:
    Example: if your API is `https://talkback-api.onrender.com`, set `VITE_API_BASE_URL=https://talkback-api.onrender.com` (no trailing slash).
 5. **Rebuild:** Changing `VITE_API_BASE_URL` (or any `VITE_*` var) requires a new build; Render will redeploy when env vars change.
 
-Local dev uses `http://localhost:8081` by default when `VITE_API_BASE_URL` is not set (see `web/.env.example`).
+Local dev uses same-origin-relative API paths by default when `VITE_API_BASE_URL` is unset (Vite proxies to `http://localhost:8080`; see `web/.env.example`).
 
 **Render checklist (recent changes)**  
 - **Backend:** Migrations run on startup from embedded files (`internal/migrations/migrations/`). New migrations (e.g. 000021) run automatically when `RUN_MIGRATIONS=true`. No new env vars required.  
@@ -602,8 +602,8 @@ The project is configured for debugging with Delve (dlv) in VS Code/Cursor.
    - Press F5 or click the green play button to start debugging
 
 2. **Debug Configurations:**
-   - **"Debug TalkBack API"** - Uses environment variables from launch config (sets `PORT=8081`, `BIND_ADDRESS=127.0.0.1` so you’ll see *Server starting on 127.0.0.1:8081*)
-   - **"Debug TalkBack API (with .env file)"** - Same, but loads `.env` first
+  - **"Debug TalkBack API"** - Uses environment variables from launch config (sets `PORT=8080`, `BIND_ADDRESS=127.0.0.1` so you’ll see *Server starting on 127.0.0.1:8080*)
+  - **"Debug TalkBack API (with .env file)"** - Same, but loads `.env` first
    - **"Attach to Process"** - Attach to a running Go process (enter process ID when prompted)
 
 #### Debugging Tests

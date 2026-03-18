@@ -1,15 +1,34 @@
 import { test, expect } from '@playwright/test'
-import { API_BASE, createSession, createUserAndLogin, uniqueEmail } from './fixtures'
+import {
+  API_BASE,
+  createSession,
+  createUserAndLoginWithId,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
+  uniqueEmail,
+} from './fixtures'
 
 // Page load + creator UI render — no LLM call. 30s local; Render can be slower (cold start).
 test.setTimeout(60_000)
 
+// Track seeded IDs for afterAll cleanup.
+let seededUserId = ''
+let seededSessionId = ''
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
+})
+
 test('creator opens session in edit mode, sees creator-only UI', async ({ page, context, request }) => {
   // --- Seed: creator user + session via API ---
   const email = uniqueEmail('creator')
-  await createUserAndLogin(context, request, email, 'SmokePass123!', 'Creator User')
+  seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Creator User')
 
   const session = await createSession(request, 'E2E Creator Access Session')
+  seededSessionId = session.id
 
   // --- Navigate to session in edit (creator) mode ---
   // Pass api= so the app uses the same backend we used (critical on Render: frontend must call the API service).

@@ -2,7 +2,10 @@ import { test, expect } from '@playwright/test'
 import {
   API_BASE,
   createSession,
-  createUserAndLogin,
+  createUserAndLoginWithId,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
   pasteMaterial,
   uniqueEmail,
 } from './fixtures'
@@ -11,12 +14,23 @@ import {
 // 30 s covers: signup/login, session load, question visibility.
 test.setTimeout(30_000)
 
+// Track seeded IDs for afterAll cleanup.
+let seededUserId = ''
+let seededSessionId = ''
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
+})
+
 test('previously asked question is visible in QA history panel', async ({ page, context, request }) => {
   // --- Seed: user + session + material via API ---
   const email = uniqueEmail('qa-history')
-  await createUserAndLogin(context, request, email, 'SmokePass123!', 'History User')
+  seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'History User')
 
   const session = await createSession(request, 'E2E QA History Session')
+  seededSessionId = session.id
   await pasteMaterial(
     request,
     session.id,

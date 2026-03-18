@@ -20,7 +20,19 @@
       "Bash(docker ps:*)",
       "Bash(curl -s http://localhost:8081/health)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8081/)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:8080/api/auth/login -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl -s -X POST http://localhost:8080/api/auth/signup -H \"Content-Type: application/json\" -d '{\"\"email\"\":\"\"cleanup-check@smoke.test\"\",\"\"password\"\":\"\"SmokePass123!\"\",\"\"display_name\"\":\"\"Cleanup Check\"\"}')",
+      "Bash(curl -s -X POST http://localhost:8080/api/auth/login -H \"Content-Type: application/json\" -d '{\"\"email\"\":\"\"cleanup-check@smoke.test\"\",\"\"password\"\":\"\"SmokePass123!\"\"}' -c /tmp/cleanup-cookies.txt)",
+      "Bash(curl -v -X POST http://localhost:8080/api/auth/signup -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"cleanup-check@smoke.test\"\",\"\"password\"\":\"\"SmokePass123!\"\",\"\"display_name\"\":\"\"Cleanup Check\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:8080/api/auth/login -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"cleanup-check@smoke.test\"\",\"\"password\"\":\"\"SmokePass123!\"\"}\" -c /tmp/cleanup-cookies.txt)",
+      "Bash(curl -s -b /tmp/cleanup-cookies.txt http://localhost:8080/sessions)",
+      "Bash(curl -s -b /tmp/cleanup-cookies.txt http://localhost:8080/sessions/)",
+      "Bash(curl -s -b /tmp/cleanup-cookies.txt \"http://localhost:8080/api/sessions\")",
+      "Bash(docker exec:*)",
+      "Bash(curl -s -X POST http://localhost:8080/api/auth/login -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"paresh@suthar.com\"\",\"\"password\"\":\"\"your-secure-password\"\"}\" -c /tmp/admin-cookies.txt)",
+      "Bash(curl -s -b /tmp/admin-cookies.txt http://localhost:8080/api/admin/users?limit=200)",
+      "Bash(/c/Users/pares/code/talkback/web/node_modules/.bin/tsc --noEmit)"
     ]
   }
 }

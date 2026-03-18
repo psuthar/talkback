@@ -11,6 +11,7 @@ if (process.env.E2E_TARGET === 'render') {
 export default defineConfig({
   testDir: './tests/e2e',
   testMatch: '**/*.e2e.ts',
+  globalTeardown: './tests/e2e/global-teardown.ts',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -28,6 +29,6 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  // Local (npm run test:e2e): API at localhost:8081 (match debugger PORT=8081 or .env), app at localhost:3000. Start both first.
-  // If API runs on 8080 (go run without PORT), set TALKBACK_API_BASE=http://localhost:8080. Render: npm run test:e2e:render.
+  // Local (npm run test:e2e): API at localhost:8080, app at localhost:3000. Start both first.
+  // If API runs elsewhere, set TALKBACK_API_BASE. Render: npm run test:e2e:render.
 })

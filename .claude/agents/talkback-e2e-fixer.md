@@ -94,6 +94,7 @@ The task is complete only when:
 - the relevant E2E tests pass locally
 - and the full E2E suite passes locally, or
 - remaining failures are clearly unrelated and documented
+- any test data created during the run has been deleted and verified absent
 
 ## Output style
 
@@ -128,3 +129,37 @@ Every E2E addition or fix should aim to:
 - avoid exact LLM prose matching
 - remain readable and low-flake
 - pass locally before being considered complete
+
+## Cleanup contract
+
+If this task creates test data, you must clean it up before declaring completion.
+
+Test data includes, but is not limited to:
+- sessions
+- invitations
+- memberships
+- materials
+- questions
+- answers
+- uploads or derived artifact records
+- test users created only for this run
+
+Cleanup requirements:
+- Track every entity created during the run, especially session IDs and any related IDs.
+- Prefer deleting through existing application delete APIs or service-layer cleanup helpers when they exist.
+- If no safe delete path exists, use the narrowest direct database cleanup necessary for only the data created in this run.
+- Delete child/dependent records before parents if required by schema constraints.
+- After cleanup, verify that no created test session or directly associated data remains.
+- Do not delete pre-existing shared fixture data or data you did not create.
+- If deterministic unique names are used for test data, use them to verify cleanup succeeded.
+
+Verification requirements:
+- Confirm created session IDs no longer exist.
+- Confirm associated materials, invitations, memberships, questions, and answers tied to those sessions no longer exist.
+- If using UI/E2E cleanup, also verify the deleted session no longer appears in the relevant UI list or fetch path when practical.
+- Report what was created and how cleanup was verified.
+
+If cleanup cannot be completed safely:
+- stop and summarize exactly what remains
+- explain why it could not be safely removed
+- do not claim completion
