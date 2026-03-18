@@ -389,23 +389,20 @@ UPDATE schema_migrations SET version = 1, dirty = false;
 
 Then redeploy. The migrator will treat the baseline as applied and run the next migration (e.g. 000002_file_artifacts_r2). Do not run this on a fresh DB that has never had migrations; use reset-db + deploy for that.
 
-**Frontend (Static Site on Render)**
+**Frontend (served by the Go API service)**
 
 To deploy the React SPA as a Render **Static Site**:
 
-1. Connect the repo and set **Root Directory** to `web` (or build from `web`).
-2. **Build command:** `npm ci && npm run build`
-3. **Publish directory:** `dist`
-4. **Environment variable** (required so the app talks to your API, not localhost):
-   - `VITE_API_BASE_URL=https://<your-api-service>.onrender.com`  
-   Example: if your API is `https://talkback-api.onrender.com`, set `VITE_API_BASE_URL=https://talkback-api.onrender.com` (no trailing slash).
-5. **Rebuild:** Changing `VITE_API_BASE_URL` (or any `VITE_*` var) requires a new build; Render will redeploy when env vars change.
+1. Connect the repo and build/run the Go API service as usual (Docker runtime).
+2. The Docker image now builds the React app and embeds it into the Go binary.
+3. In the browser, the UI uses same-origin-relative API paths by default, so **you typically should not set** `VITE_API_BASE_URL`.
+4. If you have an unusual setup (e.g. browser traffic not reaching the API service), you can override with `VITE_API_BASE_URL`.
 
 Local dev uses same-origin-relative API paths by default when `VITE_API_BASE_URL` is unset (Vite proxies to `http://localhost:8080`; see `web/.env.example`).
 
 **Render checklist (recent changes)**  
 - **Backend:** Migrations run on startup from embedded files (`internal/migrations/migrations/`). New migrations (e.g. 000021) run automatically when `RUN_MIGRATIONS=true`. No new env vars required.  
-- **Frontend:** Ensure `VITE_API_BASE_URL` is set to your API URL so the app and docx viewer (mammoth) fetch from the API. `mammoth` is in `dependencies` and is installed by `npm ci`; commit `package-lock.json` so Render installs it.  
+- **Frontend:** For first-party browser traffic served from the same origin as the API, leave `VITE_API_BASE_URL` unset (default same-origin-relative). Override only for unusual scenarios.
 - **Invitations:** On the **API** service, set `APP_BASE_URL` to your **frontend** URL (e.g. `https://talkback-ux.onrender.com`), not the API URL. Invite links and emails use this for the accept-invite page.  
 - **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
 - **PPTX slide preview:** The API must use **Docker** runtime (as in `render.yaml`: `runtime: docker`) so the image includes LibreOffice and poppler-utils. If the service uses a buildpack/native runtime, slide conversion will fail and participant view will show "No slide preview". See below for debugging.

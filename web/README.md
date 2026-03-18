@@ -32,7 +32,7 @@ A minimal single-page React application for interacting with the TalkBack API.
 
 1. **Set API Base URL** (optional for local dev)
    - When `VITE_API_BASE_URL` is unset, the UI uses same-origin-relative paths (Vite proxy -> `http://localhost:8080`).
-   - In debug mode you can override in the UI; for production builds set `VITE_API_BASE_URL` to your API URL (see root README "Deploying on Render")
+   - In debug mode you can override in the UI; for the default same-origin production setup you can leave it unset.
 
 2. **Create an Artifact**
    - Enter a title (required) and optional description

@@ -52,3 +52,7 @@ test-results/
 .DS_Store
 Thumbs.db
 
+# Embedded SPA build output (copied during Docker build; keep a tiny placeholder checked in)
+cmd/api/dist/*
+!cmd/api/dist/index.html
+

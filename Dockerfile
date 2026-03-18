@@ -1,4 +1,12 @@
-# Build stage
+# Frontend build stage
+FROM node:20-alpine AS webbuilder
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web ./
+RUN npm run build
+
+# Go build stage
 FROM golang:alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /app
@@ -6,6 +14,9 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Copy built React app into cmd/api/ so `//go:embed dist` can embed it.
+RUN rm -rf cmd/api/dist && mkdir -p cmd/api/dist
+COPY --from=webbuilder /app/web/dist ./cmd/api/dist
 # Build API and reset-db (for preDeployCommand)
 RUN CGO_ENABLED=0 go build -o /go/bin/app -v ./cmd/api
 RUN CGO_ENABLED=0 go build -o /go/bin/reset-db -v ./cmd/reset-db

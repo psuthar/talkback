@@ -17,8 +17,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"github.com/newrelic/go-agent/v3/newrelic"
 	_ "github.com/lib/pq"
+	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/debugfault"
@@ -245,7 +245,7 @@ func main() {
 	// CORS with credentials for cookie-based auth (/api/auth, /api/me, /api/sessions). Browser requires
 	// a single specific origin and Allow-Credentials. Use request Origin when it's in the allowed list
 	// so cross-origin cookies work (e.g. frontend on talkback-ux, API on talkback-895n on Render).
-		corsWithCredentials := func(next http.HandlerFunc) http.HandlerFunc {
+	corsWithCredentials := func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			origin := ""
 			reqOrigin := strings.TrimSpace(r.Header.Get("Origin"))
@@ -404,6 +404,10 @@ func main() {
 	http.HandleFunc(wrapNR("/api/auth/login", corsWithCredentials(h.AuthLogin)))
 	http.HandleFunc(wrapNR("/api/auth/logout", corsWithCredentials(h.AuthLogout)))
 	http.HandleFunc(wrapNR("/api/me", corsWithCredentials(h.RequireAuth(h.AuthMe))))
+
+	// Embedded React SPA (production same-origin serving).
+	// This must be registered after backend routes so those handlers take precedence.
+	registerEmbeddedSPA()
 
 	// Local: PORT defaults to 8080 when unset; Render: provides PORT via env (e.g. 10000).
 	// Listen on all interfaces (":port") so Render's health check can reach /health. Do not set BIND_ADDRESS=127.0.0.1 on Render.
