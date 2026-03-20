@@ -27,6 +27,48 @@ func ExtractTextFromFile(filePath string) (string, error) {
 	}
 }
 
+// ExtractTextFromFileWithMeta extracts based on original filename/content-type,
+// not the temporary downloaded file path extension.
+//
+// This is important for R2 presigned downloads where the temp filename may not
+// end with the original extension (leading to "read binary as text").
+func ExtractTextFromFileWithMeta(filePath string, originalFilename string, originalContentType string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(originalFilename))
+	ct := strings.ToLower(strings.TrimSpace(originalContentType))
+
+	// Prefer extension for deterministic routing.
+	switch ext {
+	case ".txt", ".md":
+		return extractTextFile(filePath)
+	case ".pdf":
+		return extractPDF(filePath)
+	case ".docx", ".xlsx", ".pptx":
+		return DefaultOfficeExtractor.ExtractText(filePath)
+	}
+
+	// Fallback to content-type heuristics when ext is missing/odd.
+	if ct == "text/plain" || strings.HasPrefix(ct, "text/") {
+		return extractTextFile(filePath)
+	}
+	if strings.HasPrefix(ct, "application/pdf") || strings.Contains(ct, "pdf") {
+		return extractPDF(filePath)
+	}
+	if strings.Contains(ct, "wordprocessingml") || ext == ".doc" || ext == ".docx" {
+		return DefaultOfficeExtractor.ExtractText(filePath)
+	}
+	if strings.Contains(ct, "spreadsheetml") || ext == ".xls" || ext == ".xlsx" {
+		return DefaultOfficeExtractor.ExtractText(filePath)
+	}
+	if strings.Contains(ct, "presentationml") || strings.Contains(ct, "powerpoint") || ext == ".ppt" || ext == ".pptx" {
+		// Our Office extractor currently supports .pptx for per-slide text;
+		// but this function routes ppt/pptx to office extractor anyway for plain text extraction.
+		return DefaultOfficeExtractor.ExtractText(filePath)
+	}
+
+	// Final fallback: try as plain text.
+	return extractTextFile(filePath)
+}
+
 func extractTextFile(filePath string) (string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {

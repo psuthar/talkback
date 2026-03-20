@@ -227,7 +227,9 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 		return
 	}
 
-	text, err := ExtractTextFromFile(filePath)
+	// Important: for R2 presigned downloads the temp file may not preserve
+	// the original extension. Use mat metadata for routing.
+	text, err := ExtractTextFromFileWithMeta(filePath, mat.Filename, mat.ContentType)
 	if err != nil {
 		errMsg := err.Error()
 		if len(errMsg) > 500 {
