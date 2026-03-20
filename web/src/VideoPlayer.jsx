@@ -334,6 +334,7 @@ export function Html5VideoPlayer({
   return (
     <div style={{ position: 'relative', width: '100%' }}>
       <video
+        data-testid="html5-video-player"
         ref={videoRef}
         src={mediaUrl}
         poster={posterUrl}

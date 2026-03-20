@@ -62,6 +62,7 @@ export function ParticipantMode({
   onCitationClick,
   onClearSession,
   stanceVersion = 0,
+  sessionUpdatedVersion = 0,
   sessionInvitations = []
 }) {
   const hasSession = currentSession && currentSession.session
@@ -790,6 +791,7 @@ export function ParticipantMode({
                 sessionId={currentSession?.session?.id || currentSession?.id}
                 initialPage={citationScrollTarget?.page}
                 initialBlock={citationScrollTarget?.block}
+                slidesRefreshTrigger={sessionUpdatedVersion}
               />
             ) : (currentSession.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id ? (
               <>

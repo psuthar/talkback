@@ -132,6 +132,7 @@ function App() {
   const [currentUser, setCurrentUser] = useState('') // User identifier for mode detection
   const [sessionUserMode, setSessionUserMode] = useState(null) // 'creator' or 'participant' - from API
   const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
+  const [sessionUpdatedVersion, setSessionUpdatedVersion] = useState(0) // bumped when WebSocket session_updated (e.g. slides ready); SlideDeckViewer refetches slides on change
   const [stanceVersion, setStanceVersion] = useState(0) // bumped when WebSocket stance_updated; mode components use to refetch stances
   const [replyingToQuestionId, setReplyingToQuestionId] = useState(null) // Threaded reply: parent question id when user clicked "Reply"
 
@@ -2560,7 +2561,8 @@ function App() {
         if (now - lastMaterialUploadAtRef.current < 4000) {
           return
         }
-        console.log('WebSocket: Session updated (e.g. materials), refetching session...')
+        console.log('WebSocket: Session updated (e.g. materials, slides ready), refetching session...')
+        setSessionUpdatedVersion((v) => v + 1)
         refetchSession()
       }
     } else if (message.type === 'session_deleted') {
@@ -3574,6 +3576,7 @@ function App() {
             <CreatorMode
               currentSession={currentSession}
               sessionProcessingReadyVersion={sessionProcessingReadyVersion}
+              sessionUpdatedVersion={sessionUpdatedVersion}
               stanceVersion={stanceVersion}
               refetchSession={refetchSession}
               artifactId={artifactId}
@@ -3678,6 +3681,7 @@ function App() {
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
               stanceVersion={stanceVersion}
+              sessionUpdatedVersion={sessionUpdatedVersion}
               sessionInvitations={sessionInvitations}
               onClearSession={() => {
                 setCurrentSession(null)

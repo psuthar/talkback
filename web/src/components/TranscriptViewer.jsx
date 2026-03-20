@@ -79,6 +79,7 @@ export function TranscriptViewer({ transcriptText, segments, highlightRangeMs, s
 
   return (
     <div
+      data-testid="transcript-viewer"
       ref={containerRef}
       style={{
         marginTop: '0',

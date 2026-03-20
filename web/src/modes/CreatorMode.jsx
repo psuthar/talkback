@@ -144,6 +144,7 @@ function OpenEmailDraftButton({ apiBaseUrl, invitationId, invitation, sessionTit
 export function CreatorMode({
   currentSession,
   sessionProcessingReadyVersion = 0,
+  sessionUpdatedVersion = 0,
   stanceVersion = 0,
   refetchSession,
   artifactId,
@@ -1524,6 +1525,7 @@ export function CreatorMode({
                   doc={selectedDocument}
                   apiBaseUrl={apiBaseUrl}
                   sessionId={sessionId}
+                  slidesRefreshTrigger={sessionUpdatedVersion}
                 />
               </div>
             </div>
@@ -1531,7 +1533,7 @@ export function CreatorMode({
           <>
           {/* Video player section */}
           {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
-            <div className="creator-video-container">
+            <div data-testid="video-player-container" className="creator-video-container">
               {/* Explicit non-ready states when primary_video_artifact_id is set but no playable URL */}
               {currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code && (
                 <div style={{

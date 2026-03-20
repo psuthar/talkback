@@ -32,7 +32,13 @@
       "Bash(docker exec:*)",
       "Bash(curl -s -X POST http://localhost:8080/api/auth/login -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"paresh@suthar.com\"\",\"\"password\"\":\"\"your-secure-password\"\"}\" -c /tmp/admin-cookies.txt)",
       "Bash(curl -s -b /tmp/admin-cookies.txt http://localhost:8080/api/admin/users?limit=200)",
-      "Bash(/c/Users/pares/code/talkback/web/node_modules/.bin/tsc --noEmit)"
+      "Bash(/c/Users/pares/code/talkback/web/node_modules/.bin/tsc --noEmit)",
+      "Bash(curl -s http://localhost:8080/health)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(curl:*)",
+      "Bash(psql:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(go run:*)"
     ]
   }
 }

@@ -25,7 +25,7 @@ function chunkTextForDisplay(text, chunkSize = MATERIAL_CHUNK_SIZE, overlap = MA
  * Renders a document (material, link, or transcript) in the center pane.
  * Used by both ParticipantMode and CreatorMode.
  */
-export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initialBlock }) {
+export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initialBlock, slidesRefreshTrigger }) {
   const contentRef = useRef(null)
   const blockRefs = useRef([])
   const [docxHtml, setDocxHtml] = useState(null)
@@ -105,6 +105,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
         materialId={doc.id}
         artifactId={doc.artifact_id}
         initialSlide={initialPage}
+        slidesRefreshTrigger={slidesRefreshTrigger}
       />
     )
   }
@@ -112,7 +113,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
   const iframeSrc = effectiveMaterialFileUrl || baseMaterialFileUrl
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div data-testid="document-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <header style={{
         flexShrink: 0,
         padding: '8px 0 12px',
@@ -148,7 +149,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
         padding: '16px 0 0'
       }}>
         {isLink && doc?.url ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
+          <div data-testid="link-viewer" style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%' }}>
             <iframe
               src={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
               title={title}
@@ -167,6 +168,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
         ) : isImage && iframeSrc ? (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start' }}>
             <img
+              data-testid="image-viewer"
               src={iframeSrc}
               alt={title}
               style={{ maxWidth: '100%', height: 'auto', borderRadius: '8px', border: '1px solid #e0e0e0' }}

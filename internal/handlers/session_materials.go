@@ -660,6 +660,28 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 	log.Printf("generated %d derived slides (local) for %s", len(manifest.Slides), localPath)
 }
 
+// HasSlidesManifest returns true if the material (kind=slides) has a derived slides manifest available (viewable in UI).
+func (h *Handlers) HasSlidesManifest(ctx context.Context, mat *models.Material) bool {
+	if mat == nil || mat.Kind != string(models.MaterialKindSlides) {
+		return false
+	}
+	if mat.StorageProvider == "local" && strings.TrimSpace(mat.StorageURL) != "" {
+		manifestPath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", "manifest.json")
+		_, err := os.Stat(manifestPath)
+		return err == nil
+	}
+	if h.Storage != nil && strings.TrimSpace(mat.StorageKey) != "" {
+		manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
+		rc, err := h.Storage.Get(ctx, manifestKey)
+		if err != nil {
+			return false
+		}
+		_ = rc.Close()
+		return true
+	}
+	return false
+}
+
 // sessionIDFromPath parses session ID from path like "api/sessions/:id/..." or "sessions/:id/..."
 func sessionIDFromPath(path string, minParts int) (uuid.UUID, error) {
 	path = strings.Trim(path, "/")

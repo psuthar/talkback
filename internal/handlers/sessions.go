@@ -54,6 +54,7 @@ type GetSessionResponse struct {
 	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
 	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
 	Links                  []*models.SessionLink `json:"links,omitempty"`                // session links for citation URL resolution
+	MaterialSlidesReady    map[string]bool      `json:"material_slides_ready,omitempty"` // material ID -> true when slides manifest exists (kind=slides only)
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -1006,6 +1007,13 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			createdByDisplayName = &creator.DisplayName
 		}
 	}
+	// For materials with kind=slides, indicate whether derived slides manifest exists so UI can show "Processing" and disable selection until ready.
+	materialSlidesReady := make(map[string]bool)
+	for _, m := range allMaterials {
+		if m != nil && m.Kind == string(models.MaterialKindSlides) {
+			materialSlidesReady[m.ID.String()] = h.HasSlidesManifest(r.Context(), m)
+		}
+	}
 	response := GetSessionResponse{
 		Session:              session,
 		Artifacts:            artifacts,
@@ -1022,6 +1030,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		PlaybackReasonCode:   playbackReasonCode,
 		PlaybackMessage:      playbackMessage,
 		Links:                links,
+		MaterialSlidesReady:  materialSlidesReady,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

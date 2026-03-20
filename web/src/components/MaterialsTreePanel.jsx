@@ -62,7 +62,7 @@ function TreeSection({ title, children }) {
   )
 }
 
-function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId }) {
+function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle }) {
   return (
     <div
       style={{
@@ -71,9 +71,10 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
         marginBottom: '2px',
         borderRadius: '4px',
         background: selected ? '#e8f5e9' : 'transparent',
+        ...(disabled && { opacity: 0.7 }),
       }}
       onMouseEnter={(e) => {
-        if (!selected) e.currentTarget.style.background = '#f0f0f0'
+        if (!selected && !disabled) e.currentTarget.style.background = '#f0f0f0'
       }}
       onMouseLeave={(e) => {
         if (!selected) e.currentTarget.style.background = selected ? '#e8f5e9' : 'transparent'
@@ -82,7 +83,9 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
       <button
         data-testid={testId}
         type="button"
-        onClick={onClick}
+        title={buttonTitle}
+        onClick={disabled ? undefined : onClick}
+        disabled={disabled}
         style={{
           flex: 1,
           minWidth: 0,
@@ -91,12 +94,12 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
           border: 'none',
           borderRadius: '4px',
           background: 'transparent',
-          cursor: 'pointer',
+          cursor: disabled ? 'not-allowed' : 'pointer',
           fontSize: '13px',
           display: 'flex',
           alignItems: 'center',
           gap: '8px',
-          color: '#1a1a1a'
+          color: disabled ? '#888' : '#1a1a1a'
         }}
       >
         {icon != null && icon !== '' && <span style={{ flexShrink: 0 }}>{icon}</span>}
@@ -160,7 +163,7 @@ export function MaterialsTreePanel({
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [] } = session
+  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [], material_slides_ready = {} } = session
   const linkCount = Array.isArray(links) ? links.length : 0
   const newLinkCount = Math.max(0, linkCount - lastSeenLinkCount)
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
@@ -187,7 +190,17 @@ export function MaterialsTreePanel({
     if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
     return null
   }
-  const materialStatusMetaSlides = materialStatusMeta
+  // For slides/diagram materials: show "Processing…" and treat as not viewable until slides manifest exists.
+  const materialStatusMetaSlides = (m) => {
+    const isSlidesKind = (m.kind || '').toLowerCase() === 'slides'
+    const slidesReady = isSlidesKind && material_slides_ready[String(m.id)]
+    if (isSlidesKind && !slidesReady) return { label: 'Processing…', color: '#e65100' }
+    return materialStatusMeta(m)
+  }
+  const isSlidesMaterialViewable = (m) => {
+    if ((m.kind || '').toLowerCase() !== 'slides') return true
+    return material_slides_ready[String(m.id)] === true
+  }
   const videoDisplayTitle = (v) => {
     const decodeSegment = (seg) => {
       if (!seg) return seg
@@ -227,6 +240,7 @@ export function MaterialsTreePanel({
           ) : (
             <TreeItem
               key={presentationVideo.id}
+              testId="primary-video-item"
               icon={null}
               title={videoDisplayTitle(presentationVideo)}
               meta="Primary"
@@ -248,6 +262,7 @@ export function MaterialsTreePanel({
             otherVideos.map((v) => (
               <TreeItem
                 key={v.id}
+                testId="video-item"
                 icon={null}
                 title={videoDisplayTitle(v)}
                 meta={v.transcript_status === 'ready' ? 'Ready' : v.transcript_status || ''}
@@ -330,9 +345,11 @@ export function MaterialsTreePanel({
             slidesImages.map(m => {
               const statusInfo = materialStatusMetaSlides(m)
               const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
+              const viewable = isSlidesMaterialViewable(m)
               return (
                 <TreeItem
                   key={m.id}
+                  testId="slides-item"
                   icon={null}
                   title={m.filename || 'Untitled'}
                   meta={metaParts.join(' • ')}
@@ -341,6 +358,8 @@ export function MaterialsTreePanel({
                   onClick={(e) => onSelectDocument(m, e)}
                   onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
                   deleting={deletingId === String(m.id)}
+                  disabled={!viewable}
+                  buttonTitle={!viewable ? 'Slides are still processing' : undefined}
                 />
               )
             })
@@ -358,6 +377,7 @@ export function MaterialsTreePanel({
                 <button
                   key={link.id}
                   type="button"
+                  data-testid="link-item"
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey) {
                       e.preventDefault()

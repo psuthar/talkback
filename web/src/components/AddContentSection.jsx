@@ -59,6 +59,7 @@ export function AddContentSection({
       <div style={{ padding: '8px 12px' }}>
         <button
           type="button"
+          data-testid="add-content-toggle"
           className="creator-collapsible-btn"
           onClick={() => setExpanded(e => !e)}
           aria-expanded={expanded}
@@ -77,6 +78,7 @@ export function AddContentSection({
             <div style={subsectionLabel}>Upload file</div>
             <button
               type="button"
+              data-testid="upload-file-btn"
               onClick={onUploadClick}
               disabled={uploading}
               aria-label="Choose a file to upload to this session"
@@ -118,6 +120,7 @@ export function AddContentSection({
             <div style={{ display: 'flex', gap: '6px' }}>
               <input
                 type="url"
+                data-testid="add-link-url-input"
                 placeholder="https://..."
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
@@ -135,6 +138,7 @@ export function AddContentSection({
               />
               <button
                 type="button"
+                data-testid="add-link-submit-btn"
                 onClick={addLink}
                 disabled={adding || !urlInput.trim()}
                 style={{
