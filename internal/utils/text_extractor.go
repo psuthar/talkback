@@ -43,7 +43,16 @@ func ExtractTextFromFileWithMeta(filePath string, originalFilename string, origi
 	case ".pdf":
 		return extractPDF(filePath)
 	case ".docx", ".xlsx", ".pptx":
-		return DefaultOfficeExtractor.ExtractText(filePath)
+		// Do not delegate to DefaultOfficeExtractor here: that implementation
+		// routes by filePath extension, which may be wrong for temp downloads.
+		switch ext {
+		case ".docx":
+			return extractDocx(filePath)
+		case ".xlsx":
+			return extractXlsx(filePath)
+		case ".pptx":
+			return extractPptx(filePath)
+		}
 	}
 
 	// Fallback to content-type heuristics when ext is missing/odd.
@@ -54,15 +63,14 @@ func ExtractTextFromFileWithMeta(filePath string, originalFilename string, origi
 		return extractPDF(filePath)
 	}
 	if strings.Contains(ct, "wordprocessingml") || ext == ".doc" || ext == ".docx" {
-		return DefaultOfficeExtractor.ExtractText(filePath)
+		return extractDocx(filePath)
 	}
 	if strings.Contains(ct, "spreadsheetml") || ext == ".xls" || ext == ".xlsx" {
-		return DefaultOfficeExtractor.ExtractText(filePath)
+		return extractXlsx(filePath)
 	}
 	if strings.Contains(ct, "presentationml") || strings.Contains(ct, "powerpoint") || ext == ".ppt" || ext == ".pptx" {
-		// Our Office extractor currently supports .pptx for per-slide text;
-		// but this function routes ppt/pptx to office extractor anyway for plain text extraction.
-		return DefaultOfficeExtractor.ExtractText(filePath)
+		// Pure-Go parser supports .pptx content extraction.
+		return extractPptx(filePath)
 	}
 
 	// Final fallback: try as plain text.
