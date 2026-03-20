@@ -86,7 +86,8 @@ test(
 
     expect(regResponse.ok()).toBe(true)
 
-    // --- After onRegisterSuccess the app pushes /?session=<id> ---
-    await expect(page).toHaveURL(new RegExp(`session=${session.id}`), { timeout: 10_000 })
+    // --- After onRegisterSuccess the app navigates to the canonical session path ---
+    // The app uses path-based routing: /app/sessions/<id>?mode=view
+    await expect(page).toHaveURL(new RegExp(`/app/sessions/${session.id}`), { timeout: 10_000 })
   }
 )

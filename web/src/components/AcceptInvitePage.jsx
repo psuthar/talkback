@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { buildCanonicalSessionUrl } from '../sessionNavigation'
 
 function normalizeEmail(e) {
   return (e || '').trim().toLowerCase()
@@ -81,7 +82,7 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
         onRegisterSuccess({ user: data.user, sessionId: data.session_id, acceptToken: data.accept_token || null })
         return
       }
-      const redirectTo = data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/')
+      const redirectTo = data.redirect_to || (data.session_id ? buildCanonicalSessionUrl(data.session_id, { mode: 'view' }) : '/')
       window.location.href = redirectTo
     } catch (err) {
       setSignupError(err.message || 'Network error')
@@ -160,9 +161,15 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
         return
       }
       setAcceptAuthToken(null)
-      const redirectTo = data.redirect_to?.startsWith('/sessions/')
-        ? `/?session=${data.session_id || data.redirect_to.replace(/^\/sessions\//, '')}`
-        : (data.redirect_to || (data.session_id ? `/?session=${data.session_id}` : '/'))
+      let redirectTo = data.redirect_to
+      if (redirectTo?.startsWith('/sessions/')) {
+        const id = data.session_id || redirectTo.replace(/^\/sessions\//, '')
+        redirectTo = id ? buildCanonicalSessionUrl(id, { mode: 'view' }) : '/'
+      } else if (!redirectTo && data.session_id) {
+        redirectTo = buildCanonicalSessionUrl(data.session_id, { mode: 'view' })
+      } else if (!redirectTo) {
+        redirectTo = '/'
+      }
       window.location.href = redirectTo
     } catch (err) {
       setAcceptError(err.message || 'Network error')

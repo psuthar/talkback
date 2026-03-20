@@ -7,7 +7,7 @@ import (
 
 // AllowOriginForAuth returns true if the request's Origin (if any) is allowed for auth routes.
 // If Origin header is missing, returns true (e.g. same-origin or non-browser).
-// If Origin is present and TB_ALLOWED_ORIGINS is set, Origin must be in the list.
+// If Origin is present and TB_ALLOWED_ORIGINS / CORS_ALLOWED_ORIGINS is non-empty, Origin must be in the list (split-origin hardening).
 func AllowOriginForAuth(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {

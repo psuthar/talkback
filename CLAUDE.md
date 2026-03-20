@@ -20,7 +20,7 @@ TalkBack is an **AI-powered system** for turning recorded presentations and sess
 | Layer | Technology | Purpose |
 |-------|------------|--------|
 | **Frontend** | React 18, Vite 5 | SPA: sessions, materials, Q&A, invite flow, creator/participant modes (`web/`) |
-| **Backend** | Go (stdlib `net/http`) | REST API, WebSocket, cookie + Bearer auth, CORS; single binary `cmd/api` |
+| **Backend** | Go (stdlib `net/http`) | REST API, WebSocket, cookie + Bearer auth; optional CORS for split-origin dev; single binary `cmd/api` |
 | **Database** | PostgreSQL 16 | Users, sessions, materials, invitations, questions/answers, jobs (golang-migrate) |
 | **Object storage** | Cloudflare R2 (S3-compatible) or local disk | Video files, uploads, presigned URLs; env-driven |
 | **Integrations** | Zoom, transcript ingestion, AI/RAG, observability worker(s) | Zoom OAuth + recording import; Whisper/OpenAI; optional New Relic; `cmd/obsworker` |
@@ -56,7 +56,7 @@ When working in this repository, Claude must:
 - **Follow existing patterns** before introducing new abstractions.
 - **Keep naming semantically clean**, especially around “decision topic” vs “decision outcome” and session/premise/decision concepts.
 - **Do not change product code unless explicitly requested** — only add or adjust behavior when the user asks for it.
-- **API style:** REST; routes under `/sessions/{id}/...` and `/api/...`; CORS with credentials; WebSocket for session updates.
+- **API style:** REST; routes under `/sessions/{id}/...` and `/api/...`; credentialed CORS where needed for split-origin; WebSocket for session updates.
 
 ---
 

@@ -266,7 +266,7 @@ func (h *Handlers) AcceptInvitationByID(w http.ResponseWriter, r *http.Request) 
 	if h.Hub != nil {
 		h.Hub.BroadcastInvitationAccepted(sessionID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/?session=" + sessionID.String()})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/app/sessions/" + sessionID.String()})
 }
 
 // AcceptInvitationRequest is the body for POST /api/invitations/accept.
@@ -328,7 +328,7 @@ func (h *Handlers) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if h.Hub != nil {
 		h.Hub.BroadcastInvitationAccepted(sessionID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/?session=" + sessionID.String()})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/app/sessions/" + sessionID.String()})
 }
 
 // RegisterAndAcceptInvitationRequest is the body for POST /api/invitations/register-and-accept.
@@ -410,7 +410,7 @@ func (h *Handlers) RegisterAndAcceptInvitation(w http.ResponseWriter, r *http.Re
 		}
 	}
 	user, _ := h.DB.GetUserByID(ctx, newUserID)
-	me := map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/?session=" + sessionID.String()}
+	me := map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/app/sessions/" + sessionID.String()}
 	if user != nil {
 		me["user"] = map[string]interface{}{"id": user.ID.String(), "email": user.Email, "display_name": user.DisplayName, "global_role": string(user.GlobalRole), "status": string(user.Status)}
 	}

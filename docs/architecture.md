@@ -63,7 +63,7 @@ flowchart TB
 | Layer | Technology | Purpose |
 |-------|------------|--------|
 | **Frontend** | React 18, Vite 5 | SPA: sessions, materials, Q&A, invite flow, creator/participant modes |
-| **API** | Go (stdlib `net/http`) | REST API, cookie + Bearer auth, CORS; single binary `cmd/api` |
+| **API** | Go (stdlib `net/http`) | REST API, cookie + Bearer auth; optional CORS for split-origin; single binary `cmd/api` |
 | **Real-time** | WebSocket (gorilla/websocket), SessionHub | Live updates: questions, answers, processing ready, invitation accepted |
 | **Database** | PostgreSQL 16 | Users, sessions, materials, invitations, questions/answers, jobs (golang-migrate) |
 | **Object storage** | Cloudflare R2 (or local disk) | Video files, uploads, presigned PUT/GET; optional `STORAGE_DRIVER=r2` |
@@ -156,6 +156,6 @@ Sessions are evolving to support **premise** and **primary decision** (schema an
 
 ## Deployment (e.g. Render)
 
-- **Web service**: static build from `web/` (e.g. `npm run build`), served as SPA; `APP_BASE_URL` points here for invite links.
-- **API service**: `go run ./cmd/api` (or built binary); sets `DATABASE_URL`, `CORS_ALLOWED_ORIGINS` to web origin, optional R2, Zoom, Resend, New Relic.
+- **Unified web service (typical)**: single Render service runs `cmd/api` with embedded SPA; same origin for browser + API — no CORS allowlist required for first-party use. `APP_BASE_URL` is the public app URL for invite links.
+- **Split-origin (legacy / advanced)**: separate static site + API host — set `CORS_ALLOWED_ORIGINS` / `TB_ALLOWED_ORIGINS` as documented.
 - **PostgreSQL**: managed Postgres; same DB used by API (migrations on startup when `RUN_MIGRATIONS=true`).

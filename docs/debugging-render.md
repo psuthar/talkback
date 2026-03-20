@@ -12,27 +12,31 @@
 
 **Fix:** After recreating a user, **re-invite them** to the session (Creator: open session → Invite → enter their email again).
 
-### 2. Check auth and CORS (participant gets 401)
+### 2. Check auth (and CORS only if split-origin) (participant gets 401)
 
-If the participant was invited correctly but still sees no sessions, the session list may be failing with 401 Unauthorized (cookie not sent cross-origin).
+If the participant was invited correctly but still sees no sessions, the session list may be failing with 401 Unauthorized.
 
-**InPrivate / Private browsing:** Many browsers block or restrict cross-site cookies in private windows. If you see 401 only in InPrivate, try in a **normal** (non-private) browser window first. Cross-origin login requires the session cookie to be sent from the frontend origin to the API; private mode often blocks this.
+**Unified SPA+API (same Render service, same origin):** First-party requests do not depend on CORS configuration. Focus on cookie/session: wrong `APP_BASE_URL`, expired session, or private browsing blocking cookies.
+
+**Split-origin (legacy: frontend host ≠ API host):** The session cookie may not be sent cross-site without `CORS_ALLOWED_ORIGINS` + `TB_ALLOWED_ORIGINS` (and `SameSite=None` cookie mode).
+
+**InPrivate / Private browsing:** Many browsers restrict third-party or cross-site cookies. If you see 401 only in InPrivate, try a **normal** window first.
 
 **In the browser (as the participant):**
 
 1. Open DevTools → **Network**.
-2. Log in as the participant on the frontend (e.g. `https://talkback-ux.onrender.com`).
+2. Log in as the participant on the app origin.
 3. Reload or trigger "Load sessions". Look for:
-   - `GET …/api/me` → should be **200** (if 401, the auth cookie is not being sent or accepted).
-   - `GET …/api/sessions` → should be **200** with a JSON array (if 401, same cookie/CORS issue).
+   - `GET …/api/me` → should be **200** (if 401, cookie not sent or invalid).
+   - `GET …/api/sessions` → should be **200** with a JSON array (if 401, same as above).
 
-**On the API service (Render):**
+**On the API service (Render), split-origin only:**
 
-- Set **`CORS_ALLOWED_ORIGINS`** to the exact frontend origin, e.g. `https://talkback-ux.onrender.com` (no trailing slash).
-- Optionally set **`TB_ALLOWED_ORIGINS`** to the same value so the session cookie is set with `SameSite=None; Secure` for cross-origin.
-- Redeploy the API after changing env vars.
+- Set **`CORS_ALLOWED_ORIGINS`** to the exact frontend origin (no trailing slash).
+- Set **`TB_ALLOWED_ORIGINS`** to the same value so the session cookie can use `SameSite=None; Secure` when the browser talks to a different API host.
+- Redeploy after changing env vars.
 
-**Quick test:** Open the participant invite link in a normal browser tab (same origin as where they logged in). If the link includes `?api=https://talkback-895n.onrender.com`, the frontend will use that API; the session cookie must be sent to that host.
+**Quick test:** Open the invite link in a normal tab on the same origin as login. If using `?api=` to point at another host, you need the split-origin CORS/cookie settings above.
 
 ---
 
@@ -52,5 +56,5 @@ If the participant was invited correctly but still sees no sessions, the session
 | Symptom | Likely cause | Action |
 |--------|----------------|--------|
 | No sessions after deleting/recreating user | Invitation was for old user ID; CASCADE removed it | Re-invite the user to the session |
-| No sessions, 401 on /api/me or /api/sessions | Cookie not sent or CORS blocks credentialed request | Set `CORS_ALLOWED_ORIGINS` (and optionally `TB_ALLOWED_ORIGINS`) on API; use correct frontend origin |
-| Video "Format error" | Stream endpoint returned 4xx/5xx or CORS | Creator reconnects Zoom; check stream URL in Network; fix CORS if cross-origin |
+| No sessions, 401 on /api/me or /api/sessions | Cookie not sent or invalid session | Same-origin: check login and `APP_BASE_URL`. Split-origin: set `CORS_ALLOWED_ORIGINS` + `TB_ALLOWED_ORIGINS` |
+| Video "Format error" | Stream endpoint returned 4xx/5xx or (rare) CORS on split-origin | Creator reconnects Zoom; check stream URL in Network |

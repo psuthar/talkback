@@ -9,6 +9,7 @@ import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
+import { parseSessionNavigationFromLocation, parseSessionIdFromPathname, buildCanonicalSessionUrl } from './sessionNavigation'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -470,18 +471,21 @@ function App() {
   }, [authUser?.email])
 
   // Keep participant URL in sync so refresh shows the same view: when logged in as participant, ensure URL has mode=view (with or without a session).
-  // Only preserve api= when it was already in the URL (e.g. from a shared link); don't add it during internal navigation.
+  // Prefer canonical /app/sessions/:id when a session id is present.
   useEffect(() => {
     if (authUser?.global_role !== 'participant') return
     if (window.location.pathname.replace(/\/$/, '') === '/accept-invite') return // do not overwrite accept-invite URL (would drop token)
     const params = new URLSearchParams(window.location.search)
     if (params.get('mode') === 'view') return
-    const sessionId = params.get('session')
-    const apiPart = params.get('api') // preserve only when already in URL (shared link); don't inject for internal nav
-    const parts = ['mode=view']
-    if (sessionId) parts.unshift(`session=${sessionId}`)
-    if (apiPart) parts.push(`api=${apiPart}`)
-    window.history.replaceState(null, '', `${window.location.pathname}?${parts.join('&')}`)
+    const pathId = parseSessionIdFromPathname(window.location.pathname)
+    const queryId = params.get('session')
+    const sessionId = pathId || queryId
+    const apiPart = params.get('api')
+    if (sessionId) {
+      window.history.replaceState(null, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiPart || undefined }))
+    } else {
+      window.history.replaceState(null, '', `${window.location.pathname}?mode=view`)
+    }
     setUrlKey(k => k + 1)
   }, [authUser?.global_role, apiBaseUrl])
 
@@ -511,12 +515,12 @@ function App() {
     if (window.location.pathname.replace(/\/$/, '') === '/accept-invite') return // do not overwrite accept-invite URL (would drop token)
     const params = new URLSearchParams(window.location.search)
     if (params.get('mode') !== 'edit') return
-    const sessionId = params.get('session')
+    const sessionId = parseSessionIdFromPathname(window.location.pathname) || params.get('session')
     if (!sessionId) return
     setSessionUserMode('participant')
     setCurrentUser('participant')
-    const apiParam = params.get('api') ? `&api=${params.get('api')}` : '' // preserve only when already in URL
-    window.history.replaceState(null, '', `${window.location.pathname}?session=${sessionId}&mode=view${apiParam}`)
+    const apiParam = params.get('api')
+    window.history.replaceState(null, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiParam || undefined }))
     setUrlKey(k => k + 1)
   }, [authUser?.global_role, apiBaseUrl])
 
@@ -1682,13 +1686,14 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [debugMode, apiBaseUrl])
 
-  // On mount (and when auth loads): apply api from URL; only open a session when URL has ?session= (user chose that link).
-  // With no session in URL, show default view: creator/admin = session selection; participant = sessions you're part of.
+  // On mount (and when auth loads): apply api from URL; open session when URL has /app/sessions/:id or ?session= (deep link).
+  // Path session id wins over ?session= when both are set.
   useEffect(() => {
+    const nav = parseSessionNavigationFromLocation(window.location)
     const urlParams = new URLSearchParams(window.location.search)
-    const apiFromUrl = urlParams.get('api') || urlParams.get('api_base')
-    const sessionId = urlParams.get('session')
-    const mode = urlParams.get('mode') // 'edit' or 'view'
+    const apiFromUrl = nav.apiFromQuery || urlParams.get('api_base')
+    const sessionId = nav.sessionId
+    const mode = nav.mode // 'edit' or 'view'
 
     let apiOriginForSession = null
     if (apiFromUrl) {
@@ -1843,15 +1848,14 @@ function App() {
         }
         setSessionUserMode('creator')
         // Update URL to reflect creator mode
-        window.history.replaceState({}, '', `?session=${sessionId}&mode=edit`)
+        window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'edit' }))
       } else if (forceMode === 'participant') {
         // Set currentUser to something that won't match created_by
         setCurrentUser('participant')
         setSessionUserMode('participant')
         // Update URL to reflect participant mode (preserve api= only if already in URL, e.g. from shared link)
         const apiQ = new URLSearchParams(window.location.search).get('api')
-        const apiSuffix = apiQ ? `&api=${apiQ}` : ''
-        window.history.replaceState({}, '', `?session=${sessionId}&mode=view${apiSuffix}`)
+        window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiQ || undefined }))
       } else {
         // No explicit mode, determine from URL or default to creator (unless user is participant role)
         const urlParams = new URLSearchParams(window.location.search)
@@ -1862,8 +1866,7 @@ function App() {
           setCurrentUser('participant')
           setSessionUserMode('participant')
           const apiQ = urlParams.get('api')
-          const apiSuffix = apiQ ? `&api=${apiQ}` : ''
-          window.history.replaceState({}, '', `?session=${sessionId}&mode=view${apiSuffix}`)
+          window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiQ || undefined }))
         } else {
           // Default to creator mode
           if (data.session && data.session.created_by) {
@@ -1872,7 +1875,7 @@ function App() {
             setCurrentUser('creator')
           }
           setSessionUserMode('creator')
-          window.history.replaceState({}, '', `?session=${sessionId}&mode=edit`)
+          window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'edit' }))
         }
       }
       
@@ -2475,14 +2478,15 @@ function App() {
 
   // Build participant URL for upper right corner link (include api so it works in new window/refresh)
   const sessionId = currentSession?.session?.id || currentSession?.id
-  const participantUrl = sessionId 
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`
+  const participantUrl = sessionId
+    ? buildCanonicalSessionUrl(sessionId, { mode: 'view', ...(apiBaseUrl ? { api: apiBaseUrl } : {}) })
     : null
   const hasValidSession = currentSession && sessionId
 
   // Check URL mode as fallback to determine if we're in participant mode
+  const navForUrl = parseSessionNavigationFromLocation(window.location)
   const urlParams = new URLSearchParams(window.location.search)
-  const urlMode = urlParams.get('mode')
+  const urlMode = navForUrl.mode || urlParams.get('mode')
   const isAdminMode = urlMode === 'admin'
   const showAdminView = isAdminMode && authUser?.global_role === 'admin'
   const showAdminForbidden = isAdminMode && (!authUser || authUser.global_role !== 'admin')
@@ -2491,7 +2495,7 @@ function App() {
   // Render participant view when session mode is participant, URL is view, or user role is participant (so ?mode=edit never shows edit UI)
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view' || authUser?.global_role === 'participant'
   // Use session from URL so participant tab can connect to WebSocket before openSession() completes
-  const urlSessionId = urlParams.get('session')
+  const urlSessionId = navForUrl.sessionId
   const effectiveSessionId = sessionId || (urlMode === 'view' && urlSessionId ? urlSessionId : null)
 
   // WebSocket connection for real-time updates
@@ -2694,7 +2698,7 @@ function App() {
         authUser={authUser}
         authChecked={authChecked}
         onGoToSession={(sessionId) => {
-          window.history.replaceState(null, '', `/?session=${sessionId}`)
+          window.history.replaceState(null, '', buildCanonicalSessionUrl(sessionId, { mode: 'view' }))
           openSession(sessionId, 'participant')
         }}
         onLoginSuccess={(data, options) => {
@@ -2715,13 +2719,13 @@ function App() {
               .catch(() => {})
           }
           if (options?.goToSessionId) {
-            window.history.replaceState(null, '', `/?session=${options.goToSessionId}`)
+            window.history.replaceState(null, '', buildCanonicalSessionUrl(options.goToSessionId, { mode: 'view' }))
             openSession(options.goToSessionId, 'participant', false, null, false, data.user?.email)
           }
         }}
         onRegisterSuccess={({ user, sessionId, acceptToken: tok }) => {
           if (!user || !sessionId) return
-          window.history.replaceState(null, '', `/?session=${sessionId}`)
+          window.history.replaceState(null, '', buildCanonicalSessionUrl(sessionId, { mode: 'view' }))
           setAuthUser(user)
           setAcceptToken(tok || null)
           try { if (tok) sessionStorage.setItem('talkback.accept_token', tok) } catch (_) {}
@@ -2902,8 +2906,8 @@ function App() {
               setSessionUserMode(null)
               setCurrentUser('')
               setSessionSelectFeedback({ type: '', message: '' })
-              // Clear query params so they don't carry forward on next login (e.g. no ?mode=admin or ?session=...)
-              window.history.replaceState(null, '', window.location.pathname)
+              // Clear session route / query so next login lands on home (not /app/sessions/... or ?mode=admin)
+              window.history.replaceState(null, '', '/')
               setUrlKey(k => k + 1)
             }}
             style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555' }}
@@ -3538,7 +3542,7 @@ function App() {
                   const apiQ = new URLSearchParams(window.location.search).get('api')
                   const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
                   const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
-                  window.history.replaceState(null, '', `${window.location.pathname}?mode=${mode}${apiSuffix}`)
+                  window.history.replaceState(null, '', `/?mode=${mode}${apiSuffix}`)
                 }} 
                 style={{ 
                   backgroundColor: '#f44336',
@@ -3638,7 +3642,7 @@ function App() {
                 const apiQ = new URLSearchParams(window.location.search).get('api')
                 const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
                 const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
-                window.history.replaceState(null, '', `${window.location.pathname}?mode=${mode}${apiSuffix}`)
+                window.history.replaceState(null, '', `/?mode=${mode}${apiSuffix}`)
               }}
               debugMode={debugMode}
             />
@@ -3702,7 +3706,7 @@ function App() {
                 setSessionSelectFeedback({ type: '', message: '' })
                 const apiQ = new URLSearchParams(window.location.search).get('api')
                 const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
-                window.history.replaceState(null, '', `${window.location.pathname}?mode=view${apiSuffix}`)
+                window.history.replaceState(null, '', `/?mode=view${apiSuffix}`)
               }}
               onCitationClick={(citation) => {
                 const seekMs = citation?.navigation?.type === 'video' && citation.navigation.seek_ms != null

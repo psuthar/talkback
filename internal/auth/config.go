@@ -84,7 +84,7 @@ func loadConfig() ConfigStruct {
 			c.MaxMaterialsPerSession = n
 		}
 	}
-	// Fallback: use CORS_ALLOWED_ORIGINS so one env var works for both CORS and cookie SameSite on Render
+	// Fallback: CORS_ALLOWED_ORIGINS also populates AllowedOrigins (split-origin: one list for CORS + SameSite=None).
 	if len(c.AllowedOrigins) == 0 {
 		if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
 			for _, o := range strings.Split(v, ",") {

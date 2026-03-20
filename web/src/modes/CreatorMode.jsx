@@ -5,6 +5,7 @@ import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/Material
 import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
+import { buildCanonicalSessionUrl } from '../sessionNavigation'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
 const PROGRESSION_TICK_MS = 200 // Advance displayed step at most one per tick
@@ -571,8 +572,11 @@ export function CreatorMode({
   const sessionId = hasValidSession 
     ? (currentSession?.session?.id || currentSession?.id)
     : null
-  const participantUrl = sessionId && apiBaseUrl
-    ? `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view&api=${encodeURIComponent(apiBaseUrl)}`
+  const participantUrl = sessionId
+    ? buildCanonicalSessionUrl(sessionId, {
+        mode: 'view',
+        ...(apiBaseUrl ? { api: apiBaseUrl } : {})
+      })
     : null
 
   // Processing status (Mission #4: GET /api/sessions/:id/processing) — preferred over legacy ingestion
@@ -1182,7 +1186,7 @@ export function CreatorMode({
                 )}
                 {hasJob && processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
                   <a
-                    href={`${window.location.origin}${window.location.pathname}?session=${sessionId}&zoom=connect`}
+                    href={buildCanonicalSessionUrl(sessionId, { mode: 'edit', zoom: 'connect' })}
                     style={{ fontSize: '12px', color: '#1976D2', fontWeight: 500 }}
                   >
                     Reconnect Zoom

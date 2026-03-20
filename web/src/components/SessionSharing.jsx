@@ -1,12 +1,12 @@
 import { useState } from 'react'
+import { buildCanonicalSessionUrl } from '../sessionNavigation'
 
 export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
   const [copied, setCopied] = useState(false)
-  const apiParam = apiBaseUrl ? `&api=${encodeURIComponent(apiBaseUrl)}` : ''
-  
-  const defaultUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}${apiParam}` // Defaults to creator mode
-  const creatorUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=edit${apiParam}`
-  const participantUrl = `${window.location.origin}${window.location.pathname}?session=${sessionId}&mode=view${apiParam}`
+  const q = { ...(apiBaseUrl ? { api: apiBaseUrl } : {}) }
+  const defaultUrl = buildCanonicalSessionUrl(sessionId, q) // creator default (no mode)
+  const creatorUrl = buildCanonicalSessionUrl(sessionId, { ...q, mode: 'edit' })
+  const participantUrl = buildCanonicalSessionUrl(sessionId, { ...q, mode: 'view' })
   
   const copyToClipboard = async (text) => {
     try {

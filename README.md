@@ -321,7 +321,7 @@ To run the API on [Render.com](https://render.com) as a Web Service.
 | **ENV** | Not set (or `dev`) | `production` |
 | **.env** | Loaded if present; warning if missing | Not loaded, no dotenv warnings |
 | **PORT** | Defaults to `8080` if unset | Set by Render |
-| **CORS_ALLOWED_ORIGINS** | Defaults to `*` if unset | Set to your frontend URL |
+| **CORS_ALLOWED_ORIGINS** | Optional (omit for unified SPA+API) | Split-origin only: frontend origin. Unset = permissive default in dev |
 | **DATABASE_URL** | From `.env` or env | Set in Render dashboard |
 | **Zoom redirect** | N/A or from `BASE_URL` | `ZOOM_REDIRECT_URL` = `https://<api-host>/auth/zoom/callback` (must match app callback route) |
 
@@ -343,7 +343,7 @@ To run the API on [Render.com](https://render.com) as a Web Service.
    | `DATABASE_URL` | Yes | From Render Postgres (auto if linked) |
    | `ENV` | Yes | Set to `production` (skips .env load, no noisy logs) |
    | `RUN_MIGRATIONS` | Yes | Set to `true` |
-   | `CORS_ALLOWED_ORIGINS` | Yes | Your frontend origin, e.g. `https://your-frontend.onrender.com` (default `*` if unset) |
+   | `CORS_ALLOWED_ORIGINS` | No (unified deploy) | Omit when SPA and API share one origin. Set only for split-origin (legacy two-service) |
    | `OPENAI_API_KEY` | Yes | For RAG and Q&A |
    | `BASE_URL` | Yes | Full API URL, e.g. `https://your-api.onrender.com` (used for post-OAuth redirect) |
    | `ZOOM_REDIRECT_URL` | If using Zoom | **Absolute** callback URL, e.g. `https://your-api.onrender.com/auth/zoom/callback` (required in production; local fallback is `http://localhost:8081/auth/zoom/callback`) |
@@ -404,7 +404,7 @@ Local dev uses same-origin-relative API paths by default when `VITE_API_BASE_URL
 - **Backend:** Migrations run on startup from embedded files (`internal/migrations/migrations/`). New migrations (e.g. 000021) run automatically when `RUN_MIGRATIONS=true`. No new env vars required.  
 - **Frontend:** For first-party browser traffic served from the same origin as the API, leave `VITE_API_BASE_URL` unset (default same-origin-relative). Override only for unusual scenarios.
 - **Invitations:** On the **API** service, set `APP_BASE_URL` to your **frontend** URL (e.g. `https://talkback-ux.onrender.com`), not the API URL. Invite links and emails use this for the accept-invite page.  
-- **CORS:** API must allow your frontend origin (`CORS_ALLOWED_ORIGINS`) so the browser can fetch material files (e.g. for Word document formatted view).
+- **CORS:** Not required for first-party same-origin traffic. Optional for split-origin dev or legacy two-host deploys (`CORS_ALLOWED_ORIGINS` / `TB_ALLOWED_ORIGINS`).
 - **PPTX slide preview:** The API must use **Docker** runtime (as in `render.yaml`: `runtime: docker`) so the image includes LibreOffice and poppler-utils. If the service uses a buildpack/native runtime, slide conversion will fail and participant view will show "No slide preview". See below for debugging.
 
 **Debugging PPTX slide preview on Render**  
@@ -420,10 +420,10 @@ If upload succeeds but participant view shows "No slide preview is available for
 
 **TalkBack Auth (users + login sessions)**  
 - Native user accounts and cookie-based sessions. Endpoints: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me` (requires auth).
-- Cookie name and TTL: `TB_SESSION_COOKIE_NAME` (default `tb_login`), `TB_SESSION_TTL_HOURS` (default 168). For cross-origin cookies set `TB_COOKIE_SECURE=true` and optionally `TB_COOKIE_DOMAIN`.
+- Cookie name and TTL: `TB_SESSION_COOKIE_NAME` (default `tb_login`), `TB_SESSION_TTL_HOURS` (default 168). Production uses `Secure` when `ENV=production`. Optional `TB_COOKIE_DOMAIN` for subdomain sharing.
 - First-user admin bootstrap: set `TALKBACK_BOOTSTRAP_ADMIN_EMAIL`; the first signup or login with that email gets `global_role=admin`.
-- Origin check: for mutating auth routes (signup/login/logout), if the request sends an `Origin` header it must be in `TB_ALLOWED_ORIGINS` (comma-separated). Omit to allow any origin (e.g. local dev).
-- Frontend: call `GET /api/me` with `credentials: 'include'`; the app shows "Logged in as …" when the cookie is valid. For cross-site (e.g. Render frontend + API), set `CORS_ALLOWED_ORIGINS` to the frontend URL and use `corsWithCredentials` (already wired for `/api/auth/*`, `/api/me`, and `/api/invitations/*`). Without this, "Join session" on the accept-invite page can return 401 because the login cookie is not sent cross-origin. **Incognito/private windows** often block that cookie; the app supports them by using a short-lived **accept token** (issued when the user signs in on the accept-invite page). Ensure `ENCRYPTION_KEY` or `ACCEPT_TOKEN_SECRET` is set on the API so the token can be issued.
+- Origin check: for mutating auth routes, if `TB_ALLOWED_ORIGINS` / `CORS_ALLOWED_ORIGINS` is **non-empty** and the request sends an `Origin` header, it must be in the list. If both are **empty** (typical same-origin), any Origin is accepted (local dev and unified production).
+- Frontend: call `GET /api/me` with `credentials: 'include'`. **Split-origin** (browser page on host A, API on host B): set `CORS_ALLOWED_ORIGINS` and `TB_ALLOWED_ORIGINS` to the page origin; API uses credentialed CORS on auth routes. **Same-origin** (unified Render): leave those unset — session cookies use `SameSite=Lax`. **Incognito/private windows** may block cookies; the app supports **accept tokens** for invite flows. Ensure `ENCRYPTION_KEY` or `ACCEPT_TOKEN_SECRET` is set on the API so tokens can be issued.
 
 ### Environment Variables
 

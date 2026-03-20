@@ -34,6 +34,8 @@ A minimal single-page React application for interacting with the TalkBack API.
    - When `VITE_API_BASE_URL` is unset, the UI uses same-origin-relative paths (Vite proxy -> `http://localhost:8080`).
    - In debug mode you can override in the UI; for the default same-origin production setup you can leave it unset.
 
+   **Session deep links:** Canonical routes are `/app/sessions/<sessionId>?mode=view` (participant) or `?mode=edit` (creator). Legacy `/?session=<id>&mode=...` still works. The JSON/API lives under `/sessions/...` on the server — do not use that path for SPA navigation.
+
 2. **Create an Artifact**
    - Enter a title (required) and optional description
    - Click "Create Artifact" to create a new artifact

@@ -50,11 +50,11 @@ func main() {
 			log.Printf("Warning: .env file not found: %v, using environment variables", err)
 		}
 	}
-	// Log auth cookie config so Render logs show whether cross-origin login will work (SameSite=None requires Secure + AllowedOrigins)
+	// Log auth cookie mode: same-origin (default) uses SameSite=Lax; split-origin needs AllowedOrigins + Secure for SameSite=None.
 	if auth.Config.CookieSecure && len(auth.Config.AllowedOrigins) > 0 {
-		log.Printf("Auth: cookie SameSite=None (cross-origin login enabled), %d origin(s)", len(auth.Config.AllowedOrigins))
+		log.Printf("Auth: cookie SameSite=None (split-origin / explicit cross-site), %d origin(s) in allowlist", len(auth.Config.AllowedOrigins))
 	} else if len(auth.Config.AllowedOrigins) == 0 {
-		log.Printf("Auth: CORS_ALLOWED_ORIGINS or TB_ALLOWED_ORIGINS unset; set to frontend URL (e.g. https://talkback-ux.onrender.com) for cross-origin login")
+		log.Printf("Auth: same-origin mode (cookie SameSite=Lax); CORS/TB_ALLOWED_ORIGINS not required for unified SPA+API. Set allowlists only for split-origin (e.g. Vite :3000 + API :8080)")
 	}
 
 	// Run migrations on startup if RUN_MIGRATIONS is set (or default to true in dev)

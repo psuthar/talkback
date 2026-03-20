@@ -11,7 +11,8 @@ import (
 func SetSessionCookie(w http.ResponseWriter, sessionID uuid.UUID, expiresAt time.Time) {
 	sameSite := http.SameSiteLaxMode
 	if Config.CookieSecure && len(Config.AllowedOrigins) > 0 {
-		// Cross-origin (frontend on different domain): use None so cookie is sent with credentials
+		// Split-origin only: TB_ALLOWED_ORIGINS or CORS_ALLOWED_ORIGINS non-empty → SameSite=None; Secure.
+		// Same-origin production: leave allowlists empty → Lax (no cross-site cookie needed).
 		sameSite = http.SameSiteNoneMode
 	}
 	cookie := &http.Cookie{
