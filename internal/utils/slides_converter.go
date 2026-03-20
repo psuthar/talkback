@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// Limit concurrent slide conversions to reduce CPU/memory pressure on small hosts (e.g. Render.com).
+// Slide conversion is best-effort and must not starve other background work like DOCX extraction.
+var slideConversionSem = make(chan struct{}, 1)
+
 // ConvertedSlide holds the result of converting a slide deck to PNG images.
 type ConvertedSlide struct {
 	Index int
@@ -152,6 +156,10 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 		return nil, err
 	}
 
+	// Serialize slide conversions to avoid resource contention on constrained platforms.
+	slideConversionSem <- struct{}{}
+	defer func() { <-slideConversionSem }()
+
 	var tmpDir string
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		base := uploadRootForTemp()
@@ -168,7 +176,17 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	defer os.RemoveAll(tmpDir)
 
 	// Step 1: PPT/PPTX → PDF (soffice exports all slides to PDF; --convert-to png only does first slide)
-	cmd := exec.Command(
+	sofficeTimeout := 3 * time.Minute
+	if s := strings.TrimSpace(os.Getenv("TALKBACK_SOFFICE_TIMEOUT")); s != "" {
+		if seconds, parseErr := strconv.Atoi(s); parseErr == nil && seconds > 0 {
+			sofficeTimeout = time.Duration(seconds) * time.Second
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sofficeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx,
 		cmdPath,
 		"--headless",
 		"--convert-to", "pdf",
@@ -177,6 +195,9 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("soffice conversion to PDF timed out after %s", sofficeTimeout)
+		}
 		return nil, fmt.Errorf("soffice conversion to PDF failed: %w; output=%s", err, string(output))
 	}
 

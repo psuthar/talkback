@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -200,6 +201,40 @@ func TestUpdateMaterialTextStatusWithError(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, models.MaterialTextStatusFailed, got.TextStatus)
 	assert.Equal(t, errMsg, *got.ErrorMessage)
+}
+
+func TestUpdateMaterialTextStatusWithError_SanitizesNULBytes(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	session := createTestSession(t, db, "Test Session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "Test Artifact", nil)
+	require.NoError(t, err)
+
+	material := &models.Material{
+		ID:          uuid.New(),
+		ArtifactID:  artifact.ID,
+		SessionID:   session.ID,
+		Kind:        "document",
+		Filename:    "docx.docx",
+		ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		StorageURL:  "data/uploads/docx.docx",
+		TextStatus:  models.MaterialTextStatusPending,
+	}
+	require.NoError(t, db.CreateMaterial(ctx, material))
+
+	// Postgres TEXT does not allow NUL bytes; ensure DB layer sanitizes them.
+	extractedText := "hello\x00world"
+	err = db.UpdateMaterialTextStatusWithError(ctx, material.ID, models.MaterialTextStatusReady, &extractedText, nil)
+	require.NoError(t, err)
+
+	got, err := db.GetMaterialByID(ctx, material.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ExtractedText)
+	assert.Equal(t, models.MaterialTextStatusReady, got.TextStatus)
+	assert.False(t, strings.Contains(*got.ExtractedText, "\x00"))
 }
 
 func TestGetMaterialsByArtifactID(t *testing.T) {

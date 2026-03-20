@@ -355,6 +355,14 @@ func (db *DB) UpdateMaterialTextStatus(ctx context.Context, materialID uuid.UUID
 
 // UpdateMaterialTextStatusWithError updates status, extracted text, and optional error message
 func (db *DB) UpdateMaterialTextStatusWithError(ctx context.Context, materialID uuid.UUID, textStatus models.MaterialTextStatus, extractedText *string, errMsg *string) error {
+	if extractedText != nil {
+		t := sanitizeTextForPostgres(*extractedText)
+		extractedText = &t
+	}
+	if errMsg != nil {
+		t := sanitizeTextForPostgres(*errMsg)
+		errMsg = &t
+	}
 	query := `
 		UPDATE materials
 		SET text_status = $1, extracted_text = $2, error_message = $3
