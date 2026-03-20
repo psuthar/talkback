@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
@@ -459,14 +458,23 @@ func (h *Handlers) ServeMaterialFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
-		ttl := time.Hour
-		presignedURL, err := h.Storage.PresignGet(r.Context(), mat.StorageKey, ttl)
+		// Stream via API instead of redirecting to R2 URL so browser requests stay same-origin
+		// and avoid client-side CORS failures on cloudflarestorage.com.
+		rc, err := h.Storage.Get(r.Context(), mat.StorageKey)
 		if err != nil {
-			log.Printf("ServeMaterialFile PresignGet: %v", err)
-			http.Error(w, "Failed to generate download URL", http.StatusInternalServerError)
+			log.Printf("ServeMaterialFile Storage.Get: %v", err)
+			http.Error(w, "File not found", http.StatusNotFound)
 			return
 		}
-		http.Redirect(w, r, presignedURL, http.StatusFound)
+		defer rc.Close()
+		ct := mat.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		w.Header().Set("Content-Type", ct)
+		if _, err := io.Copy(w, rc); err != nil {
+			log.Printf("ServeMaterialFile stream write failed for key %s: %v", mat.StorageKey, err)
+		}
 		return
 	}
 	path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
