@@ -1,7 +1,7 @@
 import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
 
-/** Backend API base URL. Default: localhost:8080. Set TALKBACK_API_BASE for Render or if API runs elsewhere. */
-export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8080'
+/** Backend API base URL. Default: localhost:8081. Set TALKBACK_API_BASE for Render or if API runs elsewhere. */
+export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8081'
 
 /**
  * Parse Set-Cookie response header and inject cookies into the browser context.

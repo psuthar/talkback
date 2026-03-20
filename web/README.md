@@ -71,7 +71,7 @@ A minimal single-page React application for interacting with the TalkBack API.
 ## Features
 
 - **Error Handling**: All errors display the full response body for debugging
-- **CORS Support**: The Go API includes CORS middleware to allow cross-origin requests
+- **CORS (optional)**: API includes CORS for split-origin dev or legacy setups; same-origin (Vite proxy or unified production) does not rely on CORS config for normal use
 - **Real-time Feedback**: Success/error messages and loading states
 - **Citation Display**: Answers show citations with source type, ID, and snippets
 - **Voice Questions (Mic-to-Question)**: Record a short voice question, transcribe it, review/edit, then submit as a normal session question
@@ -86,8 +86,9 @@ The built files will be in the `dist/` directory.
 
 ## Troubleshooting
 
-**CORS Errors:**
-- Ensure the Go API server is running and has CORS middleware enabled (already included)
+**CORS / credentialed errors (usually split-origin only):**
+- Same-origin dev (Vite proxy): CORS allowlists are typically unnecessary
+- If the browser calls the API on a different origin, set `CORS_ALLOWED_ORIGINS` / `TB_ALLOWED_ORIGINS` on the API per root README
 - Check that the API Base URL is correct
 
 **API Connection Errors:**

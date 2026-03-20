@@ -61,7 +61,7 @@ export default async function globalTeardown() {
   // From admin user list: participant-membership sessions
   for (const u of smokeUsers) {
     for (const sid of u.session_ids ?? []) {
-      sessionIdsToDelete.add(sid)
+      if (sid) sessionIdsToDelete.add(sid)
     }
   }
 
@@ -78,7 +78,7 @@ export default async function globalTeardown() {
         if (sessionsRes.ok()) {
           const sessions: Array<{ id: string }> = await sessionsRes.json()
           for (const s of sessions) {
-            sessionIdsToDelete.add(s.id)
+            if (s?.id) sessionIdsToDelete.add(s.id)
           }
         }
       }
