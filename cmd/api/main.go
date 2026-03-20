@@ -328,14 +328,16 @@ func main() {
 	}
 
 	// Artifact endpoints with CORS
-	http.HandleFunc(wrapNR("/artifacts", corsMiddleware(func(w http.ResponseWriter, r *http.Request) {
+	// These endpoints are accessed by the SPA with `credentials: include`, so
+	// they must allow credentials in CORS responses.
+	http.HandleFunc(wrapNR("/artifacts", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/artifacts" && r.Method == http.MethodPost {
 			h.CreateArtifact(w, r)
 		} else {
 			h.ArtifactsRouter(w, r)
 		}
 	})))
-	http.HandleFunc(wrapNR("/artifacts/", corsMiddleware(logUploadIfMatch(h.ArtifactsRouter))))
+	http.HandleFunc(wrapNR("/artifacts/", corsWithCredentials(logUploadIfMatch(h.ArtifactsRouter))))
 
 	// Session endpoints with CORS (Phase 3). POST create requires auth + admin/creator role.
 	http.HandleFunc(wrapNR("/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
