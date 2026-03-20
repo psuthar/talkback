@@ -339,7 +339,7 @@ func TestGetMaterialSlides(t *testing.T) {
 			ID:            uuid.New(),
 			ArtifactID:    otherArtifact.ID,
 			SessionID:     otherSession.ID,
-			Kind:          string(models.MaterialKindSlides),
+			Kind:          string(models.MaterialKindDocument),
 			Filename:      "deck.pptx",
 			TextStatus:    models.MaterialTextStatusReady,
 		}
@@ -352,12 +352,12 @@ func TestGetMaterialSlides(t *testing.T) {
 	})
 
 	t.Run("returns 200 with empty slides when no manifest yet (e.g. async slide gen not done or failed)", func(t *testing.T) {
-		// Material has kind=slides but no StorageURL/StorageKey and no _slides manifest; GetMaterialSlides returns 200 + empty list.
+		// PPT/PPTX material with no StorageURL/StorageKey and no _slides manifest; GetMaterialSlides returns 200 + empty list.
 		slideMat := &models.Material{
 			ID:            uuid.New(),
 			ArtifactID:    artifact.ID,
 			SessionID:     session.ID,
-			Kind:          string(models.MaterialKindSlides),
+			Kind:          string(models.MaterialKindDocument),
 			Filename:      "deck.pptx",
 			TextStatus:    models.MaterialTextStatusReady,
 		}

@@ -183,7 +183,19 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	baseName := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
 	pdfPath := filepath.Join(tmpDir, baseName+".pdf")
 	if _, err := os.Stat(pdfPath); err != nil {
-		return nil, fmt.Errorf("soffice did not produce expected PDF %s: %w", pdfPath, err)
+		// On Windows LibreOffice may emit mixed-case extension (e.g. .PDF); resolve case-insensitively.
+		candidates, _ := filepath.Glob(filepath.Join(tmpDir, baseName+".*"))
+		resolved := ""
+		for _, c := range candidates {
+			if strings.EqualFold(filepath.Ext(c), ".pdf") {
+				resolved = c
+				break
+			}
+		}
+		if resolved == "" {
+			return nil, fmt.Errorf("soffice did not produce expected PDF %s: %w", pdfPath, err)
+		}
+		pdfPath = resolved
 	}
 
 	// Step 2: PDF → one PNG per page (pdftoppm)

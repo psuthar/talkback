@@ -50,6 +50,13 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
     contentType.startsWith('image/') ||
     imageExts.some(e => fn.endsWith(e))
   )
+  const isSlideDeck = !isTranscript && !isLink && !isImage && (
+    fn.endsWith('.ppt') || fn.endsWith('.pptx') ||
+    contentType.includes('presentationml') ||
+    contentType.includes('ms-powerpoint') ||
+    contentType.includes('vnd.ms-powerpoint') ||
+    contentType.includes('openxmlformats-officedocument.presentationml.presentation')
+  )
   // apiBaseUrl can be '' for same-origin-relative requests; treat null/undefined as missing.
   const baseMaterialFileUrl = apiBaseUrl != null && doc?.artifact_id && doc?.id && !isTranscript && !isLink
     ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
@@ -96,8 +103,8 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
     }
   }, [initialBlock, textChunks?.length])
 
-  /* Only use SlideDeckViewer for actual slide decks (e.g. PPTX), not for images in the Slides/Images section */
-  if (doc?.kind === 'slides' && !isImage && sessionId && doc?.id) {
+  /* Slide decks (PPTX) live under kind=document; use filename/MIME, not kind */
+  if (isSlideDeck && sessionId && doc?.id) {
     return (
       <SlideDeckViewer
         apiBaseUrl={apiBaseUrl}

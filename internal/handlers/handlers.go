@@ -196,7 +196,7 @@ func isOfficeFile(ext, contentType string) bool {
 // deriveMaterialKind returns material kind from file extension and content-type for grouping in UI.
 func deriveMaterialKind(ext, contentType string, isImage bool) string {
 	if isImage {
-		return "slides"
+		return string(models.MaterialKindImage)
 	}
 	ct := strings.ToLower(contentType)
 	switch ext {
@@ -207,7 +207,7 @@ func deriveMaterialKind(ext, contentType string, isImage bool) string {
 	case ".docx", ".doc":
 		return "document"
 	case ".pptx", ".ppt":
-		return "slides"
+		return "document"
 	case ".xlsx", ".xls", ".csv":
 		return "document"
 	}

@@ -116,6 +116,7 @@ function App() {
   const voiceRecorderRef = useRef(null)
   const materialFileInputRef = useRef(null)
   const lastMaterialUploadAtRef = useRef(0) // skip session_updated refetch for a few seconds after upload so new material doesn't disappear
+  const scheduledSessionRefetchTimeoutRef = useRef(null)
 
   // Phase 3: Session states
   const [sessionTitle, setSessionTitle] = useState('')
@@ -2558,11 +2559,24 @@ function App() {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
       if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
         const now = Date.now()
-        if (now - lastMaterialUploadAtRef.current < 4000) {
+        const withinGuard = (now - lastMaterialUploadAtRef.current) < 4000
+        // Always bump the version so any open slide viewer refetches.
+        setSessionUpdatedVersion((v) => v + 1)
+        if (withinGuard) {
+          // Don't refetch immediately (avoid "materials disappear" UX), but do schedule one soon so
+          // slide readiness flags (material_slides_ready) update and the item becomes selectable.
+          const elapsed = now - lastMaterialUploadAtRef.current
+          const delayMs = Math.max(0, (4000 - elapsed)) + 250 // buffer so manifest write lands
+          if (scheduledSessionRefetchTimeoutRef.current) {
+            clearTimeout(scheduledSessionRefetchTimeoutRef.current)
+          }
+          scheduledSessionRefetchTimeoutRef.current = setTimeout(() => {
+            scheduledSessionRefetchTimeoutRef.current = null
+            if (typeof refetchSession === 'function') refetchSession()
+          }, delayMs)
           return
         }
         console.log('WebSocket: Session updated (e.g. materials, slides ready), refetching session...')
-        setSessionUpdatedVersion((v) => v + 1)
         refetchSession()
       }
     } else if (message.type === 'session_deleted') {

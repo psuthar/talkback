@@ -38,7 +38,9 @@
       "Bash(curl:*)",
       "Bash(psql:*)",
       "Bash(python3 -c \":*)",
-      "Bash(go run:*)"
+      "Bash(go run:*)",
+      "Bash(node -e \":*)",
+      "Bash(printenv TALKBACK_API_BASE TALKBACK_ADMIN_EMAIL TALKBACK_ADMIN_PASSWORD)"
     ]
   }
 }

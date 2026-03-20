@@ -750,6 +750,7 @@ export function ParticipantMode({
 
               <MaterialsTreePanel
                 session={currentSession}
+                apiBaseUrl={apiBaseUrl}
                 selectedVideo={selectedVideo}
                 setSelectedVideo={setSelectedVideo}
                 setVideoId={setVideoId}

@@ -1,4 +1,5 @@
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { getMaterialSlides } from '../api/materials'
 
 /** Shared "Materials" header with chevron for creator and participant left panel */
 export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0 }) {
@@ -141,6 +142,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
 
 export function MaterialsTreePanel({
   session,
+  apiBaseUrl,
   selectedVideo,
   setSelectedVideo,
   setVideoId,
@@ -158,48 +160,126 @@ export function MaterialsTreePanel({
   onDeleteMaterial,
   deletingId,
   deleteError,
+  onDeleteVideo,
 }) {
   const scrollRef = useRef(null)
+  const [probedSlidesStatus, setProbedSlidesStatus] = useState({})
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [], material_slides_ready = {} } = session
+  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [], material_slides_ready = {}, material_slides_status = {} } = session
   const linkCount = Array.isArray(links) ? links.length : 0
   const newLinkCount = Math.max(0, linkCount - lastSeenLinkCount)
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
   const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
   const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
-  const documents = materials.filter(m => {
-    const k = (m.kind || '').toLowerCase()
-    return (k === 'document' || k === 'other') && k !== 'video' // exclude video: they appear in Additional Videos via video_sources
-  })
-  const slidesImages = materials.filter(m => {
-    const k = (m.kind || '').toLowerCase()
-    return k === 'slides' || k === 'diagram'
-  })
 
   const isMaterialImage = (m) => {
     const ct = (m.content_type || '').toLowerCase()
     const fn = (m.filename || '').toLowerCase()
-    return ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'].some(e => fn.endsWith(e))
+    return ct.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg', '.heic', '.heif', '.avif', '.jfif', '.tif', '.tiff', '.ico'].some(e => fn.endsWith(e))
   }
+
+  /** Everything that is not an image file / image kind (includes PDF, Office, PPTX, text, diagram, legacy kind=slides for decks, etc.) */
+  const documentMaterials = materials.filter((m) => {
+    const k = (m.kind || '').toLowerCase()
+    if (k === 'video') return false
+    if (k === 'image') return false
+    if (isMaterialImage(m)) return false
+    return true
+  })
+  /** Raster/vector uploads (kind=image or detected image file); legacy rows may still be kind=slides */
+  const imageMaterials = materials.filter((m) => {
+    const k = (m.kind || '').toLowerCase()
+    if (k === 'image') return true
+    if (isMaterialImage(m)) return true
+    return false
+  })
   const materialStatusMeta = (m) => {
     if (isMaterialImage(m)) return null
-    if (m.text_status === 'ready') return { label: 'Ready', color: '#2e7d32' }
     if (m.text_status === 'pending' || m.text_status === 'processing') return { label: 'Processing…', color: '#e65100' }
     if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
     return null
   }
-  // For slides/diagram materials: show "Processing…" and treat as not viewable until slides manifest exists.
-  const materialStatusMetaSlides = (m) => {
-    const isSlidesKind = (m.kind || '').toLowerCase() === 'slides'
-    const slidesReady = isSlidesKind && material_slides_ready[String(m.id)]
-    if (isSlidesKind && !slidesReady) return { label: 'Processing…', color: '#e65100' }
+  const isProcessingStatus = (status) => {
+    const s = String(status || '').toLowerCase()
+    return s === 'pending' || s === 'processing' || s === 'queued' || s === 'transcribing' || s === 'extracting'
+  }
+  const isSlideDeckMaterial = (m) => {
+    const filename = String(m?.filename || '').toLowerCase()
+    const contentType = String(m?.content_type || '').toLowerCase()
+    const looksLikePpt = filename.endsWith('.ppt') || filename.endsWith('.pptx')
+    const looksLikePresentation =
+      contentType.includes('presentation') ||
+      contentType.includes('powerpoint') ||
+      contentType.includes('ms-powerpoint') ||
+      contentType.includes('openxmlformats-officedocument.presentationml.presentation')
+    return looksLikePpt || looksLikePresentation
+  }
+  const isMaterialViewable = (m) => {
+    if (isSlideDeckMaterial(m)) {
+      const slideStatus = resolveSlidesStatus(m)
+      return slideStatus === 'ready' || slideStatus === 'failed'
+    }
+    const k = (m?.kind || '').toLowerCase()
+    if (k === 'image' || isMaterialImage(m)) {
+      if (isProcessingStatus(m?.text_status)) return false
+      return m?.text_status === 'ready' || m?.text_status === 'failed'
+    }
+    if (isProcessingStatus(m?.text_status)) return false
+    return m?.text_status === 'ready' || m?.text_status === 'failed'
+  }
+  const hasSlidesReadyFlag = (m) => Object.prototype.hasOwnProperty.call(material_slides_ready, String(m.id))
+  const hasSlidesStatusFlag = (m) => Object.prototype.hasOwnProperty.call(material_slides_status, String(m.id))
+  const resolveSlidesStatus = (m) => {
+    const id = String(m.id)
+    if (hasSlidesStatusFlag(m)) return material_slides_status[id]
+    if (hasSlidesReadyFlag(m)) return material_slides_ready[id] ? 'ready' : 'processing'
+    if (Object.prototype.hasOwnProperty.call(probedSlidesStatus, id)) return probedSlidesStatus[id]
+    return 'processing'
+  }
+
+  useEffect(() => {
+    const sessionId = session?.session?.id || session?.id
+    if (!apiBaseUrl || !sessionId) return
+    const targets = materials
+      .filter((m) => isSlideDeckMaterial(m))
+      .filter((m) => !hasSlidesStatusFlag(m) && !hasSlidesReadyFlag(m))
+    if (targets.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      const updates = {}
+      for (const m of targets) {
+        try {
+          const data = await getMaterialSlides(apiBaseUrl, sessionId, m.id)
+          const list = Array.isArray(data?.slides) ? data.slides : []
+          updates[String(m.id)] = list.length > 0 ? 'ready' : 'processing'
+        } catch {
+          updates[String(m.id)] = 'processing'
+        }
+      }
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setProbedSlidesStatus((prev) => ({ ...prev, ...updates }))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [apiBaseUrl, session, session?.id, session?.session?.id, materials.map((m) => `${m.id}:${m.kind}`).join('|')])
+
+  /** Status line for the Documents list (includes PPTX slide-pipeline state). */
+  const materialStatusMetaDocument = (m) => {
+    if (isSlideDeckMaterial(m)) {
+      const slideStatus = resolveSlidesStatus(m)
+      if (slideStatus === 'failed') return { label: 'Failed', color: '#c62828' }
+      if (slideStatus !== 'ready') return { label: 'Processing…', color: '#e65100' }
+      return null
+    }
     return materialStatusMeta(m)
   }
-  const isSlidesMaterialViewable = (m) => {
-    if ((m.kind || '').toLowerCase() !== 'slides') return true
-    return material_slides_ready[String(m.id)] === true
+
+  const materialStatusMetaImage = (m) => {
+    if (m.text_status === 'pending' || m.text_status === 'processing') return { label: 'Processing…', color: '#e65100' }
+    if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
+    return null
   }
   const videoDisplayTitle = (v) => {
     const decodeSegment = (seg) => {
@@ -225,6 +305,18 @@ export function MaterialsTreePanel({
       return seg || v.provider || 'Video'
     }
     return v?.provider || 'Video'
+  }
+  const videoMaterialId = (v) => {
+    if (!v) return null
+    const norm = (s) => String(s || '').replace(/\\/g, '/').toLowerCase()
+    const keyNorm = norm(v.stored_video_object_key)
+    if (!keyNorm) return null
+    const match = materials.find((m) => {
+      const mk = norm(m.storage_key)
+      const mu = norm(m.storage_url)
+      return mk === keyNorm || mu === keyNorm || keyNorm === mu || keyNorm === mk
+    })
+    return match?.id || null
   }
 
   const content = (
@@ -260,20 +352,31 @@ export function MaterialsTreePanel({
             <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
           ) : (
             otherVideos.map((v) => (
-              <TreeItem
-                key={v.id}
-                testId="video-item"
-                icon={null}
-                title={videoDisplayTitle(v)}
-                meta={v.transcript_status === 'ready' ? 'Ready' : v.transcript_status || ''}
-                selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
-                onClick={() => {
-                  setSelectedVideo(v)
-                  setVideoId(v.id)
-                  setVideoPlayerKey(prev => prev + 1)
-                  onSelectVideo?.()
-                }}
-              />
+              (() => {
+                const materialId = videoMaterialId(v)
+                const videoSelectable = !isProcessingStatus(v?.transcript_status)
+                return (
+                  <TreeItem
+                    key={v.id}
+                    testId="video-item"
+                    icon={null}
+                    title={videoDisplayTitle(v)}
+                    meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
+                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: '#c62828' } : undefined}
+                    selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
+                    onClick={() => {
+                      setSelectedVideo(v)
+                      setVideoId(v.id)
+                      setVideoPlayerKey(prev => prev + 1)
+                      onSelectVideo?.()
+                    }}
+                    onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
+                    deleting={materialId ? deletingId === String(materialId) : false}
+                    disabled={!videoSelectable}
+                    buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
+                  />
+                )
+              })()
             ))
           )}
         </TreeSection>
@@ -310,14 +413,15 @@ export function MaterialsTreePanel({
         )}
 
         <TreeSection title="Documents">
-          {documents.length === 0 ? (
+          {documentMaterials.length === 0 ? (
             <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
               None
             </div>
           ) : (
-            documents.map(m => {
-              const statusInfo = materialStatusMeta(m)
+            documentMaterials.map(m => {
+              const statusInfo = materialStatusMetaDocument(m)
               const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
+              const viewable = isMaterialViewable(m)
               return (
                 <TreeItem
                   key={m.id}
@@ -330,26 +434,32 @@ export function MaterialsTreePanel({
                   onClick={(e) => onSelectDocument(m, e)}
                   onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
                   deleting={deletingId === String(m.id)}
+                  disabled={!viewable}
+                  buttonTitle={!viewable
+                    ? (isSlideDeckMaterial(m)
+                      ? (resolveSlidesStatus(m) === 'failed' ? 'Slide preview generation failed' : 'Slides are still processing')
+                      : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
+                    : undefined}
                 />
               )
             })
           )}
         </TreeSection>
 
-        <TreeSection title="Slides / Images">
-          {slidesImages.length === 0 ? (
+        <TreeSection title="Images">
+          {imageMaterials.length === 0 ? (
             <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
               None
             </div>
           ) : (
-            slidesImages.map(m => {
-              const statusInfo = materialStatusMetaSlides(m)
+            imageMaterials.map(m => {
+              const statusInfo = materialStatusMetaImage(m)
               const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
-              const viewable = isSlidesMaterialViewable(m)
+              const viewable = isMaterialViewable(m)
               return (
                 <TreeItem
                   key={m.id}
-                  testId="slides-item"
+                  testId="images-item"
                   icon={null}
                   title={m.filename || 'Untitled'}
                   meta={metaParts.join(' • ')}
@@ -359,7 +469,7 @@ export function MaterialsTreePanel({
                   onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
                   deleting={deletingId === String(m.id)}
                   disabled={!viewable}
-                  buttonTitle={!viewable ? 'Slides are still processing' : undefined}
+                  buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
                 />
               )
             })
@@ -373,12 +483,15 @@ export function MaterialsTreePanel({
             links.map((link) => {
               const linkDocId = `link-${link.id}`
               const isSelected = selectedDocumentId === linkDocId
+              const linkSelectable = !isProcessingStatus(link.status)
               return (
                 <button
                   key={link.id}
                   type="button"
                   data-testid="link-item"
+                  disabled={!linkSelectable}
                   onClick={(e) => {
+                    if (!linkSelectable) return
                     if (e.ctrlKey || e.metaKey) {
                       e.preventDefault()
                       window.open(link.url, '_blank', 'noopener,noreferrer')
@@ -394,15 +507,16 @@ export function MaterialsTreePanel({
                     border: 'none',
                     borderRadius: '4px',
                     background: isSelected ? '#e8f5e9' : 'transparent',
-                    cursor: 'pointer',
+                    cursor: linkSelectable ? 'pointer' : 'not-allowed',
                     fontSize: '13px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '8px',
-                    color: '#1976d2'
+                    color: linkSelectable ? '#1976d2' : '#999',
+                    opacity: linkSelectable ? 1 : 0.7
                   }}
                   onMouseEnter={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = '#f0f0f0'
+                    if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
                   }}
                   onMouseLeave={(e) => {
                     if (!isSelected) e.currentTarget.style.background = 'transparent'

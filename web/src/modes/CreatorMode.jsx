@@ -1492,6 +1492,7 @@ export function CreatorMode({
               {/* Materials tree (no duplicate header; topmost Materials is shared) */}
               <MaterialsTreePanel
                 session={currentSession}
+                apiBaseUrl={apiBaseUrl}
                 selectedVideo={selectedVideo}
                 setSelectedVideo={setSelectedVideo}
                 setVideoId={setVideoId}
@@ -1507,6 +1508,7 @@ export function CreatorMode({
                 lastSeenLinkCount={0}
                 canManage={!!sessionId}
                 onDeleteMaterial={deleteMaterial}
+                onDeleteVideo={deleteMaterial}
                 deletingId={deletingMaterialId}
                 deleteError={deleteMaterialError}
               />

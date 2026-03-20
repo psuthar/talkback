@@ -32,6 +32,55 @@ type MaterialSlidePayload struct {
 	ImageURL string `json:"image_url"`
 }
 
+// sniffImageContentType returns a MIME type when file begins with a common raster image signature.
+// Used when browsers send application/octet-stream or omit Content-Type for uploads.
+func sniffImageContentType(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	buf := make([]byte, 32)
+	n, err := f.Read(buf)
+	if err != nil || n < 3 {
+		return "", false
+	}
+	buf = buf[:n]
+	switch {
+	case n >= 3 && buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF:
+		return "image/jpeg", true
+	case n >= 8 && buf[0] == 0x89 && buf[1] == 0x50 && buf[2] == 0x4E && buf[3] == 0x47 &&
+		buf[4] == 0x0D && buf[5] == 0x0A && buf[6] == 0x1A && buf[7] == 0x0A:
+		return "image/png", true
+	case n >= 6 && buf[0] == 0x47 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x38 &&
+		(buf[4] == 0x37 || buf[4] == 0x39) && buf[5] == 0x61:
+		return "image/gif", true
+	case n >= 2 && buf[0] == 0x42 && buf[1] == 0x4D:
+		return "image/bmp", true
+	case n >= 12 && buf[0] == 0x52 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x46 &&
+		buf[8] == 0x57 && buf[9] == 0x45 && buf[10] == 0x42 && buf[11] == 0x50:
+		return "image/webp", true
+	case n >= 4 && buf[0] == 0x49 && buf[1] == 0x49 && buf[2] == 0x2A && buf[3] == 0x00:
+		return "image/tiff", true
+	case n >= 4 && buf[0] == 0x4D && buf[1] == 0x4D && buf[2] == 0x00 && buf[3] == 0x2A:
+		return "image/tiff", true
+	}
+	return "", false
+}
+
+func refineUploadAsImageIfMagic(filePath string, ext string, contentType *string, isImage *bool, kind *string) {
+	ct, magic := sniffImageContentType(filePath)
+	if !magic {
+		return
+	}
+	*isImage = true
+	ctHdr := strings.ToLower(strings.TrimSpace(*contentType))
+	if ctHdr == "application/octet-stream" || ctHdr == "" {
+		*contentType = ct
+	}
+	*kind = deriveMaterialKind(ext, *contentType, true)
+}
+
 // ListSessionMaterials handles GET /api/sessions/:id/materials and GET /sessions/:id/materials
 func (h *Handlers) ListSessionMaterials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -134,7 +183,8 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	storageURL := storage.SessionArtifactPath(sessionID, filename)
 	ext := strings.ToLower(filepath.Ext(filename))
 	isImage := strings.HasPrefix(contentType, "image/") ||
-		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg"
+		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg" ||
+		ext == ".heic" || ext == ".heif" || ext == ".avif" || ext == ".jfif" || ext == ".tif" || ext == ".tiff" || ext == ".ico"
 	kind := deriveMaterialKind(ext, contentType, isImage)
 
 	var filePath string
@@ -164,6 +214,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "Failed to close temp file", http.StatusInternalServerError)
 			return
 		}
+		refineUploadAsImageIfMagic(filePath, ext, &contentType, &isImage, &kind)
 		prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
 		storageKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifactID, filename)
 		f, err := os.Open(filePath)
@@ -192,6 +243,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "Failed to save file", http.StatusInternalServerError)
 			return
 		}
+		refineUploadAsImageIfMagic(filePath, ext, &contentType, &isImage, &kind)
 		storageProvider = "local"
 	}
 
@@ -295,7 +347,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 
 	// Best-effort slide derivation for PPT/PPTX (R2 or local): always run in background so code path is the same everywhere.
 	// R2: goroutine keeps temp file and removes it when done; request returns before Render's ~30s timeout.
-	if kind == string(models.MaterialKindSlides) && (ext == ".ppt" || ext == ".pptx") && filePath != "" {
+	if (ext == ".ppt" || ext == ".pptx") && filePath != "" {
 		if storageProvider == "r2" && h.Storage != nil && storageKey != "" {
 			removeTempWhenDone = false
 			pathCopy := filePath
@@ -580,9 +632,11 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 // It never returns errors to the caller; failures are logged for debugging.
 func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
 	log.Printf("slide generation started for %s (key=%s)", localPath, artifactKey)
+	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
 		return
 	}
 
@@ -596,6 +650,7 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 		_, _, err := h.Storage.Put(ctx, key, bytes.NewReader(slide.Data), "image/png", int64(len(slide.Data)))
 		if err != nil {
 			log.Printf("failed uploading derived slide %d for %s: %v", slide.Index, artifactKey, err)
+			h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
 			return
 		}
 
@@ -608,6 +663,7 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		log.Printf("failed marshalling slide manifest for %s: %v", artifactKey, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
 		return
 	}
 
@@ -615,9 +671,11 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 	_, _, err = h.Storage.Put(ctx, manifestKey, bytes.NewReader(manifestBytes), "application/json", int64(len(manifestBytes)))
 	if err != nil {
 		log.Printf("failed uploading slide manifest for %s: %v", artifactKey, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
 		return
 	}
 
+	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
 	log.Printf("generated %d derived slides for %s", len(manifest.Slides), artifactKey)
 }
 
@@ -625,14 +683,17 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 // Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
 func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath string) {
 	log.Printf("slide generation started (local) for %s", localPath)
+	clearSlidesFailureMarkerLocal(localPath)
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
 	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Printf("slides local mkdir failed for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
 	manifest := utils.SlideManifest{Slides: make([]utils.SlideManifestEntry, 0, len(slides))}
@@ -641,6 +702,7 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, slide.Data, 0644); err != nil {
 			log.Printf("failed writing slide %d for %s: %v", slide.Index, localPath, err)
+			writeSlidesFailureMarkerLocal(localPath, err.Error())
 			return
 		}
 		manifest.Slides = append(manifest.Slides, utils.SlideManifestEntry{
@@ -651,18 +713,21 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		log.Printf("failed marshalling slide manifest for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifestBytes, 0644); err != nil {
 		log.Printf("failed writing slide manifest for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
+	clearSlidesFailureMarkerLocal(localPath)
 	log.Printf("generated %d derived slides (local) for %s", len(manifest.Slides), localPath)
 }
 
-// HasSlidesManifest returns true if the material (kind=slides) has a derived slides manifest available (viewable in UI).
+// HasSlidesManifest returns true if the material (PPT/PPTX) has a derived slides manifest available (viewable in UI).
 func (h *Handlers) HasSlidesManifest(ctx context.Context, mat *models.Material) bool {
-	if mat == nil || mat.Kind != string(models.MaterialKindSlides) {
+	if mat == nil || !models.MaterialSupportsDerivedSlideDeck(mat) {
 		return false
 	}
 	if mat.StorageProvider == "local" && strings.TrimSpace(mat.StorageURL) != "" {
@@ -680,6 +745,84 @@ func (h *Handlers) HasSlidesManifest(ctx context.Context, mat *models.Material) 
 		return true
 	}
 	return false
+}
+
+func slidesFailureMarkerKeyFromArtifactKey(artifactKey string) string {
+	return storage.SlidesPrefixFromArtifactKey(artifactKey) + "failed.json"
+}
+
+func slidesFailureMarkerPathFromStorageURL(storageURL string) string {
+	return filepath.Join(storage.UploadRoot(), storageURL+"_slides", "failed.json")
+}
+
+func slidesManifestPathFromStorageURL(storageURL string) string {
+	return filepath.Join(storage.UploadRoot(), storageURL+"_slides", "manifest.json")
+}
+
+func writeSlidesFailureMarkerLocal(localPath, errMsg string) {
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"status": "failed",
+		"error":  errMsg,
+	})
+	_ = os.WriteFile(filepath.Join(dir, "failed.json"), payload, 0644)
+}
+
+func clearSlidesFailureMarkerLocal(localPath string) {
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	_ = os.Remove(filepath.Join(dir, "failed.json"))
+}
+
+func (h *Handlers) writeSlidesFailureMarkerStorage(ctx context.Context, artifactKey, errMsg string) {
+	if h.Storage == nil || strings.TrimSpace(artifactKey) == "" {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"status": "failed",
+		"error":  errMsg,
+	})
+	key := slidesFailureMarkerKeyFromArtifactKey(artifactKey)
+	_, _, _ = h.Storage.Put(ctx, key, bytes.NewReader(payload), "application/json", int64(len(payload)))
+}
+
+func (h *Handlers) clearSlidesFailureMarkerStorage(ctx context.Context, artifactKey string) {
+	if h.Storage == nil || strings.TrimSpace(artifactKey) == "" {
+		return
+	}
+	_ = h.Storage.Delete(ctx, slidesFailureMarkerKeyFromArtifactKey(artifactKey))
+}
+
+// GetSlidesStatus returns "ready", "processing", or "failed" for PPT/PPTX materials using the slide pipeline.
+func (h *Handlers) GetSlidesStatus(ctx context.Context, mat *models.Material) string {
+	if mat == nil || !models.MaterialSupportsDerivedSlideDeck(mat) {
+		return ""
+	}
+	if mat.StorageProvider == "local" && strings.TrimSpace(mat.StorageURL) != "" {
+		if _, err := os.Stat(slidesManifestPathFromStorageURL(mat.StorageURL)); err == nil {
+			return "ready"
+		}
+		if _, err := os.Stat(slidesFailureMarkerPathFromStorageURL(mat.StorageURL)); err == nil {
+			return "failed"
+		}
+		return "processing"
+	}
+	if h.Storage != nil && strings.TrimSpace(mat.StorageKey) != "" {
+		manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
+		if rc, err := h.Storage.Get(ctx, manifestKey); err == nil {
+			_ = rc.Close()
+			return "ready"
+		}
+		failureKey := slidesFailureMarkerKeyFromArtifactKey(mat.StorageKey)
+		if rc, err := h.Storage.Get(ctx, failureKey); err == nil {
+			_ = rc.Close()
+			return "failed"
+		}
+		return "processing"
+	}
+	return "processing"
 }
 
 // sessionIDFromPath parses session ID from path like "api/sessions/:id/..." or "sessions/:id/..."
@@ -752,7 +895,7 @@ func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}
-	if mat.Kind != string(models.MaterialKindSlides) {
+	if !models.MaterialSupportsDerivedSlideDeck(mat) {
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}
@@ -879,7 +1022,7 @@ func (h *Handlers) GetMaterialSlideImage(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}
-	if mat.Kind != string(models.MaterialKindSlides) {
+	if !models.MaterialSupportsDerivedSlideDeck(mat) {
 		http.Error(w, "Material not found", http.StatusNotFound)
 		return
 	}

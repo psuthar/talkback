@@ -54,7 +54,8 @@ type GetSessionResponse struct {
 	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
 	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
 	Links                  []*models.SessionLink `json:"links,omitempty"`                // session links for citation URL resolution
-	MaterialSlidesReady    map[string]bool      `json:"material_slides_ready,omitempty"` // material ID -> true when slides manifest exists (kind=slides only)
+	MaterialSlidesReady    map[string]bool      `json:"material_slides_ready,omitempty"` // material ID -> true when slides manifest exists (PPT/PPTX only)
+	MaterialSlidesStatus   map[string]string    `json:"material_slides_status,omitempty"` // material ID -> processing|ready|failed (PPT/PPTX only)
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -422,7 +423,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				newMaterial.StorageURL = storage.SessionArtifactPath(newSession.ID, m.Filename)
 			}
 			// Copy slide assets (manifest + PNGs) so the cloned session has slide previews.
-			if m.Kind == "slides" {
+			if models.MaterialSupportsDerivedSlideDeck(m) {
 				if m.StorageProvider == "r2" && m.StorageKey != "" && newMaterial.StorageKey != "" && h.Storage != nil {
 					rc, err := h.Storage.Get(ctx, storage.SlidesManifestKeyFromArtifactKey(m.StorageKey))
 					if err == nil {
@@ -1007,11 +1008,14 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			createdByDisplayName = &creator.DisplayName
 		}
 	}
-	// For materials with kind=slides, indicate whether derived slides manifest exists so UI can show "Processing" and disable selection until ready.
+	// For PPT/PPTX materials, indicate whether derived slides manifest exists and explicit preview status.
 	materialSlidesReady := make(map[string]bool)
+	materialSlidesStatus := make(map[string]string)
 	for _, m := range allMaterials {
-		if m != nil && m.Kind == string(models.MaterialKindSlides) {
-			materialSlidesReady[m.ID.String()] = h.HasSlidesManifest(r.Context(), m)
+		if m != nil && models.MaterialSupportsDerivedSlideDeck(m) {
+			status := h.GetSlidesStatus(r.Context(), m)
+			materialSlidesStatus[m.ID.String()] = status
+			materialSlidesReady[m.ID.String()] = status == "ready"
 		}
 	}
 	response := GetSessionResponse{
@@ -1031,6 +1035,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		PlaybackMessage:      playbackMessage,
 		Links:                links,
 		MaterialSlidesReady:  materialSlidesReady,
+		MaterialSlidesStatus: materialSlidesStatus,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

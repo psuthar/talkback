@@ -1,6 +1,7 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,8 @@ type MaterialKind string
 
 const (
 	MaterialKindDocument MaterialKind = "document"
-	MaterialKindSlides   MaterialKind = "slides"
+	MaterialKindSlides   MaterialKind = "slides" // legacy; new uploads use document (PPTX) or image
+	MaterialKindImage    MaterialKind = "image"
 	MaterialKindDiagram  MaterialKind = "diagram"
 	MaterialKindOther    MaterialKind = "other"
 )
@@ -58,6 +60,15 @@ type Material struct {
 	ErrorMessage    *string            `json:"error_message,omitempty"`  // Set when text_status is failed
 	CreatedAt       time.Time          `json:"created_at"`
 	DeletedAt       *time.Time         `json:"deleted_at,omitempty"`     // Set when user deletes file (tombstone); file removed from R2/local
+}
+
+// MaterialSupportsDerivedSlideDeck is true for PPT/PPTX files that use the slide-manifest preview pipeline.
+func MaterialSupportsDerivedSlideDeck(m *Material) bool {
+	if m == nil {
+		return false
+	}
+	fn := strings.ToLower(strings.TrimSpace(m.Filename))
+	return strings.HasSuffix(fn, ".ppt") || strings.HasSuffix(fn, ".pptx")
 }
 
 type VideoProvider string

@@ -8,13 +8,11 @@
  *  - MP4:  creates a VideoSource → appears as primary video in "Presentation" section;
  *          VideoPlayer (<video>) visible in center, transcript area shows "Processing…" since
  *          Whisper transcription is async.
- *  - PPTX: kind=slides → "Slides / Images" section; slides manifest is generated async by
- *          LibreOffice (may not be available in local dev), so item shows "Processing…" (disabled).
+ *  - PPTX: kind=document → "Documents" section; slide previews generated async by LibreOffice
+ *          (may not be available in local dev), so item may show "Processing…" (disabled).
  *  - DOCX: kind=document → "Documents" section; text extraction is async (pending), DocumentViewer
  *          shows the document via mammoth once file is fetched from backend.
- *  - JPG:  kind=slides (isImage) → "Slides / Images" section; slides manifest will never be
- *          generated (LibreOffice does not process images), so item shows "Processing…" (disabled).
- *          This is current product behavior — image viewer is only reachable when material_slides_ready.
+ *  - JPG:  kind=image → "Images" section; opens image viewer when text pipeline is ready.
  *  - Link: URL submitted via Add content panel → "Links" section; clicking shows DocumentViewer
  *          with embedded iframe + "Open in new tab" link.
  */
@@ -173,7 +171,7 @@ test.describe('Material upload and viewer flow', () => {
   })
 
   // ─── PPTX upload ──────────────────────────────────────────────────────────
-  test('PPTX upload appears in Slides/Images section with Processing status', async ({ page, context, request }) => {
+  test('PPTX upload appears in Documents section with Processing status', async ({ page, context, request }) => {
     const email = uniqueEmail('pptx-viewer')
     await createUserAndLoginWithId(context, request, email)
     const session = await createSession(request, 'E2E PPTX Viewer Session')
@@ -183,19 +181,19 @@ test.describe('Material upload and viewer flow', () => {
     // Upload PPTX
     await uploadFile(page, PPTX_FILE)
 
-    // PPTX → kind=slides → appears in "Slides / Images" section
-    const pptxItem = page.getByTestId('slides-item').filter({ hasText: 'test.pptx' })
+    // PPTX → kind=document → appears in "Documents" section
+    const pptxItem = page.getByTestId('material-item').filter({ hasText: 'test.pptx' })
     await expect(pptxItem).toBeVisible({ timeout: 15_000 })
 
     // The item should show "Processing…" since slides manifest generation is async
     // (LibreOffice may not be installed; even if it is, it runs in a goroutine)
     // We verify the Processing indicator appears in the tree row
-    const pptxRow = page.locator('[data-testid="slides-item"]').filter({ hasText: 'test.pptx' })
+    const pptxRow = page.locator('[data-testid="material-item"]').filter({ hasText: 'test.pptx' })
     await expect(pptxRow).toBeVisible()
 
     // When slides are not ready, the SlideDeckViewer shows "Processing slides…" or the item
     // is disabled in the tree. Try clicking — it may be disabled (no-op) or show the viewer.
-    // Either way, we verify the slides-item is rendered.
+    // Either way, we verify the tree item is rendered.
     const isDisabled = await pptxItem.evaluate((el) => {
       const btn = el.closest('button') || el
       return (btn as HTMLButtonElement).disabled
@@ -244,7 +242,7 @@ test.describe('Material upload and viewer flow', () => {
   })
 
   // ─── JPG upload ───────────────────────────────────────────────────────────
-  test('JPG upload appears in Slides/Images section', async ({ page, context, request }) => {
+  test('JPG upload appears in Images section', async ({ page, context, request }) => {
     const email = uniqueEmail('jpg-viewer')
     await createUserAndLoginWithId(context, request, email)
     const session = await createSession(request, 'E2E JPG Viewer Session')
@@ -254,18 +252,15 @@ test.describe('Material upload and viewer flow', () => {
     // Upload JPG
     await uploadFile(page, JPG_FILE)
 
-    // JPG → isImage → kind=slides → appears in "Slides / Images" section
-    // NOTE: images have kind=slides but no LibreOffice slides manifest, so material_slides_ready
-    // will be false, rendering the item as disabled ("Processing…"). This is current product
-    // behavior. We assert the item appears in the tree.
-    const jpgItem = page.locator('[data-testid="slides-item"]').filter({ hasText: 'test.jpg' })
+    // JPG → kind=image → "Images" section
+    const jpgItem = page.locator('[data-testid="images-item"]').filter({ hasText: 'test.jpg' })
     await expect(jpgItem).toBeVisible({ timeout: 15_000 })
 
     // Verify item has some status text in the tree row area
     const jpgItemText = await jpgItem.textContent()
     expect(jpgItemText).toBeTruthy()
 
-    // The data-testid="slides-item" IS on the <button> element itself (TreeItem renders the button
+    // The data-testid is on the <button> element itself (TreeItem renders the button
     // with the testid). Check disabled attribute directly on the located element.
     const isDisabled = await jpgItem.getAttribute('disabled')
     if (isDisabled === null) {
@@ -275,8 +270,7 @@ test.describe('Material upload and viewer flow', () => {
       const imageViewer = page.getByTestId('image-viewer')
       await expect(imageViewer).toBeVisible({ timeout: 10_000 })
     }
-    // When disabled: images show "Processing…" forever (no LibreOffice slides manifest for images)
-    // This is the expected terminal state for images in current product behavior.
+    // When disabled: image is still processing (text pipeline).
 
     // Cleanup
     await loginAsAdmin(request)
