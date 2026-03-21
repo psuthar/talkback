@@ -57,7 +57,8 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''''slides_status:'''', json.dumps\\(d.get\\(''''material_slides_status''''\\)\\)\\); print\\(''''slides_ready:'''', json.dumps\\(d.get\\(''''material_slides_ready''''\\)\\)\\); print\\(''''kind:'''', [m.get\\(''''kind''''\\) for m in d.get\\(''''materials'''', []\\)]\\); print\\(''''filename:'''', [m.get\\(''''filename''''\\) for m in d.get\\(''''materials'''', []\\)]\\)\")",
       "Bash(cmd.exe /c \"taskkill /PID 52084 /F\" 2>&1)",
       "Bash(cmd.exe /c \"taskkill /IM api.exe /F\" 2>&1)",
-      "Bash(powershell.exe -Command \"Stop-Process -Id 52084 -Force\" 2>&1)"
+      "Bash(powershell.exe -Command \"Stop-Process -Id 52084 -Force\" 2>&1)",
+      "Bash(docker compose:*)"
     ]
   }
 }
