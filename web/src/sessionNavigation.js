@@ -74,3 +74,40 @@ export function buildCanonicalSessionAbsoluteUrl(appBaseUrl, sessionId, queryPar
   if (!base) return path
   return `${base}${path}`
 }
+
+/** UUID v4 shape (TalkBack session ids) */
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+/** @param {string} [s] */
+export function isLikelySessionId(s) {
+  return typeof s === 'string' && SESSION_ID_RE.test(s.trim())
+}
+
+/**
+ * Path + query to put in the address bar after login (or when normalizing), preserving session deep links in canonical form.
+ * Non-session routes keep pathname + search + hash as-is.
+ *
+ * @param {{ pathname?: string, search?: string, hash?: string }} loc
+ */
+export function historyPathFromLocation(loc) {
+  const pathname = loc.pathname || '/'
+  const nav = parseSessionNavigationFromLocation(loc)
+  if (!nav.sessionId) {
+    return pathname + (loc.search || '') + (loc.hash || '')
+  }
+  const q = {}
+  if (nav.mode) q.mode = nav.mode
+  if (nav.apiFromQuery) q.api = nav.apiFromQuery
+  return canonicalSessionRelativePath(nav.sessionId, q)
+}
+
+/**
+ * Human-readable copy for GET /sessions/:id failures (consistent across entry points).
+ * @param {number} status
+ */
+export function sessionLoadMessageForStatus(status) {
+  if (status === 404) return 'This session does not exist or was deleted.'
+  if (status === 401) return 'Sign in to open this session.'
+  if (status === 403) return 'You do not have access to this session.'
+  return `Could not open this session (error ${status}).`
+}

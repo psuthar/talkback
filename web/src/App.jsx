@@ -9,7 +9,14 @@ import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
-import { parseSessionNavigationFromLocation, parseSessionIdFromPathname, buildCanonicalSessionUrl } from './sessionNavigation'
+import {
+  parseSessionNavigationFromLocation,
+  parseSessionIdFromPathname,
+  buildCanonicalSessionUrl,
+  historyPathFromLocation,
+  isLikelySessionId,
+  sessionLoadMessageForStatus,
+} from './sessionNavigation'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -194,7 +201,15 @@ function App() {
   const [apiHealth, setApiHealth] = useState(null) // null = unknown, true = healthy, false = unhealthy
   const [healthChecking, setHealthChecking] = useState(false)
   const [debugMode, setDebugMode] = useState(false)
-  const [urlKey, setUrlKey] = useState(0) // bump to re-read URL after clearing ?mode=admin for non-admins
+  const [urlKey, setUrlKey] = useState(0) // bump to re-read URL after replaceState (React does not re-render on history alone)
+  /** Bumped only on browser back/forward so deep-link sync runs without re-fetching on every urlKey bump from in-app replaceState. */
+  const [popstateNavKey, setPopstateNavKey] = useState(0)
+
+  useEffect(() => {
+    const onPopState = () => setPopstateNavKey((k) => k + 1)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
   // Admin panel: section expanded state (collapsed by default; reset on logout; preserved when switching app ↔ admin)
   const [adminUsersExpanded, setAdminUsersExpanded] = useState(false)
   const [adminSessionsExpanded, setAdminSessionsExpanded] = useState(false)
@@ -1687,13 +1702,16 @@ function App() {
   }, [debugMode, apiBaseUrl])
 
   // On mount (and when auth loads): apply api from URL; open session when URL has /app/sessions/:id or ?session= (deep link).
-  // Path session id wins over ?session= when both are set.
+  // Path session id wins over ?session= when both are set. Requires auth — do not fetch sessions on the login screen.
+  // popstateNavKey: browser history. urlKey is not used here — participant/admin URL normalization bumps urlKey only to re-render.
   useEffect(() => {
+    if (!authUser) return
+
     const nav = parseSessionNavigationFromLocation(window.location)
     const urlParams = new URLSearchParams(window.location.search)
     const apiFromUrl = nav.apiFromQuery || urlParams.get('api_base')
     const sessionId = nav.sessionId
-    const mode = nav.mode // 'edit' or 'view'
+    const mode = nav.mode // 'edit' or 'view' | 'admin' | null
 
     let apiOriginForSession = null
     if (apiFromUrl) {
@@ -1705,7 +1723,7 @@ function App() {
     }
 
     if (sessionId) {
-      // URL contains a session: go to that session (deep link or user navigated here)
+      // URL contains a session: go to that session (deep link, legacy ?session=, or user navigated here)
       if (mode === 'view') {
         setSessionUserMode('participant')
         setCurrentUser('participant')
@@ -1733,6 +1751,7 @@ function App() {
     } else {
       // No session in URL: default view — no session selected; creators/admins see session list, participants see "sessions you're part of"
       setCurrentSession(null)
+      clearFeedback(setSessionSelectFeedback)
       setViewMode('session')
       if (authUser?.global_role === 'participant') {
         setSessionUserMode('participant')
@@ -1743,13 +1762,33 @@ function App() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser?.global_role])
+  }, [authUser, popstateNavKey])
 
   const openSession = async (sessionId, forceMode = null, stayInSessionView = false, overrideApiBaseUrl = null, isRefetch = false, overrideParticipantRef = null) => {
     if (!isRefetch) setLoading(true)
     clearFeedback(setSessionSelectFeedback)
 
     const baseUrl = overrideApiBaseUrl != null ? overrideApiBaseUrl : apiBaseUrl
+    let sid = typeof sessionId === 'string' ? sessionId.trim() : String(sessionId || '')
+    try {
+      sid = decodeURIComponent(sid)
+    } catch (_) { /* keep sid */ }
+
+    // Switching sessions: drop previous session immediately so UI cannot show stale content
+    if (!isRefetch) {
+      setCurrentSession((prev) => {
+        const prevId = prev?.session?.id ?? prev?.id
+        if (!prevId || prevId === sid) return prev
+        return null
+      })
+    }
+
+    if (!isLikelySessionId(sid)) {
+      setSessionSelectFeedback({ type: 'error', message: 'This link does not contain a valid session id.' })
+      setViewMode('session')
+      if (!isRefetch) setLoading(false)
+      return
+    }
 
     // Participants (join-only role) must never get creator mode, even if URL has ?mode=edit
     if (forceMode === 'creator' && authUser?.global_role === 'participant') {
@@ -1776,12 +1815,11 @@ function App() {
       }
       // Always fetch fresh session so video_access_url (presigned) is current; avoid cached response on reload.
       // Use credentials so refetch after markMaterialsSeen sends cookie and returns updated unread_material_ids.
-      const response = await fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store', credentials: 'include' })
+      const response = await fetch(`${baseUrl}/sessions/${sid}`, { headers, cache: 'no-store', credentials: 'include' })
       if (!response.ok) {
-        setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${response.status}` })
-        // Mode is already set above, so UI will still hide/show correct sections
-        // Set viewMode to 'session' so ParticipantMode can render even if session load failed
+        setSessionSelectFeedback({ type: 'error', message: sessionLoadMessageForStatus(response.status) })
         setViewMode('session')
+        if (!isRefetch) setCurrentSession(null)
         if (!isRefetch) setLoading(false)
         return
       }
@@ -1810,9 +1848,9 @@ function App() {
       }
       // If session has no video_sources yet (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears
       if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
-        const loadedId = data.session.id || sessionId
+        const loadedId = data.session.id || sid
         setTimeout(() => {
-          fetch(`${baseUrl}/sessions/${sessionId}`, { headers, cache: 'no-store', credentials: 'include' })
+          fetch(`${baseUrl}/sessions/${sid}`, { headers, cache: 'no-store', credentials: 'include' })
             .then((r) => r.ok ? r.json() : null)
             .then((retryData) => {
               const currentId = loadedId
@@ -1848,14 +1886,14 @@ function App() {
         }
         setSessionUserMode('creator')
         // Update URL to reflect creator mode
-        window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'edit' }))
+        window.history.replaceState({}, '', buildCanonicalSessionUrl(sid, { mode: 'edit' }))
       } else if (forceMode === 'participant') {
         // Set currentUser to something that won't match created_by
         setCurrentUser('participant')
         setSessionUserMode('participant')
         // Update URL to reflect participant mode (preserve api= only if already in URL, e.g. from shared link)
         const apiQ = new URLSearchParams(window.location.search).get('api')
-        window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiQ || undefined }))
+        window.history.replaceState({}, '', buildCanonicalSessionUrl(sid, { mode: 'view', api: apiQ || undefined }))
       } else {
         // No explicit mode, determine from URL or default to creator (unless user is participant role)
         const urlParams = new URLSearchParams(window.location.search)
@@ -1866,7 +1904,7 @@ function App() {
           setCurrentUser('participant')
           setSessionUserMode('participant')
           const apiQ = urlParams.get('api')
-          window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'view', api: apiQ || undefined }))
+          window.history.replaceState({}, '', buildCanonicalSessionUrl(sid, { mode: 'view', api: apiQ || undefined }))
         } else {
           // Default to creator mode
           if (data.session && data.session.created_by) {
@@ -1875,7 +1913,7 @@ function App() {
             setCurrentUser('creator')
           }
           setSessionUserMode('creator')
-          window.history.replaceState({}, '', buildCanonicalSessionUrl(sessionId, { mode: 'edit' }))
+          window.history.replaceState({}, '', buildCanonicalSessionUrl(sid, { mode: 'edit' }))
         }
       }
       
@@ -1900,10 +1938,11 @@ function App() {
       setSessionIdInput('') // Clear input
       
       // Load session questions
-      fetchSessionQuestions(sessionId)
+      fetchSessionQuestions(sid)
       setSessionSelectFeedback({ type: 'success', message: `Session loaded: ${data.session.title}` })
     } catch (err) {
-      setSessionSelectFeedback({ type: 'error', message: `Failed to load session: ${err.message}` })
+      setSessionSelectFeedback({ type: 'error', message: err?.message ? `Could not load session: ${err.message}` : 'Could not load session.' })
+      if (!isRefetch) setCurrentSession(null)
     } finally {
       if (!isRefetch) setLoading(false)
     }
@@ -2756,7 +2795,8 @@ function App() {
       <LoginPage
         apiBaseUrl={apiBaseUrl}
         onLoginSuccess={(data) => {
-          window.history.replaceState(null, '', window.location.pathname)
+          window.history.replaceState(null, '', historyPathFromLocation(window.location))
+          setUrlKey((k) => k + 1)
           setAuthUser(data)
           if (data.accept_token) {
             setAcceptToken(data.accept_token)
@@ -3122,6 +3162,42 @@ function App() {
           )}
 
           <h2>{authUser?.global_role === 'participant' && !currentSession ? "Sessions you're part of" : 'Session Selection (Required)'}</h2>
+          {!currentSession && urlSessionId && loading && (
+            <div className="info" style={{ marginBottom: '12px' }}>Loading session…</div>
+          )}
+          {!currentSession && urlSessionId && !loading && sessionSelectFeedback.type === 'error' && sessionSelectFeedback.message && (
+            <div className="section error" style={{ marginBottom: '16px', padding: '14px', borderRadius: '8px' }}>
+              <div style={{ marginBottom: '12px', fontWeight: '500' }}>{sessionSelectFeedback.message}</div>
+              <button
+                type="button"
+                onClick={() => {
+                  const nav = parseSessionNavigationFromLocation(window.location)
+                  const id = nav.sessionId
+                  if (!id) return
+                  if (nav.mode === 'edit') openSession(id, 'creator')
+                  else if (nav.mode === 'view') openSession(id, 'participant')
+                  else openSession(id, authUser?.global_role === 'participant' ? 'participant' : 'creator')
+                }}
+                style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', backgroundColor: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px' }}
+              >
+                Try again
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearFeedback(setSessionSelectFeedback)
+                  const apiQ = new URLSearchParams(window.location.search).get('api')
+                  const apiSuffix = apiQ ? `&api=${encodeURIComponent(apiQ)}` : ''
+                  const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
+                  window.history.replaceState(null, '', `/?mode=${mode}${apiSuffix}`)
+                  setPopstateNavKey((k) => k + 1)
+                }}
+                style={{ marginLeft: '10px', padding: '8px 16px', fontSize: '14px', cursor: 'pointer', backgroundColor: '#757575', color: '#fff', border: 'none', borderRadius: '4px' }}
+              >
+                Back to sessions
+              </button>
+            </div>
+          )}
           <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
             {!currentSession ? (
           <>
