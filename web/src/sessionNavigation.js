@@ -38,16 +38,39 @@ export function parseSessionNavigationFromLocation(loc) {
 }
 
 /**
- * Absolute URL for opening a session in the SPA (same origin).
+ * Relative path + query for the SPA session route (leading slash), e.g. /app/sessions/&lt;uuid&gt;?mode=view
  * @param {string} sessionId
  * @param {{ mode?: string, api?: string, zoom?: string }} [queryParams]
  */
-export function buildCanonicalSessionUrl(sessionId, queryParams = {}) {
-  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+export function canonicalSessionRelativePath(sessionId, queryParams = {}) {
   const sp = new URLSearchParams()
   if (queryParams.mode) sp.set('mode', queryParams.mode)
   if (queryParams.api) sp.set('api', queryParams.api)
   if (queryParams.zoom) sp.set('zoom', queryParams.zoom)
   const q = sp.toString()
-  return `${origin}${CANONICAL_SESSION_PREFIX}/${encodeURIComponent(sessionId)}${q ? `?${q}` : ''}`
+  return `${CANONICAL_SESSION_PREFIX}/${encodeURIComponent(sessionId)}${q ? `?${q}` : ''}`
+}
+
+/**
+ * Absolute URL for same-origin navigation (uses window.location.origin).
+ * @param {string} sessionId
+ * @param {{ mode?: string, api?: string, zoom?: string }} [queryParams]
+ */
+export function buildCanonicalSessionUrl(sessionId, queryParams = {}) {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}${canonicalSessionRelativePath(sessionId, queryParams)}`
+}
+
+/**
+ * Absolute session URL when the app origin is known explicitly (e.g. APP_BASE_URL from config).
+ * Trailing slashes on base are stripped.
+ * @param {string} appBaseUrl
+ * @param {string} sessionId
+ * @param {{ mode?: string, api?: string, zoom?: string }} [queryParams]
+ */
+export function buildCanonicalSessionAbsoluteUrl(appBaseUrl, sessionId, queryParams = {}) {
+  const base = (appBaseUrl || '').replace(/\/$/, '')
+  const path = canonicalSessionRelativePath(sessionId, queryParams)
+  if (!base) return path
+  return `${base}${path}`
 }

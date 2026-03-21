@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
+	"github.com/psuthar/talkback/internal/browserurl"
 	"github.com/psuthar/talkback/internal/invitations"
 	"github.com/psuthar/talkback/internal/models"
 )
@@ -328,7 +329,7 @@ func (h *Handlers) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
 	if h.Hub != nil {
 		h.Hub.BroadcastInvitationAccepted(sessionID)
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/app/sessions/" + sessionID.String()})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": browserurl.ParticipantSessionRedirectPath(sessionID)})
 }
 
 // RegisterAndAcceptInvitationRequest is the body for POST /api/invitations/register-and-accept.
@@ -410,7 +411,7 @@ func (h *Handlers) RegisterAndAcceptInvitation(w http.ResponseWriter, r *http.Re
 		}
 	}
 	user, _ := h.DB.GetUserByID(ctx, newUserID)
-	me := map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": "/app/sessions/" + sessionID.String()}
+	me := map[string]interface{}{"ok": true, "session_id": sessionID.String(), "redirect_to": browserurl.ParticipantSessionRedirectPath(sessionID)}
 	if user != nil {
 		me["user"] = map[string]interface{}{"id": user.ID.String(), "email": user.Email, "display_name": user.DisplayName, "global_role": string(user.GlobalRole), "status": string(user.Status)}
 	}
