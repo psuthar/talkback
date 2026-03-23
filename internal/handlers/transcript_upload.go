@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -81,63 +82,101 @@ func (h *Handlers) UploadTranscriptFile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	storageDir := storage.SessionTranscriptsDir(sessionID)
-	if err := os.MkdirAll(storageDir, 0755); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create storage directory: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Generate temporary ID for this transcript-only job
+	// Generate IDs and artifact up front so both paths share them.
 	tempID := uuid.New()
-	
-	// Save file
-	filePath := filepath.Join(storageDir, tempID.String()+".mp4")
-	if err := utils.SaveFile(file, filePath); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save file: %v", err), http.StatusInternalServerError)
-		return
-	}
+	videoID := uuid.New()
 
-	objectKey := storage.SessionTranscriptPath(sessionID, tempID)
-
-	// Create a minimal artifact for this transcript (required by schema)
 	artifact, err := h.DB.CreateArtifact(r.Context(), sessionID, "Transcript Upload", nil)
 	if err != nil {
-		// Clean up file if artifact creation fails
-		os.Remove(filePath)
 		http.Error(w, fmt.Sprintf("Failed to create artifact: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Create a minimal video source (just for transcript storage, not for playback)
-	videoID := uuid.New()
+	var objectKey string
+	var transcriptSourceURL string
+
+	if h.Storage != nil {
+		// R2 path: buffer to temp file then stream to R2.
+		tmpFile, tmpErr := os.CreateTemp(os.TempDir(), "talkback-transcript-*.mp4")
+		if tmpErr != nil {
+			http.Error(w, "Failed to create temp file", http.StatusInternalServerError)
+			return
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+		if _, copyErr := io.Copy(tmpFile, file); copyErr != nil {
+			_ = tmpFile.Close()
+			http.Error(w, "Failed to buffer upload", http.StatusInternalServerError)
+			return
+		}
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			http.Error(w, "Failed to close temp file", http.StatusInternalServerError)
+			return
+		}
+		prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
+		objectKey = storage.BuildArtifactStorageKey(prefix, sessionID, artifact.ID, header.Filename)
+		f, openErr := os.Open(tmpPath)
+		if openErr != nil {
+			http.Error(w, "Failed to open temp file for upload", http.StatusInternalServerError)
+			return
+		}
+		_, _, putErr := h.Storage.Put(r.Context(), objectKey, f, contentType, header.Size)
+		_ = f.Close()
+		if putErr != nil {
+			log.Printf("UploadTranscriptFile R2 Put: %v", putErr)
+			http.Error(w, "Failed to upload file to storage", http.StatusInternalServerError)
+			return
+		}
+		presigned, presignErr := h.Storage.PresignGet(r.Context(), objectKey, 4*time.Hour)
+		if presignErr != nil {
+			log.Printf("UploadTranscriptFile R2 PresignGet: %v", presignErr)
+			http.Error(w, "Failed to generate presigned URL", http.StatusInternalServerError)
+			return
+		}
+		transcriptSourceURL = presigned
+	} else {
+		// Local path (dev only): save to disk.
+		storageDir := storage.SessionTranscriptsDir(sessionID)
+		if mkErr := os.MkdirAll(storageDir, 0755); mkErr != nil {
+			http.Error(w, fmt.Sprintf("Failed to create storage directory: %v", mkErr), http.StatusInternalServerError)
+			return
+		}
+		objectKey = storage.SessionTranscriptPath(sessionID, tempID)
+		filePath := filepath.Join(storageDir, tempID.String()+".mp4")
+		if saveErr := utils.SaveFile(file, filePath); saveErr != nil {
+			http.Error(w, fmt.Sprintf("Failed to save file: %v", saveErr), http.StatusInternalServerError)
+			return
+		}
+		transcriptSourceURL = objectKey
+	}
+
+	// Create a minimal video source (just for transcript storage, not for playback).
 	videoSource := &models.VideoSource{
-		ID:                   videoID,
-		ArtifactID:           artifact.ID,
-		SessionID:            sessionID,
-		Provider:             "other",
-		PlaybackMode:         "direct",
-		SourceType:           models.VideoSourceTypeUpload,
-		StoredVideoObjectKey: &objectKey,
-		TranscriptStatus:     models.VideoTranscriptStatusPending,
+		ID:                    videoID,
+		ArtifactID:            artifact.ID,
+		SessionID:             sessionID,
+		Provider:              "other",
+		PlaybackMode:          "direct",
+		SourceType:            models.VideoSourceTypeUpload,
+		StoredVideoObjectKey:  &objectKey,
+		TranscriptStatus:      models.VideoTranscriptStatusPending,
 		AutoTranscribeEnabled: true,
 	}
 
 	if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
-		// Clean up file if DB insert fails
-		os.Remove(filePath)
 		http.Error(w, fmt.Sprintf("Failed to create video source: %v", err), http.StatusInternalServerError)
 		return
 	}
 	h.ensurePrimaryVideoIfNone(r.Context(), sessionID, videoID)
 
-	// Enqueue transcription job (use local file path as source URL)
+	// Enqueue transcription job.
 	jobKey := utils.GenerateJobKey(videoID.String(), objectKey)
 	job := &models.TranscriptJob{
 		ID:            uuid.New(),
 		VideoSourceID: videoID,
 		SessionID:     sessionID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     objectKey, // Use local file path instead of URL
+		SourceURL:     transcriptSourceURL,
 		JobKey:        jobKey,
 		QueuedAt:      time.Now(),
 	}

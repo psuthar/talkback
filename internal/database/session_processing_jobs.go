@@ -115,8 +115,11 @@ func (db *DB) GetSessionProcessingJobByID(ctx context.Context, id uuid.UUID) (*m
 }
 
 // GetSessionProcessingJobBySessionID returns the job for session/source (any state).
+// When source is "" it defaults to "zoom" for backward compatibility with callers that
+// predate multi-provider support. New callers should always pass an explicit source value.
 func (db *DB) GetSessionProcessingJobBySessionID(ctx context.Context, sessionID uuid.UUID, source string) (*models.SessionProcessingJob, error) {
 	if source == "" {
+		// Default retained for backward compat; callers should pass explicit source.
 		source = "zoom"
 	}
 	query := `
@@ -281,8 +284,11 @@ func (db *DB) UpdateSessionProcessingMirror(ctx context.Context, sessionID uuid.
 }
 
 // RetrySessionProcessingJob sets state=queued, next_retry_at=now, clears lock and error fields.
+// When source is "" it defaults to "zoom" for backward compatibility. New callers should
+// always pass an explicit source value derived from the session's source_provider.
 func (db *DB) RetrySessionProcessingJob(ctx context.Context, sessionID uuid.UUID, source string) error {
 	if source == "" {
+		// Default retained for backward compat; callers should pass explicit source.
 		source = "zoom"
 	}
 	query := `
@@ -299,8 +305,11 @@ func (db *DB) RetrySessionProcessingJob(ctx context.Context, sessionID uuid.UUID
 }
 
 // CancelSessionProcessingJob sets state=canceled.
+// When source is "" it defaults to "zoom" for backward compatibility. New callers should
+// always pass an explicit source value derived from the session's source_provider.
 func (db *DB) CancelSessionProcessingJob(ctx context.Context, sessionID uuid.UUID, source string) error {
 	if source == "" {
+		// Default retained for backward compat; callers should pass explicit source.
 		source = "zoom"
 	}
 	query := `UPDATE session_processing_jobs SET state = 'canceled', updated_at = now() WHERE session_id = $1 AND source = $2`

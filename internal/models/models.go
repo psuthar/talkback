@@ -76,6 +76,7 @@ type VideoProvider string
 const (
 	VideoProviderLoom  VideoProvider = "loom"
 	VideoProviderZoom  VideoProvider = "zoom"
+	VideoProviderTeams VideoProvider = "teams"
 	VideoProviderOther VideoProvider = "other"
 )
 
@@ -288,6 +289,20 @@ type ZoomConnection struct {
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
+// TeamsConnection stores OAuth tokens for a creator's Microsoft Teams / Graph account (keyed by creator_identity_id).
+type TeamsConnection struct {
+	ID                    uuid.UUID `json:"id"`
+	CreatorIdentityID     string    `json:"creator_identity_id"`
+	TenantID              string    `json:"tenant_id"`
+	TeamsUserID           string    `json:"teams_user_id"`
+	TeamsUserEmail        *string   `json:"teams_user_email,omitempty"`
+	AccessTokenEncrypted  []byte    `json:"-"`
+	RefreshTokenEncrypted []byte    `json:"-"`
+	ExpiresAt             time.Time `json:"expires_at"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
 // Phase 2: Q&A Models
 
 type QuestionSource string
@@ -380,6 +395,7 @@ type SessionSourceProvider string
 const (
 	SessionSourceZoom   SessionSourceProvider = "zoom"
 	SessionSourceUpload SessionSourceProvider = "upload"
+	SessionSourceTeams  SessionSourceProvider = "teams"
 )
 
 type Session struct {

@@ -51,12 +51,41 @@ func maxUploadBytesVideo() int64 {
 // ZoomTokenFunc returns a valid Zoom access token for the given creator identity (for background workers).
 type ZoomTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
 
+// TeamsTokenFunc returns a valid Microsoft Graph access token for the given creator identity.
+type TeamsTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
+
 // RunJob runs the ingestion pipeline for one session_processing_job (fetch → download → parse → chunk → embed → ready).
-// When store and storagePrefix are set, downloads Zoom MP4 and uploads to storage, then sets session primary_video_artifact_id.
-// If Zoom transcript is not available, enqueues a Whisper fallback job when the video is stored locally and jobProcessor is set.
+// It dispatches to the appropriate provider pipeline based on job.Source.
 // Idempotent: skips stages whose outputs already exist. Updates job state and session mirror.
 // onJobReady is optional; when set, it is called when the job reaches ready so the API can broadcast to WebSocket clients.
-func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) (err error) {
+func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
+	switch job.Source {
+	case "zoom":
+		return runZoomJob(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
+	case "teams":
+		if getTeamsToken == nil {
+			attempt := job.AttemptCount + 1
+			setJobFailedPermanent(ctx, db, job.ID, attempt, "teams_not_configured", "Teams token resolver not configured")
+			_ = db.UpdateSessionProcessingMirror(ctx, job.SessionID, models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		return runTeamsJob(ctx, db, job, getTeamsToken, store, storagePrefix, jobProcessor, onJobReady)
+	default:
+		// Any job source not explicitly handled here is a misconfiguration. Fail
+		// permanently so the worker never reclaims it and the job does not spin.
+		attempt := job.AttemptCount + 1
+		msg := fmt.Sprintf("unsupported job source: %s", job.Source)
+		setJobFailedPermanent(ctx, db, job.ID, attempt, "unsupported_source", msg)
+		_ = db.UpdateSessionProcessingMirror(ctx, job.SessionID, models.ProcessingStateFailedPermanent)
+		return nil
+	}
+}
+
+// runZoomJob runs the Zoom-specific ingestion pipeline for one session_processing_job
+// (fetch → download → parse → chunk → embed → ready).
+// When store and storagePrefix are set, downloads Zoom MP4 and uploads to storage, then sets session primary_video_artifact_id.
+// If Zoom transcript is not available, enqueues a Whisper fallback job when the video is stored locally and jobProcessor is set.
+func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) (err error) {
 	sessionID := job.SessionID
 	jobID := job.ID
 	attempt := job.AttemptCount + 1
@@ -70,11 +99,6 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			updateMirror(job.State)
 		}
 	}()
-
-	// Only Zoom is implemented
-	if job.Source != "zoom" {
-		return nil
-	}
 
 	instanceUUID := meetingUUIDForJob(job)
 	if instanceUUID == "" {
@@ -311,7 +335,24 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			sess, _ := db.GetSession(ctx, sessionID)
 			if sess != nil && sess.PrimaryVideoArtifactID != nil {
 				fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
-				if fa != nil && fa.Status == models.FileArtifactStatusReady && fa.StorageProvider == "local" && fa.StorageKey != "" {
+				if fa != nil && fa.Status == models.FileArtifactStatusReady && (fa.StorageProvider == "local" || fa.StorageProvider == "r2") && fa.StorageKey != "" {
+					// Resolve source URL based on storage provider.
+					var whisperSourceURL string
+					if fa.StorageProvider == "r2" {
+						if store == nil {
+							log.Printf("Zoom Whisper fallback: storage provider is r2 but store is nil; skipping")
+						} else {
+							presigned, presignErr := store.PresignGet(ctx, fa.StorageKey, 4*time.Hour)
+							if presignErr != nil {
+								log.Printf("Zoom Whisper fallback: presign r2 key %q: %v; skipping", fa.StorageKey, presignErr)
+							} else {
+								whisperSourceURL = presigned
+							}
+						}
+					} else {
+						whisperSourceURL = filepath.ToSlash(fa.StorageKey)
+					}
+					if whisperSourceURL != "" {
 					// Ensure artifact + video_source exist (idempotent)
 					artifacts, _ := db.GetArtifactsBySessionID(ctx, sessionID)
 					var artifactID uuid.UUID
@@ -357,7 +398,7 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 						jobKey := "zoom_whisper:" + sessionID.String()
 						existing, _ := db.GetTranscriptJobByKey(ctx, jobKey)
 						if existing == nil || existing.Status == models.TranscriptJobStatusFailed {
-							sourceURL := filepath.ToSlash(fa.StorageKey)
+							sourceURL := whisperSourceURL
 							tj := &models.TranscriptJob{
 								ID:            uuid.New(),
 								VideoSourceID: videoID,
@@ -383,10 +424,11 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 							}
 						}
 					}
+					} // end if whisperSourceURL != ""
 				}
 			}
 		}
-		// No Whisper fallback (R2 or no job processor): wait for Zoom transcript
+		// No Whisper fallback or no presignable URL: wait for Zoom transcript
 		code := "transcript_not_ready"
 		msg := "no transcript file available"
 		if transcriptStatus == utils.TranscriptStatusProcessing {
@@ -597,8 +639,19 @@ func updateJobState(ctx context.Context, db *database.DB, jobID uuid.UUID, state
 	_ = db.UpdateSessionProcessingJobState(ctx, jobID, state, stage, attempt, nextRetryAt, code, msg)
 }
 
+// maxTransientAttempts is the number of failed_transient retries before escalating to failed_permanent.
+const maxTransientAttempts = 5
+
+// maxWaitingAttempts is the number of waiting retries before escalating to failed_permanent.
+const maxWaitingAttempts = 5
+
 func setJobFailedTransient(ctx context.Context, db *database.DB, jobID uuid.UUID, attempt int, code, msg string, nextRetryAt time.Time) {
-	updateJobState(ctx, db, jobID, models.ProcessingStateFailedTransient, "fetch", attempt, &nextRetryAt, &code, &msg)
+	if attempt > maxTransientAttempts {
+		escalatedMsg := fmt.Sprintf("permanent failure after %d retries: %s", maxTransientAttempts, msg)
+		updateJobState(ctx, db, jobID, models.ProcessingStateFailedPermanent, "fetch", attempt, nil, &code, &escalatedMsg)
+	} else {
+		updateJobState(ctx, db, jobID, models.ProcessingStateFailedTransient, "fetch", attempt, &nextRetryAt, &code, &msg)
+	}
 	_ = db.UnlockSessionProcessingJob(ctx, jobID)
 }
 
@@ -608,7 +661,12 @@ func setJobFailedPermanent(ctx context.Context, db *database.DB, jobID uuid.UUID
 }
 
 func setJobWaiting(ctx context.Context, db *database.DB, jobID uuid.UUID, attempt int, code, msg string, nextRetryAt time.Time) {
-	updateJobState(ctx, db, jobID, models.ProcessingStateWaiting, "download", attempt, &nextRetryAt, &code, &msg)
+	if attempt > maxWaitingAttempts {
+		escalatedMsg := fmt.Sprintf("permanent failure after %d retries: %s", maxWaitingAttempts, msg)
+		updateJobState(ctx, db, jobID, models.ProcessingStateFailedPermanent, "download", attempt, nil, &code, &escalatedMsg)
+	} else {
+		updateJobState(ctx, db, jobID, models.ProcessingStateWaiting, "download", attempt, &nextRetryAt, &code, &msg)
+	}
 	_ = db.UnlockSessionProcessingJob(ctx, jobID)
 }
 

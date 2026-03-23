@@ -107,7 +107,7 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 
-// APISessionsRouter handles /api/sessions/:id/import/zoom and /api/sessions/:id/ingestion
+// APISessionsRouter handles /api/sessions/:id/import/zoom, /import/teams, and /api/sessions/:id/ingestion
 func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
@@ -118,6 +118,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "zoom" {
 		if r.Method == http.MethodPost {
 			h.SessionImportZoom(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "teams" {
+		if r.Method == http.MethodPost {
+			h.SessionImportTeams(w, r)
 			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -20,7 +20,7 @@ type OnJobReadyFunc func(sessionID uuid.UUID)
 // storagePrefix is the R2 key prefix (e.g. "talkback") used when building artifact keys; only used when store != nil.
 // jobProcessor is optional; when set, Zoom import can enqueue Whisper fallback when native transcript is not available (local storage only).
 // onJobReady is optional; when set, it is called when a job reaches ready so the API can broadcast to WebSocket clients.
-func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, pollInterval, lockDuration time.Duration, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
+func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, store storage.Interface, storagePrefix string, pollInterval, lockDuration time.Duration, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
 	if pollInterval <= 0 {
 		pollInterval = 15 * time.Second
 	}
@@ -42,17 +42,17 @@ func RunWorker(ctx context.Context, db *database.DB, getZoomToken ZoomTokenFunc,
 			if job == nil {
 				continue
 			}
-			runOne(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
+			runOne(ctx, db, job, getZoomToken, getTeamsToken, store, storagePrefix, jobProcessor, onJobReady)
 		}
 	}
 }
 
-func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
+func runOne(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) {
 	defer func() {
 		// Ensure unlock on panic
 		_ = db.UnlockSessionProcessingJob(ctx, job.ID)
 	}()
-	_ = RunJob(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
+	_ = RunJob(ctx, db, job, getZoomToken, getTeamsToken, store, storagePrefix, jobProcessor, onJobReady)
 }
 
 // RunReconciler resets next_retry_at for stuck or waiting jobs so the worker can pick them up. Run in a goroutine.

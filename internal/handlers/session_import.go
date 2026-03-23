@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/utils"
 )
@@ -406,6 +408,19 @@ func (h *Handlers) SessionIngestionStatus(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// sessionSourceForID returns the job source string for a session by looking up the
+// session's source_provider field. This ensures status/retry/cancel operations target
+// the correct job row regardless of video provider.
+// On any DB error or unrecognised provider it returns "" which causes the DB helpers
+// to apply their own backward-compatible "zoom" default.
+func sessionSourceForID(ctx context.Context, db *database.DB, sessionID uuid.UUID) string {
+	sess, err := db.GetSession(ctx, sessionID)
+	if err != nil || sess == nil {
+		return "" // DB default ("zoom") will apply
+	}
+	return string(sess.SourceProvider)
+}
+
 // parseSessionIDFromProcessingPath extracts session ID from /api/sessions/:id/processing or /api/sessions/:id/processing/retry etc.
 func parseSessionIDFromProcessingPath(path string) (string, bool) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -434,7 +449,10 @@ func (h *Handlers) SessionProcessingStatus(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
-	job, err := h.DB.GetSessionProcessingJobBySessionID(r.Context(), sessionID, "zoom")
+	// Derive source from the session's source_provider so non-Zoom sessions are not
+	// permanently stuck. Falls back to "zoom" (via DB default) if the session is not found.
+	source := sessionSourceForID(r.Context(), h.DB, sessionID)
+	job, err := h.DB.GetSessionProcessingJobBySessionID(r.Context(), sessionID, source)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -493,7 +511,9 @@ func (h *Handlers) SessionProcessingRetry(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
-	if err := h.DB.RetrySessionProcessingJob(r.Context(), sessionID, "zoom"); err != nil {
+	// Derive source from the session's source_provider so retry works for any provider.
+	source := sessionSourceForID(r.Context(), h.DB, sessionID)
+	if err := h.DB.RetrySessionProcessingJob(r.Context(), sessionID, source); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})
@@ -521,7 +541,9 @@ func (h *Handlers) SessionProcessingCancel(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
-	if err := h.DB.CancelSessionProcessingJob(r.Context(), sessionID, "zoom"); err != nil {
+	// Derive source from the session's source_provider so cancel works for any provider.
+	source := sessionSourceForID(r.Context(), h.DB, sessionID)
+	if err := h.DB.CancelSessionProcessingJob(r.Context(), sessionID, source); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"message": err.Error()})

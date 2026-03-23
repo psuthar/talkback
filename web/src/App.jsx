@@ -20,6 +20,15 @@ import {
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
+// Named constants for the create-session source selector.
+// When a new provider (e.g. Teams) is added, extend this object and reference the constant
+// everywhere instead of duplicating string literals.
+const CREATE_SOURCE = /** @type {const} */ ({
+  EMPTY: 'empty',
+  ZOOM: 'zoom',
+  TEAMS: 'teams',
+})
+
 // Compact import status + Retry when session has Zoom source but no primary video (Artifact View).
 function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry, refetchSession }) {
   const [processingStatus, setProcessingStatus] = useState(null)
@@ -132,7 +141,7 @@ function App() {
   const [participantRef, setParticipantRef] = useState('')
   const [viewMode, setViewMode] = useState('session')
   const [sessionMode, setSessionMode] = useState('select') // 'create' or 'select' — default list; effect sets 'create' when no sessions and can create
-  const [createSource, setCreateSource] = useState('empty') // 'empty' | 'zoom' when sessionMode === 'create'
+  const [createSource, setCreateSource] = useState(CREATE_SOURCE.EMPTY) // CREATE_SOURCE.EMPTY | ZOOM | TEAMS when sessionMode === 'create'
   const [zoomPasteUrlExpanded, setZoomPasteUrlExpanded] = useState(false) // collapsible "Or paste Zoom recording URL"
   const [sessionIdInput, setSessionIdInput] = useState('')
   const [sessionSelectFeedback, setSessionSelectFeedback] = useState({ type: '', message: '' })
@@ -256,6 +265,19 @@ function App() {
   const [zoomImportSessionName, setZoomImportSessionName] = useState('') // proposed/edited session name for modal
   const [zoomImportModalError, setZoomImportModalError] = useState('')
 
+  // Teams (Microsoft): gated by API GET /api/teams/status → enabled
+  const [teamsApiEnabled, setTeamsApiEnabled] = useState(false)
+  const [teamsConnection, setTeamsConnection] = useState(null) // { teams_email, teams_user_id } or null
+  const [teamsRecordings, setTeamsRecordings] = useState([])
+  const [teamsRecordingsLoading, setTeamsRecordingsLoading] = useState(false)
+  const [teamsRecordingsError, setTeamsRecordingsError] = useState('')
+  const [teamsImporting, setTeamsImporting] = useState(false)
+  const [teamsImportError, setTeamsImportError] = useState('')
+  const [teamsImportToast, setTeamsImportToast] = useState(null) // { message } or null
+  const [teamsImportModalRec, setTeamsImportModalRec] = useState(null)
+  const [teamsImportSessionName, setTeamsImportSessionName] = useState('')
+  const [teamsImportModalError, setTeamsImportModalError] = useState('')
+
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
     try {
@@ -318,6 +340,8 @@ function App() {
         return getLoomEmbedUrl(video.video_url)
       case 'zoom':
         // Zoom videos might need different handling
+        return video.video_url
+      case 'teams':
         return video.video_url
       case 'other':
         // For other providers, try to use the URL directly
@@ -1634,6 +1658,93 @@ function App() {
     }
   }
 
+  const disconnectTeams = async () => {
+    try {
+      await fetch(`${apiBaseUrl}/api/teams/disconnect`, {
+        method: 'POST',
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      setTeamsConnection(null)
+      setTeamsRecordings([])
+    } catch (_) { /* ignore */ }
+  }
+
+  const fetchTeamsRecordings = async () => {
+    setTeamsRecordingsLoading(true)
+    setTeamsRecordingsError('')
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/teams/recordings`, {
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setTeamsRecordingsError(data.message || 'Failed to fetch recordings')
+        setTeamsRecordings([])
+        return
+      }
+      const items = (data.items || []).slice()
+      items.sort((a, b) => {
+        const ta = a.start_time ? new Date(a.start_time).getTime() : 0
+        const tb = b.start_time ? new Date(b.start_time).getTime() : 0
+        return tb - ta
+      })
+      setTeamsRecordings(items)
+    } catch (err) {
+      setTeamsRecordingsError(err.message || 'Failed to fetch recordings')
+      setTeamsRecordings([])
+    } finally {
+      setTeamsRecordingsLoading(false)
+    }
+  }
+
+  const openTeamsImportModal = (rec) => {
+    setTeamsImportModalRec(rec)
+    setTeamsImportSessionName(rec.subject || 'Teams Recording')
+    setTeamsImportModalError('')
+  }
+
+  const closeTeamsImportModal = () => {
+    setTeamsImportModalRec(null)
+    setTeamsImportSessionName('')
+    setTeamsImportModalError('')
+  }
+
+  const importFromTeamsRecording = async (rec, sessionTitle) => {
+    const baseTitle = sessionTitle ?? rec.subject ?? 'Teams Recording'
+    const title = (baseTitle || 'Teams Recording').trim()
+    setTeamsImporting(true)
+    setTeamsImportError('')
+    setTeamsImportModalError('')
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/teams/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        credentials: 'include',
+        body: JSON.stringify({
+          title,
+          meeting_id: rec.meeting_id,
+          recording_id: rec.recording_id
+        })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const msg = res.status === 422 && data.message
+          ? data.message
+          : (data.message || 'Failed to start import')
+        setTeamsImportModalError(res.status === 409 ? (data.message || 'A session with this name already exists. Please use a unique name.') : msg)
+        return
+      }
+      closeTeamsImportModal()
+      setTeamsImportToast({ message: 'Import started' })
+      setTimeout(() => setTeamsImportToast(null), 3000)
+      await openSession(data.id, 'creator', true)
+    } catch (err) {
+      setTeamsImportModalError(err.message || 'Failed to import')
+    } finally {
+      setTeamsImporting(false)
+    }
+  }
+
   // Ensure creator identity exists (for Zoom OAuth)
   useEffect(() => {
     if (!creatorIdentity) {
@@ -1646,10 +1757,11 @@ function App() {
     }
   }, [])
 
-  // Handle Zoom OAuth callback: ?zoom=connected&creator_identity= or ?zoom=error&message=
+  // Handle Zoom / Teams OAuth callbacks: ?zoom=connected|error, ?teams=connected|error
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const zoom = urlParams.get('zoom')
+    const teams = urlParams.get('teams')
     const ci = urlParams.get('creator_identity')
     const message = urlParams.get('message')
     if (zoom === 'connected' && ci) {
@@ -1660,12 +1772,41 @@ function App() {
         if (sessionStorage.getItem('talkback.zoom_return_to_create') === '1') {
           sessionStorage.removeItem('talkback.zoom_return_to_create')
           setSessionMode('create')
-          setCreateSource('zoom')
+          setCreateSource(CREATE_SOURCE.ZOOM)
         }
       } catch (_) { /* ignore */ }
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     } else if (zoom === 'error') {
       setZoomImportError(message === 'missing_code_or_state' ? 'Zoom sign-in was cancelled or incomplete.' : message === 'server_not_configured' ? 'Zoom is not configured on the server.' : message === 'exchange_failed' ? 'Could not complete Zoom sign-in.' : message === 'save_failed' ? 'Could not save Zoom connection.' : message || 'Zoom sign-in failed.')
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    }
+    if (teams === 'connected' && ci) {
+      setCreatorIdentity(ci)
+      const base = (apiBaseUrl || getDefaultApiBaseUrl()).replace(/\/$/, '')
+      fetch(`${base}/api/teams/status`, { headers: { 'X-Creator-Identity': ci } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.enabled) {
+            setTeamsApiEnabled(true)
+            if (data.connected) {
+              setTeamsConnection({
+                teams_email: data.teams_email || null,
+                teams_user_id: data.teams_user_id || null
+              })
+            }
+          }
+        })
+        .catch(() => {})
+      try {
+        if (sessionStorage.getItem('talkback.teams_return_to_create') === '1') {
+          sessionStorage.removeItem('talkback.teams_return_to_create')
+          setSessionMode('create')
+          setCreateSource(CREATE_SOURCE.TEAMS)
+        }
+      } catch (_) { /* ignore */ }
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    } else if (teams === 'error') {
+      setTeamsImportError(message === 'missing_code_or_state' ? 'Teams sign-in was cancelled or incomplete.' : message === 'server_not_configured' ? 'Teams is not configured on the server.' : message === 'exchange_failed' ? 'Could not complete Teams sign-in.' : message === 'save_failed' ? 'Could not save Teams connection.' : message || 'Teams sign-in failed.')
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     }
   }, [])
@@ -1690,6 +1831,33 @@ function App() {
         }
       })
       .catch(() => setZoomConnection(null))
+    return () => ac.abort()
+  }, [creatorIdentity, apiBaseUrl])
+
+  // Fetch Teams feature flag + connection (GET /api/teams/status)
+  useEffect(() => {
+    if (!creatorIdentity || apiBaseUrl == null) return
+    const ac = new AbortController()
+    fetch(`${apiBaseUrl}/api/teams/status`, {
+      signal: ac.signal,
+      headers: { 'X-Creator-Identity': creatorIdentity }
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setTeamsApiEnabled(data.enabled === true)
+        if (data.enabled && data.connected) {
+          setTeamsConnection({
+            teams_email: data.teams_email || null,
+            teams_user_id: data.teams_user_id || null
+          })
+        } else {
+          setTeamsConnection(null)
+        }
+      })
+      .catch(() => {
+        setTeamsApiEnabled(false)
+        setTeamsConnection(null)
+      })
     return () => ac.abort()
   }, [creatorIdentity, apiBaseUrl])
 
@@ -2838,6 +3006,23 @@ function App() {
           {zoomImportToast.message}
         </div>
       )}
+      {teamsImportToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          padding: '12px 18px',
+          backgroundColor: '#6264A7',
+          color: 'white',
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          zIndex: 9999,
+          fontWeight: '600',
+          fontSize: '14px'
+        }}>
+          {teamsImportToast.message}
+        </div>
+      )}
 
       {/* Copy session modal: optional title */}
       {copyModalSession && (
@@ -2894,6 +3079,38 @@ function App() {
                 style={{ padding: '8px 16px', cursor: zoomImporting || !zoomImportSessionName?.trim() ? 'not-allowed' : 'pointer' }}
               >
                 {zoomImporting ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Teams import: session name (duplicate check on server) */}
+      {teamsImportModalRec && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={closeTeamsImportModal}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Import Teams recording</h3>
+            <p style={{ marginBottom: '12px', color: '#555', fontSize: '14px' }}>Recording: {teamsImportModalRec.subject || 'Untitled'}</p>
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>Session name (required)</label>
+            <input
+              type="text"
+              value={teamsImportSessionName}
+              onChange={e => { setTeamsImportSessionName(e.target.value); setTeamsImportModalError('') }}
+              placeholder="e.g., Weekly review"
+              style={{ width: '100%', padding: '8px', marginBottom: '12px', boxSizing: 'border-box' }}
+            />
+            {teamsImportModalError && (
+              <div className="error" style={{ marginBottom: '12px', fontSize: '13px' }}>{teamsImportModalError}</div>
+            )}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={closeTeamsImportModal} style={{ padding: '8px 16px' }}>Cancel</button>
+              <button
+                type="button"
+                onClick={() => importFromTeamsRecording(teamsImportModalRec, teamsImportSessionName)}
+                disabled={teamsImporting || !teamsImportSessionName?.trim()}
+                style={{ padding: '8px 16px', cursor: teamsImporting || !teamsImportSessionName?.trim() ? 'not-allowed' : 'pointer' }}
+              >
+                {teamsImporting ? 'Importing…' : 'Import'}
               </button>
             </div>
           </div>
@@ -3360,12 +3577,12 @@ function App() {
                 </div>
                 <div style={{ marginBottom: '15px' }}>
                   <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>How to create:</label>
-                  <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+                  <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
                     <button
-                      onClick={() => setCreateSource('zoom')}
+                      onClick={() => setCreateSource(CREATE_SOURCE.ZOOM)}
                       style={{
-                        backgroundColor: createSource === 'zoom' ? '#2196F3' : '#e0e0e0',
-                        color: createSource === 'zoom' ? 'white' : 'black',
+                        backgroundColor: createSource === CREATE_SOURCE.ZOOM ? '#2196F3' : '#e0e0e0',
+                        color: createSource === CREATE_SOURCE.ZOOM ? 'white' : 'black',
                         padding: '8px 16px',
                         border: 'none',
                         borderRadius: '4px',
@@ -3374,11 +3591,27 @@ function App() {
                     >
                       From Zoom
                     </button>
+                    {teamsApiEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => setCreateSource(CREATE_SOURCE.TEAMS)}
+                        style={{
+                          backgroundColor: createSource === CREATE_SOURCE.TEAMS ? '#6264A7' : '#e0e0e0',
+                          color: createSource === CREATE_SOURCE.TEAMS ? 'white' : 'black',
+                          padding: '8px 16px',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        From Teams
+                      </button>
+                    )}
                     <button
-                      onClick={() => setCreateSource('empty')}
+                      onClick={() => setCreateSource(CREATE_SOURCE.EMPTY)}
                       style={{
-                        backgroundColor: createSource === 'empty' ? '#2196F3' : '#e0e0e0',
-                        color: createSource === 'empty' ? 'white' : 'black',
+                        backgroundColor: createSource === CREATE_SOURCE.EMPTY ? '#2196F3' : '#e0e0e0',
+                        color: createSource === CREATE_SOURCE.EMPTY ? 'white' : 'black',
                         padding: '8px 16px',
                         border: 'none',
                         borderRadius: '4px',
@@ -3390,7 +3623,7 @@ function App() {
                   </div>
                 </div>
 
-                {createSource === 'empty' && (
+                {createSource === CREATE_SOURCE.EMPTY && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Create New Session</div>
                     <div className="form-group">
@@ -3414,7 +3647,7 @@ function App() {
                   </div>
                 )}
 
-                {createSource === 'zoom' && (
+                {createSource === CREATE_SOURCE.ZOOM && (
                   <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
                     <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
                     {zoomConnection ? (
@@ -3574,6 +3807,85 @@ function App() {
                             </div>
                           )}
                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {createSource === CREATE_SOURCE.TEAMS && !teamsApiEnabled && (
+                  <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff3e0', borderRadius: '5px', fontSize: '13px' }}>
+                    Microsoft Teams import is not enabled on this server (the API must set ENABLE_TEAMS=true).
+                  </div>
+                )}
+
+                {createSource === CREATE_SOURCE.TEAMS && teamsApiEnabled && (
+                  <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f3f2ff', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Microsoft Teams</div>
+                    {teamsConnection ? (
+                      <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#2e7d32', fontSize: '14px' }}>
+                          Connected as {teamsConnection.teams_email || teamsConnection.teams_user_id || 'Teams user'}
+                        </span>
+                        <button type="button" onClick={disconnectTeams} style={{ padding: '4px 10px', fontSize: '13px' }}>
+                          Disconnect
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ marginBottom: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try { sessionStorage.setItem('talkback.teams_return_to_create', '1') } catch (_) {}
+                            window.location.href = `${apiBaseUrl}/auth/teams/start?creator_identity=${encodeURIComponent(creatorIdentity)}`
+                          }}
+                          style={{ padding: '6px 12px', backgroundColor: '#6264A7', color: 'white', border: 'none', borderRadius: '4px', fontSize: '14px', cursor: 'pointer' }}
+                        >
+                          Connect Microsoft Teams
+                        </button>
+                      </div>
+                    )}
+                    {teamsImportError && (
+                      <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{teamsImportError}</div>
+                    )}
+                    {teamsConnection && (
+                      <div style={{ marginTop: '10px' }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Your Teams recordings</div>
+                        <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={fetchTeamsRecordings}
+                            disabled={teamsRecordingsLoading}
+                            style={{ padding: '4px 12px', fontSize: '13px' }}
+                          >
+                            {teamsRecordingsLoading ? 'Loading…' : 'Load recordings'}
+                          </button>
+                        </div>
+                        {teamsRecordingsError && (
+                          <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{teamsRecordingsError}</div>
+                        )}
+                        {teamsRecordings.length > 0 && (
+                          <div style={{ maxHeight: '280px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '8px', backgroundColor: '#fafafa' }}>
+                            {teamsRecordings.map((rec, idx) => (
+                              <div key={`${rec.meeting_id}-${rec.recording_id}-${idx}`} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
+                                <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.subject || 'Untitled'}</div>
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
+                                  {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openTeamsImportModal(rec)}
+                                  disabled={teamsImporting}
+                                  style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#6264A7', color: 'white', border: 'none', borderRadius: '4px', cursor: teamsImporting ? 'not-allowed' : 'pointer' }}
+                                >
+                                  Import
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {!teamsRecordingsLoading && teamsRecordings.length === 0 && teamsRecordingsError === '' && (
+                          <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>Click &quot;Load recordings&quot; to list recent Teams meetings with recordings (Graph API).</div>
+                        )}
                       </div>
                     )}
                   </div>

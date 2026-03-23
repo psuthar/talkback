@@ -256,7 +256,7 @@ func (db *DB) GetQueuedOrStaleTranscriptJobs(ctx context.Context, staleThreshold
 			whisper_model, detected_language, duration_seconds, job_key, loom_password
 		FROM transcript_jobs
 		WHERE status = $1
-		   OR (status IN ($2, $3, $4, $5) AND started_at IS NOT NULL AND started_at < $6)
+		   OR (status IN ($2, $3, $4) AND started_at IS NOT NULL AND started_at < $5)
 		ORDER BY queued_at ASC
 	`
 	rows, err := db.Pool.Query(ctx, query,

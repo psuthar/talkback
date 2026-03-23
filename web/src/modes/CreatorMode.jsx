@@ -579,6 +579,8 @@ export function CreatorMode({
       })
     : null
 
+  const sessionSource = (currentSession?.session?.source_provider || '').toLowerCase() // zoom | teams | upload | ''
+
   // Processing status (Mission #4: GET /api/sessions/:id/processing) — preferred over legacy ingestion
   const [processingStatus, setProcessingStatus] = useState(null) // { state, stage, attempt_count, next_retry_at, last_error_code, last_error_message, updated_at }
   const [processingRetrying, setProcessingRetrying] = useState(false)
@@ -627,7 +629,7 @@ export function CreatorMode({
     fetchProcessing()
     const terminal = processingStatus?.state && ['ready', 'failed_permanent', 'canceled'].includes(processingStatus.state)
     if (terminal) return
-    const intervalMs = processingStatus?.state === 'waiting' ? 15000 : 2000
+    const intervalMs = (processingStatus?.state === 'waiting' || processingStatus?.state === 'awaiting_whisper' || processingStatus?.state === 'failed_transient') ? 15000 : 2000
     processingIntervalRef.current = setInterval(fetchProcessing, intervalMs)
     return () => {
       if (processingIntervalRef.current) {
@@ -644,6 +646,11 @@ export function CreatorMode({
       hasSeenProcessingJobRef.current = false
     }
   }, [sessionId])
+
+  const processingStatusRef = useRef(processingStatus)
+  useEffect(() => {
+    processingStatusRef.current = processingStatus
+  }, [processingStatus])
 
   // --- Progression panel: timer-driven display step (advance at most one step per PROGRESSION_TICK_MS) ---
   const [displayStepIndex, setDisplayStepIndex] = useState(0)
@@ -725,8 +732,16 @@ export function CreatorMode({
   const hasJobForPanel = processingStatus?.state != null && processingStatus.state !== ''
   const isRunningForPanel = hasJobForPanel && runningStatesForPanel.includes(processingStatus.state)
   const readyButNoVideoYetForPanel = hasJobForPanel && processingStatus?.state === 'ready' && !hasPrimaryR2Video
-  const processingInProgress = isRunningForPanel || readyButNoVideoYetForPanel
-  // Show panel only while processing or preparing playback; hide once session is ready with video (e.g. on login we don't reshow)
+  const [videoPollExhausted, setVideoPollExhausted] = useState(false)
+  // Also show panel for error/waiting/whisper states so panel does not disappear and reappear during retries (which looks like cycling).
+  const isNonTerminalPanel = hasJobForPanel && (
+    processingStatus.state === 'waiting' ||
+    processingStatus.state === 'awaiting_whisper' ||
+    processingStatus.state === 'failed_transient' ||
+    processingStatus.state === 'failed_permanent'
+  )
+  const processingInProgress = isRunningForPanel || (readyButNoVideoYetForPanel && !videoPollExhausted) || isNonTerminalPanel
+  // Show panel while processing, in error/waiting states, or preparing playback; hide only once session is ready with video
   const showPanel = processingInProgress
 
   // Legacy ingestion status (fallback when no processing job)
@@ -784,6 +799,7 @@ export function CreatorMode({
       prevSessionIdRef.current = sessionId
       hasRefetchedForIngestionReady.current = false
       videoPollAttemptsRef.current = 0
+      setVideoPollExhausted(false)
     }
   }, [sessionId])
 
@@ -792,12 +808,21 @@ export function CreatorMode({
   const VIDEO_POLL_INTERVAL_MS = 2500
   useEffect(() => {
     if (!sessionId || apiBaseUrl == null || !refetchSession) return
-    if (hasPlayableVideo) return
-    if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) return
+    if (hasPlayableVideo) {
+      setVideoPollExhausted(false)
+      return
+    }
+    if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) {
+      setVideoPollExhausted(true)
+      return
+    }
     const t = setInterval(() => {
       videoPollAttemptsRef.current += 1
-      if (videoPollAttemptsRef.current > VIDEO_POLL_MAX_ATTEMPTS) return
       refetchSession()
+      if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) {
+        setVideoPollExhausted(true)
+        clearInterval(t)
+      }
     }, VIDEO_POLL_INTERVAL_MS)
     return () => clearInterval(t)
   }, [sessionId, apiBaseUrl, refetchSession, hasPlayableVideo])
@@ -808,17 +833,25 @@ export function CreatorMode({
   useEffect(() => {
     if (!sessionId || apiBaseUrl == null) return
     setTranscriptData(null) // reset so we show Loading when session changes; avoids stale transcript
+    const stopTranscriptPoll = () => {
+      if (transcriptIntervalRef.current) {
+        clearInterval(transcriptIntervalRef.current)
+        transcriptIntervalRef.current = null
+      }
+    }
     const fetchTranscript = () => {
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/transcript`)
         .then((r) => r.json())
         .then((data) => {
           setTranscriptData(data)
-          // Only stop polling when we have a final state; keep polling on 'none' so async Zoom import will show transcript when ready
+          const ps = processingStatusRef.current?.state
           if (data.status === 'ready' || data.status === 'failed') {
-            if (transcriptIntervalRef.current) {
-              clearInterval(transcriptIntervalRef.current)
-              transcriptIntervalRef.current = null
-            }
+            stopTranscriptPoll()
+            return
+          }
+          // Avoid infinite polling: Zoom/Teams often leave status "none" forever when no cloud transcript exists.
+          if (data.status === 'none' && (ps === 'ready' || ps === 'failed_permanent' || ps === 'canceled')) {
+            stopTranscriptPoll()
           }
         })
         .catch(() => setTranscriptData(null))
@@ -826,13 +859,10 @@ export function CreatorMode({
     fetchTranscript()
     transcriptIntervalRef.current = setInterval(fetchTranscript, 2500)
     return () => {
-      if (transcriptIntervalRef.current) {
-        clearInterval(transcriptIntervalRef.current)
-        transcriptIntervalRef.current = null
-      }
+      stopTranscriptPoll()
     }
   }, [sessionId, apiBaseUrl, readyState])
-  // readyState in deps: when Zoom import completes (state -> 'ready'), effect re-runs and refetches transcript
+  // readyState in deps: when import completes (state -> 'ready'), effect re-runs and refetches transcript
 
   const retryProcessing = async () => {
     if (!sessionId || processingRetrying) return
@@ -1107,6 +1137,7 @@ export function CreatorMode({
         const isRunning = hasJob && runningStates.includes(processingStatus.state)
         const isFailed = hasJob && (processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent')
         const isWaiting = hasJob && processingStatus.state === 'waiting'
+        const isAwaitingWhisper = hasJob && processingStatus.state === 'awaiting_whisper'
         const readyButNoVideoYet = hasJob && processingStatus.state === 'ready' && !hasPrimaryR2Video
         const allComplete = hasJob && processingStatus.state === 'ready' && hasPrimaryR2Video
         const activeStepIndex = displayStepIndex
@@ -1116,8 +1147,8 @@ export function CreatorMode({
             padding: '12px 16px',
             borderRadius: 0,
             borderBottom: '1px solid #e0e0e0',
-            backgroundColor: allComplete ? '#e8f5e9' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : isWaiting ? '#e3f2fd' : '#fff8e1',
-            borderLeft: allComplete ? '3px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '3px solid #f44336' : isWaiting ? '3px solid #2196F3' : '3px solid #ff9800'
+            backgroundColor: allComplete ? '#e8f5e9' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : (isWaiting || isAwaitingWhisper) ? '#e3f2fd' : '#fff8e1',
+            borderLeft: allComplete ? '3px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '3px solid #f44336' : (isWaiting || isAwaitingWhisper) ? '3px solid #2196F3' : '3px solid #ff9800'
           }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -1126,7 +1157,7 @@ export function CreatorMode({
                     const completed = idx < activeStepIndex || allComplete
                     const active = idx === activeStepIndex && !completed
                     const showSpinner = active && (isRunning || !hasJob || readyButNoVideoYet || displayStepIndex < lastKnownTargetStepRef.current)
-                    const showWaiting = active && isWaiting
+                    const showWaiting = active && (isWaiting || isAwaitingWhisper)
                     const showWarning = active && isFailed
                     const activeWeight = 700
                     return (
@@ -1149,16 +1180,22 @@ export function CreatorMode({
                     ? 'Checking import status…'
                     : isRunning
                       ? <span className="processing-flash">Processing this session…</span>
-                      : isWaiting
-                        ? "Waiting for Zoom to finish processing. We'll keep checking."
+                      : isAwaitingWhisper
+                        ? "Video downloaded — transcribing audio. This may take several minutes."
+                        : isWaiting
+                        ? (sessionSource === 'teams'
+                          ? "Waiting for Microsoft Teams or your tenant to finish processing. We'll keep checking."
+                          : "Waiting for the recording provider to finish processing. We'll keep checking.")
                         : processingStatus.state === 'failed_transient'
-                          ? "Temporary issue. We'll retry automatically. You can retry now."
+                          ? `Temporary issue${processingStatus.last_error_code ? ` [${processingStatus.last_error_code}]` : ''}${processingStatus.last_error_message ? ': ' + processingStatus.last_error_message : ''}. We'll retry automatically.`
                           : processingStatus.state === 'failed_permanent'
-                            ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect Zoom or retry.`
+                            ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect your account or retry.`
                             : readyButNoVideoYet
-                              ? 'Preparing playback — video will appear on screen shortly…'
+                              ? (videoPollExhausted
+                                ? 'Video URL did not appear after several tries. Refresh the page or retry import.'
+                                : 'Preparing playback — video will appear on screen shortly…')
                               : processingStatus.state === 'ready'
-                                ? 'Import complete — video and transcript are ready.'
+                                ? 'Import complete.'
                                 : processingStatus.state === 'canceled'
                                   ? 'Import canceled.'
                                   : processingStatus.state}
@@ -1647,7 +1684,7 @@ export function CreatorMode({
                 {!transcriptData ? (
                   <div style={{ color: '#666', fontSize: '13px' }}>Loading…</div>
                 ) : transcriptData.status === 'none' ? (
-                  <div style={{ color: '#666', fontStyle: 'italic', fontSize: '13px' }}>No transcript yet. Import a Zoom recording to add one.</div>
+                  <div style={{ color: '#666', fontStyle: 'italic', fontSize: '13px' }}>No transcript yet. Import a cloud recording (Teams, Zoom, etc.) or upload media to add one.</div>
                 ) : transcriptData.status === 'parsing' ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
                     <span style={{ fontSize: '16px' }}>⏳</span>

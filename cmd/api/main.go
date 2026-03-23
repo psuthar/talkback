@@ -154,7 +154,7 @@ func main() {
 	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
 	h.IndexAsync = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
 
-	// When a transcript job completes: reindex session for RAG; if it was Zoom Whisper fallback, mark processing job ready and broadcast
+	// When a transcript job completes: reindex session for RAG; if it was a Whisper fallback, mark processing job ready and broadcast
 	onJobReady := func(sessionID uuid.UUID) { h.Hub.BroadcastSessionProcessingReady(sessionID) }
 	jobProcessor.OnTranscriptCompleted = func(sessionID uuid.UUID) {
 		rag.IndexSessionAsync(sessionID, db, store)
@@ -162,14 +162,20 @@ func main() {
 		if h.Hub != nil {
 			h.Hub.BroadcastSessionUpdated(sessionID)
 		}
-		// Zoom Whisper fallback: if a session_processing_job was awaiting transcript, mark it ready and broadcast
-		procJob, _ := db.GetSessionProcessingJobBySessionID(context.Background(), sessionID, "zoom")
+		// Whisper fallback: if a session_processing_job was awaiting transcript, mark it ready and broadcast.
+		// Look up the session's source_provider so the correct job row is targeted regardless of provider.
+		// Passing "" falls back to "zoom" inside GetSessionProcessingJobBySessionID (backward compat).
+		var jobSource string
+		if sess, err := db.GetSession(context.Background(), sessionID); err == nil && sess != nil {
+			jobSource = string(sess.SourceProvider)
+		}
+		procJob, _ := db.GetSessionProcessingJobBySessionID(context.Background(), sessionID, jobSource)
 		if procJob != nil && procJob.State == models.ProcessingStateAwaitingWhisper {
 			_ = db.UpdateSessionProcessingJobState(context.Background(), procJob.ID, models.ProcessingStateReady, models.ProcessingStageReady, procJob.AttemptCount, nil, nil, nil)
 			_ = db.UnlockSessionProcessingJob(context.Background(), procJob.ID)
 			_ = db.UpdateSessionProcessingMirror(context.Background(), sessionID, models.ProcessingStateReady)
 			onJobReady(sessionID)
-			log.Printf("Zoom Whisper fallback: marked processing job ready for session %s", sessionID)
+			log.Printf("Whisper fallback: marked processing job ready for session %s (source=%s)", sessionID, jobSource)
 		}
 	}
 	// When a material extraction job fails (or other session update without reindex): broadcast so UI shows failed state
@@ -179,9 +185,16 @@ func main() {
 		}
 	}
 
-	// Mission #4: processing worker and reconciler for Zoom import pipeline
+	// Mission #4: processing worker and reconciler for Zoom + Teams import pipelines
 	getZoomToken := func(ctx context.Context, creatorIdentity string) (string, error) {
 		tok, _, err := h.GetValidZoomAccessTokenContext(ctx, creatorIdentity)
+		return tok, err
+	}
+	getTeamsToken := func(ctx context.Context, creatorIdentity string) (string, error) {
+		if os.Getenv("ENABLE_TEAMS") != "true" {
+			return "", fmt.Errorf("teams disabled")
+		}
+		tok, _, err := h.GetValidTeamsAccessTokenContext(ctx, creatorIdentity)
 		return tok, err
 	}
 	storagePrefix := ""
@@ -195,7 +208,7 @@ func main() {
 	} else {
 		log.Printf("Zoom MP4 ingest: local disk (no R2; MP4 saved under sessions/{id}/videos/ for debugging)")
 	}
-	go processing.RunWorker(ctx, db, getZoomToken, store, storagePrefix, 15*time.Second, 15*time.Minute, jobProcessor, onJobReady)
+	go processing.RunWorker(ctx, db, getZoomToken, getTeamsToken, store, storagePrefix, 15*time.Second, 15*time.Minute, jobProcessor, onJobReady)
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 
@@ -376,6 +389,11 @@ func main() {
 	http.HandleFunc(wrapNR("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings)))
 	http.HandleFunc(wrapNR("/api/zoom/import", corsWithCredentials(h.RequireAuth(h.ZoomImport))))
 
+	// Teams: always register GET /api/teams/status so split-origin dev (e.g. Vite :3000 → API :8081) gets CORS
+	// headers even when ENABLE_TEAMS is false (handler returns enabled:false). Unregistered /api/* falls through
+	// to SPA 404 without CORS and breaks the browser preflight.
+	http.HandleFunc(wrapNR("/api/teams/status", corsMiddleware(h.TeamsAPIStatus)))
+
 	// API Session list (my sessions): GET /api/sessions requires auth
 	http.HandleFunc(wrapNR("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/sessions" {
@@ -406,6 +424,19 @@ func main() {
 	http.HandleFunc(wrapNR("/api/auth/login", corsWithCredentials(h.AuthLogin)))
 	http.HandleFunc(wrapNR("/api/auth/logout", corsWithCredentials(h.AuthLogout)))
 	http.HandleFunc(wrapNR("/api/me", corsWithCredentials(h.RequireAuth(h.AuthMe))))
+
+	// Feature flag: Teams video provider (parallel to Zoom; off by default).
+	if os.Getenv("ENABLE_TEAMS") == "true" {
+		http.HandleFunc(wrapNR("/auth/teams/start", corsMiddleware(h.TeamsAuthStart)))
+		http.HandleFunc(wrapNR("/auth/teams/callback", corsMiddleware(h.TeamsAuthCallback)))
+		http.HandleFunc(wrapNR("/api/teams/connect", corsMiddleware(h.TeamsAPIConnect)))
+		http.HandleFunc(wrapNR("/api/teams/disconnect", corsMiddleware(h.TeamsAPIDisconnect)))
+		http.HandleFunc(wrapNR("/api/teams/recordings", corsMiddleware(h.TeamsAPIRecordings)))
+		http.HandleFunc(wrapNR("/api/teams/import", corsWithCredentials(h.RequireAuth(h.TeamsImport))))
+		log.Println("Teams integration: ENABLE_TEAMS=true; OAuth and /api/teams/* routes registered")
+	} else {
+		log.Println("Teams integration: ENABLE_TEAMS not set; OAuth and other /api/teams/* routes disabled (GET /api/teams/status still returns enabled:false)")
+	}
 
 	// Embedded React SPA (production same-origin serving).
 	// This must be registered after backend routes so those handlers take precedence.
