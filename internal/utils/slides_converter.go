@@ -92,9 +92,9 @@ func uploadRootForTemp() string {
 }
 
 // slideDPI returns the resolution (DPI) for PDF→PNG conversion. Lower = faster and smaller files.
-// TALKBACK_SLIDE_DPI env (default 100); clamped to 72–300. 100 is a good balance for in-browser preview.
+// TALKBACK_SLIDE_DPI env (default 72); clamped to 72–300. Raise for sharper in-browser previews (slower).
 func slideDPI() int {
-	const defaultDPI = 100
+	const defaultDPI = 72
 	const minDPI, maxDPI = 72, 300
 	if s := os.Getenv("TALKBACK_SLIDE_DPI"); s != "" {
 		var n int
@@ -105,11 +105,25 @@ func slideDPI() int {
 	return defaultDPI
 }
 
+// pdfToPpmTimeout bounds the PDF→PNG raster step. Large decks at high DPI can exceed 1–2 minutes.
+// TALKBACK_PDFTOPPM_TIMEOUT is seconds (default 180). Previously this was hard-coded at 60s.
+func pdfToPpmTimeout() time.Duration {
+	const defaultSec = 180
+	if s := strings.TrimSpace(os.Getenv("TALKBACK_PDFTOPPM_TIMEOUT")); s != "" {
+		var sec int
+		if _, err := fmt.Sscanf(s, "%d", &sec); err == nil && sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	return defaultSec * time.Second
+}
+
 // runPdfToPpm runs pdftoppm -png to produce one PNG per page. When TALKBACK_SOFFICE_CMD is set, runs pdftoppm in Docker.
 // Uses slideDPI() for resolution; lower DPI speeds up conversion and reduces file size.
 func runPdfToPpm(pdfPath, outPrefix string) error {
 	dpi := slideDPI()
 	dpiStr := strconv.Itoa(dpi)
+	ppmDeadline := pdfToPpmTimeout()
 	root := uploadRoot()
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		rel, err := filepath.Rel(root, pdfPath)
@@ -119,7 +133,7 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 		relDir := filepath.Dir(rel)
 		containerPDF := "/data/" + filepath.ToSlash(rel)
 		containerPrefix := "/data/" + filepath.ToSlash(relDir) + "/slide"
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), ppmDeadline)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm", "-v", root+":/data", "talkback-api", "-png", "-r", dpiStr, containerPDF, containerPrefix)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -127,7 +141,7 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 		}
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), ppmDeadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, pdfPath, outPrefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -233,7 +247,7 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	if err := runPdfToPpm(pdfPath, outPrefix); err != nil {
 		return nil, err
 	}
-	log.Printf("slides timing: pdftoppm pdf→png %v src=%s", time.Since(tPpm), srcPath)
+	log.Printf("slides timing: pdftoppm pdf→png dpi=%d %v src=%s", slideDPI(), time.Since(tPpm), srcPath)
 
 	matches, err := filepath.Glob(filepath.Join(tmpDir, "slide-*.png"))
 	if err != nil {

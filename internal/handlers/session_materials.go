@@ -596,13 +596,26 @@ func (h *Handlers) DeleteSessionMaterial(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Remove file from storage first (R2 or local), then soft-delete the row (tombstone).
+	// Also remove derived PPT/PPTX slide assets (manifest + PNGs under *_slides/). If we only delete the
+	// main object, re-uploading the same filename reuses the same StorageKey and stale slides would
+	// appear "ready" in ~1s while pointing at the previous deck's images.
 	if mat.StorageProvider == "r2" && mat.StorageKey != "" && h.Storage != nil {
 		if err := h.Storage.Delete(r.Context(), mat.StorageKey); err != nil {
 			log.Printf("DeleteSessionMaterial R2 Delete: %v", err)
 		}
+		slidePrefix := storage.SlidesPrefixFromArtifactKey(mat.StorageKey)
+		if n, err := h.Storage.DeletePrefix(r.Context(), slidePrefix); err != nil {
+			log.Printf("DeleteSessionMaterial R2 DeletePrefix slides %s: %v", slidePrefix, err)
+		} else if n > 0 {
+			log.Printf("DeleteSessionMaterial: removed %d derived slide object(s) under prefix %s", n, slidePrefix)
+		}
 	} else if mat.StorageURL != "" {
 		path := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL))
 		_ = os.Remove(path)
+		slidesDir := filepath.Join(storage.UploadRoot(), filepath.FromSlash(mat.StorageURL)+"_slides")
+		if err := os.RemoveAll(slidesDir); err != nil && !os.IsNotExist(err) {
+			log.Printf("DeleteSessionMaterial local RemoveAll slides dir %s: %v", slidesDir, err)
+		}
 	}
 	// If this material was a video file, remove the linked VideoSource(s) so the Presentation video section stays in sync.
 	matKeyNorm := filepath.ToSlash(mat.StorageURL)
