@@ -5,7 +5,8 @@ import { getMaterialSlides } from '../api/materials'
  * Displays one slide at a time from a slides material (e.g. derived PPTX PNGs).
  * Fetches slide list from GET .../materials/{materialId}/slides and shows prev/next navigation.
  * When slides are not ready yet, shows "Processing slides…" and refetches when session_updated
- * arrives via WebSocket (slidesRefreshTrigger bumps), so no polling is needed.
+ * arrives via WebSocket (slidesRefreshTrigger bumps). Also polls periodically while empty so
+ * slide preview still appears if WebSocket misses (e.g. multi-instance API behind a load balancer).
  * @param {string} [artifactId] - Optional; when set, empty state shows "Open original file" link.
  * @param {number} [slidesRefreshTrigger] - Bump when session_updated (e.g. slides ready); triggers one refetch.
  */
@@ -52,6 +53,42 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
       cancelled = true
     }
   }, [apiBaseUrl, sessionId, materialId, slidesRefreshTrigger])
+
+  // Poll while slides are still empty (processing). WebSocket session_updated is best-effort only
+  // when the hub is in-memory per process (e.g. Render with multiple instances).
+  useEffect(() => {
+    if (!sessionId || !materialId || loading || error) return
+    if (slides.length > 0) return
+
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 90
+    const intervalMs = 2000
+
+    const tick = async () => {
+      if (cancelled) return
+      attempts += 1
+      if (attempts > maxAttempts) return
+      try {
+        const data = await getMaterialSlides(apiBaseUrl, sessionId, materialId)
+        if (cancelled) return
+        const list = Array.isArray(data?.slides) ? data.slides : []
+        if (list.length > 0) {
+          setSlides(list)
+          const safeInitial = Math.max(0, Math.min(list.length - 1, (initialSlide ?? 1) - 1))
+          setCurrentIndex(safeInitial)
+        }
+      } catch {
+        /* keep polling until maxAttempts */
+      }
+    }
+
+    const id = setInterval(tick, intervalMs)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [apiBaseUrl, sessionId, materialId, slides.length, loading, error, slidesRefreshTrigger, initialSlide])
 
   useEffect(() => {
     if (slides.length === 0) return
