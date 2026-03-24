@@ -170,9 +170,11 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
 
       if (initiallyDisabled) {
         // Confirmed: item is gated while processing.
-        // Also verify the "Processing…" badge appears in the tree row.
+        // Also verify the processing badge appears in the tree row.
+        // For PPTX, the badge now reads "Generating slides…" (spinner + text);
+        // other types still show "Processing…". Match both.
         const rowText = await pptxItem.textContent()
-        expect(rowText).toMatch(/Processing/i)
+        expect(rowText).toMatch(/Processing|Generating/i)
       }
       // If not initially disabled the pipeline was too fast; Phase 2 still validates terminal state.
 

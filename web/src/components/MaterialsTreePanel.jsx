@@ -1,6 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMaterialSlides } from '../api/materials'
 
+const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
+function ensureSpinnerStyle() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(SPINNER_STYLE_ID)) return
+  const style = document.createElement('style')
+  style.id = SPINNER_STYLE_ID
+  style.textContent = '@keyframes tb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+  document.head.appendChild(style)
+}
+
+/** Small inline spinner shown while async background tasks are running (e.g. slide generation). */
+function InlineSpinner() {
+  ensureSpinnerStyle()
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: 'inline-block',
+        width: '10px',
+        height: '10px',
+        border: '2px solid #e65100',
+        borderTopColor: 'transparent',
+        borderRadius: '50%',
+        animation: 'tb-spin 0.8s linear infinite',
+        verticalAlign: 'middle',
+        flexShrink: 0,
+      }}
+    />
+  )
+}
+
 /** Shared "Materials" header with chevron for creator and participant left panel */
 export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0 }) {
   return (
@@ -270,7 +301,15 @@ export function MaterialsTreePanel({
     if (isSlideDeckMaterial(m)) {
       const slideStatus = resolveSlidesStatus(m)
       if (slideStatus === 'failed') return { label: 'Failed', color: '#c62828' }
-      if (slideStatus !== 'ready') return { label: 'Processing…', color: '#e65100' }
+      if (slideStatus !== 'ready') return {
+        label: (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <InlineSpinner />
+            <span>Generating slides…</span>
+          </span>
+        ),
+        color: '#e65100'
+      }
       return null
     }
     return materialStatusMeta(m)
@@ -420,7 +459,16 @@ export function MaterialsTreePanel({
           ) : (
             documentMaterials.map(m => {
               const statusInfo = materialStatusMetaDocument(m)
-              const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
+              const isNew = unreadSet.has(String(m.id))
+              const metaNode = (statusInfo?.label || isNew)
+                ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
+                    {statusInfo?.label}
+                    {statusInfo?.label && isNew && <span> • </span>}
+                    {isNew && <span>New</span>}
+                  </span>
+                )
+                : null
               const viewable = isMaterialViewable(m)
               return (
                 <TreeItem
@@ -428,7 +476,7 @@ export function MaterialsTreePanel({
                   testId="material-item"
                   icon={null}
                   title={m.title || m.filename || 'Untitled'}
-                  meta={metaParts.join(' • ')}
+                  meta={metaNode}
                   metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
                   selected={selectedDocumentId === m.id}
                   onClick={(e) => onSelectDocument(m, e)}

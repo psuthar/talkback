@@ -1,6 +1,16 @@
 import { useState, useEffect } from 'react'
 import { getMaterialSlides } from '../api/materials'
 
+const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
+function ensureSpinnerStyle() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(SPINNER_STYLE_ID)) return
+  const style = document.createElement('style')
+  style.id = SPINNER_STYLE_ID
+  style.textContent = '@keyframes tb-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+  document.head.appendChild(style)
+}
+
 /**
  * Displays one slide at a time from a slides material (e.g. derived PPTX PNGs).
  * Fetches slide list from GET .../materials/{materialId}/slides and shows prev/next navigation.
@@ -114,14 +124,30 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     )
   }
   if (slides.length === 0) {
+    ensureSpinnerStyle()
     const originalFileUrl = (apiBaseUrl != null && artifactId && materialId)
       ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${artifactId}/materials/${materialId}/file`
       : null
     return (
       <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ padding: '24px', color: '#666', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <p style={{ margin: 0 }}>Processing slides…</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-block',
+              width: '16px',
+              height: '16px',
+              border: '2px solid #e65100',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'tb-spin 0.8s linear infinite',
+              flexShrink: 0,
+            }}
+          />
+          <p style={{ margin: 0, fontWeight: 500 }}>Generating slide previews…</p>
+        </div>
         <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>
-          Slide preview will appear here when ready. You can open the original file in the meantime.
+          This takes 20–60 seconds. Slide previews will appear here automatically when ready.
         </p>
         {originalFileUrl && (
           <a
@@ -130,7 +156,7 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
             rel="noopener noreferrer"
             style={{ fontSize: '14px', color: '#1976d2', fontWeight: 500 }}
           >
-            Open original file
+            Open original file in the meantime
           </a>
         )}
       </div>
