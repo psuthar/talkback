@@ -657,9 +657,12 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 // tryGenerateAndStoreSlides performs best-effort slide derivation for PPT/PPTX materials.
 // It never returns errors to the caller; failures are logged for debugging.
 func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
+	pipelineStart := time.Now()
 	log.Printf("slide generation started for %s (key=%s)", localPath, artifactKey)
 	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
+	tConv := time.Now()
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	convElapsed := time.Since(tConv)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
 		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
@@ -670,6 +673,8 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 		Slides: make([]utils.SlideManifestEntry, 0, len(slides)),
 	}
 
+	tUpload := time.Now()
+	var uploadBytes int64
 	for _, slide := range slides {
 		key := storage.SlideImageKeyFromArtifactKey(artifactKey, slide.Index)
 
@@ -679,12 +684,14 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 			h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
 			return
 		}
+		uploadBytes += int64(len(slide.Data))
 
 		manifest.Slides = append(manifest.Slides, utils.SlideManifestEntry{
 			Index:      slide.Index,
 			StorageKey: key,
 		})
 	}
+	uploadElapsed := time.Since(tUpload)
 
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
@@ -694,7 +701,9 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 	}
 
 	manifestKey := storage.SlidesManifestKeyFromArtifactKey(artifactKey)
+	tManifest := time.Now()
 	_, _, err = h.Storage.Put(ctx, manifestKey, bytes.NewReader(manifestBytes), "application/json", int64(len(manifestBytes)))
+	manifestElapsed := time.Since(tManifest)
 	if err != nil {
 		log.Printf("failed uploading slide manifest for %s: %v", artifactKey, err)
 		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
@@ -702,27 +711,35 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 	}
 
 	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
+	log.Printf("slides pipeline summary: key=%s slides=%d convert=%v upload_pngs=%v (%d bytes) manifest_put=%v total=%v",
+		artifactKey, len(manifest.Slides), convElapsed, uploadElapsed, uploadBytes, manifestElapsed, time.Since(pipelineStart))
 	log.Printf("generated %d derived slides for %s", len(manifest.Slides), artifactKey)
 }
 
 // tryGenerateAndStoreSlidesLocal performs best-effort slide derivation for PPT/PPTX stored on local disk.
 // Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
 func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath string) {
+	pipelineStart := time.Now()
 	log.Printf("slide generation started (local) for %s", localPath)
 	clearSlidesFailureMarkerLocal(localPath)
+	tConv := time.Now()
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	convElapsed := time.Since(tConv)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
 		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
 	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	tMkdir := time.Now()
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Printf("slides local mkdir failed for %s: %v", localPath, err)
 		writeSlidesFailureMarkerLocal(localPath, err.Error())
 		return
 	}
+	mkdirElapsed := time.Since(tMkdir)
 	manifest := utils.SlideManifest{Slides: make([]utils.SlideManifestEntry, 0, len(slides))}
+	tWrite := time.Now()
 	for _, slide := range slides {
 		name := fmt.Sprintf("slide-%03d.png", slide.Index)
 		path := filepath.Join(dir, name)
@@ -736,6 +753,7 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 			StorageKey: name,
 		})
 	}
+	writeElapsed := time.Since(tWrite)
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
 		log.Printf("failed marshalling slide manifest for %s: %v", localPath, err)
@@ -748,6 +766,8 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 		return
 	}
 	clearSlidesFailureMarkerLocal(localPath)
+	log.Printf("slides pipeline summary (local): path=%s slides=%d convert=%v mkdir=%v write_files=%v total=%v",
+		localPath, len(manifest.Slides), convElapsed, mkdirElapsed, writeElapsed, time.Since(pipelineStart))
 	log.Printf("generated %d derived slides (local) for %s", len(manifest.Slides), localPath)
 }
 

@@ -3,6 +3,7 @@ package utils
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,13 +152,18 @@ func slideNumberFromFilename(name string) int {
 // because soffice --convert-to png only exports the first slide for PPT/PPTX.
 // Callers are responsible for treating failures as best-effort only.
 func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error) {
+	overallStart := time.Now()
 	cmdPath, err := sofficeCmd()
 	if err != nil {
 		return nil, err
 	}
 
 	// Serialize slide conversions to avoid resource contention on constrained platforms.
+	semWait := time.Now()
 	slideConversionSem <- struct{}{}
+	if d := time.Since(semWait); d > 200*time.Millisecond {
+		log.Printf("slides timing: waited %v for conversion slot (queue) src=%s", d, srcPath)
+	}
 	defer func() { <-slideConversionSem }()
 
 	var tmpDir string
@@ -185,6 +191,7 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	ctx, cancel := context.WithTimeout(context.Background(), sofficeTimeout)
 	defer cancel()
 
+	tSoffice := time.Now()
 	cmd := exec.CommandContext(
 		ctx,
 		cmdPath,
@@ -218,12 +225,15 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 		}
 		pdfPath = resolved
 	}
+	log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(tSoffice), srcPath)
 
 	// Step 2: PDF → one PNG per page (pdftoppm)
 	outPrefix := filepath.Join(tmpDir, "slide")
+	tPpm := time.Now()
 	if err := runPdfToPpm(pdfPath, outPrefix); err != nil {
 		return nil, err
 	}
+	log.Printf("slides timing: pdftoppm pdf→png %v src=%s", time.Since(tPpm), srcPath)
 
 	matches, err := filepath.Glob(filepath.Join(tmpDir, "slide-*.png"))
 	if err != nil {
@@ -237,6 +247,7 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 		return slideNumberFromFilename(filepath.Base(matches[i])) < slideNumberFromFilename(filepath.Base(matches[j]))
 	})
 
+	tRead := time.Now()
 	slides := make([]ConvertedSlide, 0, len(matches))
 	for i, p := range matches {
 		data, err := os.ReadFile(p)
@@ -249,6 +260,8 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 			Data:  data,
 		})
 	}
+	log.Printf("slides timing: read %d png files %v | convert total %v src=%s",
+		len(slides), time.Since(tRead), time.Since(overallStart), srcPath)
 	return slides, nil
 }
 
