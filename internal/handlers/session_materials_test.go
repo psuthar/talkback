@@ -132,7 +132,7 @@ func TestSessionUploadMaterial(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("uploads docx and returns 201 with pending (extraction is async)", func(t *testing.T) {
+	t.Run("uploads docx and returns 201 with ready (sync extraction)", func(t *testing.T) {
 		tmp := t.TempDir()
 		docxPath := filepath.Join(tmp, "minimal.docx")
 		createMinimalDocx(t, docxPath, "Session DOCX content")
@@ -154,11 +154,12 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async; response returns pending")
-		assert.Nil(t, m["extracted_text"], "extracted_text is set by job processor when extraction completes")
+		// DOCX uses pure-Go extraction and is now extracted synchronously during upload (no async job needed).
+		assert.Equal(t, "ready", m["text_status"], "DOCX extraction runs synchronously during upload")
+		assert.NotNil(t, m["extracted_text"], "extracted_text should be set immediately for DOCX")
 	})
 
-	t.Run("uploads xlsx and returns 201 with pending (extraction is async)", func(t *testing.T) {
+	t.Run("uploads xlsx and returns 201 with ready (sync extraction)", func(t *testing.T) {
 		tmp := t.TempDir()
 		xlsxPath := filepath.Join(tmp, "minimal.xlsx")
 		f := excelize.NewFile()
@@ -184,11 +185,12 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async")
-		assert.Nil(t, m["extracted_text"])
+		// XLSX uses pure-Go extraction and is now extracted synchronously during upload (no async job needed).
+		assert.Equal(t, "ready", m["text_status"], "XLSX extraction runs synchronously during upload")
+		assert.NotNil(t, m["extracted_text"], "extracted_text should be set immediately for XLSX")
 	})
 
-	t.Run("uploads pptx and returns 201 with pending (extraction is async)", func(t *testing.T) {
+	t.Run("uploads pptx and returns 201 with ready (sync extraction)", func(t *testing.T) {
 		tmp := t.TempDir()
 		pptxPath := filepath.Join(tmp, "minimal.pptx")
 		createMinimalPptx(t, pptxPath, "Session PPTX content")
@@ -210,8 +212,9 @@ func TestSessionUploadMaterial(t *testing.T) {
 		var m map[string]interface{}
 		err = json.NewDecoder(w.Body).Decode(&m)
 		require.NoError(t, err)
-		assert.Equal(t, "pending", m["text_status"], "PDF/Office extraction runs async")
-		assert.Nil(t, m["extracted_text"])
+		// PPTX uses pure-Go extraction and is now extracted synchronously during upload (no async job needed).
+		assert.Equal(t, "ready", m["text_status"], "PPTX extraction runs synchronously during upload")
+		assert.NotNil(t, m["extracted_text"], "extracted_text should be set immediately for PPTX")
 	})
 }
 

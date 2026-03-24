@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
@@ -19,6 +20,7 @@ import (
 // IndexSession builds chunks from transcript + materials, embeds them, and stores (idempotent).
 // store is optional; when non-nil, R2-backed materials (e.g. PDFs) are fetched from storage for chunking.
 func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessionID uuid.UUID, store storage.Interface) error {
+	indexStart := time.Now()
 	// Optional: set index_status = building
 	_ = setSessionIndexStatus(db, ctx, sessionID, "building")
 
@@ -236,6 +238,7 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 	}
 
 	_ = setSessionIndexStatus(db, ctx, sessionID, "ready")
+	log.Printf("IndexSession: completed session_id=%s chunks=%d duration_ms=%d", sessionID, len(chunkIDs), time.Since(indexStart).Milliseconds())
 	return nil
 }
 

@@ -2014,8 +2014,9 @@ function App() {
           setVideoId(null)
         }
       }
-      // If session has no video_sources yet (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears
-      if (data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
+      // If session has no video_sources yet on initial load (e.g. Zoom import just finished or refresh race), retry once after a short delay so video player appears.
+      // Guard with !isRefetch: refetches triggered by WebSocket events must not queue a new retry or PPTX-only sessions loop forever.
+      if (!isRefetch && data.session && (!data.video_sources || data.video_sources.length === 0) && !data.session?.primary_video_artifact_id) {
         const loadedId = data.session.id || sid
         setTimeout(() => {
           fetch(`${baseUrl}/sessions/${sid}`, { headers, cache: 'no-store', credentials: 'include' })

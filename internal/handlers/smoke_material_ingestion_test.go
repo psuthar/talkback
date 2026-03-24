@@ -3,8 +3,11 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/psuthar/talkback/internal/models"
@@ -89,4 +92,46 @@ func TestSmoke_MaterialIngestion_ListEmptyForNewSession(t *testing.T) {
 	var list []*models.Material
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&list))
 	assert.Len(t, list, 0)
+}
+
+// TestSmoke_MaterialIngestion_PPTXUploadReturnsReady verifies that uploading a PPTX file returns
+// text_status="ready" synchronously in the 201 response. PPTX text extraction uses a pure-Go
+// parser and completes during the upload request without an async job.
+func TestSmoke_MaterialIngestion_PPTXUploadReturnsReady(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	session := createTestSessionForHandlers(t, h.DB, "PPTX Smoke Session")
+
+	// Build a minimal valid PPTX file with known content.
+	tmp := t.TempDir()
+	pptxPath := filepath.Join(tmp, "smoke_deck.pptx")
+	createMinimalPptx(t, pptxPath, "Meridian PPTX smoke content")
+
+	data, err := os.ReadFile(pptxPath)
+	require.NoError(t, err)
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	fw, err := mw.CreateFormFile("file", "smoke_deck.pptx")
+	require.NoError(t, err)
+	_, err = fw.Write(data)
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.SessionUploadMaterial(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var m map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&m))
+
+	// Sync extraction contract: text_status must be "ready" and extracted_text non-empty
+	// on the immediate 201 response — no async job should be needed for PPTX.
+	assert.Equal(t, "ready", m["text_status"], "PPTX upload must return text_status=ready synchronously (not pending or processing)")
+	assert.NotEmpty(t, m["extracted_text"], "PPTX upload must return extracted_text in the 201 response")
+	assert.NotEmpty(t, m["id"], "material ID must be present in the 201 response")
 }

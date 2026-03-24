@@ -187,6 +187,7 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 		log.Printf("Warning: Failed to set material processing: %v", err)
 	}
 
+	jobStart := time.Now()
 	var filePath string
 	var cleanup func()
 	if strings.HasPrefix(job.SourceURL, "sessions/") || strings.HasPrefix(job.SourceURL, "./sessions/") ||
@@ -204,7 +205,9 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 		}
 		cleanup = func() {}
 	} else if strings.HasPrefix(job.SourceURL, "http://") || strings.HasPrefix(job.SourceURL, "https://") {
+		downloadStart := time.Now()
 		tempFile, c, downloadErr := jp.service.DownloadMedia(ctx, job.SourceURL, job.ID.String())
+		log.Printf("material_extract: download completed material_id=%s duration_ms=%d", materialID, time.Since(downloadStart).Milliseconds())
 		if downloadErr != nil {
 			errMsg := fmt.Sprintf("Failed to download file: %v", downloadErr)
 			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
@@ -229,6 +232,7 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 
 	// Important: for R2 presigned downloads the temp file may not preserve
 	// the original extension. Use mat metadata for routing.
+	extractStart := time.Now()
 	text, err := ExtractTextFromFileWithMeta(filePath, mat.Filename, mat.ContentType)
 	if err != nil {
 		errMsg := err.Error()
@@ -269,7 +273,8 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 	if jp.OnTranscriptCompleted != nil {
 		jp.OnTranscriptCompleted(job.SessionID)
 	}
-	log.Printf("Worker %d completed material extraction job %s", workerID, job.ID)
+	log.Printf("material_extract: completed material_id=%s filename=%s extract_ms=%d total_ms=%d",
+		materialID, mat.Filename, time.Since(extractStart).Milliseconds(), time.Since(jobStart).Milliseconds())
 }
 
 // processLinkExtractionJob runs URL fetch+extract for a session link; job has SessionLinkID set.

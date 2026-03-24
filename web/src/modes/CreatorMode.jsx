@@ -587,6 +587,8 @@ export function CreatorMode({
   const processingIntervalRef = useRef(null)
   // Once we've seen a processing job for this session, keep the progression panel visible until video is on screen (so it never "disappears" mid-import)
   const hasSeenProcessingJobRef = useRef(false)
+  // Stop polling the processing endpoint if no job exists after several attempts
+  const processingNoJobCountRef = useRef(0)
 
   // When WebSocket sends session_processing_ready, App bumps sessionProcessingReadyVersion and refetches. Set status to "ready" immediately so the panel shows "Preparing playback" until refetch returns (no disappear).
   const prevProcessingReadyVersionRef = useRef(sessionProcessingReadyVersion)
@@ -615,11 +617,20 @@ export function CreatorMode({
         .then((data) => {
           // Only update when we have a state; never clear on empty so the panel doesn't disappear on transient empty/error responses
           if (data.state != null && data.state !== '') {
+            processingNoJobCountRef.current = 0
             setProcessingStatus(data)
             hasSeenProcessingJobRef.current = true
             console.log('[ProgressPanel] processing fetch: state=', data.state, 'stage=', data.stage)
           } else {
+            processingNoJobCountRef.current += 1
             console.log('[ProgressPanel] processing fetch: empty state, keeping previous (data.state=', data.state, ')')
+            // Stop polling if no job has ever existed for this session (e.g. PPTX-only, no video import)
+            if (!hasSeenProcessingJobRef.current && processingNoJobCountRef.current >= 5) {
+              if (processingIntervalRef.current) {
+                clearInterval(processingIntervalRef.current)
+                processingIntervalRef.current = null
+              }
+            }
           }
         })
         .catch((err) => {
@@ -748,8 +759,10 @@ export function CreatorMode({
   const [ingestionStatus, setIngestionStatus] = useState(null)
   const [ingestionRetrying, setIngestionRetrying] = useState(false)
   const ingestionIntervalRef = useRef(null)
+  const ingestionNoJobCountRef = useRef(0)
   useEffect(() => {
     if (!sessionId || apiBaseUrl == null || (processingStatus?.state != null && processingStatus.state !== '')) return
+    ingestionNoJobCountRef.current = 0
     const fetchIngestion = () => {
       fetch(`${apiBaseUrl}/api/sessions/${sessionId}/ingestion`, {
         headers: { 'X-Creator-Identity': creatorIdentity }
@@ -757,6 +770,7 @@ export function CreatorMode({
         .then((r) => r.json())
         .then((data) => {
           if (data.source && data.state) {
+            ingestionNoJobCountRef.current = 0
             setIngestionStatus(data)
             if ((data.state === 'ready' || data.state === 'failed') && ingestionIntervalRef.current) {
               clearInterval(ingestionIntervalRef.current)
@@ -764,6 +778,12 @@ export function CreatorMode({
             }
           } else {
             setIngestionStatus(null)
+            ingestionNoJobCountRef.current += 1
+            // No Zoom ingestion job — stop polling after 5 empty responses
+            if (ingestionNoJobCountRef.current >= 5 && ingestionIntervalRef.current) {
+              clearInterval(ingestionIntervalRef.current)
+              ingestionIntervalRef.current = null
+            }
           }
         })
         .catch(() => setIngestionStatus(null))
@@ -803,29 +823,35 @@ export function CreatorMode({
     }
   }, [sessionId])
 
-  // Poll session until we have a playable primary video (video_access_url) or video_sources — backend may set primary_video_artifact_id before file is Ready, so keep refetching until video_access_url appears
+  // Poll session until we have a playable primary video (video_access_url) or video_sources — backend may set primary_video_artifact_id before file is Ready, so keep refetching until video_access_url appears.
+  // Guard: only run when we've seen an import job (Zoom/Teams). PPTX-only sessions never have video, so polling is pointless and causes an endless request loop.
+  // Use a ref for refetchSession to avoid restarting the effect (and resetting the interval) on every render.
   const VIDEO_POLL_MAX_ATTEMPTS = 20
   const VIDEO_POLL_INTERVAL_MS = 2500
+  const refetchSessionRef = useRef(refetchSession)
+  useEffect(() => { refetchSessionRef.current = refetchSession }, [refetchSession])
   useEffect(() => {
-    if (!sessionId || apiBaseUrl == null || !refetchSession) return
+    if (!sessionId || apiBaseUrl == null) return
     if (hasPlayableVideo) {
       setVideoPollExhausted(false)
       return
     }
+    // Only poll for video when an import job has been seen; PPTX/document-only sessions never have video
+    if (!hasSeenProcessingJobRef.current && !ingestionStatus?.state) return
     if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) {
       setVideoPollExhausted(true)
       return
     }
     const t = setInterval(() => {
       videoPollAttemptsRef.current += 1
-      refetchSession()
+      if (refetchSessionRef.current) refetchSessionRef.current()
       if (videoPollAttemptsRef.current >= VIDEO_POLL_MAX_ATTEMPTS) {
         setVideoPollExhausted(true)
         clearInterval(t)
       }
     }, VIDEO_POLL_INTERVAL_MS)
     return () => clearInterval(t)
-  }, [sessionId, apiBaseUrl, refetchSession, hasPlayableVideo])
+  }, [sessionId, apiBaseUrl, hasPlayableVideo, ingestionStatus?.state])
 
   // Session transcript (Mission #2: GET /api/sessions/:id/transcript)
   const [transcriptData, setTranscriptData] = useState(null) // { status, source, updated_at, error_message, segments }
@@ -849,8 +875,9 @@ export function CreatorMode({
             stopTranscriptPoll()
             return
           }
-          // Avoid infinite polling: Zoom/Teams often leave status "none" forever when no cloud transcript exists.
-          if (data.status === 'none' && (ps === 'ready' || ps === 'failed_permanent' || ps === 'canceled')) {
+          // Avoid infinite polling: stop when no transcript and no active import job
+          const processingTerminalOrAbsent = !ps || ps === '' || ps === 'ready' || ps === 'failed_permanent' || ps === 'canceled'
+          if (data.status === 'none' && processingTerminalOrAbsent) {
             stopTranscriptPoll()
           }
         })

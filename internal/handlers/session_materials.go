@@ -264,8 +264,32 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			s := err.Error()
 			errMsg = &s
 		}
-	case contentType == "application/pdf" || ext == ".pdf", isOfficeFile(ext, contentType):
-		// PDF and Office: extraction runs async via job processor; return 201 immediately with text_status=pending
+	case contentType == "application/pdf" || ext == ".pdf":
+		// PDF: extraction runs async via job processor; return 201 immediately with text_status=pending.
+		// PDF parsing via pdftotext or ledongthuc/pdf can be slow, so keep async.
+		textStatus = models.MaterialTextStatusPending
+	case isOfficeFile(ext, contentType) && (ext == ".pptx" || ext == ".ppt" || ext == ".docx" || ext == ".xlsx"):
+		// Office (PPTX/DOCX/XLSX): pure-Go extraction is fast (milliseconds). Extract synchronously while
+		// the temp/local file is still in hand, avoiding an async round-trip that re-downloads from R2.
+		// Fall back to async (pending) only if extraction fails or produces no text.
+		if filePath != "" {
+			extracted, exErr := utils.ExtractTextFromFileWithMeta(filePath, filename, contentType)
+			if exErr == nil && strings.TrimSpace(extracted) != "" {
+				textStatus = models.MaterialTextStatusReady
+				extractedText = &extracted
+				log.Printf("SessionUploadMaterial: extracted %s text synchronously (%d bytes, no async job needed)", ext, len(extracted))
+			} else {
+				// Extraction failed or empty - fall through to async job
+				textStatus = models.MaterialTextStatusPending
+				if exErr != nil {
+					log.Printf("SessionUploadMaterial: sync extraction failed for %s (%s), will retry async: %v", filename, ext, exErr)
+				}
+			}
+		} else {
+			textStatus = models.MaterialTextStatusPending
+		}
+	case isOfficeFile(ext, contentType):
+		// Other office types (e.g. .ppt, .xls): extraction runs async via job processor.
 		textStatus = models.MaterialTextStatusPending
 	case isVideoForTranscription(ext, contentType):
 		// Video: transcript is handled by VideoSource + job; material is just the file reference — show ready so it doesn't stay "pending"
@@ -310,7 +334,9 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Enqueue material extraction job for PDF/Office so extraction runs async (worker sets processing → ready/failed, then index + broadcast).
-	needsExtraction := (contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)
+	// Skip the async job when text was already extracted synchronously during upload (textStatus==ready with extractedText set).
+	needsExtraction := ((contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)) &&
+		!(textStatus == models.MaterialTextStatusReady && extractedText != nil)
 	if needsExtraction && h.JobProcessor != nil {
 		jobKey := "material_extract:" + material.ID.String()
 		existing, _ := h.DB.GetTranscriptJobByKey(r.Context(), jobKey)
@@ -736,13 +762,10 @@ func (h *Handlers) HasSlidesManifest(ctx context.Context, mat *models.Material) 
 		return err == nil
 	}
 	if h.Storage != nil && strings.TrimSpace(mat.StorageKey) != "" {
+		// Use Head (no body download) to check manifest existence.
 		manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
-		rc, err := h.Storage.Get(ctx, manifestKey)
-		if err != nil {
-			return false
-		}
-		_ = rc.Close()
-		return true
+		exists, _, _, err := h.Storage.Head(ctx, manifestKey)
+		return err == nil && exists
 	}
 	return false
 }
@@ -810,14 +833,13 @@ func (h *Handlers) GetSlidesStatus(ctx context.Context, mat *models.Material) st
 		return "processing"
 	}
 	if h.Storage != nil && strings.TrimSpace(mat.StorageKey) != "" {
+		// Use Head (no body download) to check existence — avoids downloading manifest/marker bytes on every session load.
 		manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
-		if rc, err := h.Storage.Get(ctx, manifestKey); err == nil {
-			_ = rc.Close()
+		if exists, _, _, err := h.Storage.Head(ctx, manifestKey); err == nil && exists {
 			return "ready"
 		}
 		failureKey := slidesFailureMarkerKeyFromArtifactKey(mat.StorageKey)
-		if rc, err := h.Storage.Get(ctx, failureKey); err == nil {
-			_ = rc.Close()
+		if exists, _, _, err := h.Storage.Head(ctx, failureKey); err == nil && exists {
 			return "failed"
 		}
 		return "processing"
