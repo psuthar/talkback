@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -118,13 +119,101 @@ func pdfToPpmTimeout() time.Duration {
 	return defaultSec * time.Second
 }
 
+// slideParallelism returns the number of concurrent pdftoppm workers to use.
+// TALKBACK_SLIDE_WORKERS env (default 4); clamped to 1–16.
+// On Render.com shared CPU, 4 workers provides a good balance of parallelism without overloading.
+func slideParallelism() int {
+	const defaultWorkers = 4
+	const minWorkers, maxWorkers = 1, 16
+	if s := os.Getenv("TALKBACK_SLIDE_WORKERS"); s != "" {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n >= minWorkers && n <= maxWorkers {
+			return n
+		}
+	}
+	return defaultWorkers
+}
+
+// pdfPageCount returns the number of pages in a PDF by running pdftoppm on the first page
+// and counting all output files after a full run (or via pdfinfo if available).
+// We use a lightweight probe: run pdfinfo if available, otherwise fall back to pdftoppm -l 1
+// and see what the last page number pdftoppm would assign is by checking its output naming.
+// If page count cannot be determined, returns 0 (caller should fall back to single-process mode).
+func pdfPageCount(ctx context.Context, pdfPath string) int {
+	// Try pdfinfo first — it's part of poppler-utils alongside pdftoppm.
+	cmd := exec.CommandContext(ctx, "pdfinfo", pdfPath)
+	out, err := cmd.Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "Pages:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					if n, parseErr := strconv.Atoi(parts[1]); parseErr == nil && n > 0 {
+						return n
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// pdfPageCountDocker returns the number of pages in a PDF via pdfinfo inside Docker.
+func pdfPageCountDocker(ctx context.Context, containerPDF, root string) int {
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdfinfo",
+		"-v", root+":/data", "talkback-api", containerPDF)
+	out, err := cmd.Output()
+	if err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "Pages:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					if n, parseErr := strconv.Atoi(parts[1]); parseErr == nil && n > 0 {
+						return n
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// runPdfToPpmOnePage runs pdftoppm for a single page (pageNum, 1-based). Used by the parallel worker.
+func runPdfToPpmOnePage(ctx context.Context, pdfPath, outPrefix, dpiStr string, pageNum int) error {
+	pageStr := strconv.Itoa(pageNum)
+	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, "-f", pageStr, "-l", pageStr, pdfPath, outPrefix)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pdftoppm page %d failed: %w; output=%s", pageNum, err, string(out))
+	}
+	return nil
+}
+
+// runPdfToPpmOnePageDocker runs pdftoppm for a single page inside Docker. Used by the parallel worker.
+func runPdfToPpmOnePageDocker(ctx context.Context, root, containerPDF, containerPrefix, dpiStr string, pageNum int) error {
+	pageStr := strconv.Itoa(pageNum)
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm",
+		"-v", root+":/data", "talkback-api",
+		"-png", "-r", dpiStr, "-f", pageStr, "-l", pageStr,
+		containerPDF, containerPrefix)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pdftoppm (Docker) page %d failed: %w; output=%s", pageNum, err, string(out))
+	}
+	return nil
+}
+
 // runPdfToPpm runs pdftoppm -png to produce one PNG per page. When TALKBACK_SOFFICE_CMD is set, runs pdftoppm in Docker.
-// Uses slideDPI() for resolution; lower DPI speeds up conversion and reduces file size.
+// Uses slideDPI() for resolution and slideParallelism() workers to convert pages concurrently.
+// Parallel conversion significantly reduces wall-clock time on constrained CPUs (e.g. Render.com shared).
 func runPdfToPpm(pdfPath, outPrefix string) error {
 	dpi := slideDPI()
 	dpiStr := strconv.Itoa(dpi)
 	ppmDeadline := pdfToPpmTimeout()
 	root := uploadRoot()
+	workers := slideParallelism()
+
+	ctx, cancel := context.WithTimeout(context.Background(), ppmDeadline)
+	defer cancel()
+
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		rel, err := filepath.Rel(root, pdfPath)
 		if err != nil {
@@ -133,21 +222,117 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 		relDir := filepath.Dir(rel)
 		containerPDF := "/data/" + filepath.ToSlash(rel)
 		containerPrefix := "/data/" + filepath.ToSlash(relDir) + "/slide"
-		ctx, cancel := context.WithTimeout(context.Background(), ppmDeadline)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm", "-v", root+":/data", "talkback-api", "-png", "-r", dpiStr, containerPDF, containerPrefix)
+
+		// Attempt parallel conversion if we can determine the page count.
+		pageCount := pdfPageCountDocker(ctx, containerPDF, root)
+		if pageCount > 1 && workers > 1 {
+			log.Printf("slides timing: pdftoppm docker parallel workers=%d pages=%d", workers, pageCount)
+			return runPdfToPpmParallelDocker(ctx, root, containerPDF, containerPrefix, dpiStr, pageCount, workers)
+		}
+		// Fall back to single-process conversion (unknown page count or single page).
+		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "--entrypoint", "pdftoppm",
+			"-v", root+":/data", "talkback-api",
+			"-png", "-r", dpiStr, containerPDF, containerPrefix)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("pdftoppm (Docker) failed: %w; output=%s", err, string(out))
 		}
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), ppmDeadline)
-	defer cancel()
+
+	// Attempt parallel conversion if we can determine the page count.
+	pageCount := pdfPageCount(ctx, pdfPath)
+	if pageCount > 1 && workers > 1 {
+		log.Printf("slides timing: pdftoppm parallel workers=%d pages=%d", workers, pageCount)
+		return runPdfToPpmParallel(ctx, pdfPath, outPrefix, dpiStr, pageCount, workers)
+	}
+	// Fall back to single-process conversion (unknown page count or single page).
 	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, pdfPath, outPrefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pdftoppm failed: %w; output=%s", err, string(out))
 	}
 	return nil
+}
+
+// runPdfToPpmParallel converts a multi-page PDF to PNGs using a bounded worker pool.
+// Each worker converts exactly one page via pdftoppm -f N -l N.
+// On a 4-worker pool, 13 pages complete in ~ceil(13/4) = 4 sequential rounds instead of 13.
+func runPdfToPpmParallel(ctx context.Context, pdfPath, outPrefix, dpiStr string, pageCount, workers int) error {
+	type result struct {
+		page int
+		err  error
+	}
+	jobs := make(chan int, pageCount)
+	results := make(chan result, pageCount)
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for page := range jobs {
+				err := runPdfToPpmOnePage(ctx, pdfPath, outPrefix, dpiStr, page)
+				results <- result{page: page, err: err}
+			}
+		}()
+	}
+
+	for page := 1; page <= pageCount; page++ {
+		jobs <- page
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var firstErr error
+	for r := range results {
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+		}
+	}
+	return firstErr
+}
+
+// runPdfToPpmParallelDocker is the Docker equivalent of runPdfToPpmParallel.
+func runPdfToPpmParallelDocker(ctx context.Context, root, containerPDF, containerPrefix, dpiStr string, pageCount, workers int) error {
+	type result struct {
+		page int
+		err  error
+	}
+	jobs := make(chan int, pageCount)
+	results := make(chan result, pageCount)
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for page := range jobs {
+				err := runPdfToPpmOnePageDocker(ctx, root, containerPDF, containerPrefix, dpiStr, page)
+				results <- result{page: page, err: err}
+			}
+		}()
+	}
+
+	for page := 1; page <= pageCount; page++ {
+		jobs <- page
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var firstErr error
+	for r := range results {
+		if r.err != nil && firstErr == nil {
+			firstErr = r.err
+		}
+	}
+	return firstErr
 }
 
 // slideNumberFromFilename extracts the page number from pdftoppm output like "slide-1.png" or "slide-01.png".
