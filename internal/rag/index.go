@@ -104,36 +104,57 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 					matChunks = BuildMaterialChunksFromPDF(sessionID, m.ID, absPath)
 				}
 			}
-			// PPTX/slides: per-slide chunks with page anchor so citations open the correct slide
+			// PPTX/slides: per-slide chunks with page anchor so citations open the correct slide.
+			// When extracted_text is already populated (set by the async extraction job), reconstruct
+			// per-slide texts by splitting on newline - extractPptx joins slides with newline, one per slide.
+			// This avoids a redundant R2 download on cloud hosts like Render.com (root cause of 60s delays).
 			isPptx := matChunks == nil && (strings.HasSuffix(strings.ToLower(m.Filename), ".pptx") || strings.HasSuffix(strings.ToLower(m.Filename), ".ppt") || strings.Contains(strings.ToLower(m.ContentType), "presentation") || strings.Contains(strings.ToLower(m.ContentType), "powerpoint"))
 			if isPptx {
-				var pptxPath string
-				if m.StorageProvider == "r2" && m.StorageKey != "" && store != nil {
-					rc, err := store.Get(ctx, m.StorageKey)
-					if err != nil {
-						log.Printf("IndexSession: get R2 material %s: %v", m.ID, err)
-					} else {
-						tmpF, err := os.CreateTemp(os.TempDir(), "talkback-rag-pptx-*.pptx")
-						if err != nil {
-							_ = rc.Close()
-							log.Printf("IndexSession: create temp file: %v", err)
-						} else {
-							_, _ = io.Copy(tmpF, rc)
-							_ = rc.Close()
-							pptxPath = tmpF.Name()
-							_ = tmpF.Close()
-							slideTexts, err := utils.ExtractPptxTextPerSlide(pptxPath)
-							_ = os.Remove(pptxPath)
-							if err == nil && len(slideTexts) > 0 {
-								matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
-							}
+				// Fast path: extracted_text already stored - split into per-slide chunks without any network I/O.
+				if m.ExtractedText != nil && strings.TrimSpace(*m.ExtractedText) != "" {
+					slideTexts := strings.Split(*m.ExtractedText, "\n")
+					filtered := make([]string, 0, len(slideTexts))
+					for _, s := range slideTexts {
+						if strings.TrimSpace(s) != "" {
+							filtered = append(filtered, s)
 						}
 					}
-				} else if m.StorageURL != "" {
-					absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
-					slideTexts, err := utils.ExtractPptxTextPerSlide(absPath)
-					if err == nil && len(slideTexts) > 0 {
-						matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
+					if len(filtered) > 0 {
+						matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, filtered)
+						log.Printf("IndexSession: PPTX %s chunked from extracted_text (%d slides, no R2 download)", m.ID, len(filtered))
+					}
+				}
+				// Slow path (fallback): extracted_text not yet available - download from storage and parse.
+				// Only reached when re-indexing a session before the extraction job has completed.
+				if matChunks == nil {
+					var pptxPath string
+					if m.StorageProvider == "r2" && m.StorageKey != "" && store != nil {
+						rc, err := store.Get(ctx, m.StorageKey)
+						if err != nil {
+							log.Printf("IndexSession: get R2 material %s: %v", m.ID, err)
+						} else {
+							tmpF, err := os.CreateTemp(os.TempDir(), "talkback-rag-pptx-*.pptx")
+							if err != nil {
+								_ = rc.Close()
+								log.Printf("IndexSession: create temp file: %v", err)
+							} else {
+								_, _ = io.Copy(tmpF, rc)
+								_ = rc.Close()
+								pptxPath = tmpF.Name()
+								_ = tmpF.Close()
+								slideTexts, err := utils.ExtractPptxTextPerSlide(pptxPath)
+								_ = os.Remove(pptxPath)
+								if err == nil && len(slideTexts) > 0 {
+									matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
+								}
+							}
+						}
+					} else if m.StorageURL != "" {
+						absPath := filepath.Join(storage.UploadRoot(), filepath.FromSlash(m.StorageURL))
+						slideTexts, err := utils.ExtractPptxTextPerSlide(absPath)
+						if err == nil && len(slideTexts) > 0 {
+							matChunks = BuildMaterialChunksFromSlides(sessionID, m.ID, slideTexts)
+						}
 					}
 				}
 			}
