@@ -1,10 +1,16 @@
-# Deterministic release readiness: evidence → score → PASS/WARN/BLOCK (no LLM in decision path).
 name: Release Readiness
 
 on:
   pull_request:
     branches: [main, master]
+  push:
+    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "Optional git base ref for manual diff comparison"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -43,10 +49,22 @@ jobs:
       - name: Install readiness dependencies
         run: pip install -r ops/release-readiness/requirements.txt
 
-      - name: Fetch base ref for git diff
-        env:
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
-        run: git fetch origin "$BASE_BRANCH" --depth=50 || true
+      - name: Fetch refs for git diff
+        run: git fetch --all --tags --prune || true
+
+      - name: Determine base ref
+        id: base
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base_ref=origin/${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "base_ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ github.event.inputs.base_ref }}" ]; then
+            echo "base_ref=${{ github.event.inputs.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run Go tests (smoke signal)
         id: gotest
@@ -58,25 +76,21 @@ jobs:
       - name: Write smoke_results.json
         run: |
           if [ "${{ steps.gotest.outcome }}" = "success" ]; then
-            # migrations_validated: smoke tests run DB migrations internally via test setup,
-            # so a passing smoke suite implies migration correctness on the current schema.
-            echo '{"status":"passed","failed_count":0,"total_count":1,"validations":{"migrations_validated":true}}' > smoke_results.json
+            echo '{"status":"passed","failed_count":0,"total_count":1}' > smoke_results.json
           else
             echo '{"status":"failed","failed_count":1,"total_count":1}' > smoke_results.json
           fi
 
-      - name: E2E skipped placeholder (optional full E2E can replace this step)
+      - name: E2E skipped placeholder
         run: |
           echo '{"status":"skipped","note":"E2E not run in readiness job; add Playwright + JSON reporter for full signal"}' > e2e_results.json
 
       - name: Run release readiness
-        env:
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
         run: |
           python scripts/release_readiness.py \
             --repo-root . \
             --config ops/release-readiness/config.yaml \
-            --base-ref "origin/${BASE_BRANCH}" \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
             --smoke-results smoke_results.json \
             --e2e-results e2e_results.json \
             --output-dir artifacts/release-readiness
