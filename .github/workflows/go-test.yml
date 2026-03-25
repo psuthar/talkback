@@ -1,5 +1,6 @@
-# Run all tests on push and pull_request. Use branch protection to block merge when this fails.
-name: Test
+# Continuous Go integration tests against PostgreSQL (strict gate; fails the workflow on failure).
+# For release readiness scoring and artifacts, see release-readiness.yml.
+name: Go test (PostgreSQL)
 
 on:
   push:
@@ -8,7 +9,7 @@ on:
     branches: [main, master]
 
 jobs:
-  test:
+  go-test:
     runs-on: ubuntu-latest
     services:
       postgres:
