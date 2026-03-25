@@ -477,6 +477,21 @@ func (db *DB) SessionWithTitleExistsForCreator(ctx context.Context, createdBy st
 	return true, nil
 }
 
+// UpdateSessionSourceProvider sets sessions.source_provider (e.g. after CopySession enqueues a zoom/teams import job).
+func (db *DB) UpdateSessionSourceProvider(ctx context.Context, sessionID uuid.UUID, p models.SessionSourceProvider) error {
+	if string(p) == "" {
+		return fmt.Errorf("UpdateSessionSourceProvider: source provider empty")
+	}
+	result, err := db.Pool.Exec(ctx, `UPDATE sessions SET source_provider = $2, updated_at = now() WHERE id = $1`, sessionID, string(p))
+	if err != nil {
+		return fmt.Errorf("UpdateSessionSourceProvider: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("UpdateSessionSourceProvider: session not found")
+	}
+	return nil
+}
+
 // UpdateSessionTitle updates the session title and updated_at.
 func (db *DB) UpdateSessionTitle(ctx context.Context, sessionID uuid.UUID, title string) error {
 	result, err := db.Pool.Exec(ctx, `UPDATE sessions SET title = $1, updated_at = now() WHERE id = $2`, title, sessionID)

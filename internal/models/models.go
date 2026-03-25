@@ -255,11 +255,17 @@ const (
 	ProcessingStageReady   = "ready"
 )
 
+// SessionProcessingJobSource values for session_processing_jobs.source (must match DB CHECK constraints).
+const (
+	SessionProcessingJobSourceZoom  = "zoom"
+	SessionProcessingJobSourceTeams = "teams"
+)
+
 // SessionProcessingJob is the authoritative pipeline job for session import/index (Mission #4)
 type SessionProcessingJob struct {
 	ID               uuid.UUID  `json:"id"`
 	SessionID        uuid.UUID  `json:"session_id"`
-	Source           string     `json:"source"` // "zoom"
+	Source           string     `json:"source"` // SessionProcessingJobSourceZoom | SessionProcessingJobSourceTeams
 	State            string     `json:"state"`
 	Stage            string     `json:"stage"`
 	AttemptCount     int        `json:"attempt_count"`

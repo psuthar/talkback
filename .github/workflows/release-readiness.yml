@@ -1,0 +1,106 @@
+# Deterministic release readiness: evidence → score → PASS/WARN/BLOCK (no LLM in decision path).
+name: Release readiness
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: talkback
+          POSTGRES_PASSWORD: talkback
+          POSTGRES_DB: talkback
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install readiness dependencies
+        run: pip install -r ops/release-readiness/requirements.txt
+
+      - name: Fetch base ref for git diff
+        env:
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: git fetch origin "$BASE_BRANCH" --depth=50 || true
+
+      - name: Run Go tests (smoke signal)
+        id: gotest
+        continue-on-error: true
+        env:
+          DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+        run: go test ./... -count=1
+
+      - name: Write smoke_results.json
+        run: |
+          if [ "${{ steps.gotest.outcome }}" = "success" ]; then
+            # migrations_validated: smoke tests run DB migrations internally via test setup,
+            # so a passing smoke suite implies migration correctness on the current schema.
+            echo '{"status":"passed","failed_count":0,"total_count":1,"validations":{"migrations_validated":true}}' > smoke_results.json
+          else
+            echo '{"status":"failed","failed_count":1,"total_count":1}' > smoke_results.json
+          fi
+
+      - name: E2E skipped placeholder (optional full E2E can replace this step)
+        run: |
+          echo '{"status":"skipped","note":"E2E not run in readiness job; add Playwright + JSON reporter for full signal"}' > e2e_results.json
+
+      - name: Run release readiness
+        env:
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          python scripts/release_readiness.py \
+            --repo-root . \
+            --config ops/release-readiness/config.yaml \
+            --base-ref "origin/${BASE_BRANCH}" \
+            --smoke-results smoke_results.json \
+            --e2e-results e2e_results.json \
+            --output-dir artifacts/release-readiness
+
+      - name: Upload readiness reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-${{ github.run_id }}
+          path: artifacts/release-readiness/
+          if-no-files-found: warn
+
+      - name: Fail job on BLOCK
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, sys
+          from pathlib import Path
+          p = Path("artifacts/release-readiness/report.json")
+          if not p.is_file():
+              sys.exit(0)
+          o = json.loads(p.read_text(encoding="utf-8")).get("outcome")
+          if o == "BLOCK":
+              print("Outcome BLOCK — see report artifact.")
+              sys.exit(1)
+          sys.exit(0)
+          PY

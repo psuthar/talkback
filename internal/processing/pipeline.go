@@ -60,9 +60,9 @@ type TeamsTokenFunc func(ctx context.Context, creatorIdentity string) (string, e
 // onJobReady is optional; when set, it is called when the job reaches ready so the API can broadcast to WebSocket clients.
 func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
 	switch job.Source {
-	case "zoom":
+	case models.SessionProcessingJobSourceZoom:
 		return runZoomJob(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
-	case "teams":
+	case models.SessionProcessingJobSourceTeams:
 		if getTeamsToken == nil {
 			attempt := job.AttemptCount + 1
 			setJobFailedPermanent(ctx, db, job.ID, attempt, "teams_not_configured", "Teams token resolver not configured")

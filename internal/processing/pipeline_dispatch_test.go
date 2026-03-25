@@ -128,7 +128,7 @@ func TestPipelineDispatch_TeamsWithNoTokenFails(t *testing.T) {
 	db, cleanup := setupProcessingTestDB(t)
 	defer cleanup()
 
-	_, job := seedProcessingJob(t, db, "teams")
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceTeams)
 
 	// Call RunJob with nil getTeamsToken to trigger the teams_not_configured path.
 	err := RunJob(context.Background(), db, job, nil, nil, nil, "", nil, nil)
@@ -164,7 +164,7 @@ func TestPipelineDispatch_UnsupportedSourceFails(t *testing.T) {
 	// that references the same DB row but uses an unsupported source string.
 	// The dispatch switch uses job.Source from the struct, not from the DB,
 	// so this accurately tests the default: branch without violating the constraint.
-	_, realJob := seedProcessingJob(t, db, "teams")
+	_, realJob := seedProcessingJob(t, db, models.SessionProcessingJobSourceTeams)
 
 	// Override Source in memory to trigger the default: branch.
 	syntheticJob := *realJob
@@ -193,7 +193,7 @@ func TestSetJobFailedTransient_EscalatesToPermanentAfterMaxAttempts(t *testing.T
 	defer cleanup()
 
 	ctx := context.Background()
-	_, job := seedProcessingJob(t, db, "teams")
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceTeams)
 
 	// Simulate attempt count past the threshold.
 	overAttempt := maxTransientAttempts + 1
@@ -220,7 +220,7 @@ func TestSetJobWaiting_EscalatesToPermanentAfterMaxAttempts(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, job := seedProcessingJob(t, db, "teams")
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceTeams)
 
 	overAttempt := maxWaitingAttempts + 1
 	code := "teams_transcript_unavailable"

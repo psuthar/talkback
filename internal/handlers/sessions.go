@@ -665,9 +665,13 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// If copy has no MP4 yet but source was Zoom, enqueue processing so the worker downloads Zoom MP4 for the new session (in-app player only).
+	// If copy has no MP4 yet but source had a cloud import job (Zoom/Teams), enqueue processing so the worker can fetch MP4 for the new session (in-app player only).
 	if !copiedPrimaryVideo {
-		if sourceJob, err := h.DB.GetSessionProcessingJobBySessionID(ctx, sourceSessionID, "zoom"); err == nil && sourceJob != nil && (sourceJob.MeetingUUID != nil || sourceJob.InstanceUUID != nil) {
+		jobSource := string(sourceSession.SourceProvider)
+		if jobSource == "" {
+			jobSource = models.SessionProcessingJobSourceZoom
+		}
+		if sourceJob, err := h.DB.GetSessionProcessingJobBySessionID(ctx, sourceSessionID, jobSource); err == nil && sourceJob != nil && (sourceJob.MeetingUUID != nil || sourceJob.InstanceUUID != nil) {
 			creatorIdentity := sourceJob.CreatorIdentity
 			if creatorIdentity == nil && sourceSession.CreatedBy != nil {
 				creatorIdentity = sourceSession.CreatedBy
@@ -675,7 +679,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			newJob := &models.SessionProcessingJob{
 				ID:              uuid.New(),
 				SessionID:       newSession.ID,
-				Source:          "zoom",
+				Source:          jobSource,
 				State:           models.ProcessingStateQueued,
 				Stage:           models.ProcessingStageFetch,
 				MeetingUUID:     sourceJob.MeetingUUID,
@@ -683,9 +687,12 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				CreatorIdentity: creatorIdentity,
 			}
 			if err := h.DB.CreateOrGetSessionProcessingJob(ctx, newJob); err != nil {
-				log.Printf("CopySession CreateOrGetSessionProcessingJob zoom for new session: %v", err)
+				log.Printf("CopySession CreateOrGetSessionProcessingJob (%s) for new session: %v", jobSource, err)
 			} else {
-				log.Printf("CopySession enqueued Zoom processing for new session %s (MP4 will be available when job completes)", newSession.ID)
+				if err := h.DB.UpdateSessionSourceProvider(ctx, newSession.ID, models.SessionSourceProvider(jobSource)); err != nil {
+					log.Printf("CopySession UpdateSessionSourceProvider: %v", err)
+				}
+				log.Printf("CopySession enqueued %s processing for new session %s (MP4 will be available when job completes)", jobSource, newSession.ID)
 			}
 		}
 	}

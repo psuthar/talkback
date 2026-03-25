@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "api_ping",
+      "status": "ok"
+    }
+  ]
+}

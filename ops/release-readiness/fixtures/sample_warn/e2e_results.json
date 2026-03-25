@@ -1,0 +1,18 @@
+{
+  "status": "failed",
+  "failed_count": 1,
+  "total_count": 8,
+  "retries": 1,
+  "failures": [
+    {
+      "title": "qa-rag-noncritical",
+      "name": "qa-rag-noncritical"
+    }
+  ],
+  "validations": {
+    "auth_session": true,
+    "nav_assets": false,
+    "viewer_materials": false,
+    "qa_rag": true
+  }
+}

@@ -1,0 +1,98 @@
+# TalkBack release-readiness risk model (v1)
+# Deterministic rules only — no LLM scoring. Extend with New Relic / deployment hooks later.
+
+version: 1
+
+# Core workflow validations (must be evidenced by smoke and/or E2E artifacts when relevant areas change)
+validations:
+  auth_session:
+    description: "Login/session and creator access"
+  upload_extraction:
+    description: "Material upload and text extraction pipeline"
+  nav_assets:
+    description: "Materials tree / asset selection in left nav"
+  viewer_materials:
+    description: "Viewer renders uploaded materials"
+  qa_rag:
+    description: "Q&A and answer generation with citations"
+
+# Map changed paths → risk categories (first match wins per file; a file can trigger multiple via multiple rules)
+risk_from_paths:
+  - categories: [auth_session]
+    patterns:
+      - "internal/auth/**"
+      - "internal/handlers/*login*"
+      - "internal/handlers/*session*"
+      - "internal/invitations/**"
+      - "internal/database/*user*"
+      - "internal/database/*session*"
+      - "internal/database/*login*"
+  - categories: [upload_extraction]
+    patterns:
+      - "internal/handlers/session_materials.go"
+      - "internal/processing/**"
+      - "internal/utils/job_processor.go"
+      - "internal/transcript/**"
+      - "internal/rag/**"
+  - categories: [nav_assets, viewer_materials]
+    patterns:
+      - "web/src/components/MaterialsTreePanel*"
+      - "web/src/components/SlideDeckViewer*"
+      - "web/src/components/Artifact*"
+  - categories: [viewer_materials]
+    patterns:
+      - "web/src/modes/CreatorMode*"
+      - "web/src/modes/ParticipantMode*"
+  - categories: [qa_rag]
+    patterns:
+      - "internal/handlers/session_ask.go"
+      - "internal/rag/**"
+      - "internal/handlers/*question*"
+  - categories: [migrations]
+    patterns:
+      - "db/migrations/**"
+      - "internal/migrations/**"
+
+# When these path patterns change, warn unless `config_validation_note` is set in evidence (see script)
+risky_config_patterns:
+  - ".github/workflows/**"
+  - "deploy/**"
+  - "Dockerfile"
+  - "**/render.yaml"
+  - "go.mod"
+
+# When smoke/E2E report overall PASS, infer these validations (deterministic; CI can override with explicit false in JSON).
+infer_validations_when_pass:
+  smoke:
+    - auth_session
+    - upload_extraction
+    - qa_rag
+  e2e:
+    - auth_session
+    - nav_assets
+    - viewer_materials
+    - qa_rag
+
+scoring:
+  max_score: 100
+  pass_threshold: 85
+  warn_threshold: 60
+  penalties:
+    missing_smoke_artifact: 25
+    missing_e2e_artifact: 15
+    missing_coverage_artifact: 5
+    missing_prod_health_artifact: 5
+    non_critical_e2e_failure: 15
+    e2e_retries_or_flaky: 10
+    coverage_regression: 12
+    risky_config_without_note: 10
+  block_score: 0
+
+# E2E failure severity: tests matching these name substrings are "critical" for blocking
+e2e_critical_name_patterns:
+  - "auth"
+  - "login"
+  - "session"
+  - "upload"
+  - "material"
+  - "invite"

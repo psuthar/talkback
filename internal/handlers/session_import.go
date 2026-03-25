@@ -173,7 +173,7 @@ func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 	job := &models.SessionProcessingJob{
 		ID:              jobID,
 		SessionID:       sessionID,
-		Source:          "zoom",
+		Source:          models.SessionProcessingJobSourceZoom,
 		State:           models.ProcessingStateQueued,
 		Stage:           models.ProcessingStageFetch,
 		MeetingUUID:     &meetingUUID,
@@ -327,7 +327,7 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	job := &models.SessionProcessingJob{
 		ID:              jobID,
 		SessionID:       sessionID,
-		Source:          "zoom",
+		Source:          models.SessionProcessingJobSourceZoom,
 		State:           models.ProcessingStateQueued,
 		Stage:           models.ProcessingStageFetch,
 		MeetingUUID:     meetingUUIDPtr,
