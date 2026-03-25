@@ -122,12 +122,11 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
     else:
         lines.append("- (none)")
     lines.extend(["", "### Validations", ""])
-    lines.append("| Key | Satisfied |")
-    lines.append("|-----|-----------|")
-    for k in sorted(set(r.validations_required) | set(r.validations_satisfied.keys())):
-        sat = "yes" if r.validations_satisfied.get(k) else "no"
-        req = "required" if k in r.validations_required else ""
-        lines.append(f"| {k} | {sat} {req}|")
+    lines.append("| Key | Status |")
+    lines.append("|-----|--------|")
+    for k, status in sorted(r.validations.items()):
+        req_marker = " *(required)*" if k in r.validations_required else ""
+        lines.append(f"| {k} | {status}{req_marker} |")
     if r.failed_checks:
         lines.extend(["", "### Failed checks", ""])
         for f in r.failed_checks:

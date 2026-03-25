@@ -16,6 +16,15 @@ sessions/
 # Temp dir for slide conversion when using TALKBACK_SOFFICE_CMD (Docker wrapper)
 .tmp/
 
+# Python (release-readiness scripts, local tooling)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.venv/
+venv/
+
 # Go
 *.exe
 *.exe~

@@ -17,7 +17,7 @@ class ReadinessResult:
     failed_checks: list[str] = field(default_factory=list)
     changed_files: list[str] = field(default_factory=list)
     risks_triggered: list[str] = field(default_factory=list)
-    validations_satisfied: dict[str, bool] = field(default_factory=dict)
+    validations: dict[str, str] = field(default_factory=dict)  # satisfied | missing | not_required | not_evaluated
     validations_required: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     recommended_actions: list[str] = field(default_factory=list)
@@ -276,6 +276,30 @@ def compute_readiness(
         blockers.append(f"Changed areas require validation evidence missing: {', '.join(missing_vals)}")
         failed_checks.append("risk_without_validation")
 
+    # Compute explicit per-validation statuses for output.
+    # Rule: a validation is "satisfied" only when it was required AND evidenced.
+    # Inferred-but-not-required validations are "not_required", not "satisfied".
+    no_evidence = smoke is None and e2e is None
+    known_keys = set(config.get("validations", {}).keys())
+    # Include all known keys, all required keys, and any explicitly evidenced keys.
+    # Keys that are neither required nor evidenced are omitted (pure noise).
+    keys_to_report = known_keys | set(validations_required_list) | {k for k, v in val_map.items() if v is True}
+    validation_statuses: dict[str, str] = {}
+    for k in sorted(keys_to_report):
+        is_required = k in validations_required_list
+        evidenced_true = val_map.get(k) is True
+        if is_required:
+            if evidenced_true:
+                validation_statuses[k] = "satisfied"
+            elif no_evidence:
+                validation_statuses[k] = "not_evaluated"
+            else:
+                validation_statuses[k] = "missing"
+        else:
+            if evidenced_true:
+                validation_statuses[k] = "not_required"
+            # Not required + not evidenced → omit
+
     # Clamp score
     score = max(0.0, min(max_score, score))
 
@@ -316,7 +340,7 @@ def compute_readiness(
         failed_checks=failed_checks,
         changed_files=sorted(changed_files),
         risks_triggered=sorted(risks),
-        validations_satisfied=val_map,
+        validations=validation_statuses,
         validations_required=validations_required_list,
         evidence={
             "smoke_present": smoke is not None,
