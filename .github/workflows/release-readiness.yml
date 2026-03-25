@@ -1,5 +1,5 @@
 # Deterministic release readiness: evidence → score → PASS/WARN/BLOCK (no LLM in decision path).
-name: Release readiness
+name: Release Readiness
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  readiness:
+  release-readiness:
     runs-on: ubuntu-latest
     services:
       postgres:
