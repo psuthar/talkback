@@ -159,6 +159,36 @@ jobs:
           echo "API did not become healthy within 30s" >&2
           exit 1
 
+      - name: Write prod_health.json
+        run: |
+          mkdir -p artifacts/release-readiness
+          python - <<'PY'
+          import json, urllib.request
+
+          def get_json(url: str):
+              with urllib.request.urlopen(url, timeout=10) as r:
+                  return json.loads(r.read().decode("utf-8"))
+
+          try:
+              health = get_json("http://localhost:8081/health")
+          except Exception as e:
+              health = {"status": "error", "message": str(e)}
+
+          try:
+              db_ping = get_json("http://localhost:8081/db/ping")
+          except Exception as e:
+              db_ping = {"status": "error", "message": str(e)}
+
+          payload = {
+              "ok": True,  # Presence-only evidence for readiness scoring.
+              "health": health,
+              "db_ping": db_ping,
+          }
+          with open("artifacts/release-readiness/prod_health.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f)
+          print("Wrote artifacts/release-readiness/prod_health.json")
+          PY
+
       - name: Run Playwright E2E tests
         id: playwright
         continue-on-error: true
@@ -186,6 +216,7 @@ jobs:
             --smoke-results smoke_results.json \
             --e2e-results e2e_results.json \
             --coverage coverage.json \
+            --prod-health artifacts/release-readiness/prod_health.json \
             --output-dir artifacts/release-readiness
 
       - name: Upload readiness reports

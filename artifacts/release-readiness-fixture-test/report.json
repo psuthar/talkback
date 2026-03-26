@@ -1,0 +1,38 @@
+{
+  "outcome": "PASS",
+  "score": 100.0,
+  "max_score": 100.0,
+  "pass_threshold": 85.0,
+  "warn_threshold": 60.0,
+  "reasons": [
+    "Score=100.0/100.0 (PASS: score>=85.0 AND 0 warnings; WARN: score>=60.0 or warnings present)",
+    "Analyzed 0 changed file(s)",
+    "No risk categories triggered (skip validation gating)"
+  ],
+  "warnings": [],
+  "blockers": [],
+  "failed_checks": [],
+  "changed_files": [],
+  "risks_triggered": [],
+  "validations": {
+    "auth_session": "not_required",
+    "migrations_validated": "not_required",
+    "nav_assets": "not_required",
+    "qa_rag": "not_required",
+    "upload_extraction": "not_required",
+    "viewer_materials": "not_required"
+  },
+  "validations_required": [],
+  "evidence": {
+    "smoke_present": true,
+    "e2e_present": true,
+    "coverage_present": true,
+    "prod_health_present": true
+  },
+  "recommended_actions": [],
+  "outcome_overrides": [],
+  "timestamp_utc": "2026-03-26T20:24:12.722845+00:00",
+  "config_path": "C:\\Users\\pares\\code\\talkback\\ops\\release-readiness\\config.yaml",
+  "base_ref": "origin/main",
+  "deterministic_summary": "PASS: score=100.0, blockers=0, warnings=0"
+}
