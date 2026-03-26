@@ -22,16 +22,24 @@ risk_from_paths:
     patterns:
       - "internal/auth/**"
       - "internal/handlers/*login*"
-      - "internal/handlers/*session*"
+      - "internal/handlers/sessions.go"
+      - "internal/handlers/session_invite.go"
+      - "internal/handlers/session_participant.go"
       - "internal/invitations/**"
       - "internal/database/*user*"
-      - "internal/database/*session*"
+      - "internal/database/sessions.go"
+      - "internal/database/session_invitations.go"
+      - "internal/database/session_memberships.go"
       - "internal/database/*login*"
   - categories: [upload_extraction]
     patterns:
       - "internal/handlers/session_materials.go"
+      - "internal/handlers/session_import.go"
+      - "internal/handlers/session_import_teams.go"
       - "internal/processing/**"
       - "internal/utils/job_processor.go"
+      - "internal/database/session_processing_jobs.go"
+      - "internal/database/session_chunks.go"
       - "internal/transcript/**"
       - "internal/rag/**"
   - categories: [nav_assets, viewer_materials]

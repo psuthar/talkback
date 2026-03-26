@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -142,6 +143,27 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []SessionWithRole{}
 	}
+
+	// Optional limit/offset pagination. Both default to "no limit / no offset" when absent or zero.
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+			offset := 0
+			if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+				if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+					offset = o
+				}
+			}
+			if offset >= len(out) {
+				out = []SessionWithRole{}
+			} else {
+				out = out[offset:]
+				if limit < len(out) {
+					out = out[:limit]
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(out)

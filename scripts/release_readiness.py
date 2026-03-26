@@ -158,7 +158,7 @@ def main() -> int:
     ap.add_argument(
         "--fixture-variant",
         default="pass",
-        choices=["pass", "warn", "block"],
+        choices=["pass", "warn", "block", "block-score"],
         help="Which fixture variant to load (only used with --fixture-mode)",
     )
     ap.add_argument(
@@ -177,6 +177,8 @@ def main() -> int:
         fix_root = repo_root / "ops" / "release-readiness" / "fixtures"
         if args.fixture_variant == "block":
             fix = fix_root / "sample_block_smoke"
+        elif args.fixture_variant == "block-score":
+            fix = fix_root / "sample_block_score"
         elif args.fixture_variant == "warn":
             fix = fix_root / "sample_warn"
         else:

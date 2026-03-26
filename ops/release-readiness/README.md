@@ -54,13 +54,84 @@ Exit code: `0` for PASS/WARN, `1` for BLOCK.
 
 ## CI
 
-GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`, runs `go test`, writes `smoke_results.json`, runs the readiness script, and **always uploads** `artifacts/release-readiness/` even when the outcome is WARN or BLOCK.
+GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
+
+1. Runs `go test ./...` and writes `smoke_results.json`.
+2. Installs Node 22, runs `npm ci` in `web/`, and installs Playwright (chromium only).
+3. Builds the React frontend (`npm run build`).
+4. Starts the Go API in the background on port 8081 against the CI PostgreSQL service.
+5. Waits up to 30s for the API health check at `/health`.
+6. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
+7. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
+8. Runs the readiness script and **always uploads** `artifacts/release-readiness/` even when the outcome is WARN or BLOCK.
+
+### E2E environment variables used in CI
+
+| Variable | Value in CI | Purpose |
+|----------|-------------|---------|
+| `DATABASE_URL` | postgres service on localhost:5432 | API database |
+| `PORT` | 8081 | API listen port (avoids clash with 8080 reserved by runner) |
+| `RUN_MIGRATIONS` | true | Run DB migrations on API startup |
+| `STORAGE_DRIVER` | local | Use local disk — no R2 credentials needed |
+| `ENCRYPTION_KEY` | fixed CI value | Required for session token signing |
+| `TALKBACK_API_BASE` | http://localhost:8081 | Playwright tests use this to call the API |
+| `TALKBACK_ADMIN_EMAIL` | ci-admin@smoke.test | Admin user for test teardown |
+| `TALKBACK_ADMIN_PASSWORD` | SmokePass123! | Admin password for teardown |
+
+## E2E → readiness converter (`scripts/e2e_to_readiness.py`)
+
+`scripts/e2e_to_readiness.py` converts the raw Playwright `--reporter=json` output into the `e2e_results.json` schema that `release_readiness_engine.py` expects.
+
+### What it does
+
+- Walks the Playwright suite tree to collect all leaf test specs.
+- Maps each spec to one or more readiness validations by matching the spec's source file stem:
+
+  | Validation | Source file stems |
+  |------------|------------------|
+  | `auth_session` | creator-access, participant-acceptance, invite-invalid-token, participant-happy-path, session-availability, session-routing |
+  | `upload_extraction` | material-processing-state |
+  | `nav_assets` | material-viewers |
+  | `viewer_materials` | material-viewers, pptx-polling-stop |
+  | `qa_rag` | qa-history |
+
+- Sets a validation key to `true` if all tests in its group passed, `false` if any failed, or omits the key if no tests from that group ran (so the engine can apply inference instead of an explicit `false`).
+- Counts retried tests (specs with more than one result entry) and surfaces them as `retries`.
+- If the input file is missing or unparseable, writes a safe skipped/failed placeholder so downstream steps never fail on a missing artifact.
+
+### Run locally
+
+```bash
+# After running Playwright with JSON reporter:
+cd web
+npx playwright test --reporter=json 2>/dev/null > ../playwright-results.json || true
+cd ..
+
+python scripts/e2e_to_readiness.py \
+  --input playwright-results.json \
+  --output e2e_results.json
+
+cat e2e_results.json
+```
+
+### Test the converter without a browser
+
+A minimal sample Playwright JSON fixture is provided at `fixtures/sample_e2e_playwright/playwright-results.json`:
+
+```bash
+python scripts/e2e_to_readiness.py \
+  --input ops/release-readiness/fixtures/sample_e2e_playwright/playwright-results.json \
+  --output /tmp/e2e_results.json
+
+cat /tmp/e2e_results.json
+# expected: status=passed, all 5 validations=true
+```
 
 ## Extending
 
 - **New Relic / deploy health**: add a step that writes `prod_health.json`, pass `--prod-health`.
 - **Coverage**: emit `coverage.json` with `line_percent` and `baseline_percent` (from main branch artifact or stored baseline).
-- **Stricter E2E**: run Playwright with JSON reporter and pass `--e2e-results` path.
+- **New E2E test file**: add its stem(s) to `VALIDATION_FILE_STEMS` in `scripts/e2e_to_readiness.py`.
 
 ## Sample fixtures
 
@@ -68,5 +139,6 @@ GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_
 |-----------|---------|
 | `fixtures/sample_pass/` | Happy-path smoke + E2E + coverage + health |
 | `fixtures/sample_block_smoke/` | Failing smoke (expect BLOCK when combined with script) |
+| `fixtures/sample_e2e_playwright/` | Minimal Playwright JSON reporter output for converter testing |
 
 Run with `--fixture-mode` (loads `sample_pass`).

@@ -71,12 +71,12 @@ jobs:
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
           
-      - name: Run Go tests (smoke signal)
+      - name: Run Go tests (smoke signal + coverage)
         id: gotest
         continue-on-error: true
         env:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
-        run: go test ./... -count=1
+        run: go test ./... -count=1 -coverprofile=coverage.out
 
       - name: Write smoke_results.json
         run: |
@@ -86,9 +86,91 @@ jobs:
             echo '{"status":"failed","failed_count":1,"total_count":1}' > smoke_results.json
           fi
 
-      - name: E2E skipped placeholder
+      - name: Write coverage.json
         run: |
-          echo '{"status":"skipped","note":"E2E not run in readiness job; add Playwright + JSON reporter for full signal"}' > e2e_results.json
+          if [ -f coverage.out ]; then
+            TOTAL=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}' | tr -d '%')
+            BASELINE=$(python3 -c "import json; print(json.load(open('ops/release-readiness/coverage_baseline.json')).get('baseline_percent', 0))" 2>/dev/null || echo "0")
+            echo "{\"line_percent\": $TOTAL, \"baseline_percent\": $BASELINE}" > coverage.json
+          else
+            echo '{"line_percent": 0, "baseline_percent": 0}' > coverage.json
+          fi
+
+      # ── E2E: Node + Playwright ──────────────────────────────────────────────
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm install
+
+      - name: Install Playwright browsers (chromium only)
+        working-directory: web
+        run: npx playwright install chromium --with-deps
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
+      - name: Serve frontend (background)
+        working-directory: web
+        run: |
+          npm run preview -- --port 3000 &
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "Frontend ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend did not start within 15s" >&2
+          exit 1
+
+      - name: Install LibreOffice and poppler-utils (for PPTX conversion)
+        run: sudo apt-get install -y --no-install-recommends libreoffice poppler-utils
+
+      - name: Start API server (background)
+        env:
+          DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+          PORT: "8081"
+          RUN_MIGRATIONS: "true"
+          STORAGE_DRIVER: local
+          ENCRYPTION_KEY: ci-e2e-test-key-not-for-production
+          ALLOW_DEV_RESET: "false"
+        run: |
+          go build -o api-ci ./cmd/api
+          ./api-ci &
+          echo $! > api-ci.pid
+
+      - name: Wait for API to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8081/health > /dev/null 2>&1; then
+              echo "API is healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API did not become healthy within 30s" >&2
+          exit 1
+
+      - name: Run Playwright E2E tests
+        id: playwright
+        continue-on-error: true
+        working-directory: web
+        env:
+          CI: "true"
+          TALKBACK_API_BASE: "http://localhost:8081"
+          TALKBACK_ADMIN_EMAIL: "ci-admin@smoke.test"
+          TALKBACK_ADMIN_PASSWORD: "SmokePass123!"
+        run: |
+          npx playwright test --reporter=json 2>/dev/null > ../playwright-results.json || true
+
+      - name: Convert Playwright results to readiness schema
+        run: |
+          python scripts/e2e_to_readiness.py \
+            --input playwright-results.json \
+            --output e2e_results.json
 
       - name: Run release readiness
         run: |
@@ -98,6 +180,7 @@ jobs:
             --base-ref "${{ steps.base.outputs.base_ref }}" \
             --smoke-results smoke_results.json \
             --e2e-results e2e_results.json \
+            --coverage coverage.json \
             --output-dir artifacts/release-readiness
 
       - name: Upload readiness reports

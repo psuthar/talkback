@@ -1,0 +1,155 @@
+{
+  "stats": {
+    "startTime": "2025-01-01T00:00:00.000Z",
+    "duration": 42000,
+    "expected": 6,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "title": "creator-access.e2e.ts",
+      "file": "tests/e2e/creator-access.e2e.ts",
+      "specs": [
+        {
+          "title": "creator opens session in edit mode, sees creator-only UI",
+          "ok": true,
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed",
+                  "duration": 3200
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "suites": []
+    },
+    {
+      "title": "participant-acceptance.e2e.ts",
+      "file": "tests/e2e/participant-acceptance.e2e.ts",
+      "specs": [
+        {
+          "title": "participant accepts invite and sees session view",
+          "ok": true,
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed",
+                  "duration": 4100
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "suites": []
+    },
+    {
+      "title": "material-processing-state.e2e.ts",
+      "file": "tests/e2e/material-processing-state.e2e.ts",
+      "suites": [
+        {
+          "title": "Material processing-state gating in MaterialsTreePanel",
+          "file": "tests/e2e/material-processing-state.e2e.ts",
+          "specs": [
+            {
+              "title": "PPTX: item is disabled while slides are processing, becomes enabled at terminal state",
+              "ok": true,
+              "tests": [
+                {
+                  "results": [
+                    {
+                      "status": "passed",
+                      "duration": 45000
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "DOCX: item is disabled while text extraction is processing, becomes enabled at terminal state",
+              "ok": true,
+              "tests": [
+                {
+                  "results": [
+                    {
+                      "status": "passed",
+                      "duration": 12000
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "JPG: item is disabled while text pipeline is processing, becomes enabled at terminal state",
+              "ok": true,
+              "tests": [
+                {
+                  "results": [
+                    {
+                      "status": "passed",
+                      "duration": 9000
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "material-viewers.e2e.ts",
+      "file": "tests/e2e/material-viewers.e2e.ts",
+      "suites": [
+        {
+          "title": "Material upload and viewer flow",
+          "file": "tests/e2e/material-viewers.e2e.ts",
+          "specs": [
+            {
+              "title": "DOCX upload appears in Documents section; DocumentViewer renders",
+              "ok": true,
+              "tests": [
+                {
+                  "results": [
+                    {
+                      "status": "passed",
+                      "duration": 8500
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "qa-history.e2e.ts",
+      "file": "tests/e2e/qa-history.e2e.ts",
+      "specs": [
+        {
+          "title": "previously asked question is visible in QA history panel",
+          "ok": true,
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed",
+                  "duration": 7200
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "suites": []
+    }
+  ]
+}

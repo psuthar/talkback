@@ -248,6 +248,34 @@ func TestSmoke_ProcessingRetry_TeamsJobCanBeRetried(t *testing.T) {
 	assert.Equal(t, models.ProcessingStateQueued, updated.State)
 }
 
+// TestSmoke_ProcessingImport_TeamsCancel verifies that
+// POST /api/sessions/:id/processing/cancel transitions a queued teams job
+// to canceled and returns 200 with state=canceled.
+func TestSmoke_ProcessingImport_TeamsCancel(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	sess, _ := seedTeamsJobForSession(t, h, "Proc Cancel Teams", models.ProcessingStateQueued)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/sessions/"+sess.ID.String()+"/processing/cancel", nil)
+	w := httptest.NewRecorder()
+	h.SessionProcessingCancel(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "canceled", resp["state"])
+
+	// Verify DB state changed to canceled.
+	ctx := context.Background()
+	updated, err := h.DB.GetSessionProcessingJobBySessionID(ctx, sess.ID, "teams")
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, models.ProcessingStateCanceled, updated.State)
+}
+
 // TestSmoke_ProcessingStatus_TeamsJobDerivesSource verifies that
 // GET /api/sessions/:id/processing for a teams session finds the teams job
 // (not a zoom job) via sessionSourceForID. This proves the source derivation

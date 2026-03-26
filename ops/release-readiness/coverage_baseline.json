@@ -1,0 +1,4 @@
+{
+  "baseline_percent": 0,
+  "_note": "Set baseline_percent to the actual coverage from a passing main-branch CI run. Until then, 0 suppresses false regression warnings."
+}

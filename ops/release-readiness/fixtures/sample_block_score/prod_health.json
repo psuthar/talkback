@@ -1,0 +1,5 @@
+{
+  "status": "healthy",
+  "error_rate_percent": 0.1,
+  "p99_latency_ms": 220
+}
