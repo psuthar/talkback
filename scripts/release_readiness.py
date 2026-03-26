@@ -144,9 +144,13 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
         f"| Blockers | {len(r.blockers)} |",
         f"| Warnings | {len(r.warnings)} |",
         f"| **Final outcome** | **{r.outcome}** |",
+    ]
+    if r.outcome_overrides:
+        lines.append(f"| Outcome override | {r.outcome_overrides[0]} |")
+    lines.extend([
         "",
         f"**Why:** {_outcome_rationale(r)}",
-    ]
+    ])
     if r.blockers:
         lines.extend(["", "### Blockers", ""])
         for b in r.blockers:
@@ -255,8 +259,9 @@ def main() -> int:
     payload["config_path"] = str(config_path)
     payload["base_ref"] = args.base_ref
     payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
+    override_note = f", overrides={len(result.outcome_overrides)}" if result.outcome_overrides else ""
     payload["deterministic_summary"] = (
-        f"{result.outcome}: score={result.score:.1f}, blockers={len(result.blockers)}, warnings={len(result.warnings)}"
+        f"{result.outcome}: score={result.score:.1f}, blockers={len(result.blockers)}, warnings={len(result.warnings)}{override_note}"
     )
 
     report_json = out_dir / "report.json"

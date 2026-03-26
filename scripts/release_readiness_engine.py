@@ -24,6 +24,9 @@ class ReadinessResult:
     validations_required: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     recommended_actions: list[str] = field(default_factory=list)
+    # Explains when the final outcome differs from what score alone would produce.
+    # Empty when score-only and final outcome agree (e.g. score < warn_threshold → BLOCK).
+    outcome_overrides: list[str] = field(default_factory=list)
     timestamp_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -164,6 +167,8 @@ def _classify_e2e_failures(e2e: Optional[dict], critical_patterns: list[str]) ->
 
 
 def decide_outcome(score: float, blockers: list[str], warnings: list[str], pass_threshold: float, warn_threshold: float) -> str:
+    # PASS requires BOTH: score >= pass_threshold AND no warnings.
+    # Warnings alone (without blockers) demote an otherwise-qualifying score to WARN.
     if blockers:
         return "BLOCK"
     if score < warn_threshold:
@@ -171,6 +176,43 @@ def decide_outcome(score: float, blockers: list[str], warnings: list[str], pass_
     if not warnings and score >= pass_threshold:
         return "PASS"
     return "WARN"
+
+
+def _score_only_outcome(score: float, pass_threshold: float, warn_threshold: float) -> str:
+    """What the outcome would be based purely on score, ignoring blockers and warnings."""
+    if score < warn_threshold:
+        return "BLOCK"
+    if score >= pass_threshold:
+        return "PASS"
+    return "WARN"
+
+
+def compute_outcome_overrides(
+    score: float,
+    warnings: list[str],
+    outcome: str,
+    pass_threshold: float,
+    warn_threshold: float,
+) -> list[str]:
+    """
+    Returns strings explaining why the final outcome differs from what score alone would produce.
+    Empty when score-only outcome already matches the final outcome (no override occurred).
+
+    Note: when hard blockers are present the score is already floored to block_score (0) before
+    this function is called, so score_only will agree with outcome==BLOCK and no override fires.
+    The only remaining override is warnings suppressing a score-qualifying PASS to WARN.
+    """
+    score_only = _score_only_outcome(score, pass_threshold, warn_threshold)
+    if score_only == outcome:
+        return []
+    overrides: list[str] = []
+    if score_only == "PASS" and outcome == "WARN":
+        overrides.append(
+            f"warnings_suppress_pass: {len(warnings)} warning(s) present; "
+            f"score {score:.1f} qualifies for PASS (>={pass_threshold:.0f}) "
+            f"but outcome demoted to WARN"
+        )
+    return overrides
 
 
 def compute_readiness(
@@ -306,8 +348,16 @@ def compute_readiness(
                 validation_statuses[k] = "not_required"
             # Not required + not evidenced → omit
 
-    # Clamp score
+    # Clamp score to [0, max_score].
     score = max(0.0, min(max_score, score))
+
+    # When hard blockers exist, floor score to block_score (config default: 0).
+    # Hard blockers (smoke failure, critical E2E, missing required validation) carry no
+    # soft penalty, so without this step score could read 90/100 while outcome is BLOCK.
+    # Flooring to block_score (0) makes score consistent with the BLOCK outcome.
+    block_score_val = float(config.get("scoring", {}).get("block_score", 0))
+    if blockers:
+        score = min(score, block_score_val)
 
     # Outcome decision (explicit thresholds, no ambiguity)
     outcome = decide_outcome(
@@ -322,8 +372,20 @@ def compute_readiness(
         # Defensive: should be impossible due to decide_outcome ordering.
         outcome = "WARN"
 
-    # Reasons summary (keep concise)
-    reasons.append(f"Score={score:.1f}/{max_score} (pass>={pass_th}, warn>={warn_th})")
+    outcome_overrides = compute_outcome_overrides(
+        score=score,
+        warnings=warnings,
+        outcome=outcome,
+        pass_threshold=pass_th,
+        warn_threshold=warn_th,
+    )
+
+    # Reasons summary — document both PASS conditions so the threshold line is never misleading.
+    # PASS requires score >= pass_threshold AND no warnings; score alone is not sufficient.
+    reasons.append(
+        f"Score={score:.1f}/{max_score} "
+        f"(PASS: score>={pass_th} AND 0 warnings; WARN: score>={warn_th} or warnings present)"
+    )
     reasons.append(f"Analyzed {len(changed_files)} changed file(s)")
 
     if risks:
@@ -358,5 +420,6 @@ def compute_readiness(
             "prod_health_present": prod_health is not None,
         },
         recommended_actions=recommended,
+        outcome_overrides=outcome_overrides,
     )
 
