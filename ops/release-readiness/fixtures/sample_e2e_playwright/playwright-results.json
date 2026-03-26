@@ -1,8 +1,8 @@
 {
   "stats": {
     "startTime": "2025-01-01T00:00:00.000Z",
-    "duration": 42000,
-    "expected": 6,
+    "duration": 55000,
+    "expected": 7,
     "unexpected": 0,
     "flaky": 0,
     "skipped": 0
@@ -129,6 +129,27 @@
           ]
         }
       ]
+    },
+    {
+      "title": "participant-happy-path.e2e.ts",
+      "file": "tests/e2e/participant-happy-path.e2e.ts",
+      "specs": [
+        {
+          "title": "participant views material, asks question and receives generated answer",
+          "ok": true,
+          "tests": [
+            {
+              "results": [
+                {
+                  "status": "passed",
+                  "duration": 9800
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "suites": []
     },
     {
       "title": "qa-history.e2e.ts",

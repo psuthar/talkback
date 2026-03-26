@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Debug — workflow context
         run: |
@@ -44,7 +44,7 @@ jobs:
           echo "actor=${{ github.actor }}"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload bundle artifacts
         if: steps.check-secrets.outputs.has_secrets == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: talkback-observability-bundle-${{ github.run_id }}
           path: |

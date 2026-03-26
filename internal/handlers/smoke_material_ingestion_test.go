@@ -59,6 +59,59 @@ func TestSmoke_MaterialIngestion_PasteCreatesReadyMaterial(t *testing.T) {
 	assert.Equal(t, models.MaterialTextStatusReady, list[0].TextStatus)
 }
 
+// TestSmoke_ExtractionContent_PasteTextIsReadableViaListEndpoint verifies that the extracted
+// text content of a pasted material is actually stored and readable — not just that the pipeline
+// reached text_status="ready". This covers the upload_extraction readiness gate at the API level:
+// the 201 response must include extracted_text, and the list endpoint must return that same content
+// from the database, proving the text was both extracted and persisted correctly.
+func TestSmoke_ExtractionContent_PasteTextIsReadableViaListEndpoint(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	session := createTestSessionForHandlers(t, h.DB, "Extraction Content Smoke Session")
+
+	// --- Step 1: Paste material with a distinctive keyword ---
+	body, _ := json.Marshal(map[string]any{
+		"title": "Extraction Verification Report",
+		"text":  smokeDocText,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/paste", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.SessionPasteMaterial(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&created))
+
+	// Assert extracted_text is present and contains the known keyword in the 201 response.
+	// This proves the extraction completed synchronously during the paste request, not just
+	// that text_status was set to "ready".
+	assert.Equal(t, "ready", created["text_status"], "paste must return text_status=ready")
+	assert.NotEmpty(t, created["extracted_text"], "paste 201 response must include non-empty extracted_text")
+	if et, ok := created["extracted_text"].(string); ok {
+		assert.Contains(t, et, "Meridian", "extracted_text must contain the known keyword from smokeDocText")
+	}
+
+	// --- Step 2: Re-fetch via ListSessionMaterials to verify DB persistence ---
+	listReq := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials", nil)
+	listW := httptest.NewRecorder()
+	h.ListSessionMaterials(listW, listReq)
+
+	require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+	var list []*models.Material
+	require.NoError(t, json.NewDecoder(listW.Body).Decode(&list))
+	require.Len(t, list, 1, "session must have exactly one material after paste")
+
+	m := list[0]
+	assert.Equal(t, models.MaterialTextStatusReady, m.TextStatus, "persisted material must have text_status=ready")
+	require.NotNil(t, m.ExtractedText, "persisted material must have non-nil extracted_text")
+	assert.NotEmpty(t, *m.ExtractedText, "persisted material must have non-empty extracted_text")
+	assert.Contains(t, *m.ExtractedText, "Meridian",
+		"persisted extracted_text must contain the known keyword — proves content was extracted and stored, not just status updated")
+}
+
 // TestSmoke_MaterialIngestion_EmptyTextRejected verifies that empty paste is rejected with 400.
 func TestSmoke_MaterialIngestion_EmptyTextRejected(t *testing.T) {
 	t.Parallel()

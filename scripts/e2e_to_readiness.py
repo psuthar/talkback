@@ -23,13 +23,25 @@ Schema produced (all extra fields in the input are ignored by the engine):
       }
     }
 
-Validation → test file mapping:
-    auth_session      creator-access, participant-acceptance, invite-invalid-token,
-                      participant-happy-path, session-availability, session-routing
-    upload_extraction material-processing-state
-    nav_assets        material-viewers
-    viewer_materials  material-viewers, pptx-polling-stop
-    qa_rag            qa-history
+Validation → test file mapping (see VALIDATION_FILE_STEMS below for canonical source):
+    auth_session      creator-access          — creator opens session, sees creator UI
+                      participant-acceptance  — new participant accepts invite and signs up
+                      invite-invalid-token    — invalid invite token shows error page
+                      participant-happy-path  — participant views material, asks question, sees answer
+                      session-availability    — participant sees materials panel + QA input
+                      session-routing         — URL routing: canonical paths, legacy redirects
+
+    upload_extraction material-processing-state — PPTX/DOCX/JPG transitions from
+                                                  processing→disabled to terminal→enabled
+
+    nav_assets        material-viewers        — uploaded materials appear in tree panel
+
+    viewer_materials  material-viewers        — DocumentViewer/SlideDeckViewer renders for uploads
+                      pptx-polling-stop       — regression: polling loops stop after timeout
+
+    qa_rag            qa-history              — previously asked question visible in QA history panel
+                      participant-happy-path  — end-to-end: participant asks question, RAG answer
+                                                returned and displayed (generation, not just display)
 
 A validation key is:
   - true  if all tests in the group ran and all passed
@@ -49,27 +61,40 @@ from pathlib import Path
 # A test belongs to a validation group when its file path contains the stem.
 # ---------------------------------------------------------------------------
 
+# Maps each readiness validation to the Playwright test file stems that provide evidence for it.
+# A test file stem is the filename with .e2e.ts (and .e2e) stripped, e.g. "creator-access".
+# A test file may appear in multiple groups when it exercises more than one concern.
+# A validation is True iff ALL tests in the group ran and ALL passed.
+# A validation is absent (not emitted) if no tests from the group ran at all.
 VALIDATION_FILE_STEMS: dict[str, list[str]] = {
+    # Auth, session access, and invite flow
     "auth_session": [
-        "creator-access",
-        "participant-acceptance",
-        "invite-invalid-token",
-        "participant-happy-path",
-        "session-availability",
-        "session-routing",
+        "creator-access",          # creator opens session in edit mode, sees creator-only UI
+        "participant-acceptance",  # new participant accepts invite, signs up, lands on session
+        "invite-invalid-token",    # invalid invite token shows error page (not crash)
+        "participant-happy-path",  # full participant journey: view material, ask question, see answer
+        "session-availability",    # participant sees materials panel and QA input after joining
+        "session-routing",         # canonical URLs, legacy redirects, invite landing page routing
     ],
+    # Material upload and processing pipeline (files reach terminal state after extraction)
     "upload_extraction": [
-        "material-processing-state",
+        "material-processing-state",  # PPTX/DOCX/JPG: disabled while processing, enabled at terminal
     ],
+    # Materials tree panel / left-nav asset navigation
     "nav_assets": [
-        "material-viewers",
+        "material-viewers",  # uploaded materials appear in the MaterialsTreePanel left nav
     ],
+    # Material viewer rendering (DocumentViewer, SlideDeckViewer, etc.)
     "viewer_materials": [
-        "material-viewers",
-        "pptx-polling-stop",
+        "material-viewers",    # viewer renders for MP4, PPTX, DOCX, JPG, link uploads
+        "pptx-polling-stop",   # regression: slide-deck polling loops stop after timeout
     ],
+    # Q&A and RAG answer generation
+    # qa-history verifies question persistence and display.
+    # participant-happy-path verifies the full ask→answer pipeline (RAG generation, not just display).
     "qa_rag": [
-        "qa-history",
+        "qa-history",              # previously asked question (seeded via API) is visible in QA panel
+        "participant-happy-path",  # participant asks a new question and receives a generated answer
     ],
 }
 

@@ -83,13 +83,23 @@ test(
     // "error" is a valid terminal state in CI when no OpenAI key is configured.
     await expect(statusBadge).toHaveClass(/answered|not_covered|error/)
 
-    // --- 9. Keyword assertion — only when LLM actually answered ---
+    // --- 9. Keyword + citation assertion — only when LLM actually answered ---
     const statusText = (await statusBadge.textContent()) ?? ''
     if (statusText.trim() === 'answered') {
       const answerDiv = page.locator('[data-testid="answer-text"]').first()
       await expect(answerDiv).toBeVisible()
       const answerText = (await answerDiv.textContent()) ?? ''
       expect(answerText.toLowerCase()).toMatch(/meridian|apac|churn/)
+
+      // Assert that at least one citation is rendered.
+      // The backend returns citations for paste-based materials (source_type=material,
+      // label e.g. "Meridian Report (block 1)"). The UI renders data-testid="citations"
+      // when citations.length > 0.
+      // TODO: stronger coverage (verifying the exact label text against the material title)
+      // would benefit from a real PDF upload fixture so the citation source_id maps to a
+      // named file rather than an inline text block.
+      const citationsContainer = page.locator('[data-testid="citations"]').first()
+      await expect(citationsContainer).toBeVisible({ timeout: 5_000 })
     }
   }
 )

@@ -93,6 +93,39 @@ def evaluate(
     )
 
 
+def _score_band(r: ReadinessResult) -> str:
+    if r.score >= r.pass_threshold:
+        return f"PASS range (>={r.pass_threshold:.0f})"
+    if r.score >= r.warn_threshold:
+        return f"WARN range ({r.warn_threshold:.0f}-{r.pass_threshold:.0f})"
+    return f"BLOCK range (<{r.warn_threshold:.0f})"
+
+
+def _outcome_rationale(r: ReadinessResult) -> str:
+    """Deterministic one-sentence explanation of the outcome decision."""
+    if r.outcome == "BLOCK":
+        if r.blockers:
+            n = len(r.blockers)
+            label = r.blockers[0] if n == 1 else f"{n} hard blockers"
+            return f"Blocked by hard blocker(s): {label}"
+        return (
+            f"Score {r.score:.1f} < {r.warn_threshold:.0f} (warn threshold) - "
+            "insufficient evidence to reach minimum bar"
+        )
+    if r.outcome == "PASS":
+        return f"Score {r.score:.1f} >= {r.pass_threshold:.0f} (pass threshold) with no warnings"
+    # WARN: either score-in-range-but-warnings, or score-below-pass
+    if r.score >= r.pass_threshold and r.warnings:
+        return (
+            f"Score {r.score:.1f} is in PASS range (>={r.pass_threshold:.0f}), "
+            f"but {len(r.warnings)} warning(s) suppress promotion to PASS"
+        )
+    return (
+        f"Score {r.score:.1f} is below PASS threshold ({r.pass_threshold:.0f}) - "
+        "no blockers but review required before deploy"
+    )
+
+
 def render_markdown(r: ReadinessResult, config_version: Any) -> str:
     lines = [
         "# TalkBack release readiness report",
@@ -102,11 +135,18 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
         "",
         f"## Result: **{r.outcome}** (score {r.score:.1f})",
         "",
-        "### Summary",
+        "### Outcome determination",
         "",
+        "| Factor | Value |",
+        "|--------|-------|",
+        f"| Score | **{r.score:.1f} / {r.max_score:.0f}** |",
+        f"| Score band | {_score_band(r)} |",
+        f"| Blockers | {len(r.blockers)} |",
+        f"| Warnings | {len(r.warnings)} |",
+        f"| **Final outcome** | **{r.outcome}** |",
+        "",
+        f"**Why:** {_outcome_rationale(r)}",
     ]
-    for x in r.reasons:
-        lines.append(f"- {x}")
     if r.blockers:
         lines.extend(["", "### Blockers", ""])
         for b in r.blockers:
@@ -115,6 +155,9 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
         lines.extend(["", "### Warnings", ""])
         for w in r.warnings:
             lines.append(f"- {w}")
+    lines.extend(["", "### Summary", ""])
+    for x in r.reasons:
+        lines.append(f"- {x}")
     lines.extend(["", "### Risks from changed paths", ""])
     if r.risks_triggered:
         for x in r.risks_triggered:

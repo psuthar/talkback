@@ -11,6 +11,9 @@ from typing import Any, Optional
 class ReadinessResult:
     outcome: str  # PASS | WARN | BLOCK
     score: float
+    max_score: float = 100.0
+    pass_threshold: float = 85.0
+    warn_threshold: float = 60.0
     reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
@@ -258,7 +261,10 @@ def compute_readiness(
     risky_hits = [f for f in changed_files if match_patterns(f, config.get("risky_config_patterns", []) or [])]
     note = (smoke or {}).get("config_validation_note") or (e2e or {}).get("config_validation_note")
     if risky_hits and not note:
-        warnings.append("Risky config/workflow paths changed without explicit validation note in evidence")
+        files_note = ", ".join(sorted(risky_hits)[:3])
+        if len(risky_hits) > 3:
+            files_note += f" (+{len(risky_hits) - 3} more)"
+        warnings.append(f"Risky config/workflow paths changed without validation note: {files_note}")
         score -= float(penalties.get("risky_config_without_note", 10))
         failed_checks.append("risky_config_without_note")
 
@@ -334,6 +340,9 @@ def compute_readiness(
     return ReadinessResult(
         outcome=outcome,
         score=score,
+        max_score=max_score,
+        pass_threshold=pass_th,
+        warn_threshold=warn_th,
         reasons=reasons,
         warnings=warnings,
         blockers=blockers,

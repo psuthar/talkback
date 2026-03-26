@@ -326,7 +326,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
             )}
           </div>
           {q.answer.citations && q.answer.citations.length > 0 && (
-            <div className="citations" style={{ marginTop: '10px' }}>
+            <div data-testid="citations" className="citations" style={{ marginTop: '10px' }}>
               <strong>Citations:</strong>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
                 {q.answer.citations.map((citation, cidx) => (
