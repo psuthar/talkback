@@ -48,7 +48,16 @@ python scripts/release_readiness.py \
 go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
 ```
 
-Exit code: `0` for PASS/WARN, `1` for BLOCK.
+Exit code: `0` for PASS (or WARN in `block_only` mode), `1` for BLOCK (or WARN in `warn_and_block` mode).
+
+### Enforcement mode
+
+| Mode | Exit 1 when | How to set |
+|------|-------------|------------|
+| `block_only` *(default)* | BLOCK | default |
+| `warn_and_block` | WARN **or** BLOCK | `--enforcement-mode warn_and_block` or `READINESS_ENFORCEMENT_MODE=warn_and_block` |
+
+The recommended initial policy is **`block_only`**: warnings are visible in the report and artifact but do not fail the workflow. Move to `warn_and_block` once the team is comfortable with the baseline warning rate.
 
 ### Environment variables
 
@@ -56,6 +65,7 @@ Exit code: `0` for PASS/WARN, `1` for BLOCK.
 |----------|---------|
 | `RELEASE_READINESS_BASE_REF` | Default `origin/main` for `--base-ref` |
 | `PRRISK_JIRA_ISSUE_KEY` | Optional; echoed into PR risk v2 `integrations` for future Jira linking |
+| `READINESS_ENFORCEMENT_MODE` | `block_only` (default) or `warn_and_block` |
 
 ## CI
 
@@ -164,6 +174,35 @@ This works for **direct commits to main/master** (push event) and **PR merges** 
 | `pull_request` | `origin/<base-branch>` | PR head commits only |
 | `push` | `github.event.before` (or `HEAD~1`) | The pushed commits |
 | `workflow_dispatch` | `--base-ref` input (or `HEAD~1`) | Explicit or last commit |
+
+## Remediation guidance
+
+Every WARN or BLOCK report includes a **Remediation guidance** table in both `report.md` and `report.json` (`remediation_items` array). Each row maps directly to a failed check:
+
+| Column | Meaning |
+|--------|---------|
+| `check` | The internal check key (e.g. `smoke_failed`, `e2e_critical`) |
+| `severity` | `BLOCK` or `WARN` |
+| `likely_cause` | Deterministic description of why this check fires |
+| `recommended_action` | Concrete next step to resolve it |
+| `fix_type` | Category: `code`, `test`, `config`, `process`, `infra`, `db` |
+
+Guidance is config-driven — edit `remediation:` in `config.yaml` to adjust any entry. Unknown check keys fall back to a generic "Investigate check: <key>" entry.
+
+### Branch protection with enforcement mode
+
+To use the readiness outcome as a merge gate:
+
+1. Enable **branch protection rules** on `main` in GitHub Settings → Branches.
+2. Require the `release-readiness` status check to pass before merging.
+3. Set enforcement mode in `.github/workflows/release-readiness.yml`:
+
+```yaml
+env:
+  READINESS_ENFORCEMENT_MODE: block_only   # change to warn_and_block for stricter policy
+```
+
+**Recommended initial policy:** start with `block_only`. The workflow fails (and the merge is blocked) only on BLOCK outcomes. Warnings appear in the artifact but don't block. Upgrade to `warn_and_block` once warning noise is under control.
 
 ## Extending
 

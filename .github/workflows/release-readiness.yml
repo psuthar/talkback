@@ -17,6 +17,9 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Enforcement policy: block_only (default) or warn_and_block (stricter).
+  # Change to warn_and_block to block merges on WARN outcomes as well.
+  READINESS_ENFORCEMENT_MODE: block_only
 
 jobs:
   release-readiness:
@@ -219,6 +222,8 @@ jobs:
             --output e2e_results.json
 
       - name: Run release readiness
+        id: readiness
+        continue-on-error: true
         run: |
           python scripts/release_readiness.py \
             --repo-root . \
@@ -228,7 +233,8 @@ jobs:
             --e2e-results e2e_results.json \
             --coverage coverage.json \
             --prod-health artifacts/release-readiness/prod_health.json \
-            --output-dir artifacts/release-readiness
+            --output-dir artifacts/release-readiness \
+            --enforcement-mode "$READINESS_ENFORCEMENT_MODE"
 
       - name: Upload readiness reports
         if: always()
@@ -238,18 +244,24 @@ jobs:
           path: artifacts/release-readiness/
           if-no-files-found: warn
 
-      - name: Fail job on BLOCK
+      - name: Enforce readiness outcome
         if: always()
         run: |
           python - <<'PY'
-          import json, sys
+          import json, os, sys
           from pathlib import Path
           p = Path("artifacts/release-readiness/report.json")
           if not p.is_file():
-              sys.exit(0)
-          o = json.loads(p.read_text(encoding="utf-8")).get("outcome")
-          if o == "BLOCK":
-              print("Outcome BLOCK — see report artifact.")
+              print("report.json not found — readiness script may have crashed.", file=sys.stderr)
               sys.exit(1)
+          outcome = json.loads(p.read_text(encoding="utf-8")).get("outcome", "")
+          mode = os.environ.get("READINESS_ENFORCEMENT_MODE", "block_only")
+          if outcome == "BLOCK":
+              print(f"Outcome BLOCK — failing job (enforcement_mode={mode})")
+              sys.exit(1)
+          if outcome == "WARN" and mode == "warn_and_block":
+              print(f"Outcome WARN — failing job (enforcement_mode={mode})")
+              sys.exit(1)
+          print(f"Outcome {outcome} — passing job (enforcement_mode={mode})")
           sys.exit(0)
           PY
