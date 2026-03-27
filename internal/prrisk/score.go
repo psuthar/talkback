@@ -110,14 +110,26 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		reducerSum += r.Points
 	}
 
-	score := clamp100(sum - reducerSum)
+	netBeforeFloor := clamp100(sum - reducerSum)
+	finalScore, floorApplied, floorMin, floorReasons := applyRiskFloor(netBeforeFloor, factors)
 
-	riskBand := band(score)
+	riskBand := band(finalScore)
 	cats := ComputeCategories(s, factors, reducers)
-	req := ComputeRequiredActions(s, factors, reducers, score, riskBand)
+	req := ComputeRequiredActions(s, factors, reducers, finalScore, riskBand)
+
+	math := ScoreMath{
+		FactorsSubtotal:  sum,
+		ReducersSubtotal: reducerSum,
+		NetBeforeFloor:   netBeforeFloor,
+		FloorMinScore:    floorMin,
+		FloorApplied:     floorApplied,
+		FloorReasons:     floorReasons,
+		FinalScore:       finalScore,
+		FinalBand:        riskBand,
+	}
 
 	mits := Mitigate(factors)
-	integ := BuildIntegrations(factors, score, s.BaseRef, jiraKey)
+	integ := BuildIntegrations(factors, finalScore, s.BaseRef, jiraKey, req, math)
 
 	res := Result{
 		Version:         Version,
@@ -125,8 +137,9 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		GeneratedAt:     now,
 		BaseRef:         s.BaseRef,
 		Signals:         s,
-		RiskScore:       score,
+		RiskScore:       finalScore,
 		RiskBand:        riskBand,
+		ScoreMath:       math,
 		Factors:         factors,
 		Categories:      cats,
 		Reducers:        reducers,

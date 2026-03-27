@@ -51,6 +51,66 @@ func TestInterpretScoreEmbedded(t *testing.T) {
 	}
 }
 
+func TestInterpretFloorNoteIncludedWhenApplied(t *testing.T) {
+	// When FloorApplied is true, the interpretation for non-low bands must contain
+	// a note that mentions the floor raised the score.
+	r := Result{
+		RiskScore: 20,
+		RiskBand:  "medium",
+		ScoreMath: ScoreMath{
+			FloorApplied:   true,
+			NetBeforeFloor: 6,
+			FinalScore:     20,
+		},
+	}
+	interp := buildInterpretation(r)
+	if !strings.Contains(interp, "floor") {
+		t.Errorf("expected floor note in interpretation when FloorApplied=true, got: %q", interp)
+	}
+	// The note must reference both the pre-floor and final score values.
+	if !strings.Contains(interp, "6") {
+		t.Errorf("expected pre-floor score (6) in floor note, got: %q", interp)
+	}
+	if !strings.Contains(interp, "20") {
+		t.Errorf("expected final score (20) in floor note, got: %q", interp)
+	}
+}
+
+func TestInterpretFloorNoteAbsentWhenNotApplied(t *testing.T) {
+	r := Result{
+		RiskScore: 40,
+		RiskBand:  "medium",
+		ScoreMath: ScoreMath{
+			FloorApplied:   false,
+			NetBeforeFloor: 40,
+			FinalScore:     40,
+		},
+	}
+	interp := buildInterpretation(r)
+	if strings.Contains(interp, "floor") {
+		t.Errorf("expected no floor note when FloorApplied=false, got: %q", interp)
+	}
+}
+
+func TestInterpretFloorNoteHighBand(t *testing.T) {
+	r := Result{
+		RiskScore: 50,
+		RiskBand:  "high",
+		ScoreMath: ScoreMath{
+			FloorApplied:   true,
+			NetBeforeFloor: 15,
+			FinalScore:     50,
+		},
+	}
+	interp := buildInterpretation(r)
+	if !strings.Contains(strings.ToLower(interp), "high") {
+		t.Errorf("expected high-band language: %q", interp)
+	}
+	if !strings.Contains(interp, "floor") {
+		t.Errorf("expected floor note for high band with FloorApplied=true: %q", interp)
+	}
+}
+
 func TestInterpretUnknownBandEmpty(t *testing.T) {
 	r := Result{RiskScore: 0, RiskBand: ""}
 	interp := buildInterpretation(r)

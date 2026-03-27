@@ -11,6 +11,12 @@ func TestScoreEmptyDiff(t *testing.T) {
 	if r.RiskBand != "low" {
 		t.Fatalf("expected low band, got %s", r.RiskBand)
 	}
+	if r.ScoreMath.FinalScore != r.RiskScore || r.ScoreMath.FinalBand != r.RiskBand {
+		t.Fatalf("score_math mismatch: %+v vs risk %v/%s", r.ScoreMath, r.RiskScore, r.RiskBand)
+	}
+	if r.ScoreMath.FactorsSubtotal != 0 || r.ScoreMath.FloorApplied {
+		t.Fatalf("unexpected score_math for empty diff: %+v", r.ScoreMath)
+	}
 }
 
 func TestScoreAuthAndMigrations(t *testing.T) {
@@ -75,12 +81,12 @@ func TestScoreSpecificFactors(t *testing.T) {
 
 func TestScoreGoModTriggersFactor(t *testing.T) {
 	s := Signals{
-		BaseRef:      "origin/main",
-		Files:        []FileChange{{Path: "go.mod", Added: 2, Deleted: 1}},
-		FileCount:    1,
-		TotalLOC:     3,
-		DomainHits:   map[string]int{DomainOther: 1},
-		ConfigFiles:  1,
+		BaseRef:     "origin/main",
+		Files:       []FileChange{{Path: "go.mod", Added: 2, Deleted: 1}},
+		FileCount:   1,
+		TotalLOC:    3,
+		DomainHits:  map[string]int{DomainOther: 1},
+		ConfigFiles: 1,
 	}
 	r := Score(s, DefaultWeights(), "")
 	if !hasFactorID(r.Factors, "go_mod_deps") {
@@ -140,4 +146,151 @@ func hasFactorID(factors []RiskFactor, id string) bool {
 		}
 	}
 	return false
+}
+
+func TestScoreWorkflowFloorNotLowBand(t *testing.T) {
+	w := DefaultWeights()
+	s := Signals{
+		BaseRef: "origin/main",
+		Files: []FileChange{
+			{Path: ".github/workflows/ci.yml", Added: 1},
+		},
+		FileCount:             1,
+		TotalLOC:              1,
+		DomainHits:            map[string]int{DomainWorkflows: 1},
+		ConfigFiles:           1,
+		ValidationNoteFound:   true,
+		ValidationNoteSnippet: "Validation: e2e smoke passed",
+	}
+	r := Score(s, w, "")
+	if r.RiskBand == "low" {
+		t.Fatalf("workflow change must not end as low band, got %s score=%v", r.RiskBand, r.RiskScore)
+	}
+	if !r.ScoreMath.FloorApplied {
+		t.Fatal("expected risk floor to apply (reducers would otherwise allow very low net)")
+	}
+	if r.RiskScore < floorMinNotLowBand {
+		t.Fatalf("score %v below floor %v", r.RiskScore, floorMinNotLowBand)
+	}
+	found := false
+	for _, a := range r.RequiredActions {
+		if a.ID == "workflow_config_validation" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected workflow_config_validation required action")
+	}
+}
+
+func TestScoreVersionMinor(t *testing.T) {
+	s := Signals{BaseRef: "origin/main", DomainHits: map[string]int{}}
+	r := Score(s, DefaultWeights(), "")
+	if r.VersionMinor != VersionMinor {
+		t.Fatalf("expected VersionMinor=%d on Result, got %d", VersionMinor, r.VersionMinor)
+	}
+	if r.Version != Version {
+		t.Fatalf("expected Version=%d on Result, got %d", Version, r.Version)
+	}
+}
+
+func TestScoreMathConsistency(t *testing.T) {
+	// Auth + migrations diff with unit test evidence — reducers fire, floor does not.
+	s := Signals{
+		BaseRef: "origin/main",
+		Files: []FileChange{
+			{Path: "internal/auth/x.go", Added: 10},
+		},
+		FileCount:          1,
+		TotalLOC:           10,
+		DomainHits:         map[string]int{DomainAuth: 1},
+		TestUnitDomainHits: map[string]int{DomainAuth: 1},
+	}
+	r := Score(s, DefaultWeights(), "")
+	m := r.ScoreMath
+
+	// FinalScore and RiskScore must agree.
+	if m.FinalScore != r.RiskScore {
+		t.Errorf("ScoreMath.FinalScore=%.1f != RiskScore=%.1f", m.FinalScore, r.RiskScore)
+	}
+	if m.FinalBand != r.RiskBand {
+		t.Errorf("ScoreMath.FinalBand=%s != RiskBand=%s", m.FinalBand, r.RiskBand)
+	}
+
+	// ReducersSubtotal must be positive (unit evidence fired).
+	if m.ReducersSubtotal <= 0 {
+		t.Errorf("expected positive ReducersSubtotal, got %.1f", m.ReducersSubtotal)
+	}
+
+	// NetBeforeFloor == clamp100(FactorsSubtotal - ReducersSubtotal).
+	want := clamp100(m.FactorsSubtotal - m.ReducersSubtotal)
+	if m.NetBeforeFloor != want {
+		t.Errorf("NetBeforeFloor=%.1f, want clamp100(%.1f-%.1f)=%.1f",
+			m.NetBeforeFloor, m.FactorsSubtotal, m.ReducersSubtotal, want)
+	}
+
+	// No floor factors in this diff (only domain_auth), so floor must not apply.
+	if m.FloorApplied {
+		t.Error("expected FloorApplied=false for auth-only diff without floor factors")
+	}
+	if m.FloorMinScore != 0 {
+		t.Errorf("expected FloorMinScore=0 when no floor rule fires, got %.1f", m.FloorMinScore)
+	}
+}
+
+func TestScoreMathFloorAppliedPopulatesFields(t *testing.T) {
+	// Workflow change with strong validation note: reducers may bring net below 20,
+	// triggering the floor.
+	w := DefaultWeights()
+	s := Signals{
+		BaseRef: "origin/main",
+		Files: []FileChange{
+			{Path: ".github/workflows/ci.yml", Added: 1},
+		},
+		FileCount:             1,
+		TotalLOC:              1,
+		DomainHits:            map[string]int{DomainWorkflows: 1},
+		ValidationNoteFound:   true,
+		ValidationNoteSnippet: "Validation: e2e smoke passed",
+	}
+	r := Score(s, w, "")
+	m := r.ScoreMath
+	if !m.FloorApplied {
+		t.Fatal("expected FloorApplied=true for workflow floor scenario")
+	}
+	if m.FloorMinScore <= 0 {
+		t.Errorf("expected positive FloorMinScore, got %.1f", m.FloorMinScore)
+	}
+	if len(m.FloorReasons) == 0 {
+		t.Error("expected at least one FloorReason when floor applied")
+	}
+	// FinalScore must equal FloorMinScore when raised.
+	if m.FinalScore != m.FloorMinScore {
+		t.Errorf("FinalScore=%.1f, want FloorMinScore=%.1f when floor raised the score",
+			m.FinalScore, m.FloorMinScore)
+	}
+}
+
+func TestScoreLargeDiffRequiredAction(t *testing.T) {
+	w := DefaultWeights()
+	s := Signals{
+		BaseRef:    "origin/main",
+		TotalLOC:   w.LargeDiffLOC + 1,
+		DomainHits: map[string]int{},
+	}
+	r := Score(s, w, "")
+	if r.RiskBand == "low" {
+		t.Fatalf("large diff must not end as low band, got %s", r.RiskBand)
+	}
+	found := false
+	for _, a := range r.RequiredActions {
+		if a.ID == "pr_review_summary" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected pr_review_summary for large diff")
+	}
 }

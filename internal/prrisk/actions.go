@@ -38,13 +38,13 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 			AppliesWhen: "git diff base...HEAD was unavailable",
 			Checklist: []string{
 				"Confirm CI uses `fetch-depth: 0` (or an equivalent full-history checkout).",
-				"Re-run PR risk v2.2 scoring after the checkout depth fix.",
+				"Re-run PR risk scoring after the checkout depth fix.",
 			},
 		})
 	}
 
-	// Diff-size / review hygiene.
-	if gateHigh && (okBool(has, "diff_large") || okBool(has, "diff_very_large") || okBool(has, "many_files")) {
+	// Diff-size / review hygiene — always when large-diff signals fire (trust / review load).
+	if okBool(has, "diff_large") || okBool(has, "diff_very_large") || okBool(has, "many_files") {
 		add(RequiredAction{
 			ID:      "pr_review_summary",
 			Title:   "Make PR review scoped and evidence-backed",
@@ -56,8 +56,8 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 		})
 	}
 
-	// Workflow / config validation evidence.
-	if gateHigh && (okBool(has, "ci_workflows") || okBool(has, "deploy_config") || okBool(has, "go_mod_deps")) {
+	// Workflow / config validation — always when these factors are present.
+	if okBool(has, "ci_workflows") || okBool(has, "deploy_config") || okBool(has, "go_mod_deps") {
 		msg := "Confirm required checks and env parity before merge."
 		if hasValidationNote {
 			msg = "Validation note is present; confirm required checks and env parity before merge."

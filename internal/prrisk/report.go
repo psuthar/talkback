@@ -47,6 +47,29 @@ func WriteMarkdown(path string, r Result) error {
 		sn := strings.ReplaceAll(r.Signals.ValidationNoteSnippet, "\n", " ")
 		sb.WriteString(fmt.Sprintf("| Validation note | yes (%s) |\n", sn))
 	}
+	sb.WriteString("\n## Score math\n\n")
+	sm := r.ScoreMath
+	sb.WriteString("| Step | Value |\n|------|------:|\n")
+	sb.WriteString(fmt.Sprintf("| Factors subtotal (sum of factor points) | **%.1f** |\n", sm.FactorsSubtotal))
+	sb.WriteString(fmt.Sprintf("| Reducers subtotal (points subtracted) | **%.1f** |\n", sm.ReducersSubtotal))
+	sb.WriteString(fmt.Sprintf("| Net before floor | **%.1f** |\n", sm.NetBeforeFloor))
+	if sm.FloorMinScore > 0 {
+		applied := "no"
+		if sm.FloorApplied {
+			applied = "yes"
+		}
+		sb.WriteString(fmt.Sprintf("| Floor minimum (when rules apply) | **%.0f** |\n", sm.FloorMinScore))
+		sb.WriteString(fmt.Sprintf("| Floor applied | **%s** |\n", applied))
+		if len(sm.FloorReasons) > 0 {
+			sb.WriteString("| Floor reasons | ")
+			sb.WriteString(strings.Join(sm.FloorReasons, "; "))
+			sb.WriteString(" |\n")
+		}
+	} else {
+		sb.WriteString("| Floor rules | _none_ |\n")
+	}
+	sb.WriteString(fmt.Sprintf("| **Final score** | **%.1f** |\n", sm.FinalScore))
+	sb.WriteString(fmt.Sprintf("| **Final band** | **%s** |\n", sm.FinalBand))
 	sb.WriteString("\n## Domain hits\n\n")
 	if len(r.Signals.DomainHits) == 0 {
 		sb.WriteString("_None._\n")

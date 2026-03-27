@@ -101,10 +101,16 @@ export default async function globalTeardown() {
     }
   }
 
-  // 5. Delete all smoke-test users via admin context
+  // 5. Delete all smoke-test users via admin context.
+  // Sort so that the teardown admin account itself is deleted last — deleting it earlier
+  // invalidates the admin session and causes subsequent deletes to return 401.
+  const sortedSmokeUsers = [
+    ...smokeUsers.filter((u) => u.email !== ADMIN_EMAIL),
+    ...smokeUsers.filter((u) => u.email === ADMIN_EMAIL),
+  ]
   let userDeleted = 0
   let userFailed = 0
-  for (const u of smokeUsers) {
+  for (const u of sortedSmokeUsers) {
     const res = await ctx.delete(`${API_BASE}/api/admin/users/${u.id}`)
     if (res.ok() || res.status() === 404 || res.status() === 204) {
       userDeleted++
