@@ -74,12 +74,20 @@ func DiffNumstat(repoRoot, baseRef string) ([]FileChange, string) {
 func ExtractSignals(repoRoot, baseRef string) Signals {
 	repoRoot = filepath.Clean(repoRoot)
 	files, gitErr := DiffNumstat(repoRoot, baseRef)
+
+	valFound, valSnippet := detectValidationNote(repoRoot, baseRef)
+
 	s := Signals{
-		BaseRef:    baseRef,
-		HeadRef:    headRef(repoRoot),
-		DomainHits: make(map[string]int),
-		Files:      files,
-		GitError:   gitErr,
+		BaseRef:               baseRef,
+		HeadRef:               headRef(repoRoot),
+		DomainHits:            make(map[string]int),
+		TestDomainHits:        make(map[string]int),
+		TestUnitDomainHits:    make(map[string]int),
+		TestE2EDomainHits:     make(map[string]int),
+		Files:                 files,
+		GitError:              gitErr,
+		ValidationNoteFound:   valFound,
+		ValidationNoteSnippet: valSnippet,
 	}
 	for _, f := range files {
 		s.FileCount++
@@ -89,6 +97,15 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 		s.DomainHits[d]++
 		if IsTestPath(f.Path) {
 			s.TestFiles++
+			td := ClassifyArea(f.Path)
+			s.TestDomainHits[td]++
+			if IsE2EPath(f.Path) {
+				s.E2ETestFiles++
+				s.TestE2EDomainHits[td]++
+			} else {
+				s.UnitTestFiles++
+				s.TestUnitDomainHits[td]++
+			}
 		}
 		if IsConfigPath(f.Path) {
 			s.ConfigFiles++
@@ -99,4 +116,32 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 	}
 	s.TotalLOC = s.TotalAdded + s.TotalDeleted
 	return s
+}
+
+func detectValidationNote(repoRoot, baseRef string) (bool, string) {
+	// Mirrors ops/release-readiness.py behavior but stays deterministic and scoped to this diff range.
+	// We look for a line beginning with `Validation:` or `Validate:` (case-insensitive).
+	cmd := exec.Command("git", "-C", repoRoot, "log", "--format=%B", fmt.Sprintf("%s...HEAD", baseRef))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return false, ""
+	}
+	lines := strings.Split(stdout.String(), "\n")
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" {
+			continue
+		}
+		lower := strings.ToLower(stripped)
+		if strings.HasPrefix(lower, "validation:") || strings.HasPrefix(lower, "validate:") {
+			if len(stripped) > 120 {
+				return true, stripped[:120]
+			}
+			return true, stripped
+		}
+	}
+	_ = stderr // keep stderr for future debugging without changing behavior.
+	return false, ""
 }
