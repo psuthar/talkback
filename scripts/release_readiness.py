@@ -221,6 +221,17 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
         lines.extend(["", "### Recommended actions", ""])
         for a in r.recommended_actions:
             lines.append(f"- {a}")
+    if r.remediation_items:
+        lines.extend(["", "### Remediation guidance", ""])
+        lines.append("| Check | Severity | Likely cause | Recommended action | Fix type |")
+        lines.append("|-------|----------|--------------|--------------------|----------|")
+        for item in r.remediation_items:
+            sev = item.get("severity", "").upper()
+            check = item.get("check", "")
+            cause = item.get("likely_cause", "")
+            action = item.get("recommended_action", "")
+            fix_type = item.get("fix_type", "")
+            lines.append(f"| `{check}` | {sev} | {cause} | {action} | {fix_type} |")
     lines.extend(["", "---", "*Deterministic scoring only (no LLM in the decision path).*", ""])
     return "\n".join(lines)
 
@@ -251,6 +262,16 @@ def main() -> int:
         "--empty-diff",
         action="store_true",
         help="Ignore git diff (demo determinism: no path-based risks)",
+    )
+    ap.add_argument(
+        "--enforcement-mode",
+        default=os.environ.get("READINESS_ENFORCEMENT_MODE", "block_only"),
+        choices=["block_only", "warn_and_block"],
+        help=(
+            "block_only (default): exit 1 on BLOCK only. "
+            "warn_and_block: exit 1 on WARN or BLOCK. "
+            "Override via READINESS_ENFORCEMENT_MODE env var."
+        ),
     )
     args = ap.parse_args()
 
@@ -319,8 +340,15 @@ def main() -> int:
 
     print(md)
     print(f"\nWrote {report_json} and {report_md}", file=sys.stderr)
+    print(f"Enforcement mode: {args.enforcement_mode}", file=sys.stderr)
 
-    return 0 if result.outcome != "BLOCK" else 1
+    if result.outcome == "BLOCK":
+        print("Outcome BLOCK — failing.", file=sys.stderr)
+        return 1
+    if result.outcome == "WARN" and args.enforcement_mode == "warn_and_block":
+        print("Outcome WARN — failing (enforcement_mode=warn_and_block).", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
