@@ -78,7 +78,15 @@ jobs:
           else
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
-          
+
+      - name: PR risk scoring (v2)
+        run: |
+          mkdir -p artifacts/release-readiness
+          go run ./cmd/prrisk \
+            --repo-root . \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
+            --output-dir artifacts/release-readiness
+
       - name: Run Go tests (smoke signal + coverage)
         id: gotest
         continue-on-error: true

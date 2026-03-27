@@ -7,6 +7,7 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
 3. **Outputs** — `artifacts/release-readiness/report.json` and `report.md`.
+4. **PR risk (v2)** — deterministic diff-based risk from `go run ./cmd/prrisk` → `pr_risk_v2.json` and `pr_risk_v2.md` (same artifact directory).
 
 ## Core validations (mapped to changed paths)
 
@@ -42,6 +43,9 @@ python scripts/release_readiness.py \
   --base-ref origin/main \
   --smoke-results smoke_results.json \
   --output-dir artifacts/release-readiness
+
+# Optional: PR risk v2 only (git diff signals; no Python)
+go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
 ```
 
 Exit code: `0` for PASS/WARN, `1` for BLOCK.
@@ -51,19 +55,21 @@ Exit code: `0` for PASS/WARN, `1` for BLOCK.
 | Variable | Meaning |
 |----------|---------|
 | `RELEASE_READINESS_BASE_REF` | Default `origin/main` for `--base-ref` |
+| `PRRISK_JIRA_ISSUE_KEY` | Optional; echoed into PR risk v2 `integrations` for future Jira linking |
 
 ## CI
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go test ./...` and writes `smoke_results.json`.
-2. Installs Node 22, runs `npm ci` in `web/`, and installs Playwright (chromium only).
-3. Builds the React frontend (`npm run build`).
-4. Starts the Go API in the background on port 8081 against the CI PostgreSQL service.
-5. Waits up to 30s for the API health check at `/health`.
-6. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
-7. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
-8. Runs the readiness script and **always uploads** `artifacts/release-readiness/` even when the outcome is WARN or BLOCK.
+1. Runs `go run ./cmd/prrisk` (PR risk v2) and writes `pr_risk_v2.json` / `pr_risk_v2.md`.
+2. Runs `go test ./...` and writes `smoke_results.json`.
+3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
+4. Builds the React frontend (`npm run build`).
+5. Starts the Go API in the background on port 8081 against the CI PostgreSQL service.
+6. Waits up to 30s for the API health check at `/health`.
+7. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
+8. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
+9. Runs the readiness script and **always uploads** `artifacts/release-readiness/` even when the outcome is WARN or BLOCK.
 
 ### E2E environment variables used in CI
 
