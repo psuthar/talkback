@@ -7,8 +7,8 @@ import "time"
 const Version = 2
 
 // VersionMinor is the minor report schema version.
-// v2.1 == Version=2, VersionMinor=1
-const VersionMinor = 1
+// v2.2 == Version=2, VersionMinor=2
+const VersionMinor = 2
 
 // Domain labels for changed-file classification (extensible).
 const (
@@ -42,6 +42,7 @@ type Signals struct {
 	TotalAdded            int            `json:"total_added"`
 	TotalDeleted          int            `json:"total_deleted"`
 	TotalLOC              int            `json:"total_loc"` // added + deleted (diff churn)
+	TestLOCRatio          float64        `json:"test_loc_ratio,omitempty"` // test LOC / total LOC
 	Files                 []FileChange   `json:"files"`
 	DomainHits            map[string]int `json:"domain_hits"` // domain -> file count
 	TestDomainHits        map[string]int `json:"test_domain_hits,omitempty"`
@@ -71,15 +72,29 @@ type Mitigation struct {
 	Actions  []string `json:"actions"`
 }
 
+// ConfidenceAdjustment is one contribution to the test confidence score.
+type ConfidenceAdjustment struct {
+	Reason string  `json:"reason"`
+	Delta  float64 `json:"delta"` // positive = more confident, negative = less
+}
+
+// ConfidenceBreakdown explains how the test_confidence score was computed.
+type ConfidenceBreakdown struct {
+	BaseScore   float64                `json:"base_score"`
+	Adjustments []ConfidenceAdjustment `json:"adjustments,omitempty"`
+	FinalScore  float64                `json:"final_score"`
+}
+
 // RiskCategory is one breakdown lane for decision-grade reporting.
 // Categories cover: code risk, workflow/config risk, and test confidence.
 type RiskCategory struct {
-	Key        string   `json:"key"`
-	Label      string   `json:"label"`
-	RiskScore  float64  `json:"risk_score"`
-	Confidence float64  `json:"confidence,omitempty"` // primarily used by test confidence category
-	Factors    []string `json:"factors,omitempty"`    // factor IDs contributing to risk_score
-	Reducers   []string `json:"reducers,omitempty"`   // reducer IDs affecting risk_score
+	Key        string               `json:"key"`
+	Label      string               `json:"label"`
+	RiskScore  float64              `json:"risk_score"`
+	Confidence float64              `json:"confidence,omitempty"`  // primarily used by test confidence category
+	Factors    []string             `json:"factors,omitempty"`     // factor IDs contributing to risk_score
+	Reducers   []string             `json:"reducers,omitempty"`    // reducer IDs affecting risk_score
+	Breakdown  *ConfidenceBreakdown `json:"breakdown,omitempty"`   // only set for test_confidence category
 }
 
 // RiskReducer is something that lowers risk deterministically (based on diff signals).
@@ -117,6 +132,7 @@ type Result struct {
 	Signals         Signals          `json:"signals"`
 	RiskScore       float64          `json:"risk_score"` // 0–100, higher = riskier
 	RiskBand        string           `json:"risk_band"`
+	Interpretation  string           `json:"interpretation,omitempty"` // plain-English summary
 	Factors         []RiskFactor     `json:"factors"`
 	Categories      []RiskCategory   `json:"categories,omitempty"`
 	Reducers        []RiskReducer    `json:"reducers,omitempty"`
@@ -145,11 +161,15 @@ type ScoreWeights struct {
 	TestsMissingPoints  float64
 
 	// Reducers subtract points from the base score.
-	ValidationNoteReducerPoints   float64
+	ValidationNoteReducerPoints   float64 // strong validation note (E2E/smoke evidence)
+	WorkflowPartialReducerPoints  float64 // moderate validation note (staging/CI evidence)
 	UnitTestEvidenceReducerPoints float64
 	E2ETestEvidenceReducerPoints  float64
 	// If only tests changed (no sensitive code domains), reduce overall risk.
 	TestOnlyDiffReducerPoints float64
+	// If test LOC ratio >= threshold (but not all-test), reduce test confidence risk.
+	TestHeavyLOCRatioThreshold float64
+	TestHeavyReducerPoints     float64
 }
 
 // DefaultWeights returns built-in v2 weights.
@@ -173,8 +193,11 @@ func DefaultWeights() ScoreWeights {
 		TestsMissingPoints:  18,
 
 		ValidationNoteReducerPoints:   10,
+		WorkflowPartialReducerPoints:  6,
 		UnitTestEvidenceReducerPoints: 7,
 		E2ETestEvidenceReducerPoints:  14,
 		TestOnlyDiffReducerPoints:     10,
+		TestHeavyLOCRatioThreshold:    0.40,
+		TestHeavyReducerPoints:        6,
 	}
 }

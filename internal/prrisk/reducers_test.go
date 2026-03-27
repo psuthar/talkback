@@ -2,9 +2,9 @@ package prrisk
 
 import "testing"
 
-// TestReducerValidationNoteForWorkflowFactor verifies the validation-note reducer
-// fires when a workflow/deploy/gomod factor is present and a note was found.
-func TestReducerValidationNoteForWorkflowFactor(t *testing.T) {
+// TestReducerValidationNoteModerateForWorkflowDispatch verifies the moderate tier
+// fires for a "workflow dispatch" snippet.
+func TestReducerValidationNoteModerateForWorkflowDispatch(t *testing.T) {
 	s := Signals{
 		ValidationNoteFound:   true,
 		ValidationNoteSnippet: "Validation: ran workflow dispatch",
@@ -13,13 +13,13 @@ func TestReducerValidationNoteForWorkflowFactor(t *testing.T) {
 	for _, factorID := range []string{"ci_workflows", "deploy_config", "go_mod_deps"} {
 		factors := []RiskFactor{{ID: factorID, Points: 12}}
 		reducers := DetectReducers(s, factors, DefaultWeights())
-		found := findReducer(reducers, "validation_note_present")
+		found := findReducer(reducers, "validation_note_moderate")
 		if found == nil {
-			t.Errorf("expected validation_note_present reducer for factor %s", factorID)
+			t.Errorf("expected validation_note_moderate reducer for factor %s", factorID)
 			continue
 		}
-		if found.Points != DefaultWeights().ValidationNoteReducerPoints {
-			t.Errorf("[%s] points: want %v got %v", factorID, DefaultWeights().ValidationNoteReducerPoints, found.Points)
+		if found.Points != DefaultWeights().WorkflowPartialReducerPoints {
+			t.Errorf("[%s] points: want %v got %v", factorID, DefaultWeights().WorkflowPartialReducerPoints, found.Points)
 		}
 		if found.CategoryKey != CategoryWorkflow {
 			t.Errorf("[%s] category: want %s got %s", factorID, CategoryWorkflow, found.CategoryKey)
@@ -27,8 +27,48 @@ func TestReducerValidationNoteForWorkflowFactor(t *testing.T) {
 	}
 }
 
-// TestReducerValidationNoteAbsentWithoutWorkflowFactor verifies the note reducer
-// does not fire when only non-workflow factors are present.
+// TestReducerValidationNoteStrongForE2EEvidence verifies the strong tier fires
+// when the snippet mentions E2E or smoke testing.
+func TestReducerValidationNoteStrongForE2EEvidence(t *testing.T) {
+	s := Signals{
+		ValidationNoteFound:   true,
+		ValidationNoteSnippet: "Validation: ran E2E smoke suite, all tests passed",
+		DomainHits:            map[string]int{},
+	}
+	factors := []RiskFactor{{ID: "ci_workflows", Points: 12}}
+	w := DefaultWeights()
+	reducers := DetectReducers(s, factors, w)
+	found := findReducer(reducers, "validation_note_strong")
+	if found == nil {
+		t.Fatal("expected validation_note_strong for E2E evidence snippet")
+	}
+	if found.Points != w.ValidationNoteReducerPoints {
+		t.Errorf("points: want %v got %v", w.ValidationNoteReducerPoints, found.Points)
+	}
+}
+
+// TestReducerValidationNoteBasicForGenericNote verifies the basic tier fires
+// when the snippet has no staging/CI/E2E keywords.
+func TestReducerValidationNoteBasicForGenericNote(t *testing.T) {
+	s := Signals{
+		ValidationNoteFound:   true,
+		ValidationNoteSnippet: "Validation: manually verified the change looks correct",
+		DomainHits:            map[string]int{},
+	}
+	factors := []RiskFactor{{ID: "go_mod_deps", Points: 8}}
+	w := DefaultWeights()
+	reducers := DetectReducers(s, factors, w)
+	found := findReducer(reducers, "validation_note_basic")
+	if found == nil {
+		t.Fatal("expected validation_note_basic for generic note")
+	}
+	if found.Points != w.WorkflowPartialReducerPoints/2 {
+		t.Errorf("points: want %v got %v", w.WorkflowPartialReducerPoints/2, found.Points)
+	}
+}
+
+// TestReducerValidationNoteAbsentWithoutWorkflowFactor verifies no tiered note reducer
+// fires when only non-workflow factors are present.
 func TestReducerValidationNoteAbsentWithoutWorkflowFactor(t *testing.T) {
 	s := Signals{
 		ValidationNoteFound: true,
@@ -36,8 +76,10 @@ func TestReducerValidationNoteAbsentWithoutWorkflowFactor(t *testing.T) {
 	}
 	factors := []RiskFactor{{ID: "domain_auth", Points: 14}}
 	reducers := DetectReducers(s, factors, DefaultWeights())
-	if findReducer(reducers, "validation_note_present") != nil {
-		t.Error("validation_note_present should not fire without a workflow/deploy/gomod factor")
+	for _, id := range []string{"validation_note_strong", "validation_note_moderate", "validation_note_basic"} {
+		if findReducer(reducers, id) != nil {
+			t.Errorf("%s should not fire without a workflow/deploy/gomod factor", id)
+		}
 	}
 }
 
@@ -173,6 +215,62 @@ func TestReducerLowersScoreViaScoreFunction(t *testing.T) {
 
 	if with >= without {
 		t.Errorf("E2E evidence should lower score: with=%.1f without=%.1f", with, without)
+	}
+}
+
+// TestReducerTestHeavyDiff verifies test_heavy_diff fires when test LOC ratio is high
+// but the diff includes non-test files.
+func TestReducerTestHeavyDiff(t *testing.T) {
+	s := Signals{
+		FileCount:    5,
+		TestFiles:    3,
+		TotalLOC:     100,
+		TestLOCRatio: 0.60,
+		DomainHits:   map[string]int{DomainWeb: 2, DomainTests: 3},
+	}
+	w := DefaultWeights()
+	reducers := DetectReducers(s, []RiskFactor{}, w)
+	found := findReducer(reducers, "test_heavy_diff")
+	if found == nil {
+		t.Fatal("expected test_heavy_diff reducer when test LOC ratio >= threshold")
+	}
+	if found.Points != w.TestHeavyReducerPoints {
+		t.Errorf("points: want %v got %v", w.TestHeavyReducerPoints, found.Points)
+	}
+	if found.CategoryKey != CategoryTestConfidence {
+		t.Errorf("category: want %s got %s", CategoryTestConfidence, found.CategoryKey)
+	}
+}
+
+// TestReducerTestHeavyDiffNotFiredWhenAllTests verifies test_heavy_diff is suppressed
+// when all files are tests (test_only_diff takes priority).
+func TestReducerTestHeavyDiffNotFiredWhenAllTests(t *testing.T) {
+	s := Signals{
+		FileCount:    3,
+		TestFiles:    3,
+		TotalLOC:     60,
+		TestLOCRatio: 1.0,
+		DomainHits:   map[string]int{DomainTests: 3},
+	}
+	reducers := DetectReducers(s, []RiskFactor{}, DefaultWeights())
+	if findReducer(reducers, "test_heavy_diff") != nil {
+		t.Error("test_heavy_diff should not fire when all files are tests")
+	}
+}
+
+// TestReducerTestHeavyDiffNotFiredBelowThreshold verifies test_heavy_diff does not
+// fire when test LOC ratio is below the threshold.
+func TestReducerTestHeavyDiffBelowThreshold(t *testing.T) {
+	s := Signals{
+		FileCount:    5,
+		TestFiles:    1,
+		TotalLOC:     100,
+		TestLOCRatio: 0.10, // below 0.40 threshold
+		DomainHits:   map[string]int{DomainWeb: 4, DomainTests: 1},
+	}
+	reducers := DetectReducers(s, []RiskFactor{}, DefaultWeights())
+	if findReducer(reducers, "test_heavy_diff") != nil {
+		t.Error("test_heavy_diff should not fire below LOC ratio threshold")
 	}
 }
 

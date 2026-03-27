@@ -82,7 +82,7 @@ jobs:
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: PR risk scoring (v2.1)
+      - name: PR risk scoring (v2.2)
         run: |
           mkdir -p artifacts/release-readiness
           go run ./cmd/prrisk \

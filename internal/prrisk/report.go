@@ -23,6 +23,9 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString(fmt.Sprintf("# TalkBack PR Risk Report (v%d.%d)\n\n", r.Version, r.VersionMinor))
 	sb.WriteString(fmt.Sprintf("**Generated:** %s  \n", r.GeneratedAt.Format("2006-01-02T15:04:05Z")))
 	sb.WriteString(fmt.Sprintf("**Base ref:** `%s`  \n\n", r.BaseRef))
+	if r.Interpretation != "" {
+		sb.WriteString(fmt.Sprintf("> %s\n\n", r.Interpretation))
+	}
 	sb.WriteString("## Summary\n\n")
 	sb.WriteString(fmt.Sprintf("| Metric | Value |\n|--------|-------|\n"))
 	sb.WriteString(fmt.Sprintf("| Risk score | **%.1f** / 100 |\n", r.RiskScore))
@@ -68,6 +71,26 @@ func WriteMarkdown(path string, r Result) error {
 			sb.WriteString(fmt.Sprintf("| %s | %.1f | %s |\n", c.Label, c.RiskScore, conf))
 		}
 	}
+	// Confidence breakdown sub-table (test_confidence lane only).
+	for _, c := range r.Categories {
+		if c.Key == CategoryTestConfidence && c.Breakdown != nil {
+			sb.WriteString("\n### Test confidence breakdown\n\n")
+			sb.WriteString(fmt.Sprintf("Base score: %.0f\n\n", c.Breakdown.BaseScore))
+			if len(c.Breakdown.Adjustments) > 0 {
+				sb.WriteString("| Reason | Δ |\n|--------|---:|\n")
+				for _, adj := range c.Breakdown.Adjustments {
+					sign := "+"
+					if adj.Delta < 0 {
+						sign = ""
+					}
+					sb.WriteString(fmt.Sprintf("| %s | %s%.0f |\n", adj.Reason, sign, adj.Delta))
+				}
+				sb.WriteString(fmt.Sprintf("\n**Final confidence score: %.0f / 100**\n", c.Breakdown.FinalScore))
+			}
+			break
+		}
+	}
+
 	sb.WriteString("\n## Risk factors\n\n")
 	if len(r.Factors) == 0 {
 		sb.WriteString("_No factors triggered._\n")

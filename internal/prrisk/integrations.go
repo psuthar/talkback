@@ -26,9 +26,9 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 	}
 
 	md.WriteString("\n**Required actions before merge:**\n")
-	md.WriteString("_See artifact `pr_risk_v2_1.md` for the full checklist._\n")
+	md.WriteString("_See artifact `pr_risk.md` for the full checklist._\n")
 
-	md.WriteString("\n_See artifact `pr_risk_v2_1.md` for reducers, category breakdown, and full mitigations._\n")
+	md.WriteString("\n_See artifact `pr_risk.md` for reducers, category breakdown, and full mitigations._\n")
 
 	return Integrations{
 		JiraIssueKey:      jiraKey,

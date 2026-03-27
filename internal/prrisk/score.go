@@ -111,9 +111,6 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 	}
 
 	score := clamp100(sum - reducerSum)
-	if score > 100 {
-		score = 100
-	}
 
 	riskBand := band(score)
 	cats := ComputeCategories(s, factors, reducers)
@@ -122,7 +119,7 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 	mits := Mitigate(factors)
 	integ := BuildIntegrations(factors, score, s.BaseRef, jiraKey)
 
-	return Result{
+	res := Result{
 		Version:         Version,
 		VersionMinor:    VersionMinor,
 		GeneratedAt:     now,
@@ -137,6 +134,8 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		Mitigations:     mits,
 		Integrations:    integ,
 	}
+	res.Interpretation = buildInterpretation(res)
+	return res
 }
 
 func webChurn(s Signals) int {

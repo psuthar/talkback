@@ -115,6 +115,15 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 		}
 	}
 	s.TotalLOC = s.TotalAdded + s.TotalDeleted
+	if s.TotalLOC > 0 && s.TestFiles > 0 {
+		testLOC := 0
+		for _, f := range files {
+			if IsTestPath(f.Path) {
+				testLOC += f.Added + f.Deleted
+			}
+		}
+		s.TestLOCRatio = float64(testLOC) / float64(s.TotalLOC)
+	}
 	return s
 }
 

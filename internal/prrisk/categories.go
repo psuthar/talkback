@@ -33,27 +33,57 @@ func laneForFactorID(factorID string) string {
 	}
 }
 
-func testConfidenceScore(s Signals) float64 {
-	// Sensitive domains in this diff are where missing tests matter.
+func testConfidenceScore(s Signals) (float64, *ConfidenceBreakdown) {
+	const base = 50.0
+	bd := &ConfidenceBreakdown{BaseScore: base}
+	score := base
+
 	sensitiveChanged := s.DomainHits[DomainAuth] > 0 ||
 		s.DomainHits[DomainRAG] > 0 ||
 		s.DomainHits[DomainProcessing] > 0 ||
 		s.DomainHits[DomainMigrations] > 0
 
 	if !sensitiveChanged {
-		// Changes are likely low-risk for correctness; "confidence" is high.
-		return 85
+		const delta = 35.0
+		bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+			Reason: "No sensitive domains changed",
+			Delta:  delta,
+		})
+		score += delta // 85
+	} else {
+		const sensitiveAdj = -10.0
+		bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+			Reason: "Sensitive domains changed",
+			Delta:  sensitiveAdj,
+		})
+		score += sensitiveAdj // 40
+
+		if s.E2ETestFiles > 0 {
+			const e2eAdj = 40.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "E2E tests present in diff",
+				Delta:  e2eAdj,
+			})
+			score += e2eAdj // 80
+		} else if s.UnitTestFiles > 0 || s.TestFiles > 0 {
+			const unitAdj = 20.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "Unit tests present in diff",
+				Delta:  unitAdj,
+			})
+			score += unitAdj // 60
+		} else {
+			const noTestAdj = -15.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "No tests for sensitive domain changes",
+				Delta:  noTestAdj,
+			})
+			score += noTestAdj // 25
+		}
 	}
 
-	// Prefer E2E evidence.
-	if s.E2ETestFiles > 0 {
-		return 80
-	}
-	if s.UnitTestFiles > 0 || s.TestFiles > 0 {
-		return 60
-	}
-	// No tests in diff for sensitive areas.
-	return 25
+	bd.FinalScore = score
+	return score, bd
 }
 
 // ComputeCategories builds the decision-grade risk category breakdown.
@@ -81,12 +111,18 @@ func ComputeCategories(s Signals, factors []RiskFactor, reducers []RiskReducer) 
 	codeRisk := clamp100(baseByLane[CategoryCode] - reducerByLane[CategoryCode])
 	workflowRisk := clamp100(baseByLane[CategoryWorkflow] - reducerByLane[CategoryWorkflow])
 
-	conf := testConfidenceScore(s)
+	conf, bd := testConfidenceScore(s)
 	testConfidenceRisk := clamp100(100 - conf)
 	if s.GitError != "" {
 		// Git issues reduce confidence regardless of test evidence.
+		const gitAdj = -10.0
+		bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+			Reason: "Git error reduces confidence",
+			Delta:  gitAdj,
+		})
 		testConfidenceRisk = clamp100(testConfidenceRisk + 10)
-		conf = clamp100(conf - 10)
+		conf = clamp100(conf + gitAdj)
+		bd.FinalScore = conf
 	}
 
 	return []RiskCategory{
@@ -111,6 +147,7 @@ func ComputeCategories(s Signals, factors []RiskFactor, reducers []RiskReducer) 
 			Confidence: clamp100(conf),
 			Factors:    uniqueStrings(factorsByLane[CategoryTestConfidence]),
 			Reducers:   uniqueStrings(reducersByLane[CategoryTestConfidence]),
+			Breakdown:  bd,
 		},
 	}
 }

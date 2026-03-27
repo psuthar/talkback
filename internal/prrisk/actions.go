@@ -38,7 +38,7 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 			AppliesWhen: "git diff base...HEAD was unavailable",
 			Checklist: []string{
 				"Confirm CI uses `fetch-depth: 0` (or an equivalent full-history checkout).",
-				"Re-run PR risk v2.1 scoring after the checkout depth fix.",
+				"Re-run PR risk v2.2 scoring after the checkout depth fix.",
 			},
 		})
 	}

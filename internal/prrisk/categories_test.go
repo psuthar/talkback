@@ -157,6 +157,46 @@ func TestCategoriesNoDuplicateFactors(t *testing.T) {
 	}
 }
 
+// TestCategoriesTestConfidenceBreakdownPresent verifies ConfidenceBreakdown is populated
+// for the test_confidence category.
+func TestCategoriesTestConfidenceBreakdownPresent(t *testing.T) {
+	s := Signals{
+		DomainHits:   map[string]int{DomainAuth: 1},
+		E2ETestFiles: 1,
+		TestFiles:    1,
+	}
+	cats := ComputeCategories(s, nil, nil)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	if tc.Breakdown == nil {
+		t.Fatal("expected ConfidenceBreakdown to be populated")
+	}
+	if tc.Breakdown.FinalScore != tc.Confidence {
+		t.Errorf("breakdown FinalScore %.0f != Confidence %.0f", tc.Breakdown.FinalScore, tc.Confidence)
+	}
+	if len(tc.Breakdown.Adjustments) == 0 {
+		t.Error("expected at least one adjustment in breakdown")
+	}
+}
+
+// TestCategoriesTestConfidenceBreakdownBaseScore verifies the base score is 50.
+func TestCategoriesTestConfidenceBreakdownBaseScore(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{DomainWeb: 1}}
+	cats := ComputeCategories(s, nil, nil)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	if tc.Breakdown == nil {
+		t.Fatal("expected ConfidenceBreakdown")
+	}
+	if tc.Breakdown.BaseScore != 50 {
+		t.Errorf("expected base score 50, got %.0f", tc.Breakdown.BaseScore)
+	}
+}
+
 func findCategory(cats []RiskCategory, key string) *RiskCategory {
 	for i := range cats {
 		if cats[i].Key == key {

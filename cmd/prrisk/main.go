@@ -21,7 +21,7 @@ import (
 func main() {
 	repo := flag.String("repo-root", ".", "repository root (git worktree)")
 	base := flag.String("base-ref", "origin/main", "git base ref for diff (e.g. origin/main)")
-	outDir := flag.String("output-dir", "artifacts/release-readiness", "directory for pr_risk_v2.json/pr_risk_v2_1.json and corresponding .md files")
+	outDir := flag.String("output-dir", "artifacts/release-readiness", "directory for pr_risk.json and pr_risk.md")
 	jira := flag.String("jira-key", "", "optional Jira issue key (overrides PRRISK_JIRA_ISSUE_KEY)")
 	flag.Parse()
 
@@ -39,30 +39,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Backwards compatible outputs: keep legacy v2 filenames, and add v2.1 variants.
-	jsonV2 := filepath.Join(out, "pr_risk_v2.json")
-	mdV2 := filepath.Join(out, "pr_risk_v2.md")
-	jsonV21 := filepath.Join(out, "pr_risk_v2_1.json")
-	mdV21 := filepath.Join(out, "pr_risk_v2_1.md")
+	jsonOut := filepath.Join(out, "pr_risk.json")
+	mdOut := filepath.Join(out, "pr_risk.md")
 
-	if err := prrisk.WriteJSON(jsonV2, res); err != nil {
-		fmt.Fprintf(os.Stderr, "prrisk: write json (v2): %v\n", err)
+	if err := prrisk.WriteJSON(jsonOut, res); err != nil {
+		fmt.Fprintf(os.Stderr, "prrisk: write json: %v\n", err)
 		os.Exit(1)
 	}
-	if err := prrisk.WriteJSON(jsonV21, res); err != nil {
-		fmt.Fprintf(os.Stderr, "prrisk: write json (v2.1): %v\n", err)
-		os.Exit(1)
-	}
-	if err := prrisk.WriteMarkdown(mdV2, res); err != nil {
-		fmt.Fprintf(os.Stderr, "prrisk: write markdown (v2): %v\n", err)
-		os.Exit(1)
-	}
-	if err := prrisk.WriteMarkdown(mdV21, res); err != nil {
-		fmt.Fprintf(os.Stderr, "prrisk: write markdown (v2.1): %v\n", err)
+	if err := prrisk.WriteMarkdown(mdOut, res); err != nil {
+		fmt.Fprintf(os.Stderr, "prrisk: write markdown: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("PR risk v2.1: score=%.1f (%s) — wrote %s/%s\n", res.RiskScore, res.RiskBand, filepath.Base(jsonV21), filepath.Base(mdV21))
+	fmt.Printf("PR risk v%d.%d: score=%.1f (%s) — wrote %s/%s\n",
+		prrisk.Version, prrisk.VersionMinor, res.RiskScore, res.RiskBand,
+		filepath.Base(jsonOut), filepath.Base(mdOut))
 	if res.Signals.GitError != "" {
 		fmt.Fprintf(os.Stderr, "warning: git diff issue: %s\n", res.Signals.GitError)
 	}
