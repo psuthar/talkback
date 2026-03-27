@@ -24,6 +24,8 @@ class ReadinessResult:
     validations_required: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     recommended_actions: list[str] = field(default_factory=list)
+    # Structured per-check remediation guidance, populated from config.yaml remediation mapping.
+    remediation_items: list[dict] = field(default_factory=list)
     # Explains when the final outcome differs from what score alone would produce.
     # Empty when score-only and final outcome agree (e.g. score < warn_threshold → BLOCK).
     outcome_overrides: list[str] = field(default_factory=list)
@@ -213,6 +215,26 @@ def compute_outcome_overrides(
             f"but outcome demoted to WARN"
         )
     return overrides
+
+
+def build_remediation_items(failed_checks: list[str], config: dict) -> list[dict]:
+    """Map each failed check key to its remediation entry from config.yaml.
+
+    Returns a list of dicts with keys: check, severity, likely_cause,
+    recommended_action, fix_type.  Unknown keys get a minimal fallback entry.
+    """
+    remediation_map = config.get("remediation", {}) or {}
+    items: list[dict] = []
+    for check in failed_checks:
+        entry = remediation_map.get(check) or {}
+        items.append({
+            "check": check,
+            "severity": entry.get("severity", "warn"),
+            "likely_cause": entry.get("likely_cause", ""),
+            "recommended_action": entry.get("recommended_action", f"Investigate check: {check}"),
+            "fix_type": entry.get("fix_type", ""),
+        })
+    return items
 
 
 def compute_readiness(
@@ -406,6 +428,8 @@ def compute_readiness(
     elif outcome == "WARN":
         recommended.append("Review warnings before deploy")
 
+    remediation_items = build_remediation_items(failed_checks, config)
+
     return ReadinessResult(
         outcome=outcome,
         score=score,
@@ -430,6 +454,7 @@ def compute_readiness(
             "validation_note_snippet": commit_validation_snippet if commit_validation_note else "",
         },
         recommended_actions=recommended,
+        remediation_items=remediation_items,
         outcome_overrides=outcome_overrides,
     )
 

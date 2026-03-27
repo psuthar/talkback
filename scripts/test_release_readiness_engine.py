@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.release_readiness_engine import compute_readiness
+from scripts.release_readiness_engine import build_remediation_items, compute_readiness
 
 
 BASE_CONFIG = {
@@ -180,6 +180,54 @@ class ReleaseReadinessEngineTests(unittest.TestCase):
         self.assertIn("smoke_artifact", res.failed_checks)
         self.assertIn("e2e_artifact", res.failed_checks)
         self.assertIn("coverage_regression", res.failed_checks)
+
+    def test_remediation_items_populated_on_warn(self):
+        config_with_remediation = {
+            **BASE_CONFIG,
+            "remediation": {
+                "coverage_regression": {
+                    "severity": "warn",
+                    "likely_cause": "Coverage dropped",
+                    "recommended_action": "Add tests",
+                    "fix_type": "test",
+                },
+            },
+        }
+        res = compute_readiness(
+            config=config_with_remediation,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 40, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        self.assertIn("coverage_regression", res.failed_checks)
+        checks = [item["check"] for item in res.remediation_items]
+        self.assertIn("coverage_regression", checks)
+        item = next(i for i in res.remediation_items if i["check"] == "coverage_regression")
+        self.assertEqual(item["severity"], "warn")
+        self.assertEqual(item["fix_type"], "test")
+        self.assertEqual(item["recommended_action"], "Add tests")
+
+    def test_remediation_items_empty_on_pass(self):
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        self.assertEqual(res.outcome, "PASS")
+        self.assertEqual(res.remediation_items, [])
+
+    def test_build_remediation_items_fallback_for_unknown_key(self):
+        items = build_remediation_items(["unknown_check"], {})
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["check"], "unknown_check")
+        self.assertIn("unknown_check", items[0]["recommended_action"])
 
     def test_happy_path_passes(self):
         res = compute_readiness(

@@ -96,6 +96,66 @@ scoring:
     risky_config_without_note: 10
   block_score: 0
 
+# Deterministic remediation guidance, keyed by failed_check identifier.
+# Used by the readiness script to populate the remediation section of reports.
+# Fields: severity (block|warn), likely_cause, recommended_action, fix_type (code|test|config|process|infra|db)
+remediation:
+  smoke_artifact:
+    severity: warn
+    likely_cause: "Smoke test job did not run or failed to upload results"
+    recommended_action: "Check the go-test job logs; re-run the workflow if transient"
+    fix_type: process
+  smoke_parse_error:
+    severity: block
+    likely_cause: "smoke_results.json was written but contains invalid JSON"
+    recommended_action: "Inspect the 'Write smoke_results.json' step output in CI"
+    fix_type: process
+  smoke_failed:
+    severity: block
+    likely_cause: "One or more Go tests failed"
+    recommended_action: "Run 'go test ./...' locally and fix the failing tests before merge"
+    fix_type: code
+  e2e_artifact:
+    severity: warn
+    likely_cause: "Playwright did not produce output or the e2e_to_readiness converter step failed"
+    recommended_action: "Check the Playwright and converter step logs; re-run if transient"
+    fix_type: process
+  e2e_skipped:
+    severity: warn
+    likely_cause: "E2E step was explicitly skipped or timed out before producing results"
+    recommended_action: "Investigate why Playwright was skipped; re-run or mark as known flake if intentional"
+    fix_type: process
+  e2e_critical:
+    severity: block
+    likely_cause: "A test matching a critical name pattern (auth/login/session/upload/material/invite) failed"
+    recommended_action: "Run 'npx playwright test' locally targeting the failing spec and fix before merge"
+    fix_type: test
+  e2e_non_critical:
+    severity: warn
+    likely_cause: "Non-critical E2E tests failed (does not match critical name patterns)"
+    recommended_action: "Investigate failing specs; fix or document as a known flake if intentional"
+    fix_type: test
+  e2e_retries:
+    severity: warn
+    likely_cause: "Playwright retried tests — indicates flakiness or timing issues in the test suite"
+    recommended_action: "Add explicit waits or stability guards to the affected test; investigate root cause"
+    fix_type: test
+  coverage_regression:
+    severity: warn
+    likely_cause: "New code was added without corresponding tests, lowering line coverage"
+    recommended_action: "Add unit tests for the changed area; verify with 'go test -cover ./...'"
+    fix_type: test
+  risky_config_without_note:
+    severity: warn
+    likely_cause: "A workflow, Dockerfile, or deploy config file changed without a Validation: commit note"
+    recommended_action: "Add 'Validation: <what you tested>' to a commit message in this branch"
+    fix_type: process
+  risk_without_validation:
+    severity: block
+    likely_cause: "Changed paths triggered a risk category but required validation evidence is missing from smoke/E2E results"
+    recommended_action: "Ensure the relevant smoke and E2E tests ran and passed for the affected area; check infer_validations_when_pass in config.yaml"
+    fix_type: test
+
 # E2E failure severity: tests matching these name substrings are "critical" for blocking
 e2e_critical_name_patterns:
   - "auth"
