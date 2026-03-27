@@ -72,10 +72,39 @@ When working in this repository, Claude must:
 
 ## Subagent routing
 
-Use the `talkback-e2e-fixer` subagent for tasks that involve:
-- running Playwright tests
-- diagnosing E2E failures
-- fixing selectors, waits, fixture/setup issues, or minor UI bugs revealed by browser tests
+Route tasks to specialized TalkBack subagents as follows:
+
+- `talkback-architect`
+  - multi-file design work spanning backend + frontend + data model
+  - migrations, API contract changes, and rollout/backward-compatibility decisions
+  - decision/premise model evolution where naming and structure matter
+
+- `talkback-backend`
+  - Go API handlers, database access, auth/session, invitations, processing, RAG, storage
+  - endpoint behavior fixes, business logic updates, and backend test updates
+
+- `talkback-frontend`
+  - React/Vite UI changes in `web/` (creator/participant modes, materials, Q&A, invite flows)
+  - client-side state, API wiring, and UI behavior fixes that do not require broad UX redesign
+
+- `talkback-ux`
+  - interaction design and usability improvements
+  - layout/content hierarchy updates that should preserve existing visual language unless requested otherwise
+
+- `talkback-reviewer`
+  - code review tasks focused on regressions, risk, and missing tests
+  - use when the user asks for a review or wants a quality/risk pass
+
+- `talkback-e2e-fixer`
+  - running Playwright tests
+  - diagnosing E2E failures
+  - fixing selectors, waits, fixture/setup issues, or minor UI bugs revealed by browser tests
+
+- `talkback-smoke-fixer`
+  - running smoke/integration tests
+  - diagnosing smoke failures
+  - fixing smoke tests or small backend issues revealed by smoke runs
+  - expanding smoke coverage while following repo smoke-test conventions
 
 Use the `smoke-tests` skill for API/integration test creation.
 Use the `e2e-tests` skill for browser-test authoring conventions.
@@ -93,6 +122,7 @@ Use the `talkback-smoke-fixer` subagent for:
 - expanding smoke coverage while following repo smoke-test conventions
 
 Use the `e2e-tests` skill and `talkback-e2e-fixer` subagent for browser-based workflow validation.
+Use `talkback-reviewer` for post-change risk review and missing-test detection.
 
 ---
 
