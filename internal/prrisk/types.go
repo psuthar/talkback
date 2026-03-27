@@ -1,10 +1,14 @@
-// Package prrisk implements deterministic PR risk scoring (v2) from git diffs.
+// Package prrisk implements deterministic PR risk scoring (v2.x) from git diffs.
 package prrisk
 
 import "time"
 
-// Version is the report schema version.
+// Version is the major report schema version.
 const Version = 2
+
+// VersionMinor is the minor report schema version.
+// v2.2 == Version=2, VersionMinor=2
+const VersionMinor = 2
 
 // Domain labels for changed-file classification (extensible).
 const (
@@ -32,18 +36,26 @@ type FileChange struct {
 
 // Signals is extracted, deterministic input to scoring.
 type Signals struct {
-	BaseRef        string         `json:"base_ref"`
-	HeadRef        string         `json:"head_ref"`
-	FileCount      int            `json:"file_count"`
-	TotalAdded     int            `json:"total_added"`
-	TotalDeleted   int            `json:"total_deleted"`
-	TotalLOC       int            `json:"total_loc"` // added + deleted (diff churn)
-	Files          []FileChange   `json:"files"`
-	DomainHits     map[string]int `json:"domain_hits"` // domain -> file count
-	TestFiles      int            `json:"test_files"`  // files classified as tests
-	ConfigFiles    int            `json:"config_files"`
-	MigrationFiles int            `json:"migration_files"`
-	GitError       string         `json:"git_error,omitempty"`
+	BaseRef               string         `json:"base_ref"`
+	HeadRef               string         `json:"head_ref"`
+	FileCount             int            `json:"file_count"`
+	TotalAdded            int            `json:"total_added"`
+	TotalDeleted          int            `json:"total_deleted"`
+	TotalLOC              int            `json:"total_loc"` // added + deleted (diff churn)
+	TestLOCRatio          float64        `json:"test_loc_ratio,omitempty"` // test LOC / total LOC
+	Files                 []FileChange   `json:"files"`
+	DomainHits            map[string]int `json:"domain_hits"` // domain -> file count
+	TestDomainHits        map[string]int `json:"test_domain_hits,omitempty"`
+	TestUnitDomainHits    map[string]int `json:"test_unit_domain_hits,omitempty"`
+	TestE2EDomainHits     map[string]int `json:"test_e2e_domain_hits,omitempty"`
+	TestFiles             int            `json:"test_files"` // files classified as tests
+	UnitTestFiles         int            `json:"unit_test_files,omitempty"`
+	E2ETestFiles          int            `json:"e2e_test_files,omitempty"`
+	ConfigFiles           int            `json:"config_files"`
+	MigrationFiles        int            `json:"migration_files"`
+	GitError              string         `json:"git_error,omitempty"`
+	ValidationNoteFound   bool           `json:"validation_note_found,omitempty"`
+	ValidationNoteSnippet string         `json:"validation_note_snippet,omitempty"`
 }
 
 // RiskFactor is one explainable contributor to the score.
@@ -60,6 +72,51 @@ type Mitigation struct {
 	Actions  []string `json:"actions"`
 }
 
+// ConfidenceAdjustment is one contribution to the test confidence score.
+type ConfidenceAdjustment struct {
+	Reason string  `json:"reason"`
+	Delta  float64 `json:"delta"` // positive = more confident, negative = less
+}
+
+// ConfidenceBreakdown explains how the test_confidence score was computed.
+type ConfidenceBreakdown struct {
+	BaseScore   float64                `json:"base_score"`
+	Adjustments []ConfidenceAdjustment `json:"adjustments,omitempty"`
+	FinalScore  float64                `json:"final_score"`
+}
+
+// RiskCategory is one breakdown lane for decision-grade reporting.
+// Categories cover: code risk, workflow/config risk, and test confidence.
+type RiskCategory struct {
+	Key        string               `json:"key"`
+	Label      string               `json:"label"`
+	RiskScore  float64              `json:"risk_score"`
+	Confidence float64              `json:"confidence,omitempty"`  // primarily used by test confidence category
+	Factors    []string             `json:"factors,omitempty"`     // factor IDs contributing to risk_score
+	Reducers   []string             `json:"reducers,omitempty"`    // reducer IDs affecting risk_score
+	Breakdown  *ConfidenceBreakdown `json:"breakdown,omitempty"`   // only set for test_confidence category
+}
+
+// RiskReducer is something that lowers risk deterministically (based on diff signals).
+type RiskReducer struct {
+	ID       string  `json:"id"`
+	Label    string  `json:"label"`
+	Points   float64 `json:"points"` // positive amount reduces risk
+	Evidence string  `json:"evidence,omitempty"`
+	// CategoryKey indicates which lane this reducer primarily affects.
+	CategoryKey string `json:"category_key,omitempty"`
+}
+
+// RequiredAction represents a pre-merge checklist item derived from risk analysis.
+type RequiredAction struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	FixType     string `json:"fix_type,omitempty"` // code|test|config|process|infra|db
+	AppliesWhen string `json:"applies_when,omitempty"`
+	// Checklist provides concrete steps; deterministic templates only.
+	Checklist []string `json:"checklist,omitempty"`
+}
+
 // Integrations holds optional hooks for CI / issue trackers (placeholders).
 type Integrations struct {
 	JiraIssueKey      string `json:"jira_issue_key,omitempty"`
@@ -68,15 +125,20 @@ type Integrations struct {
 
 // Result is the full scoring output.
 type Result struct {
-	Version      int          `json:"version"`
-	GeneratedAt  time.Time    `json:"generated_at"`
-	BaseRef      string       `json:"base_ref"`
-	Signals      Signals      `json:"signals"`
-	RiskScore    float64      `json:"risk_score"` // 0–100, higher = riskier
-	RiskBand     string       `json:"risk_band"`
-	Factors      []RiskFactor `json:"factors"`
-	Mitigations  []Mitigation `json:"mitigations"`
-	Integrations Integrations `json:"integrations"`
+	Version         int              `json:"version"`
+	VersionMinor    int              `json:"version_minor"`
+	GeneratedAt     time.Time        `json:"generated_at"`
+	BaseRef         string           `json:"base_ref"`
+	Signals         Signals          `json:"signals"`
+	RiskScore       float64          `json:"risk_score"` // 0–100, higher = riskier
+	RiskBand        string           `json:"risk_band"`
+	Interpretation  string           `json:"interpretation,omitempty"` // plain-English summary
+	Factors         []RiskFactor     `json:"factors"`
+	Categories      []RiskCategory   `json:"categories,omitempty"`
+	Reducers        []RiskReducer    `json:"reducers,omitempty"`
+	RequiredActions []RequiredAction `json:"required_actions,omitempty"`
+	Mitigations     []Mitigation     `json:"mitigations"`
+	Integrations    Integrations     `json:"integrations"`
 }
 
 // ScoreWeights tune deterministic contributions (sum capped at 100).
@@ -97,6 +159,17 @@ type ScoreWeights struct {
 	DeployPoints        float64
 	ConfigPoints        float64
 	TestsMissingPoints  float64
+
+	// Reducers subtract points from the base score.
+	ValidationNoteReducerPoints   float64 // strong validation note (E2E/smoke evidence)
+	WorkflowPartialReducerPoints  float64 // moderate validation note (staging/CI evidence)
+	UnitTestEvidenceReducerPoints float64
+	E2ETestEvidenceReducerPoints  float64
+	// If only tests changed (no sensitive code domains), reduce overall risk.
+	TestOnlyDiffReducerPoints float64
+	// If test LOC ratio >= threshold (but not all-test), reduce test confidence risk.
+	TestHeavyLOCRatioThreshold float64
+	TestHeavyReducerPoints     float64
 }
 
 // DefaultWeights returns built-in v2 weights.
@@ -118,5 +191,13 @@ func DefaultWeights() ScoreWeights {
 		DeployPoints:        12,
 		ConfigPoints:        8,
 		TestsMissingPoints:  18,
+
+		ValidationNoteReducerPoints:   10,
+		WorkflowPartialReducerPoints:  6,
+		UnitTestEvidenceReducerPoints: 7,
+		E2ETestEvidenceReducerPoints:  14,
+		TestOnlyDiffReducerPoints:     10,
+		TestHeavyLOCRatioThreshold:    0.40,
+		TestHeavyReducerPoints:        6,
 	}
 }

@@ -7,7 +7,7 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
 3. **Outputs** — `artifacts/release-readiness/report.json` and `report.md`.
-4. **PR risk (v2)** — deterministic diff-based risk from `go run ./cmd/prrisk` → `pr_risk_v2.json` and `pr_risk_v2.md` (same artifact directory).
+4. **PR risk (v2.2)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` artifacts (same directory).
 
 ## Core validations (mapped to changed paths)
 
@@ -44,7 +44,7 @@ python scripts/release_readiness.py \
   --smoke-results smoke_results.json \
   --output-dir artifacts/release-readiness
 
-# Optional: PR risk v2 only (git diff signals; no Python)
+# Optional: PR risk v2.2 (git diff signals; no Python)
 go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
 ```
 
@@ -64,14 +64,14 @@ The recommended initial policy is **`block_only`**: warnings are visible in the 
 | Variable | Meaning |
 |----------|---------|
 | `RELEASE_READINESS_BASE_REF` | Default `origin/main` for `--base-ref` |
-| `PRRISK_JIRA_ISSUE_KEY` | Optional; echoed into PR risk v2 `integrations` for future Jira linking |
+| `PRRISK_JIRA_ISSUE_KEY` | Optional; echoed into PR risk v2.x `integrations` for future Jira linking |
 | `READINESS_ENFORCEMENT_MODE` | `block_only` (default) or `warn_and_block` |
 
 ## CI
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2) and writes `pr_risk_v2.json` / `pr_risk_v2.md`.
+1. Runs `go run ./cmd/prrisk` (PR risk v2.2) and writes `pr_risk.json` and `pr_risk.md`.
 2. Runs `go test ./...` and writes `smoke_results.json`.
 3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
 4. Builds the React frontend (`npm run build`).

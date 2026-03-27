@@ -1,4 +1,4 @@
-// Command prrisk runs deterministic PR risk scoring (v2) from git diff signals.
+// Command prrisk runs deterministic PR risk scoring (v2.x) from git diff signals.
 //
 // Usage:
 //
@@ -21,7 +21,7 @@ import (
 func main() {
 	repo := flag.String("repo-root", ".", "repository root (git worktree)")
 	base := flag.String("base-ref", "origin/main", "git base ref for diff (e.g. origin/main)")
-	outDir := flag.String("output-dir", "artifacts/release-readiness", "directory for pr_risk_v2.json and pr_risk_v2.md")
+	outDir := flag.String("output-dir", "artifacts/release-readiness", "directory for pr_risk.json and pr_risk.md")
 	jira := flag.String("jira-key", "", "optional Jira issue key (overrides PRRISK_JIRA_ISSUE_KEY)")
 	flag.Parse()
 
@@ -38,19 +38,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "prrisk: mkdir: %v\n", err)
 		os.Exit(1)
 	}
-	jsonPath := filepath.Join(out, "pr_risk_v2.json")
-	mdPath := filepath.Join(out, "pr_risk_v2.md")
 
-	if err := prrisk.WriteJSON(jsonPath, res); err != nil {
+	jsonOut := filepath.Join(out, "pr_risk.json")
+	mdOut := filepath.Join(out, "pr_risk.md")
+
+	if err := prrisk.WriteJSON(jsonOut, res); err != nil {
 		fmt.Fprintf(os.Stderr, "prrisk: write json: %v\n", err)
 		os.Exit(1)
 	}
-	if err := prrisk.WriteMarkdown(mdPath, res); err != nil {
+	if err := prrisk.WriteMarkdown(mdOut, res); err != nil {
 		fmt.Fprintf(os.Stderr, "prrisk: write markdown: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("PR risk v2: score=%.1f (%s) — wrote %s and %s\n", res.RiskScore, res.RiskBand, jsonPath, mdPath)
+	fmt.Printf("PR risk v%d.%d: score=%.1f (%s) — wrote %s/%s\n",
+		prrisk.Version, prrisk.VersionMinor, res.RiskScore, res.RiskBand,
+		filepath.Base(jsonOut), filepath.Base(mdOut))
 	if res.Signals.GitError != "" {
 		fmt.Fprintf(os.Stderr, "warning: git diff issue: %s\n", res.Signals.GitError)
 	}

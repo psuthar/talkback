@@ -103,25 +103,39 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 			"no *_test.go / web test paths in diff; consider adding or updating tests")
 	}
 
-	score := clamp100(sum)
-	if score > 100 {
-		score = 100
+	// Reducers deterministically lower risk by subtracting points from the base sum.
+	reducers := DetectReducers(s, factors, w)
+	reducerSum := 0.0
+	for _, r := range reducers {
+		reducerSum += r.Points
 	}
+
+	score := clamp100(sum - reducerSum)
+
+	riskBand := band(score)
+	cats := ComputeCategories(s, factors, reducers)
+	req := ComputeRequiredActions(s, factors, reducers, score, riskBand)
 
 	mits := Mitigate(factors)
 	integ := BuildIntegrations(factors, score, s.BaseRef, jiraKey)
 
-	return Result{
-		Version:      Version,
-		GeneratedAt:  now,
-		BaseRef:      s.BaseRef,
-		Signals:      s,
-		RiskScore:    score,
-		RiskBand:     band(score),
-		Factors:      factors,
-		Mitigations:  mits,
-		Integrations: integ,
+	res := Result{
+		Version:         Version,
+		VersionMinor:    VersionMinor,
+		GeneratedAt:     now,
+		BaseRef:         s.BaseRef,
+		Signals:         s,
+		RiskScore:       score,
+		RiskBand:        riskBand,
+		Factors:         factors,
+		Categories:      cats,
+		Reducers:        reducers,
+		RequiredActions: req,
+		Mitigations:     mits,
+		Integrations:    integ,
 	}
+	res.Interpretation = buildInterpretation(res)
+	return res
 }
 
 func webChurn(s Signals) int {
