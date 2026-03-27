@@ -47,6 +47,37 @@ def _read_json(path: Path) -> Optional[dict]:
         return {"_parse_error": str(e)}
 
 
+def git_commit_messages(repo_root: Path, base_ref: str) -> list[str]:
+    """Return all lines from commit messages in base_ref...HEAD."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "log", "--format=%B", f"{base_ref}...HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            return []
+        return r.stdout.splitlines()
+    except OSError:
+        return []
+
+
+def detect_validation_note(lines: list[str]) -> tuple[bool, str]:
+    """Return (found, snippet).
+
+    Scans commit message lines for a line starting with ``Validation:`` or
+    ``Validate:`` (case-insensitive).  The first matching line (up to 120 chars)
+    is returned as the snippet.
+    """
+    for line in lines:
+        stripped = line.strip()
+        lower = stripped.lower()
+        if lower.startswith("validation:") or lower.startswith("validate:"):
+            return True, stripped[:120]
+    return False, ""
+
+
 def git_changed_files(repo_root: Path, base_ref: str) -> list[str]:
     try:
         r = subprocess.run(
@@ -80,6 +111,8 @@ def evaluate(
     prod_health: Optional[dict],
     migration_validated_cli: bool,
     empty_diff: bool = False,
+    commit_validation_note: bool = False,
+    commit_validation_snippet: str = "",
 ) -> ReadinessResult:
     changed = [] if empty_diff else git_changed_files(repo_root, base_ref)
     return compute_readiness(
@@ -90,6 +123,8 @@ def evaluate(
         coverage=coverage,
         prod_health=prod_health,
         migration_validated_cli=migration_validated_cli,
+        commit_validation_note=commit_validation_note,
+        commit_validation_snippet=commit_validation_snippet,
     )
 
 
@@ -147,6 +182,10 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
     ]
     if r.outcome_overrides:
         lines.append(f"| Outcome override | {r.outcome_overrides[0]} |")
+    note_present = r.evidence.get("validation_note_present", False)
+    note_source = r.evidence.get("validation_note_source", "none")
+    note_display = f"yes ({note_source})" if note_present else "no"
+    lines.append(f"| Validation note | {note_display} |")
     lines.extend([
         "",
         f"**Why:** {_outcome_rationale(r)}",
@@ -240,6 +279,9 @@ def main() -> int:
         coverage = _read_json(args.coverage) if args.coverage else None
         prod_health = _read_json(args.prod_health) if args.prod_health else None
 
+    commit_msgs = git_commit_messages(repo_root, args.base_ref)
+    commit_note_found, commit_note_snippet = detect_validation_note(commit_msgs)
+
     result = evaluate(
         repo_root,
         config,
@@ -250,6 +292,8 @@ def main() -> int:
         prod_health,
         args.migration_validated,
         empty_diff=args.empty_diff or args.fixture_mode,
+        commit_validation_note=commit_note_found,
+        commit_validation_snippet=commit_note_snippet,
     )
 
     out_dir = args.output_dir if args.output_dir.is_absolute() else repo_root / args.output_dir

@@ -135,6 +135,23 @@ class ReleaseReadinessEngineTests(unittest.TestCase):
         self.assertEqual(res.outcome, "WARN")
         self.assertIn("risky_config_without_note", res.failed_checks)
 
+    def test_risky_config_suppressed_by_commit_note(self):
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=["Dockerfile", "internal/handlers/session_materials.go"],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 51, "baseline_percent": 50},  # no regression
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            commit_validation_note=True,
+            commit_validation_snippet="Validation: ran workflow_dispatch, verified artifacts",
+        )
+        self.assertEqual(res.outcome, "PASS")
+        self.assertNotIn("risky_config_without_note", res.failed_checks)
+        self.assertTrue(res.evidence["validation_note_present"])
+        self.assertEqual(res.evidence["validation_note_source"], "commit_message")
+
     def test_coverage_regression_warns(self):
         res = compute_readiness(
             config=BASE_CONFIG,

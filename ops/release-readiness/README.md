@@ -127,6 +127,38 @@ cat /tmp/e2e_results.json
 # expected: status=passed, all 5 validations=true
 ```
 
+## Suppressing the risky-config warning via commit messages
+
+When `.github/workflows/**`, `Dockerfile`, `deploy/**`, `go.mod`, or other paths listed under `risky_config_patterns` in `config.yaml` change, the readiness check warns:
+
+> Risky config/workflow paths changed without validation note
+
+You can suppress this warning by including a `Validation:` (or `Validate:`) section in **any commit** in the range being evaluated (`base_ref...HEAD`).  The section just needs to start the line — everything after the colon is the human-readable note:
+
+```
+Fix: update Dockerfile base image to Go 1.23
+
+Validation:
+- ran workflow_dispatch on staging branch
+- confirmed Docker build succeeded and API /health returned ok
+- verified E2E smoke suite passed end-to-end
+```
+
+The readiness script reads `git log base_ref...HEAD --format=%B` and scans for a line beginning with `Validation:` or `Validate:` (case-insensitive).  When found:
+
+- `evidence.validation_note_present` → `true`
+- `evidence.validation_note_source` → `"commit_message"`
+- The `risky_config_without_note` warning and its score penalty are suppressed
+- The markdown report row **Validation note** shows `yes (commit_message)`
+
+This works for **direct commits to main/master** (push event) and **PR merges** (pull_request event) because the workflow already computes the correct `base_ref` for each event type:
+
+| Event | `base_ref` used | Commit range scanned |
+|-------|-----------------|----------------------|
+| `pull_request` | `origin/<base-branch>` | PR head commits only |
+| `push` | `github.event.before` (or `HEAD~1`) | The pushed commits |
+| `workflow_dispatch` | `--base-ref` input (or `HEAD~1`) | Explicit or last commit |
+
 ## Extending
 
 - **New Relic / deploy health**: add a step that writes `prod_health.json`, pass `--prod-health`.

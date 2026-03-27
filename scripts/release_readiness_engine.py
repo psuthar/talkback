@@ -224,6 +224,8 @@ def compute_readiness(
     coverage: Optional[dict],
     prod_health: Optional[dict],
     migration_validated_cli: bool,
+    commit_validation_note: bool = False,
+    commit_validation_snippet: str = "",
 ) -> ReadinessResult:
     penalties = config.get("scoring", {}).get("penalties", {}) or {}
     max_score = float(config.get("scoring", {}).get("max_score", 100))
@@ -301,7 +303,12 @@ def compute_readiness(
 
     # Risky config without validation note warning
     risky_hits = [f for f in changed_files if match_patterns(f, config.get("risky_config_patterns", []) or [])]
-    note = (smoke or {}).get("config_validation_note") or (e2e or {}).get("config_validation_note")
+    evidence_json_note = (smoke or {}).get("config_validation_note") or (e2e or {}).get("config_validation_note")
+    note = commit_validation_note or evidence_json_note
+    validation_note_source = (
+        "commit_message" if commit_validation_note
+        else ("evidence_json" if evidence_json_note else "none")
+    )
     if risky_hits and not note:
         files_note = ", ".join(sorted(risky_hits)[:3])
         if len(risky_hits) > 3:
@@ -418,6 +425,9 @@ def compute_readiness(
             "e2e_present": e2e is not None,
             "coverage_present": coverage is not None,
             "prod_health_present": prod_health is not None,
+            "validation_note_present": bool(note),
+            "validation_note_source": validation_note_source,
+            "validation_note_snippet": commit_validation_snippet if commit_validation_note else "",
         },
         recommended_actions=recommended,
         outcome_overrides=outcome_overrides,
