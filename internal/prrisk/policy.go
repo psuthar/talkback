@@ -27,24 +27,6 @@ func ComputeEnforcement(r Result) Enforcement {
 	}
 	reasons := computePolicyReasons(r, rec)
 
-	// Clarify UNKNOWN evidence: WARN is used (not BLOCK) because evidence is incomplete
-	// but not proven failed. The reviewer should confirm coverage gaps.
-	if rec == "warn" {
-		unknownCount := 0
-		for _, ev := range evidenceStatus {
-			if ev.Status == EvidenceUnknown {
-				unknownCount++
-			}
-		}
-		if unknownCount > 0 {
-			reasons = append(reasons, fmt.Sprintf(
-				"Evidence UNKNOWN for %d validation(s) — no confirmed failures from diff alone; "+
-					"WARN applies pending reviewer confirmation of coverage.",
-				unknownCount,
-			))
-		}
-	}
-
 	return Enforcement{
 		MergeRecommendation: rec,
 		Rationale:           mergeRationale(r, rec),
