@@ -224,8 +224,11 @@ jobs:
       - name: Run release readiness
         id: readiness
         continue-on-error: true
+        shell: bash
+        env:
+          READINESS_ENFORCEMENT_MODE: ${{ env.READINESS_ENFORCEMENT_MODE }}
         run: |
-          python scripts/release_readiness.py \
+          bash scripts/release-readiness.sh \
             --repo-root . \
             --config ops/release-readiness/config.yaml \
             --base-ref "${{ steps.base.outputs.base_ref }}" \
@@ -234,34 +237,88 @@ jobs:
             --coverage coverage.json \
             --prod-health artifacts/release-readiness/prod_health.json \
             --output-dir artifacts/release-readiness \
-            --enforcement-mode "$READINESS_ENFORCEMENT_MODE"
+            --enforcement-mode "${READINESS_ENFORCEMENT_MODE:-block_only}"
 
-      - name: Upload readiness reports
+      - name: Upload Release Readiness Artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: release-readiness-${{ github.run_id }}
-          path: artifacts/release-readiness/
+          name: release-readiness
+          path: artifacts/
           if-no-files-found: warn
 
-      - name: Enforce readiness outcome
+      - name: Evaluate Release Readiness Outcome
+        id: evaluate
         if: always()
+        shell: bash
+        env:
+          READINESS_ENFORCEMENT_MODE: ${{ env.READINESS_ENFORCEMENT_MODE }}
         run: |
-          python - <<'PY'
-          import json, os, sys
-          from pathlib import Path
-          p = Path("artifacts/release-readiness/report.json")
-          if not p.is_file():
-              print("report.json not found — readiness script may have crashed.", file=sys.stderr)
-              sys.exit(1)
-          outcome = json.loads(p.read_text(encoding="utf-8")).get("outcome", "")
-          mode = os.environ.get("READINESS_ENFORCEMENT_MODE", "block_only")
-          if outcome == "BLOCK":
-              print(f"Outcome BLOCK — failing job (enforcement_mode={mode})")
-              sys.exit(1)
-          if outcome == "WARN" and mode == "warn_and_block":
-              print(f"Outcome WARN — failing job (enforcement_mode={mode})")
-              sys.exit(1)
-          print(f"Outcome {outcome} — passing job (enforcement_mode={mode})")
-          sys.exit(0)
-          PY
+          set -euo pipefail
+          if [[ "${READINESS_FAILED:-}" == "true" ]]; then
+            echo "::error::Release readiness execution failed"
+            exit 1
+          fi
+          if [[ ! -f artifacts/release-readiness.json ]]; then
+            echo "::error::artifacts/release-readiness.json missing"
+            exit 1
+          fi
+          OUTCOME=$(jq -r '.outcome // empty' artifacts/release-readiness.json)
+          echo "Outcome: $OUTCOME"
+          echo "outcome=$OUTCOME" >> "$GITHUB_OUTPUT"
+          MODE="${READINESS_ENFORCEMENT_MODE:-block_only}"
+          if [[ "$OUTCOME" == "PASS" ]]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$OUTCOME" == "WARN" ]]; then
+            echo "::warning::Release Readiness is WARN. Review report artifact."
+            echo "status=warn" >> "$GITHUB_OUTPUT"
+            if [[ "$MODE" == "warn_and_block" ]]; then
+              echo "::error::Release Readiness is WARN and READINESS_ENFORCEMENT_MODE=warn_and_block."
+              exit 1
+            fi
+            exit 0
+          fi
+          if [[ "$OUTCOME" == "BLOCK" ]]; then
+            echo "::error::Release Readiness is BLOCK. Failing check."
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "::error::Unknown outcome: $OUTCOME"
+          exit 1
+
+      - name: Add PR Summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Release Readiness"
+            echo ""
+            if [[ ! -f artifacts/release-readiness.json ]]; then
+              echo "_Machine summary missing (artifacts/release-readiness.json)._"
+              exit 0
+            fi
+            OUTCOME=$(jq -r '.outcome // "unknown"' artifacts/release-readiness.json)
+            SCORE=$(jq -r '.score // 0' artifacts/release-readiness.json)
+            WARNINGS=$(jq -r '.warnings // 0' artifacts/release-readiness.json)
+            BLOCKERS=$(jq -r '.blockers // 0' artifacts/release-readiness.json)
+            echo "**Outcome:** ${OUTCOME}  "
+            echo "**Score:** ${SCORE}  | **Warnings:** ${WARNINGS} | **Blockers:** ${BLOCKERS}"
+            echo ""
+            case "$OUTCOME" in
+              PASS)
+                echo "Ready to merge"
+                ;;
+              WARN)
+                echo "Review warnings before merge"
+                ;;
+              BLOCK)
+                echo "Blocked — do not merge"
+                ;;
+              *)
+                echo "Outcome: ${OUTCOME}"
+                ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"
