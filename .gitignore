@@ -69,7 +69,9 @@ Thumbs.db
 cmd/api/dist/*
 !cmd/api/dist/index.html
 
-# Release readiness generated reports (keep artifacts/release-readiness/.gitkeep)
+# Release readiness generated reports (keep .gitkeep placeholders)
 artifacts/release-readiness/*
 !artifacts/release-readiness/.gitkeep
+artifacts/release-readiness-fixture-test/
+artifacts/rr-test/
 
