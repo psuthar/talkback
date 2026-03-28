@@ -31,6 +31,9 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 		if _, ok := seen[a.ID]; ok {
 			return
 		}
+		if a.Priority == "" {
+			a.Priority = priorityForActionID(a.ID)
+		}
 		seen[a.ID] = struct{}{}
 		out = append(out, a)
 	}
@@ -238,7 +241,7 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 
 	_ = reducers
 
-	return out
+	return SortRequiredActions(out)
 }
 
 // hasSensitiveDomainHit reports whether any sensitive domain has file hits in this diff.

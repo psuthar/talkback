@@ -153,12 +153,14 @@ func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 	enf := Enforcement{
 		MergeRecommendation: "block",
 		Rationale:           "High risk band.",
-		ReviewStrategy:      "Do not merge until checklist is complete.",
+		RecommendedReview: RecommendedReview{
+			Strategy:     "Do not merge until checklist is complete.",
+			RoutingHints: []string{"Include a reviewer familiar with auth flows."},
+		},
 		RequiredValidations: []string{
 			"ci: required status checks must pass before merge",
 			"test: auth/session evidence",
 		},
-		RoutingHints: []string{"Include a reviewer familiar with auth flows."},
 	}
 	integ := BuildIntegrations(nil, 72.0, "origin/main", "", nil, ScoreMath{}, enf)
 	md := integ.PRCommentMarkdown

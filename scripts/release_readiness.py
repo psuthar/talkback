@@ -331,6 +331,7 @@ def main() -> int:
         payload["pr_risk"] = {
             "version": pr_risk.get("version"),
             "version_minor": pr_risk.get("version_minor"),
+            "report_version": pr_risk.get("report_version"),
             "risk_score": pr_risk.get("risk_score"),
             "risk_band": pr_risk.get("risk_band"),
             "enforcement": pr_risk.get("enforcement"),

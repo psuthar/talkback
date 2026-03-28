@@ -155,3 +155,148 @@ func TestProximityWebE2EDoesNotMatchNonWeb(t *testing.T) {
 		t.Error("e2e test should not match non-web code")
 	}
 }
+
+// --- StructuralAlignment mirrors Mode ---
+
+func TestProximityStructuralAlignmentMirrorsMode(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     Input
+	}{
+		{
+			name: "n_a",
+			in:   Input{Files: nil, IsTest: nil},
+		},
+		{
+			name: "distant",
+			in: Input{
+				Files:  files("internal/auth/x.go", "internal/auth/y.go"),
+				IsTest: isTestFlags(false, false),
+			},
+		},
+		{
+			name: "partial",
+			in: Input{
+				Files:  files("internal/auth/x.go", "internal/auth/x_test.go", "internal/rag/y.go"),
+				IsTest: isTestFlags(false, true, false),
+			},
+		},
+		{
+			name: "co_located",
+			in: Input{
+				Files:  files("internal/auth/x.go", "internal/auth/x_test.go", "internal/auth/y.go", "internal/auth/y_test.go"),
+				IsTest: isTestFlags(false, true, false, true),
+			},
+		},
+	}
+	for _, c := range cases {
+		r := AnalyzeProximity(c.in)
+		if r.StructuralAlignment != r.Mode {
+			t.Errorf("%s: StructuralAlignment=%q, Mode=%q — expected equal", c.name, r.StructuralAlignment, r.Mode)
+		}
+	}
+}
+
+// --- BehavioralCoverage ---
+
+// TestBehavioralCoverageDistantIsUnknown verifies distant structural mode always
+// yields unknown behavioral coverage regardless of domain hit maps.
+func TestBehavioralCoverageDistantIsUnknown(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:              files("internal/auth/x.go"),
+		IsTest:             isTestFlags(false),
+		DomainHits:         map[string]int{"auth": 1},
+		TestUnitDomainHits: map[string]int{"auth": 1},
+		TestE2EDomainHits:  map[string]int{"auth": 1},
+	})
+	if r.Mode != "distant" {
+		t.Fatalf("expected distant mode for no tests in diff, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "unknown" {
+		t.Errorf("distant mode should yield unknown coverage, got %q", r.BehavioralCoverage)
+	}
+}
+
+// TestBehavioralCoverageNonSensitiveIsAdequate verifies non-sensitive production
+// domains produce adequate coverage without needing test domain hits.
+func TestBehavioralCoverageNonSensitiveIsAdequate(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:      files("web/src/Foo.tsx", "web/src/Foo.test.tsx"),
+		IsTest:     isTestFlags(false, true),
+		DomainHits: map[string]int{"web": 2},
+	})
+	if r.Mode != "co_located" {
+		t.Fatalf("expected co_located, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "adequate" {
+		t.Errorf("non-sensitive domain should yield adequate coverage, got %q", r.BehavioralCoverage)
+	}
+}
+
+// TestBehavioralCoverageE2EOverlapIsAdequate verifies E2E domain hits covering a
+// sensitive domain produce adequate coverage even without unit domain hits.
+func TestBehavioralCoverageE2EOverlapIsAdequate(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:             files("internal/auth/x.go", "internal/auth/x_test.go"),
+		IsTest:            isTestFlags(false, true),
+		DomainHits:        map[string]int{"auth": 1},
+		TestE2EDomainHits: map[string]int{"auth": 1},
+	})
+	if r.Mode != "co_located" {
+		t.Fatalf("expected co_located, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "adequate" {
+		t.Errorf("E2E overlap with sensitive domain should be adequate, got %q", r.BehavioralCoverage)
+	}
+}
+
+// TestBehavioralCoverageUnitCoLocatedIsShallow verifies co_located structural mode +
+// unit domain overlap (no E2E) on a sensitive domain produces shallow coverage.
+func TestBehavioralCoverageUnitCoLocatedIsShallow(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:              files("internal/auth/x.go", "internal/auth/x_test.go"),
+		IsTest:             isTestFlags(false, true),
+		DomainHits:         map[string]int{"auth": 1},
+		TestUnitDomainHits: map[string]int{"auth": 1},
+	})
+	if r.Mode != "co_located" {
+		t.Fatalf("expected co_located, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "shallow" {
+		t.Errorf("unit overlap + co_located + sensitive domain should be shallow, got %q", r.BehavioralCoverage)
+	}
+}
+
+// TestBehavioralCoverageUnitPartialIsUnknown verifies partial structural mode +
+// unit domain overlap (no E2E) on a sensitive domain remains unknown coverage.
+func TestBehavioralCoverageUnitPartialIsUnknown(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:              files("internal/auth/x.go", "internal/auth/x_test.go", "internal/rag/y.go"),
+		IsTest:             isTestFlags(false, true, false),
+		DomainHits:         map[string]int{"auth": 1},
+		TestUnitDomainHits: map[string]int{"auth": 1},
+	})
+	if r.Mode != "partial" {
+		t.Fatalf("expected partial, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "unknown" {
+		t.Errorf("unit overlap + partial + sensitive domain should be unknown, got %q", r.BehavioralCoverage)
+	}
+}
+
+// TestBehavioralCoverageNoTestDomainHitsIsUnknown verifies that structural co_located
+// alone is insufficient when no test domain hits are recorded for a sensitive domain.
+func TestBehavioralCoverageNoTestDomainHitsIsUnknown(t *testing.T) {
+	r := AnalyzeProximity(Input{
+		Files:      files("internal/auth/x.go", "internal/auth/x_test.go"),
+		IsTest:     isTestFlags(false, true),
+		DomainHits: map[string]int{"auth": 1},
+		// TestUnitDomainHits and TestE2EDomainHits intentionally nil
+	})
+	if r.Mode != "co_located" {
+		t.Fatalf("expected co_located, got %q", r.Mode)
+	}
+	if r.BehavioralCoverage != "unknown" {
+		t.Errorf("co_located + sensitive domain + nil test domain hits should be unknown, got %q", r.BehavioralCoverage)
+	}
+}

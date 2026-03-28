@@ -3,6 +3,8 @@ package prrisk
 import (
 	"strings"
 	"testing"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
 )
 
 func TestMergeRecommendationGitErrorBlocks(t *testing.T) {
@@ -163,6 +165,31 @@ func TestMergeRationaleWarnIncludesChecklist(t *testing.T) {
 	}
 }
 
+// TestComputePolicyReasonsWeakIntent verifies the weak-intent policy reason is emitted
+// when ContextInsights.Intent.IntentStrength == "weak".
+func TestComputePolicyReasonsWeakIntent(t *testing.T) {
+	ci := &riskcontext.ContextInsights{
+		Intent: riskcontext.IntentInsight{IntentStrength: "weak"},
+	}
+	r := Result{
+		RiskBand:        "medium",
+		RiskScore:       30,
+		Signals:         Signals{DomainHits: map[string]int{}},
+		ContextInsights: ci,
+	}
+	reasons := computePolicyReasons(r, "warn")
+	found := false
+	for _, reason := range reasons {
+		if strings.Contains(reason, "weak intent") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected weak-intent reason in policy reasons, got %v", reasons)
+	}
+}
+
 func TestComputeEnforcementHasValidationsAndRouting(t *testing.T) {
 	r := Result{
 		RiskBand:  "medium",
@@ -193,7 +220,7 @@ func TestComputeEnforcementHasValidationsAndRouting(t *testing.T) {
 	if !found {
 		t.Fatal("expected baseline CI validation")
 	}
-	if len(e.RoutingHints) < 1 {
+	if len(e.RecommendedReview.RoutingHints) < 1 {
 		t.Fatal("expected at least one routing hint for auth domain")
 	}
 }

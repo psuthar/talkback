@@ -121,13 +121,28 @@ func TestConcentrationHHIArithmetic(t *testing.T) {
 	}
 }
 
+func TestConcentrationFocusedLarge(t *testing.T) {
+	// Two-segment prefixes: all churn under internal/foo with total LOC >= 2000.
+	var fcs []FileChange
+	for i := 0; i < 50; i++ {
+		fcs = append(fcs, FileChange{Path: "internal/foo/x.go", Added: 50, Deleted: 0})
+	}
+	c := AnalyzeConcentration(Input{Files: fcs})
+	if c.Mode != "focused_large" {
+		t.Fatalf("want focused_large, got %q (%s)", c.Mode, c.Detail)
+	}
+	if c.TopPrefix != "internal/foo" {
+		t.Fatalf("unexpected top prefix: %q", c.TopPrefix)
+	}
+}
+
 func TestTwoSegmentPrefix(t *testing.T) {
 	cases := []struct{ path, want string }{
 		{"internal/auth/x.go", "internal/auth"},
 		{"web/src/components/Foo.tsx", "web/src"},
 		{"go.mod", "go.mod"},
 		{"cmd/api/main.go", "cmd/api"},
-		{"", ""},  // strings.Split("","/") returns [""], so parts[0]="" is returned
+		{"", ""},
 	}
 	for _, c := range cases {
 		got := twoSegmentPrefix(c.path)

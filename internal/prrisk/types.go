@@ -7,13 +7,6 @@ import (
 	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
 )
 
-// Version is the major report schema version.
-const Version = 2
-
-// VersionMinor is the minor report schema version.
-// v2.5 == Version=2, VersionMinor=5 (enforcement + merge recommendation)
-const VersionMinor = 5
-
 // Domain labels for changed-file classification (extensible).
 const (
 	DomainAuth       = "auth"
@@ -117,6 +110,7 @@ type RiskReducer struct {
 type RequiredAction struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
+	Priority    string `json:"priority,omitempty"` // high | medium | supporting
 	FixType     string `json:"fix_type,omitempty"` // code|test|config|process|infra|db
 	AppliesWhen string `json:"applies_when,omitempty"`
 	// Checklist provides concrete steps; deterministic templates only.
@@ -129,14 +123,21 @@ type Integrations struct {
 	PRCommentMarkdown string `json:"pr_comment_markdown,omitempty"`
 }
 
+// RecommendedReview groups strategy and routing as first-class review guidance (v2.5+).
+type RecommendedReview struct {
+	Strategy     string   `json:"strategy"`
+	RoutingHints []string `json:"routing_hints,omitempty"`
+}
+
 // Enforcement is deterministic merge/review policy derived from score, factors, and context (v2.5+).
 type Enforcement struct {
-	MergeRecommendation string   `json:"merge_recommendation"` // pass | warn | block
-	Rationale           string   `json:"rationale"`
-	ReviewStrategy      string   `json:"review_strategy"`
-	RequiredValidations []string `json:"required_validations"`
-	ReviewRequirements  []string `json:"review_requirements"`
-	RoutingHints        []string `json:"routing_hints,omitempty"`
+	MergeRecommendation string            `json:"merge_recommendation"` // pass | warn | block
+	Rationale           string            `json:"rationale"`
+	RecommendedReview   RecommendedReview `json:"recommended_review"`
+	RequiredValidations []string          `json:"required_validations"`
+	ReviewRequirements  []string          `json:"review_requirements"`
+	BlockingReasons     []string          `json:"blocking_reasons,omitempty"`
+	Reasons             []string          `json:"reasons,omitempty"` // policy trace (deterministic)
 }
 
 // ScoreMath is the explicit, auditable score calculation (v2.3+; report minor v2.4 adds context).
@@ -155,6 +156,7 @@ type ScoreMath struct {
 type Result struct {
 	Version         int              `json:"version"`
 	VersionMinor    int              `json:"version_minor"`
+	ReportVersion   string           `json:"report_version"` // canonical e.g. "v2.5"
 	GeneratedAt     time.Time        `json:"generated_at"`
 	BaseRef         string           `json:"base_ref"`
 	Signals         Signals          `json:"signals"`

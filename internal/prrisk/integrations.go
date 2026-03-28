@@ -11,13 +11,37 @@ const EnvJiraIssueKey = "PRRISK_JIRA_ISSUE_KEY"
 // BuildIntegrations fills PR comment markdown and optional Jira hook.
 func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey string, actions []RequiredAction, math ScoreMath, enf Enforcement) Integrations {
 	md := &strings.Builder{}
-	fmt.Fprintf(md, "## PR Risk (v%d.%d)\n\n", Version, VersionMinor)
+	fmt.Fprintf(md, "## PR Risk (%s)\n\n", ReportVersionString())
 	fmt.Fprintf(md, "**Score:** %.1f/100 (%s) vs `%s`\n\n", score, band(score), baseRef)
 
 	rec := strings.ToUpper(enf.MergeRecommendation)
 	fmt.Fprintf(md, "**Merge recommendation:** **%s** — %s\n\n", rec, enf.Rationale)
-	if strings.TrimSpace(enf.ReviewStrategy) != "" {
-		fmt.Fprintf(md, "**Review strategy:** %s\n\n", enf.ReviewStrategy)
+	if strings.TrimSpace(enf.RecommendedReview.Strategy) != "" {
+		fmt.Fprintf(md, "**Review strategy:** %s\n\n", enf.RecommendedReview.Strategy)
+	}
+	if len(enf.BlockingReasons) > 0 {
+		md.WriteString("**Blocking / elevated review reasons:**\n")
+		for _, b := range enf.BlockingReasons {
+			if strings.TrimSpace(b) != "" {
+				fmt.Fprintf(md, "- %s\n", b)
+			}
+		}
+		md.WriteString("\n")
+	}
+
+	if len(enf.Reasons) > 0 {
+		md.WriteString("**Policy trace:**\n")
+		maxR := 4
+		if len(enf.Reasons) < maxR {
+			maxR = len(enf.Reasons)
+		}
+		for i := 0; i < maxR; i++ {
+			fmt.Fprintf(md, "- %s\n", enf.Reasons[i])
+		}
+		if len(enf.Reasons) > maxR {
+			fmt.Fprintf(md, "_…and %d more in `pr_risk.md`._\n", len(enf.Reasons)-maxR)
+		}
+		md.WriteString("\n")
 	}
 
 	if len(enf.RequiredValidations) > 0 {
@@ -35,17 +59,18 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 		md.WriteString("\n")
 	}
 
-	if len(enf.RoutingHints) > 0 {
+	rh := enf.RecommendedReview.RoutingHints
+	if len(rh) > 0 {
 		md.WriteString("**Review routing:**\n")
 		maxH := 4
-		if len(enf.RoutingHints) < maxH {
-			maxH = len(enf.RoutingHints)
+		if len(rh) < maxH {
+			maxH = len(rh)
 		}
 		for i := 0; i < maxH; i++ {
-			fmt.Fprintf(md, "- %s\n", enf.RoutingHints[i])
+			fmt.Fprintf(md, "- %s\n", rh[i])
 		}
-		if len(enf.RoutingHints) > maxH {
-			fmt.Fprintf(md, "_…and %d more in `pr_risk.md`._\n", len(enf.RoutingHints)-maxH)
+		if len(rh) > maxH {
+			fmt.Fprintf(md, "_…and %d more in `pr_risk.md`._\n", len(rh)-maxH)
 		}
 		md.WriteString("\n")
 	}
@@ -85,7 +110,11 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 		}
 		for i := 0; i < maxShow; i++ {
 			a := actions[i]
-			fmt.Fprintf(md, "%d. **%s**", i+1, a.Title)
+			prio := a.Priority
+			if prio == "" {
+				prio = priorityForActionID(a.ID)
+			}
+			fmt.Fprintf(md, "%d. **[ %s ]** **%s**", i+1, prio, a.Title)
 			if len(a.Checklist) > 0 {
 				fmt.Fprintf(md, " — %s", a.Checklist[0])
 			}

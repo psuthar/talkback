@@ -25,10 +25,10 @@ var keywordRules = []struct {
 	{"deploy", []string{"deploy"}},
 	{"docker", []string{"deploy"}},
 	{"render", []string{"deploy"}},
-	{"e2e", []string{"web"}},       // e2e implies web-layer changes; "tests" excluded from domainsPresent
-	{"playwright", []string{"web"}}, // same rationale as e2e
-	{"test", nil},                   // too generic — skip domain inference
-	{"fix", nil}, // too generic — only used with another keyword
+	{"e2e", []string{"web"}},
+	{"playwright", []string{"web"}},
+	{"test", nil},
+	{"fix", nil},
 	{"refactor", nil},
 }
 
@@ -40,12 +40,15 @@ func AnalyzeIntent(in Input) IntentInsight {
 		title, body = gitHeadMessage(in.RepoRoot)
 	}
 
-	combined := strings.ToLower(title + " " + body)
+	combined := strings.TrimSpace(strings.ToLower(title + " " + body))
+	weakTitle := isWeakTitle(title)
+
 	if combined == "" {
 		return IntentInsight{
-			Aligned:  true,
-			Mismatch: false,
-			Detail:   "No PR title/body or git subject available; intent alignment skipped.",
+			IntentStrength: "unknown",
+			Aligned:        true,
+			Mismatch:       false,
+			Detail:         "No PR title/body or git subject available; intent alignment skipped.",
 		}
 	}
 
@@ -72,13 +75,37 @@ func AnalyzeIntent(in Input) IntentInsight {
 		}
 	}
 
+	strength := "strong"
+	if weakTitle {
+		strength = "weak"
+	}
+	if len(expected) == 0 && len(matched) == 0 {
+		strength = "unknown"
+	}
+
 	inDiff := domainsPresent(in.DomainHits)
+
+	// Weak/generic title with no domain keywords: do not report as "aligned".
+	if len(expected) == 0 && weakTitle {
+		return IntentInsight{
+			Title:           title,
+			IntentStrength:  "weak",
+			KeywordsMatched: matched,
+			Aligned:         false,
+			Mismatch:        false,
+			DomainsInDiff:   inDiff,
+			Detail:          "PR title/body is weak or generic; intent alignment not inferred. Use a descriptive title (area + change).",
+		}
+	}
+
 	if len(expected) == 0 {
 		return IntentInsight{
 			Title:           title,
+			IntentStrength:  "unknown",
 			KeywordsMatched: matched,
 			Aligned:         true,
 			Mismatch:        false,
+			DomainsInDiff:   inDiff,
 			Detail:          "No strong intent keywords matched; alignment not scored.",
 		}
 	}
@@ -95,9 +122,13 @@ func AnalyzeIntent(in Input) IntentInsight {
 	if mismatch {
 		detail = "Title/body suggests certain areas (keywords) but corresponding paths may be missing from this diff — confirm scope or update the PR description."
 	}
+	if weakTitle {
+		detail += " (Title is still weak; prefer a clearer summary for reviewers.)"
+	}
 
 	return IntentInsight{
 		Title:           title,
+		IntentStrength:  strength,
 		KeywordsMatched: matched,
 		DomainsExpected: expected,
 		DomainsInDiff:   inDiff,
@@ -105,6 +136,28 @@ func AnalyzeIntent(in Input) IntentInsight {
 		Mismatch:        mismatch,
 		Detail:          detail,
 	}
+}
+
+func isWeakTitle(title string) bool {
+	t := strings.TrimSpace(strings.ToLower(title))
+	if t == "" {
+		return true
+	}
+	if len(t) <= 4 {
+		return true
+	}
+	generic := map[string]bool{
+		"wip": true, "fix": true, "update": true, "bump": true, "patch": true,
+		"misc": true, "draft": true, "changes": true, "temp": true, "test": true,
+	}
+	if generic[t] {
+		return true
+	}
+	// Very short single-token titles (e.g. "cleanup")
+	if !strings.Contains(t, " ") && len(t) <= 8 {
+		return true
+	}
+	return false
 }
 
 func gitHeadMessage(repoRoot string) (subject, body string) {
@@ -144,7 +197,6 @@ func containsDomain(inDiff []string, domain string) bool {
 			return true
 		}
 	}
-	// web E2E often only touches web/tests — accept web keyword if tests present
 	if domain == "web" {
 		for _, d := range inDiff {
 			if d == "web" || d == "tests" {

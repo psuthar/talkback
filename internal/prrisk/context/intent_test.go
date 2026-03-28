@@ -1,14 +1,17 @@
 package riskcontext
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Tests run without a real git repo; all rely on PRTitle/PRBody so no fallback needed.
 
 func TestIntentNoTextSkipped(t *testing.T) {
 	in := Input{
-		PRTitle: "",
-		PRBody:  "",
-		GitError: "no repo", // prevents git HEAD fallback
+		PRTitle:    "",
+		PRBody:     "",
+		GitError:   "no repo", // prevents git HEAD fallback
 		DomainHits: map[string]int{"auth": 1},
 	}
 	r := AnalyzeIntent(in)
@@ -17,6 +20,23 @@ func TestIntentNoTextSkipped(t *testing.T) {
 	}
 	if !r.Aligned {
 		t.Error("expected aligned=true when skipped")
+	}
+}
+
+func TestIntentWeakTitleNoKeywordsNotAligned(t *testing.T) {
+	in := Input{
+		PRTitle:    "wip",
+		DomainHits: map[string]int{"auth": 1},
+	}
+	r := AnalyzeIntent(in)
+	if r.IntentStrength != "weak" {
+		t.Errorf("expected weak intent strength, got %q", r.IntentStrength)
+	}
+	if r.Aligned {
+		t.Error("weak title with no keywords should not be aligned")
+	}
+	if r.Mismatch {
+		t.Error("weak title should not set mismatch (no expected domains)")
 	}
 }
 
@@ -172,6 +192,110 @@ func TestDomainsPresent(t *testing.T) {
 	}
 	if found["rag"] {
 		t.Error("rag with count 0 should be excluded from domainsPresent")
+	}
+}
+
+// --- IntentStrength ---
+
+func TestIntentStrengthStrongWhenKeywordsAligned(t *testing.T) {
+	in := Input{
+		PRTitle:    "fix: auth token expiry handling",
+		DomainHits: map[string]int{"auth": 1},
+	}
+	r := AnalyzeIntent(in)
+	if r.IntentStrength != "strong" {
+		t.Errorf("expected strong for normal title with matched keywords, got %q", r.IntentStrength)
+	}
+}
+
+func TestIntentStrengthUnknownWhenNoKeywords(t *testing.T) {
+	in := Input{
+		PRTitle:    "chore: bump version and update readme",
+		DomainHits: map[string]int{"web": 1},
+	}
+	r := AnalyzeIntent(in)
+	if r.IntentStrength != "unknown" {
+		t.Errorf("expected unknown when no strong keywords matched, got %q", r.IntentStrength)
+	}
+}
+
+func TestIntentStrengthUnknownWhenNoText(t *testing.T) {
+	in := Input{
+		PRTitle:    "",
+		PRBody:     "",
+		GitError:   "no repo",
+		DomainHits: map[string]int{"auth": 1},
+	}
+	r := AnalyzeIntent(in)
+	if r.IntentStrength != "unknown" {
+		t.Errorf("expected unknown when no text available, got %q", r.IntentStrength)
+	}
+}
+
+// TestIntentWeakTitleWithMatchingKeyword verifies that a weak title (≤4 chars) containing
+// a domain keyword produces IntentStrength="weak" even when domain alignment succeeds,
+// and that the detail mentions the weak title.
+func TestIntentWeakTitleWithMatchingKeyword(t *testing.T) {
+	// "auth" is exactly 4 chars → weak. It also matches the "auth" keyword rule.
+	in := Input{
+		PRTitle:    "auth",
+		DomainHits: map[string]int{"auth": 1},
+	}
+	r := AnalyzeIntent(in)
+	if r.IntentStrength != "weak" {
+		t.Errorf("expected weak for 4-char title with keyword match, got %q", r.IntentStrength)
+	}
+	if r.Mismatch {
+		t.Error("expected no mismatch: auth keyword + auth domain present")
+	}
+	if !strings.Contains(r.Detail, "weak") {
+		t.Errorf("expected weak note in detail, got %q", r.Detail)
+	}
+}
+
+// --- isWeakTitle ---
+
+func TestIsWeakTitleEmpty(t *testing.T) {
+	if !isWeakTitle("") {
+		t.Error("empty string should be a weak title")
+	}
+}
+
+func TestIsWeakTitleShortLength(t *testing.T) {
+	for _, title := range []string{"go", "ok", "ci", "auth"} {
+		if !isWeakTitle(title) {
+			t.Errorf("title %q (len %d) should be weak (≤4 chars)", title, len(title))
+		}
+	}
+}
+
+func TestIsWeakTitleGenericMap(t *testing.T) {
+	for _, title := range []string{"wip", "fix", "update", "bump", "patch", "misc", "draft", "changes", "temp", "test"} {
+		if !isWeakTitle(title) {
+			t.Errorf("generic title %q should be weak", title)
+		}
+	}
+}
+
+func TestIsWeakTitleSingleTokenShort(t *testing.T) {
+	// Single-token (no spaces) titles with length ≤8 are weak.
+	for _, title := range []string{"cleanup", "refactor"} {
+		if !isWeakTitle(title) {
+			t.Errorf("single-token title %q (len %d) should be weak", title, len(title))
+		}
+	}
+}
+
+func TestIsWeakTitleNormalTitlesNotWeak(t *testing.T) {
+	for _, title := range []string{
+		"fix: auth token expiry handling",
+		"add migration for users table",
+		"refactoring",              // 11 chars, has no space but > 8
+		"ci: update prrisk step",   // has space, > 4, not in generic map
+	} {
+		if isWeakTitle(title) {
+			t.Errorf("title %q should not be weak", title)
+		}
 	}
 }
 

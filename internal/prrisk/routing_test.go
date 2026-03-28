@@ -81,6 +81,20 @@ func TestRoutingDeployDomain(t *testing.T) {
 	}
 }
 
+func TestRoutingFocusedLargeConcentration(t *testing.T) {
+	ci := &riskcontext.ContextInsights{
+		Concentration: riskcontext.ConcentrationInsight{Mode: "focused_large", TopPrefix: "internal/rag"},
+	}
+	s := Signals{DomainHits: map[string]int{}, FileCount: 3}
+	hints := ComputeRoutingHints(s, nil, ci)
+	if !hasRoutingHint(hints, "internal/rag") {
+		t.Errorf("expected focused_large routing hints, got %v", hints)
+	}
+	if !hasRoutingHint(hints, "regression") {
+		t.Errorf("expected large concentrated churn regression hint, got %v", hints)
+	}
+}
+
 func TestRoutingFocusedConcentration(t *testing.T) {
 	ci := &riskcontext.ContextInsights{
 		Concentration: riskcontext.ConcentrationInsight{Mode: "focused", TopPrefix: "internal/auth"},

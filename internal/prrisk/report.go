@@ -20,7 +20,7 @@ func WriteJSON(path string, r Result) error {
 // WriteMarkdown writes a human-readable report including mitigations.
 func WriteMarkdown(path string, r Result) error {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# TalkBack PR Risk Report (v%d.%d)\n\n", r.Version, r.VersionMinor))
+	sb.WriteString(fmt.Sprintf("# TalkBack PR Risk Report (%s)\n\n", ReportVersionString()))
 	sb.WriteString(fmt.Sprintf("**Generated:** %s  \n", r.GeneratedAt.Format("2006-01-02T15:04:05Z")))
 	sb.WriteString(fmt.Sprintf("**Base ref:** `%s`  \n\n", r.BaseRef))
 	if r.Interpretation != "" {
@@ -30,6 +30,7 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString("| Metric | Value |\n|--------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| Risk score | **%.1f** / 100 |\n", r.RiskScore))
 	sb.WriteString(fmt.Sprintf("| Band | **%s** |\n", r.RiskBand))
+	sb.WriteString(fmt.Sprintf("| Report version | **%s** |\n", r.ReportVersion))
 	for _, c := range r.Categories {
 		if c.Key == CategoryTestConfidence {
 			sb.WriteString(fmt.Sprintf("| Test confidence | **%.0f** / 100 |\n", c.Confidence))
@@ -53,7 +54,34 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
 	sb.WriteString("\n### Recommended review strategy\n\n")
-	sb.WriteString(enf.ReviewStrategy + "\n\n")
+	sb.WriteString(enf.RecommendedReview.Strategy + "\n\n")
+	sb.WriteString("### Review routing (recommended)\n\n")
+	if len(enf.RecommendedReview.RoutingHints) == 0 {
+		sb.WriteString("_None._\n\n")
+	} else {
+		for _, h := range enf.RecommendedReview.RoutingHints {
+			sb.WriteString(fmt.Sprintf("- %s\n", h))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("### Blocking / elevated review reasons\n\n")
+	if len(enf.BlockingReasons) == 0 {
+		sb.WriteString("_None._\n\n")
+	} else {
+		for _, b := range enf.BlockingReasons {
+			sb.WriteString(fmt.Sprintf("- %s\n", b))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("### Policy trace (deterministic)\n\n")
+	if len(enf.Reasons) == 0 {
+		sb.WriteString("_None._\n\n")
+	} else {
+		for _, x := range enf.Reasons {
+			sb.WriteString(fmt.Sprintf("- %s\n", x))
+		}
+		sb.WriteString("\n")
+	}
 	sb.WriteString("### Required validations before merge\n\n")
 	if len(enf.RequiredValidations) == 0 {
 		sb.WriteString("_None beyond standard CI._\n\n")
@@ -71,14 +99,6 @@ func WriteMarkdown(path string, r Result) error {
 			sb.WriteString(fmt.Sprintf("- %s\n", v))
 		}
 		sb.WriteString("\n")
-	}
-	sb.WriteString("### Review routing hints\n\n")
-	if len(enf.RoutingHints) == 0 {
-		sb.WriteString("_None._\n")
-	} else {
-		for _, h := range enf.RoutingHints {
-			sb.WriteString(fmt.Sprintf("- %s\n", h))
-		}
 	}
 
 	sb.WriteString("\n## Score math\n\n")
@@ -109,7 +129,10 @@ func WriteMarkdown(path string, r Result) error {
 		ci := r.ContextInsights
 		sb.WriteString("\n## Context insights\n\n")
 		sb.WriteString("### Test–code proximity\n\n")
-		sb.WriteString(fmt.Sprintf("- **Mode:** `%s` — %s\n", ci.Proximity.Mode, ci.Proximity.Detail))
+		sb.WriteString(fmt.Sprintf("- **Structural alignment:** `%s` — %s\n", ci.Proximity.StructuralAlignment, ci.Proximity.Detail))
+		if ci.Proximity.BehavioralCoverage != "" {
+			sb.WriteString(fmt.Sprintf("- **Behavioral coverage depth:** `%s` (unit/E2E overlap vs sensitive domains in this diff)\n", ci.Proximity.BehavioralCoverage))
+		}
 		sb.WriteString(fmt.Sprintf("- Non-test files: **%d** with nearby test in diff: **%d** (ratio **%.0f%%**)\n",
 			ci.Proximity.NonTestFiles, ci.Proximity.WithNearbyTestInDiff, ci.Proximity.Ratio*100))
 
@@ -131,6 +154,9 @@ func WriteMarkdown(path string, r Result) error {
 		}
 
 		sb.WriteString("\n### PR intent vs diff\n\n")
+		if ci.Intent.IntentStrength != "" {
+			sb.WriteString(fmt.Sprintf("- **Intent strength:** `%s`\n", ci.Intent.IntentStrength))
+		}
 		if ci.Intent.Title != "" {
 			sb.WriteString(fmt.Sprintf("- **Subject line (source):** %s\n", ci.Intent.Title))
 		}
@@ -230,7 +256,11 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString("_No required actions for this risk profile. Review mitigations if helpful._\n")
 	} else {
 		for _, a := range r.RequiredActions {
-			sb.WriteString(fmt.Sprintf("### %s\n\n", a.Title))
+			prio := a.Priority
+			if prio == "" {
+				prio = priorityForActionID(a.ID)
+			}
+			sb.WriteString(fmt.Sprintf("### [ %s ] %s\n\n", prio, a.Title))
 			for _, c := range a.Checklist {
 				sb.WriteString(fmt.Sprintf("- %s\n", c))
 			}

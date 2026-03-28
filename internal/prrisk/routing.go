@@ -53,8 +53,11 @@ func ComputeRoutingHints(s Signals, factors []RiskFactor, insights *riskcontext.
 	}
 
 	if insights != nil {
-		if insights.Concentration.Mode == "focused" && insights.Concentration.TopPrefix != "" {
+		if (insights.Concentration.Mode == "focused" || insights.Concentration.Mode == "focused_large") && insights.Concentration.TopPrefix != "" {
 			add("Focus primary review on `" + insights.Concentration.TopPrefix + "` (majority of churn).")
+		}
+		if insights.Concentration.Mode == "focused_large" && insights.Concentration.TopPrefix != "" {
+			add("Large single-area churn — run targeted regression and integration checks around `" + insights.Concentration.TopPrefix + "`.")
 		}
 		if insights.Concentration.Mode == "scattered" && s.FileCount >= 10 {
 			add("Split review by subsystem or commit; avoid single-threaded review of unrelated areas.")

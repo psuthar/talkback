@@ -11,7 +11,9 @@ type ContextInsights struct {
 
 // ProximityInsight describes test-to-code co-location in this diff.
 type ProximityInsight struct {
-	Mode                 string  `json:"mode"` // co_located | partial | distant | n_a
+	Mode                 string  `json:"mode"`                 // co_located | partial | distant | n_a
+	StructuralAlignment  string  `json:"structural_alignment"` // same as Mode: structural co-location of test files vs prod in diff
+	BehavioralCoverage   string  `json:"behavioral_coverage"`  // unknown | shallow | adequate — depth of test evidence vs sensitive domains
 	NonTestFiles         int     `json:"non_test_files"`
 	WithNearbyTestInDiff int     `json:"with_nearby_test_in_diff"`
 	Ratio                float64 `json:"ratio"` // WithNearbyTestInDiff / NonTestFiles (0 if none)
@@ -20,7 +22,7 @@ type ProximityInsight struct {
 
 // ConcentrationInsight describes whether churn is focused vs scattered.
 type ConcentrationInsight struct {
-	Mode       string  `json:"mode"` // focused | balanced | scattered
+	Mode       string  `json:"mode"` // focused | focused_large | balanced | scattered
 	TopPrefix  string  `json:"top_prefix,omitempty"`
 	TopShare   float64 `json:"top_share,omitempty"` // 0–1 of LOC in top prefix
 	HHI        float64 `json:"hhi,omitempty"`       // Herfindahl on prefix LOC shares
@@ -37,13 +39,14 @@ type HotspotInsight struct {
 
 // IntentInsight compares PR title/body keywords to domains touched in the diff.
 type IntentInsight struct {
-	Title              string   `json:"title,omitempty"`
-	KeywordsMatched    []string `json:"keywords_matched,omitempty"`
-	DomainsExpected    []string `json:"domains_expected,omitempty"`
-	DomainsInDiff      []string `json:"domains_in_diff,omitempty"`
-	Aligned            bool     `json:"aligned"`
-	Mismatch           bool     `json:"mismatch"`
-	Detail             string   `json:"detail"`
+	Title           string   `json:"title,omitempty"`
+	IntentStrength  string   `json:"intent_strength,omitempty"` // strong | weak | unknown
+	KeywordsMatched []string `json:"keywords_matched,omitempty"`
+	DomainsExpected []string `json:"domains_expected,omitempty"`
+	DomainsInDiff   []string `json:"domains_in_diff,omitempty"`
+	Aligned         bool     `json:"aligned"`
+	Mismatch        bool     `json:"mismatch"`
+	Detail          string   `json:"detail"`
 }
 
 // FactorContribution is a small deterministic score bump from contextual signals.

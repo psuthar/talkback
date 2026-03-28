@@ -142,6 +142,7 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 	res := Result{
 		Version:         Version,
 		VersionMinor:    VersionMinor,
+		ReportVersion:   ReportVersionString(),
 		GeneratedAt:     now,
 		BaseRef:         s.BaseRef,
 		Signals:         s,

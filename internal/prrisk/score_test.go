@@ -23,6 +23,9 @@ func TestScoreEmptyDiff(t *testing.T) {
 	if len(r.Enforcement.RequiredValidations) == 0 {
 		t.Fatal("expected at least baseline required validations")
 	}
+	if r.ReportVersion != ReportVersionString() {
+		t.Fatalf("ReportVersion=%q want %q", r.ReportVersion, ReportVersionString())
+	}
 }
 
 func TestScoreAuthAndMigrations(t *testing.T) {

@@ -21,6 +21,10 @@ type Input struct {
 	// DomainHits uses prrisk domain labels (auth, rag, workflows, …).
 	DomainHits map[string]int
 
+	// TestUnitDomainHits / TestE2EDomainHits: test file counts per domain (for behavioral coverage depth).
+	TestUnitDomainHits map[string]int
+	TestE2EDomainHits  map[string]int
+
 	// PR text (optional). If empty, intent analysis uses git HEAD subject/body when possible.
 	PRTitle string
 	PRBody  string
