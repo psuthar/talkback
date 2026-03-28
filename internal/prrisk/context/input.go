@@ -15,8 +15,9 @@ type Input struct {
 	// GitError non-empty skips git log–based hotspot and optional intent fallbacks.
 	GitError string
 
-	Files  []FileChange
-	IsTest []bool // parallel to Files; caller supplies from prrisk.IsTestPath
+	Files        []FileChange
+	IsTest       []bool // parallel to Files; caller supplies from prrisk.IsTestPath
+	IsUntestable []bool // parallel to Files; true for file types with no test convention (YAML, shell, markdown…)
 
 	// DomainHits uses prrisk domain labels (auth, rag, workflows, …).
 	DomainHits map[string]int

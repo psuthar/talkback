@@ -56,6 +56,31 @@ func TestProximityDistantNoTestsInDiff(t *testing.T) {
 	}
 }
 
+func TestProximityNAAllUntestableFiles(t *testing.T) {
+	// A diff of only YAML/shell/markdown should not produce a "distant" proximity —
+	// these file types have no test convention, so proximity is not applicable.
+	r := AnalyzeProximity(Input{
+		Files:        files(".github/workflows/ci.yml", "scripts/deploy.sh", "docs/README.md"),
+		IsTest:       isTestFlags(false, false, false),
+		IsUntestable: []bool{true, true, true},
+	})
+	if r.Mode != "n_a" {
+		t.Errorf("expected n_a for all-untestable diff, got %q", r.Mode)
+	}
+}
+
+func TestProximityDistantMixedUntestableAndSource(t *testing.T) {
+	// A diff mixing source files with config files should still be scored normally.
+	r := AnalyzeProximity(Input{
+		Files:        files("internal/auth/x.go", ".github/workflows/ci.yml"),
+		IsTest:       isTestFlags(false, false),
+		IsUntestable: []bool{false, true},
+	})
+	if r.Mode != "distant" {
+		t.Errorf("expected distant when source files present without tests, got %q", r.Mode)
+	}
+}
+
 func TestProximityCoLocated(t *testing.T) {
 	// All prod files have a test in the same directory.
 	r := AnalyzeProximity(Input{

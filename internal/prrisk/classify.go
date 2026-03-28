@@ -133,6 +133,23 @@ func IsE2EPath(path string) bool {
 	return false
 }
 
+// IsUntestablePath reports whether a file type has no conventional co-located test
+// framework. Files matching this predicate are excluded from test-proximity scoring
+// so that a diff containing only YAML/shell/markdown does not produce a spurious
+// "missing test proximity" signal.
+func IsUntestablePath(path string) bool {
+	p := strings.ToLower(filepath.ToSlash(path))
+	switch filepath.Ext(p) {
+	case ".yml", ".yaml", ".sh", ".bash", ".md", ".lock", ".sum":
+		return true
+	}
+	switch filepath.Base(p) {
+	case "makefile", "dockerfile", ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig":
+		return true
+	}
+	return false
+}
+
 // IsConfigPath reports CI/deploy/config-ish paths.
 func IsConfigPath(path string) bool {
 	p := strings.ToLower(filepath.ToSlash(path))
