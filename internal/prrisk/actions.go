@@ -1,6 +1,12 @@
 package prrisk
 
-func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskReducer, riskScore float64, riskBand string) []RequiredAction {
+import (
+	"fmt"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
+)
+
+func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskReducer, riskScore float64, riskBand string, insights *riskcontext.ContextInsights) []RequiredAction {
 	has := factorIDs(factors)
 
 	// Evidence levels per sensitive domain.
@@ -182,7 +188,54 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 		})
 	}
 
-	// reducers currently don't produce additional actions, but are used for risk score shaping.
+	if insights != nil {
+		if insights.Intent.Mismatch {
+			add(RequiredAction{
+				ID:      "context_align_pr_description",
+				Title:   "Align PR title/description with the diff",
+				FixType: "process",
+				Checklist: []string{
+					"Update the PR title or body so keywords match the areas actually changed, or narrow the diff to match the stated intent.",
+					"If the scope is intentional, explain why expected domains are not touched.",
+				},
+			})
+		}
+		if insights.Concentration.Mode == "scattered" && s.FileCount >= 10 {
+			add(RequiredAction{
+				ID:      "context_scattered_review_plan",
+				Title:   "Structure review for a scattered change",
+				FixType: "process",
+				Checklist: []string{
+					"Add a short map of files grouped by subsystem (or commit) to speed review.",
+					"Call out cross-cutting concerns explicitly (auth, DB, RAG, web).",
+				},
+			})
+		}
+		if insights.Proximity.Mode == "distant" && insights.Proximity.NonTestFiles >= 2 {
+			add(RequiredAction{
+				ID:      "context_improve_test_proximity",
+				Title:   "Improve test proximity for changed code",
+				FixType: "test",
+				Checklist: []string{
+					"Add or reference tests in the same package or directory as changed production files.",
+					"If tests live elsewhere, link them in the PR description.",
+				},
+			})
+		}
+		if len(insights.Hotspots) > 0 {
+			p := insights.Hotspots[0].Prefix
+			add(RequiredAction{
+				ID:      "context_hotspot_regression_focus",
+				Title:   "Extra regression focus on high-churn area",
+				FixType: "process",
+				Checklist: []string{
+					fmt.Sprintf("Prefix `%s` is active in recent history; run targeted smoke for behavior touching this area.", p),
+					"Watch for unintended side effects in adjacent modules.",
+				},
+			})
+		}
+	}
+
 	_ = reducers
 
 	return out

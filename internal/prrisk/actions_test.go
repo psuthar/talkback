@@ -6,7 +6,7 @@ import "testing"
 func TestActionsAuthGateAtHighRisk(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainAuth: 1}}
 	factors := []RiskFactor{{ID: "domain_auth", Points: 14}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "auth_e2e_gate") {
 		t.Error("expected auth_e2e_gate at high risk with auth domain")
 	}
@@ -16,7 +16,7 @@ func TestActionsAuthGateAtHighRisk(t *testing.T) {
 func TestActionsAuthGateNotFiredAtLowRisk(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainAuth: 1}}
 	factors := []RiskFactor{{ID: "domain_auth", Points: 14}}
-	acts := ComputeRequiredActions(s, factors, nil, 10, "low")
+	acts := ComputeRequiredActions(s, factors, nil, 10, "low", nil)
 	if hasAction(acts, "auth_e2e_gate") {
 		t.Error("auth_e2e_gate should not fire at low risk score (< 45)")
 	}
@@ -26,7 +26,7 @@ func TestActionsAuthGateNotFiredAtLowRisk(t *testing.T) {
 func TestActionsMigrationsGate(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainMigrations: 1}}
 	factors := []RiskFactor{{ID: "domain_migrations", Points: 22}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "migrations_validation_gate") {
 		t.Error("expected migrations_validation_gate action")
 	}
@@ -36,7 +36,7 @@ func TestActionsMigrationsGate(t *testing.T) {
 func TestActionsRAGGate(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainRAG: 1}}
 	factors := []RiskFactor{{ID: "domain_rag", Points: 10}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "rag_qna_citations_gate") {
 		t.Error("expected rag_qna_citations_gate action")
 	}
@@ -46,7 +46,7 @@ func TestActionsRAGGate(t *testing.T) {
 func TestActionsProcessingGate(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainProcessing: 1}}
 	factors := []RiskFactor{{ID: "domain_processing", Points: 10}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "materials_processing_gate") {
 		t.Error("expected materials_processing_gate action")
 	}
@@ -56,7 +56,7 @@ func TestActionsProcessingGate(t *testing.T) {
 func TestActionsWorkflowConfigValidation(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainWorkflows: 1}}
 	factors := []RiskFactor{{ID: "ci_workflows", Points: 12}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "workflow_config_validation") {
 		t.Error("expected workflow_config_validation action")
 	}
@@ -70,7 +70,7 @@ func TestActionsValidationNoteAdjustsWorkflowMessage(t *testing.T) {
 		ValidationNoteFound: true,
 	}
 	factors := []RiskFactor{{ID: "ci_workflows", Points: 12}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	a := findAction(acts, "workflow_config_validation")
 	if a == nil {
 		t.Fatal("expected workflow_config_validation action")
@@ -90,7 +90,7 @@ func TestActionsTestsMissingAtHighRisk(t *testing.T) {
 		{ID: "domain_auth", Points: 14},
 		{ID: "tests_missing", Points: 18},
 	}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "add_tests_or_evidence") {
 		t.Error("expected add_tests_or_evidence at high risk")
 	}
@@ -101,7 +101,7 @@ func TestActionsTestsMissingAtHighRisk(t *testing.T) {
 func TestActionsTestsMissingAtMediumRisk(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{}}
 	factors := []RiskFactor{{ID: "tests_missing", Points: 18}}
-	acts := ComputeRequiredActions(s, factors, nil, 30, "medium")
+	acts := ComputeRequiredActions(s, factors, nil, 30, "medium", nil)
 	if !hasAction(acts, "add_tests_or_evidence") {
 		t.Error("expected add_tests_or_evidence at medium risk")
 	}
@@ -115,7 +115,7 @@ func TestActionsTestsMissingNotDuplicated(t *testing.T) {
 		{ID: "domain_auth", Points: 14},
 		{ID: "tests_missing", Points: 18},
 	}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	count := 0
 	for _, a := range acts {
 		if a.ID == "add_tests_or_evidence" {
@@ -131,7 +131,7 @@ func TestActionsTestsMissingNotDuplicated(t *testing.T) {
 func TestActionsGitUnavailable(t *testing.T) {
 	s := Signals{GitError: "no merge base", DomainHits: map[string]int{}}
 	factors := []RiskFactor{{ID: "git_unavailable", Points: 25}}
-	acts := ComputeRequiredActions(s, factors, nil, 25, "medium")
+	acts := ComputeRequiredActions(s, factors, nil, 25, "medium", nil)
 	if !hasAction(acts, "ci_fetch_depth_zero") {
 		t.Error("expected ci_fetch_depth_zero action for git error")
 	}
@@ -141,7 +141,7 @@ func TestActionsGitUnavailable(t *testing.T) {
 func TestActionsPRReviewSummaryAtHighRisk(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{}}
 	factors := []RiskFactor{{ID: "diff_very_large", Points: 22}}
-	acts := ComputeRequiredActions(s, factors, nil, 50, "high")
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "pr_review_summary") {
 		t.Error("expected pr_review_summary for large diff at high risk")
 	}
@@ -150,7 +150,7 @@ func TestActionsPRReviewSummaryAtHighRisk(t *testing.T) {
 // TestActionsNoneForEmptyDiff verifies no required actions for a clean empty diff.
 func TestActionsNoneForEmptyDiff(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{}}
-	acts := ComputeRequiredActions(s, nil, nil, 0, "low")
+	acts := ComputeRequiredActions(s, nil, nil, 0, "low", nil)
 	if len(acts) != 0 {
 		t.Errorf("expected no actions for empty diff, got %d", len(acts))
 	}

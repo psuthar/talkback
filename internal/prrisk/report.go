@@ -70,6 +70,52 @@ func WriteMarkdown(path string, r Result) error {
 	}
 	sb.WriteString(fmt.Sprintf("| **Final score** | **%.1f** |\n", sm.FinalScore))
 	sb.WriteString(fmt.Sprintf("| **Final band** | **%s** |\n", sm.FinalBand))
+
+	if r.ContextInsights != nil {
+		ci := r.ContextInsights
+		sb.WriteString("\n## Context insights\n\n")
+		sb.WriteString("### Test–code proximity\n\n")
+		sb.WriteString(fmt.Sprintf("- **Mode:** `%s` — %s\n", ci.Proximity.Mode, ci.Proximity.Detail))
+		sb.WriteString(fmt.Sprintf("- Non-test files: **%d** with nearby test in diff: **%d** (ratio **%.0f%%**)\n",
+			ci.Proximity.NonTestFiles, ci.Proximity.WithNearbyTestInDiff, ci.Proximity.Ratio*100))
+
+		sb.WriteString("\n### Change concentration\n\n")
+		sb.WriteString(fmt.Sprintf("- **Mode:** `%s` — %s\n", ci.Concentration.Mode, ci.Concentration.Detail))
+		if ci.Concentration.TopPrefix != "" {
+			sb.WriteString(fmt.Sprintf("- Top area: `%s` (~%.0f%% of churn); **%d** distinct path prefixes.\n",
+				ci.Concentration.TopPrefix, ci.Concentration.TopShare*100, ci.Concentration.UniqueDirs))
+		}
+
+		if len(ci.Hotspots) > 0 {
+			sb.WriteString("\n### Hotspots (recent git activity)\n\n")
+			for _, h := range ci.Hotspots {
+				sb.WriteString(fmt.Sprintf("- **`%s`** — %d recent path hits — %s\n", h.Prefix, h.RecentCount, h.Detail))
+			}
+		} else {
+			sb.WriteString("\n### Hotspots (recent git activity)\n\n")
+			sb.WriteString("_No overlapping high-churn prefixes detected (or git history unavailable)._\n")
+		}
+
+		sb.WriteString("\n### PR intent vs diff\n\n")
+		if ci.Intent.Title != "" {
+			sb.WriteString(fmt.Sprintf("- **Subject line (source):** %s\n", ci.Intent.Title))
+		}
+		if len(ci.Intent.KeywordsMatched) > 0 {
+			sb.WriteString(fmt.Sprintf("- **Keywords matched:** %s\n", strings.Join(ci.Intent.KeywordsMatched, ", ")))
+		}
+		if len(ci.Intent.DomainsExpected) > 0 {
+			sb.WriteString(fmt.Sprintf("- **Domains implied by text:** %s\n", strings.Join(ci.Intent.DomainsExpected, ", ")))
+		}
+		if len(ci.Intent.DomainsInDiff) > 0 {
+			sb.WriteString(fmt.Sprintf("- **Domains in diff (non-test):** %s\n", strings.Join(ci.Intent.DomainsInDiff, ", ")))
+		}
+		aligned := "yes"
+		if !ci.Intent.Aligned {
+			aligned = "no"
+		}
+		sb.WriteString(fmt.Sprintf("- **Aligned:** %s — %s\n", aligned, ci.Intent.Detail))
+	}
+
 	sb.WriteString("\n## Domain hits\n\n")
 	if len(r.Signals.DomainHits) == 0 {
 		sb.WriteString("_None._\n")

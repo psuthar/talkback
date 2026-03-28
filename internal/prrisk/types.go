@@ -1,14 +1,18 @@
 // Package prrisk implements deterministic PR risk scoring (v2.x) from git diffs.
 package prrisk
 
-import "time"
+import (
+	"time"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
+)
 
 // Version is the major report schema version.
 const Version = 2
 
 // VersionMinor is the minor report schema version.
-// v2.3 == Version=2, VersionMinor=3
-const VersionMinor = 3
+// v2.4 == Version=2, VersionMinor=4
+const VersionMinor = 4
 
 // Domain labels for changed-file classification (extensible).
 const (
@@ -56,6 +60,8 @@ type Signals struct {
 	GitError              string         `json:"git_error,omitempty"`
 	ValidationNoteFound   bool           `json:"validation_note_found,omitempty"`
 	ValidationNoteSnippet string         `json:"validation_note_snippet,omitempty"`
+	// RepoRoot is the git worktree root used for contextual git queries (v2.4+).
+	RepoRoot string `json:"repo_root,omitempty"`
 }
 
 // RiskFactor is one explainable contributor to the score.
@@ -123,7 +129,7 @@ type Integrations struct {
 	PRCommentMarkdown string `json:"pr_comment_markdown,omitempty"`
 }
 
-// ScoreMath is the explicit, auditable score calculation (v2.3+).
+// ScoreMath is the explicit, auditable score calculation (v2.3+; report minor v2.4 adds context).
 type ScoreMath struct {
 	FactorsSubtotal  float64  `json:"factors_subtotal"`  // sum of risk factor points
 	ReducersSubtotal float64  `json:"reducers_subtotal"` // sum of reducer points (positive)
@@ -152,6 +158,8 @@ type Result struct {
 	RequiredActions []RequiredAction `json:"required_actions,omitempty"`
 	Mitigations     []Mitigation     `json:"mitigations"`
 	Integrations    Integrations     `json:"integrations"`
+	// ContextInsights is deterministic contextual intelligence (v2.4+): proximity, concentration, hotspots, intent.
+	ContextInsights *riskcontext.ContextInsights `json:"context_insights,omitempty"`
 }
 
 // ScoreWeights tune deterministic contributions (sum capped at 100).
@@ -183,6 +191,12 @@ type ScoreWeights struct {
 	// If test LOC ratio >= threshold (but not all-test), reduce test confidence risk.
 	TestHeavyLOCRatioThreshold float64
 	TestHeavyReducerPoints     float64
+
+	// Contextual signals (v2.4+) — small additive factors; see internal/prrisk/context.
+	ContextProximityLowPoints   float64
+	ContextScatteredPoints      float64
+	ContextHotspotPoints        float64
+	ContextIntentMismatchPoints float64
 }
 
 // DefaultWeights returns built-in v2 weights.
@@ -212,5 +226,10 @@ func DefaultWeights() ScoreWeights {
 		TestOnlyDiffReducerPoints:     6,
 		TestHeavyLOCRatioThreshold:    0.40,
 		TestHeavyReducerPoints:        4,
+
+		ContextProximityLowPoints:   5,
+		ContextScatteredPoints:      5,
+		ContextHotspotPoints:        4,
+		ContextIntentMismatchPoints: 6,
 	}
 }

@@ -1,5 +1,7 @@
 package prrisk
 
+import "strings"
+
 const (
 	CategoryCode           = "code"
 	CategoryWorkflow       = "workflow"
@@ -7,6 +9,9 @@ const (
 )
 
 func laneForFactorID(factorID string) string {
+	if strings.HasPrefix(factorID, "context_") {
+		return CategoryCode
+	}
 	switch factorID {
 	case
 		"git_unavailable",

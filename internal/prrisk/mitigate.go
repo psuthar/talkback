@@ -56,6 +56,22 @@ var mitigationMap = map[string][]string{
 		"Add or update unit/integration tests for changed packages.",
 		"If behavior is unchanged refactor-only, note that in the PR description.",
 	},
+	"context_test_proximity_distant": {
+		"Add tests next to changed packages or link existing tests in the PR description.",
+		"Prefer package-local *_test.go over only end-to-end coverage for the same change.",
+	},
+	"context_change_scattered": {
+		"Split the PR description by subsystem or commit so reviewers can validate incrementally.",
+		"Consider follow-up PRs if the scatter is accidental.",
+	},
+	"context_hotspot_overlap": {
+		"Run focused regression on the hot area; recent churn increases regression risk.",
+		"Scan related modules for unintended behavior changes.",
+	},
+	"context_intent_mismatch": {
+		"Update the PR title/body to match the diff, or adjust the diff to match the stated intent.",
+		"If intentional, explain the scope change explicitly for reviewers.",
+	},
 }
 
 // Mitigate returns mitigations for each factor that has a non-empty mapping.
