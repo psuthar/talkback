@@ -241,7 +241,7 @@ jobs:
 
       - name: Upload Release Readiness Artifact
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: release-readiness
           path: artifacts/
