@@ -5,10 +5,16 @@ import (
 	"strings"
 )
 
-// AnalyzeProximity scores whether tests in the diff sit near the production code they exercise.
+// AnalyzeProximity scores whether tests in the diff sit near the production code they exercise,
+// and classifies behavioral coverage depth vs sensitive domains.
 func AnalyzeProximity(in Input) ProximityInsight {
 	if len(in.Files) == 0 || len(in.IsTest) != len(in.Files) {
-		return ProximityInsight{Mode: "n_a", Detail: "no files to analyze"}
+		return ProximityInsight{
+			Mode:                "n_a",
+			StructuralAlignment: "n_a",
+			BehavioralCoverage:  "unknown",
+			Detail:              "no files to analyze",
+		}
 	}
 
 	var nonTestPaths []string
@@ -25,11 +31,18 @@ func AnalyzeProximity(in Input) ProximityInsight {
 	}
 
 	if len(nonTestPaths) == 0 {
-		return ProximityInsight{Mode: "n_a", Detail: "only test files in diff"}
+		return ProximityInsight{
+			Mode:                "n_a",
+			StructuralAlignment: "n_a",
+			BehavioralCoverage:  "unknown",
+			Detail:              "only test files in diff",
+		}
 	}
 	if len(testPaths) == 0 {
 		return ProximityInsight{
 			Mode:                 "distant",
+			StructuralAlignment:  "distant",
+			BehavioralCoverage:   "unknown",
 			NonTestFiles:         len(nonTestPaths),
 			WithNearbyTestInDiff: 0,
 			Ratio:                0,
@@ -62,12 +75,73 @@ func AnalyzeProximity(in Input) ProximityInsight {
 		detail = "Some production changes lack adjacent tests in the same diff; spot-check coverage."
 	}
 
+	behavioral := computeBehavioralCoverage(in, mode)
+	if behavioral != "" && behavioral != "unknown" {
+		detail += " " + behavioralCoverageNote(behavioral)
+	}
+
 	return ProximityInsight{
 		Mode:                 mode,
+		StructuralAlignment:  mode,
+		BehavioralCoverage:   behavioral,
 		NonTestFiles:         len(nonTestPaths),
 		WithNearbyTestInDiff: withNearby,
 		Ratio:                ratio,
 		Detail:               detail,
+	}
+}
+
+func computeBehavioralCoverage(in Input, structuralMode string) string {
+	if structuralMode == "n_a" || structuralMode == "distant" {
+		return "unknown"
+	}
+	if !hasSensitiveProductionDomains(in.DomainHits) {
+		return "adequate"
+	}
+	if overlapsSensitiveTestDomains(in.TestE2EDomainHits, in.DomainHits) {
+		return "adequate"
+	}
+	if overlapsSensitiveTestDomains(in.TestUnitDomainHits, in.DomainHits) {
+		if structuralMode == "co_located" {
+			return "shallow"
+		}
+		return "unknown"
+	}
+	return "unknown"
+}
+
+func hasSensitiveProductionDomains(h map[string]int) bool {
+	if h == nil {
+		return false
+	}
+	for _, k := range []string{"auth", "rag", "processing", "migrations", "api", "database"} {
+		if h[k] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func overlapsSensitiveTestDomains(testHits map[string]int, domainHits map[string]int) bool {
+	if testHits == nil || domainHits == nil {
+		return false
+	}
+	for _, k := range []string{"auth", "rag", "processing", "migrations", "api", "database"} {
+		if domainHits[k] > 0 && testHits[k] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func behavioralCoverageNote(depth string) string {
+	switch depth {
+	case "adequate":
+		return "Behavioral depth: adequate for this diff’s risk class (E2E/domain overlap with sensitive areas, or non-sensitive production changes)."
+	case "shallow":
+		return "Behavioral depth: unit-level overlap with sensitive domains but no matching E2E evidence in this diff — consider deeper tests where applicable."
+	default:
+		return ""
 	}
 }
 
@@ -81,19 +155,14 @@ func hasNearbyTestInDiff(codePath string, testPaths []string) bool {
 			continue
 		}
 		td := filepath.ToSlash(filepath.Dir(t))
-		// Same directory (typical Go *_test.go + source)
 		if td == dir {
 			return true
 		}
-		// One package level of separation: test's dir is the direct parent of the code's dir, or vice versa.
-		// Deliberately limited to one level to avoid false co-location (e.g. a test at "internal/"
-		// should not be considered nearby to code at "internal/auth/handlers/").
 		parentOfDir := filepath.ToSlash(filepath.Dir(dir))
 		parentOfTd := filepath.ToSlash(filepath.Dir(td))
 		if td == parentOfDir || dir == parentOfTd {
 			return true
 		}
-		// Web: e2e tests apply broadly to web/ — weak signal
 		if strings.Contains(t, "web/tests/e2e/") && strings.HasPrefix(codePath, "web/") {
 			return true
 		}

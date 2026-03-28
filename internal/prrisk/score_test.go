@@ -17,6 +17,15 @@ func TestScoreEmptyDiff(t *testing.T) {
 	if r.ScoreMath.FactorsSubtotal != 0 || r.ScoreMath.FloorApplied {
 		t.Fatalf("unexpected score_math for empty diff: %+v", r.ScoreMath)
 	}
+	if r.Enforcement.MergeRecommendation != "pass" {
+		t.Fatalf("empty diff should merge-recommend pass, got %q (%+v)", r.Enforcement.MergeRecommendation, r.Enforcement)
+	}
+	if len(r.Enforcement.RequiredValidations) == 0 {
+		t.Fatal("expected at least baseline required validations")
+	}
+	if r.ReportVersion != ReportVersionString() {
+		t.Fatalf("ReportVersion=%q want %q", r.ReportVersion, ReportVersionString())
+	}
 }
 
 func TestScoreAuthAndMigrations(t *testing.T) {

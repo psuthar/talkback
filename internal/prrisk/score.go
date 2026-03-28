@@ -137,12 +137,12 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 	}
 
 	mits := Mitigate(factors)
-	integ := BuildIntegrations(factors, finalScore, s.BaseRef, jiraKey, req, math)
 
 	ci := cInsights
 	res := Result{
 		Version:         Version,
 		VersionMinor:    VersionMinor,
+		ReportVersion:   ReportVersionString(),
 		GeneratedAt:     now,
 		BaseRef:         s.BaseRef,
 		Signals:         s,
@@ -154,10 +154,11 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		Reducers:        reducers,
 		RequiredActions: req,
 		Mitigations:     mits,
-		Integrations:    integ,
 		ContextInsights: &ci,
 	}
 	res.Interpretation = buildInterpretation(res)
+	res.Enforcement = ComputeEnforcement(res)
+	res.Integrations = BuildIntegrations(factors, finalScore, s.BaseRef, jiraKey, req, math, res.Enforcement)
 	return res
 }
 

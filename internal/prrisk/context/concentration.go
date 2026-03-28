@@ -40,6 +40,8 @@ func AnalyzeConcentration(in Input) ConcentrationInsight {
 	top := prefs[0]
 	topShare := float64(locByPrefix[top]) / float64(total)
 
+	const focusedLargeLOC = 2000 // align with very-large diff scale; concentrated churn in one area
+
 	// Herfindahl index on LOC shares
 	hhi := 0.0
 	for _, v := range locByPrefix {
@@ -55,6 +57,13 @@ func AnalyzeConcentration(in Input) ConcentrationInsight {
 	} else if topShare >= 0.55 && len(locByPrefix) <= 4 {
 		mode = "focused"
 		detail = fmt.Sprintf("Most churn (~%.0f%%) sits under `%s`.", topShare*100, top)
+		if total >= focusedLargeLOC {
+			mode = "focused_large"
+			detail = fmt.Sprintf(
+				"Large concentrated churn (~%d LOC); ~%.0f%% sits under `%s` — prioritize regression around this area.",
+				total, topShare*100, top,
+			)
+		}
 	}
 
 	return ConcentrationInsight{

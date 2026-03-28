@@ -1,6 +1,11 @@
 package prrisk
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
+)
 
 // TestActionsAuthGateAtHighRisk verifies auth_e2e_gate fires at high risk.
 func TestActionsAuthGateAtHighRisk(t *testing.T) {
@@ -137,13 +142,25 @@ func TestActionsGitUnavailable(t *testing.T) {
 	}
 }
 
-// TestActionsPRReviewSummaryAtHighRisk verifies pr_review_summary fires for large diffs.
-func TestActionsPRReviewSummaryAtHighRisk(t *testing.T) {
+// TestActionsPRReviewSummaryForLargeDiff verifies pr_review_summary fires whenever a
+// large-diff factor is present — unconditionally, regardless of risk band.
+func TestActionsPRReviewSummaryForLargeDiff(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{}}
 	factors := []RiskFactor{{ID: "diff_very_large", Points: 22}}
 	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
 	if !hasAction(acts, "pr_review_summary") {
 		t.Error("expected pr_review_summary for large diff at high risk")
+	}
+}
+
+// TestActionsPRReviewSummaryUnconditional verifies pr_review_summary also fires at low
+// risk — the action is not gated on risk band, only on the presence of the factor.
+func TestActionsPRReviewSummaryUnconditional(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{}}
+	factors := []RiskFactor{{ID: "diff_large", Points: 12}}
+	acts := ComputeRequiredActions(s, factors, nil, 5, "low", nil)
+	if !hasAction(acts, "pr_review_summary") {
+		t.Error("pr_review_summary should fire for large diff even at low risk band")
 	}
 }
 
@@ -153,6 +170,109 @@ func TestActionsNoneForEmptyDiff(t *testing.T) {
 	acts := ComputeRequiredActions(s, nil, nil, 0, "low", nil)
 	if len(acts) != 0 {
 		t.Errorf("expected no actions for empty diff, got %d", len(acts))
+	}
+}
+
+// TestActionsContextIntentMismatch verifies context_align_pr_description fires on mismatch.
+func TestActionsContextIntentMismatch(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{}}
+	ci := &riskcontext.ContextInsights{
+		Intent: riskcontext.IntentInsight{Mismatch: true, DomainsExpected: []string{"auth"}},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if !hasAction(acts, "context_align_pr_description") {
+		t.Error("expected context_align_pr_description for intent mismatch")
+	}
+}
+
+// TestActionsContextScatteredWithEnoughFiles verifies context_scattered_review_plan fires
+// when concentration is scattered and FileCount >= 10.
+func TestActionsContextScatteredWithEnoughFiles(t *testing.T) {
+	s := Signals{FileCount: 10, DomainHits: map[string]int{}}
+	ci := &riskcontext.ContextInsights{
+		Concentration: riskcontext.ConcentrationInsight{Mode: "scattered"},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if !hasAction(acts, "context_scattered_review_plan") {
+		t.Error("expected context_scattered_review_plan for scattered change with 10+ files")
+	}
+}
+
+// TestActionsContextScatteredRequiresTenFiles verifies context_scattered_review_plan does
+// not fire when FileCount < 10, even when concentration is scattered.
+func TestActionsContextScatteredRequiresTenFiles(t *testing.T) {
+	s := Signals{FileCount: 9, DomainHits: map[string]int{}}
+	ci := &riskcontext.ContextInsights{
+		Concentration: riskcontext.ConcentrationInsight{Mode: "scattered"},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if hasAction(acts, "context_scattered_review_plan") {
+		t.Error("context_scattered_review_plan should not fire with fewer than 10 files")
+	}
+}
+
+// TestActionsContextProximityDistantSensitiveDomain verifies context_improve_test_proximity
+// fires when proximity is distant, NonTestFiles >= 2, and a sensitive domain is present.
+func TestActionsContextProximityDistantSensitiveDomain(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{DomainAuth: 1}}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{Mode: "distant", NonTestFiles: 3},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if !hasAction(acts, "context_improve_test_proximity") {
+		t.Error("expected context_improve_test_proximity for distant proximity with sensitive domain")
+	}
+}
+
+// TestActionsContextProximityDistantNonSensitiveDomain verifies context_improve_test_proximity
+// does NOT fire when no sensitive domain is present, matching the factor's own guard.
+func TestActionsContextProximityDistantNonSensitiveDomain(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{DomainWeb: 2, DomainScripts: 1}}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{Mode: "distant", NonTestFiles: 3},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if hasAction(acts, "context_improve_test_proximity") {
+		t.Error("context_improve_test_proximity should not fire when no sensitive domain is present")
+	}
+}
+
+// TestActionsContextHotspot verifies context_hotspot_regression_focus fires when hotspots exist.
+func TestActionsContextHotspot(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{}}
+	ci := &riskcontext.ContextInsights{
+		Hotspots: []riskcontext.HotspotInsight{{Prefix: "internal/auth", RecentCount: 8}},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	if !hasAction(acts, "context_hotspot_regression_focus") {
+		t.Error("expected context_hotspot_regression_focus when hotspots are present")
+	}
+}
+
+// TestActionsContextHotspotChecklist verifies the hotspot action checklist names the prefix.
+func TestActionsContextHotspotChecklist(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{}}
+	ci := &riskcontext.ContextInsights{
+		Hotspots: []riskcontext.HotspotInsight{{Prefix: "internal/rag", RecentCount: 7}},
+	}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", ci)
+	a := findAction(acts, "context_hotspot_regression_focus")
+	if a == nil {
+		t.Fatal("expected context_hotspot_regression_focus action")
+	}
+	if len(a.Checklist) == 0 || !strings.Contains(a.Checklist[0], "internal/rag") {
+		t.Errorf("expected checklist to reference the hotspot prefix, got %v", a.Checklist)
+	}
+}
+
+// TestActionsContextNilInsightsNoContextActions verifies no context_ actions fire when insights is nil.
+func TestActionsContextNilInsightsNoContextActions(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{}}
+	acts := ComputeRequiredActions(s, nil, nil, 10, "low", nil)
+	for _, a := range acts {
+		if strings.HasPrefix(a.ID, "context_") {
+			t.Errorf("no context actions expected with nil insights, got %s", a.ID)
+		}
 	}
 }
 
