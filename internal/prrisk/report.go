@@ -53,10 +53,9 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
-	if enf.EvidenceSummary.PassCount+enf.EvidenceSummary.MissingCount+enf.EvidenceSummary.UnknownCount+enf.EvidenceSummary.FailCount > 0 {
-		es := enf.EvidenceSummary
-		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d unknown · %d fail |\n",
-			es.PassCount, es.MissingCount, es.UnknownCount, es.FailCount))
+	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount > 0 {
+		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail |\n",
+			es.PassCount, es.MissingCount, es.FailCount))
 	}
 	sb.WriteString("\n### Recommended review strategy\n\n")
 	sb.WriteString(enf.RecommendedReview.Strategy + "\n\n")

@@ -342,36 +342,17 @@ def compute_readiness(
 
     # PR Risk integration: cap readiness outcome by PR Risk merge recommendation.
     # When pr_risk.json is absent or unparseable, this block is skipped (graceful degradation).
+    # Messages are intentionally brief — the PR Risk report (pr_risk.md) is the source of
+    # truth for the specific signals; repeating them here would be redundant.
     if pr_risk and isinstance(pr_risk, dict) and not pr_risk.get("_parse_error"):
         enforcement = pr_risk.get("enforcement") or {}
         pr_rec = str(enforcement.get("merge_recommendation") or "").lower()
-        risk_band = pr_risk.get("risk_band", "unknown")
-        risk_score = pr_risk.get("risk_score", 0)
         if pr_rec == "block":
-            blockers.append(
-                f"PR Risk merge recommendation is BLOCK "
-                f"(band={risk_band}, score={risk_score:.0f}) — "
-                "resolve PR Risk required actions before release"
-            )
+            blockers.append("PR Risk: BLOCK — see pr_risk.md for required actions")
             failed_checks.append("pr_risk_block")
         elif pr_rec == "warn":
-            warnings.append(
-                f"PR Risk merge recommendation is WARN "
-                f"(band={risk_band}, score={risk_score:.0f}) — "
-                "review PR Risk required actions before release"
-            )
+            warnings.append("PR Risk: WARN — see pr_risk.md for required actions")
             failed_checks.append("pr_risk_warn")
-        # Surface evidence summary in reasons for report visibility.
-        ev_summary = enforcement.get("evidence_summary") or {}
-        ev_total = sum(ev_summary.get(k, 0) for k in ("pass_count", "missing_count", "unknown_count", "fail_count"))
-        if ev_total > 0:
-            reasons.append(
-                f"PR Risk evidence: "
-                f"{ev_summary.get('pass_count', 0)} pass · "
-                f"{ev_summary.get('missing_count', 0)} missing · "
-                f"{ev_summary.get('unknown_count', 0)} unknown · "
-                f"{ev_summary.get('fail_count', 0)} fail"
-            )
 
     # Risk validation blockers
     validations_required: set[str] = set()

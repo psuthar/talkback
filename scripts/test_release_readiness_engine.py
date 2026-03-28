@@ -306,8 +306,9 @@ class PRRiskIntegrationTests(unittest.TestCase):
         self.assertEqual(res.outcome, "WARN")
         self.assertIn("pr_risk_warn", res.failed_checks)
         warn_text = " ".join(res.warnings)
-        self.assertIn("WARN", warn_text)
-        self.assertIn("medium", warn_text)
+        # Message is a brief pointer — does not repeat prrisk details like band/score.
+        self.assertIn("PR Risk", warn_text)
+        self.assertIn("pr_risk.md", warn_text)
 
     def test_pr_risk_block_rec_blocks_readiness(self):
         """PR Risk BLOCK adds a hard blocker that blocks readiness."""
@@ -324,11 +325,12 @@ class PRRiskIntegrationTests(unittest.TestCase):
         self.assertEqual(res.outcome, "BLOCK")
         self.assertIn("pr_risk_block", res.failed_checks)
         block_text = " ".join(res.blockers)
-        self.assertIn("BLOCK", block_text)
-        self.assertIn("high", block_text)
+        # Message is a brief pointer — does not repeat prrisk details like band/score.
+        self.assertIn("PR Risk", block_text)
+        self.assertIn("pr_risk.md", block_text)
 
-    def test_pr_risk_evidence_summary_in_reasons(self):
-        """PR Risk evidence summary is included in reasons when non-zero."""
+    def test_pr_risk_evidence_summary_not_in_reasons(self):
+        """PR Risk evidence details are not repeated in release readiness reasons — see pr_risk.md."""
         evidence = {"pass_count": 3, "missing_count": 1, "unknown_count": 2, "fail_count": 0}
         res = compute_readiness(
             config=BASE_CONFIG,
@@ -343,9 +345,7 @@ class PRRiskIntegrationTests(unittest.TestCase):
         evidence_reason = next(
             (r for r in res.reasons if "PR Risk evidence" in r), None
         )
-        self.assertIsNotNone(evidence_reason, f"Expected PR Risk evidence reason in {res.reasons}")
-        self.assertIn("3 pass", evidence_reason)
-        self.assertIn("1 missing", evidence_reason)
+        self.assertIsNone(evidence_reason, f"prrisk evidence should not be repeated in reasons: {res.reasons}")
 
     def test_pr_risk_parse_error_ignored(self):
         """A pr_risk dict with _parse_error is silently ignored."""
