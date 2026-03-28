@@ -88,20 +88,64 @@ func TestValidationsValidationNoteAppended(t *testing.T) {
 	}
 }
 
-func TestValidationsDeterministicOrder(t *testing.T) {
-	// Same action IDs in different order must produce identical validation lists.
+func TestValidationsPriorityOrderPreservedFromInput(t *testing.T) {
+	// Validations follow action input order; SortRequiredActions output should
+	// yield high-priority validations before medium-priority ones.
 	s := Signals{}
-	acts1 := []RequiredAction{{ID: "auth_e2e_gate"}, {ID: "add_tests_or_evidence"}}
-	acts2 := []RequiredAction{{ID: "add_tests_or_evidence"}, {ID: "auth_e2e_gate"}}
-	vs1 := ComputeRequiredValidations(s, acts1)
-	vs2 := ComputeRequiredValidations(s, acts2)
-	if len(vs1) != len(vs2) {
-		t.Fatalf("expected same length for same action set, got %d vs %d", len(vs1), len(vs2))
-	}
-	for i := range vs1 {
-		if vs1[i] != vs2[i] {
-			t.Errorf("position %d differs: %q vs %q", i, vs1[i], vs2[i])
+	acts := SortRequiredActions([]RequiredAction{
+		{ID: "auth_e2e_gate"},
+		{ID: "add_tests_or_evidence"},
+		{ID: "workflow_config_validation"},
+	})
+	vs := ComputeRequiredValidations(s, acts)
+
+	var authIdx, testsIdx, configIdx int = -1, -1, -1
+	for i, v := range vs {
+		switch {
+		case strings.Contains(v, "auth/session"):
+			authIdx = i
+		case strings.Contains(v, "tests or recorded evidence"):
+			testsIdx = i
+		case strings.Contains(v, "workflow / deploy"):
+			configIdx = i
 		}
+	}
+	if authIdx == -1 || testsIdx == -1 || configIdx == -1 {
+		t.Fatalf("expected all three validations in %v", vs)
+	}
+	// Both HIGH-priority actions should appear before the MEDIUM one.
+	if authIdx > configIdx || testsIdx > configIdx {
+		t.Errorf("HIGH-priority validations should precede MEDIUM; auth=%d tests=%d config=%d in %v",
+			authIdx, testsIdx, configIdx, vs)
+	}
+}
+
+func TestValidationsMaterialsMigrationsHighBeforeMedium(t *testing.T) {
+	// migrations_validation_gate (HIGH) must appear before materials_processing_gate (MEDIUM)
+	// even though "materials" < "migrations" alphabetically. This is the concrete case that
+	// was broken by the old alphabetical sort.
+	s := Signals{}
+	acts := SortRequiredActions([]RequiredAction{
+		{ID: "materials_processing_gate"}, // MEDIUM, 'm','a'
+		{ID: "migrations_validation_gate"}, // HIGH, 'm','i'
+	})
+	vs := ComputeRequiredValidations(s, acts)
+
+	var migrIdx, matsIdx int = -1, -1
+	for i, v := range vs {
+		if strings.Contains(v, "migrations") {
+			migrIdx = i
+		}
+		if strings.Contains(v, "materials upload") {
+			matsIdx = i
+		}
+	}
+	if migrIdx == -1 || matsIdx == -1 {
+		t.Fatalf("expected both validations in %v", vs)
+	}
+	if migrIdx > matsIdx {
+		t.Errorf("HIGH migrations_validation_gate must precede MEDIUM materials_processing_gate; "+
+			"got migrations at index %d, materials at %d in %v", migrIdx, matsIdx, vs)
 	}
 }
 

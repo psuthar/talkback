@@ -113,6 +113,7 @@ def evaluate(
     empty_diff: bool = False,
     commit_validation_note: bool = False,
     commit_validation_snippet: str = "",
+    pr_risk: Optional[dict] = None,
 ) -> ReadinessResult:
     changed = [] if empty_diff else git_changed_files(repo_root, base_ref)
     return compute_readiness(
@@ -125,6 +126,7 @@ def evaluate(
         migration_validated_cli=migration_validated_cli,
         commit_validation_note=commit_validation_note,
         commit_validation_snippet=commit_validation_snippet,
+        pr_risk=pr_risk,
     )
 
 
@@ -303,6 +305,15 @@ def main() -> int:
     commit_msgs = git_commit_messages(repo_root, args.base_ref)
     commit_note_found, commit_note_snippet = detect_validation_note(commit_msgs)
 
+    # Compute out_dir early so we can read pr_risk.json before evaluate().
+    # pr_risk.json is written by `go run ./cmd/prrisk` earlier in the same CI job.
+    # If absent or unparseable, pr_risk_data is None and the integration is skipped.
+    out_dir = args.output_dir if args.output_dir.is_absolute() else repo_root / args.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pr_risk_path = out_dir / "pr_risk.json"
+    pr_risk_data = _read_json(pr_risk_path) if not args.fixture_mode else None
+
     result = evaluate(
         repo_root,
         config,
@@ -315,18 +326,15 @@ def main() -> int:
         empty_diff=args.empty_diff or args.fixture_mode,
         commit_validation_note=commit_note_found,
         commit_validation_snippet=commit_note_snippet,
+        pr_risk=pr_risk_data,
     )
-
-    out_dir = args.output_dir if args.output_dir.is_absolute() else repo_root / args.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     payload = asdict(result)
     payload["config_path"] = str(config_path)
     payload["base_ref"] = args.base_ref
     payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
 
-    pr_risk_path = out_dir / "pr_risk.json"
-    pr_risk = _read_json(pr_risk_path)
+    pr_risk = pr_risk_data
     if pr_risk and isinstance(pr_risk, dict) and "_parse_error" not in pr_risk:
         enforcement = pr_risk.get("enforcement") or {}
         evidence_summary = enforcement.get("evidence_summary") or {}

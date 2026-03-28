@@ -248,6 +248,7 @@ def compute_readiness(
     migration_validated_cli: bool,
     commit_validation_note: bool = False,
     commit_validation_snippet: str = "",
+    pr_risk: Optional[dict] = None,
 ) -> ReadinessResult:
     penalties = config.get("scoring", {}).get("penalties", {}) or {}
     max_score = float(config.get("scoring", {}).get("max_score", 100))
@@ -338,6 +339,39 @@ def compute_readiness(
         warnings.append(f"Risky config/workflow paths changed without validation note: {files_note}")
         score -= float(penalties.get("risky_config_without_note", 10))
         failed_checks.append("risky_config_without_note")
+
+    # PR Risk integration: cap readiness outcome by PR Risk merge recommendation.
+    # When pr_risk.json is absent or unparseable, this block is skipped (graceful degradation).
+    if pr_risk and isinstance(pr_risk, dict) and not pr_risk.get("_parse_error"):
+        enforcement = pr_risk.get("enforcement") or {}
+        pr_rec = str(enforcement.get("merge_recommendation") or "").lower()
+        risk_band = pr_risk.get("risk_band", "unknown")
+        risk_score = pr_risk.get("risk_score", 0)
+        if pr_rec == "block":
+            blockers.append(
+                f"PR Risk merge recommendation is BLOCK "
+                f"(band={risk_band}, score={risk_score:.0f}) — "
+                "resolve PR Risk required actions before release"
+            )
+            failed_checks.append("pr_risk_block")
+        elif pr_rec == "warn":
+            warnings.append(
+                f"PR Risk merge recommendation is WARN "
+                f"(band={risk_band}, score={risk_score:.0f}) — "
+                "review PR Risk required actions before release"
+            )
+            failed_checks.append("pr_risk_warn")
+        # Surface evidence summary in reasons for report visibility.
+        ev_summary = enforcement.get("evidence_summary") or {}
+        ev_total = sum(ev_summary.get(k, 0) for k in ("pass_count", "missing_count", "unknown_count", "fail_count"))
+        if ev_total > 0:
+            reasons.append(
+                f"PR Risk evidence: "
+                f"{ev_summary.get('pass_count', 0)} pass · "
+                f"{ev_summary.get('missing_count', 0)} missing · "
+                f"{ev_summary.get('unknown_count', 0)} unknown · "
+                f"{ev_summary.get('fail_count', 0)} fail"
+            )
 
     # Risk validation blockers
     validations_required: set[str] = set()
