@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
 )
 
 // band returns risk band label from score 0-100.
@@ -103,6 +105,12 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 			"no *_test.go / web test paths in diff; consider adding or updating tests")
 	}
 
+	ctxIn := contextInputFromSignals(s)
+	cInsights, ctxFactors := riskcontext.Analyze(ctxIn, riskContextWeights(w))
+	for _, cf := range ctxFactors {
+		add(cf.ID, cf.Label, cf.Points, cf.Detail)
+	}
+
 	// Reducers deterministically lower risk by subtracting points from the base sum.
 	reducers := DetectReducers(s, factors, w)
 	reducerSum := 0.0
@@ -110,29 +118,44 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		reducerSum += r.Points
 	}
 
-	score := clamp100(sum - reducerSum)
+	netBeforeFloor := clamp100(sum - reducerSum)
+	finalScore, floorApplied, floorMin, floorReasons := applyRiskFloor(netBeforeFloor, factors)
 
-	riskBand := band(score)
+	riskBand := band(finalScore)
 	cats := ComputeCategories(s, factors, reducers)
-	req := ComputeRequiredActions(s, factors, reducers, score, riskBand)
+	req := ComputeRequiredActions(s, factors, reducers, finalScore, riskBand, &cInsights)
+
+	math := ScoreMath{
+		FactorsSubtotal:  sum,
+		ReducersSubtotal: reducerSum,
+		NetBeforeFloor:   netBeforeFloor,
+		FloorMinScore:    floorMin,
+		FloorApplied:     floorApplied,
+		FloorReasons:     floorReasons,
+		FinalScore:       finalScore,
+		FinalBand:        riskBand,
+	}
 
 	mits := Mitigate(factors)
-	integ := BuildIntegrations(factors, score, s.BaseRef, jiraKey)
+	integ := BuildIntegrations(factors, finalScore, s.BaseRef, jiraKey, req, math)
 
+	ci := cInsights
 	res := Result{
 		Version:         Version,
 		VersionMinor:    VersionMinor,
 		GeneratedAt:     now,
 		BaseRef:         s.BaseRef,
 		Signals:         s,
-		RiskScore:       score,
+		RiskScore:       finalScore,
 		RiskBand:        riskBand,
+		ScoreMath:       math,
 		Factors:         factors,
 		Categories:      cats,
 		Reducers:        reducers,
 		RequiredActions: req,
 		Mitigations:     mits,
 		Integrations:    integ,
+		ContextInsights: &ci,
 	}
 	res.Interpretation = buildInterpretation(res)
 	return res

@@ -9,10 +9,23 @@ import (
 const EnvJiraIssueKey = "PRRISK_JIRA_ISSUE_KEY"
 
 // BuildIntegrations fills PR comment markdown and optional Jira hook.
-func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey string) Integrations {
+func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey string, actions []RequiredAction, math ScoreMath) Integrations {
 	md := &strings.Builder{}
 	fmt.Fprintf(md, "## PR Risk (v%d.%d)\n\n", Version, VersionMinor)
 	fmt.Fprintf(md, "**Score:** %.1f/100 (%s) vs `%s`\n\n", score, band(score), baseRef)
+
+	if math.FactorsSubtotal > 0 || math.ReducersSubtotal > 0 || math.FloorMinScore > 0 {
+		fmt.Fprintf(md, "**Score math:** factors **%.1f** − reducers **%.1f** → net **%.1f**",
+			math.FactorsSubtotal, math.ReducersSubtotal, math.NetBeforeFloor)
+		if math.FloorMinScore > 0 {
+			fmt.Fprintf(md, "; floor **%.0f**", math.FloorMinScore)
+			if math.FloorApplied {
+				md.WriteString(" **(applied)**")
+			}
+		}
+		fmt.Fprintf(md, " → **final %.1f** (%s)\n\n", math.FinalScore, math.FinalBand)
+	}
+
 	if jiraKey != "" {
 		fmt.Fprintf(md, "**Tracked issue:** %s\n\n", jiraKey)
 	}
@@ -26,9 +39,30 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 	}
 
 	md.WriteString("\n**Required actions before merge:**\n")
-	md.WriteString("_See artifact `pr_risk.md` for the full checklist._\n")
+	n := len(actions)
+	if n == 0 {
+		md.WriteString("_None._\n")
+	} else {
+		maxShow := 5
+		if n < maxShow {
+			maxShow = n
+		}
+		for i := 0; i < maxShow; i++ {
+			a := actions[i]
+			fmt.Fprintf(md, "%d. **%s**", i+1, a.Title)
+			if len(a.Checklist) > 0 {
+				fmt.Fprintf(md, " — %s", a.Checklist[0])
+			}
+			md.WriteString("\n")
+		}
+		if n > maxShow {
+			fmt.Fprintf(md, "_…and %d more (see artifact `pr_risk.md`)._\n", n-maxShow)
+		} else {
+			md.WriteString("\n_Full checklist in artifact `pr_risk.md`._\n")
+		}
+	}
 
-	md.WriteString("\n_See artifact `pr_risk.md` for reducers, category breakdown, and full mitigations._\n")
+	md.WriteString("\n_See artifact `pr_risk.md` for reducers, category breakdown, and mitigations._\n")
 
 	return Integrations{
 		JiraIssueKey:      jiraKey,

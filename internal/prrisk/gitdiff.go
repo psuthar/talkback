@@ -78,6 +78,7 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 	valFound, valSnippet := detectValidationNote(repoRoot, baseRef)
 
 	s := Signals{
+		RepoRoot:              repoRoot,
 		BaseRef:               baseRef,
 		HeadRef:               headRef(repoRoot),
 		DomainHits:            make(map[string]int),

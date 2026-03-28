@@ -1,14 +1,18 @@
 // Package prrisk implements deterministic PR risk scoring (v2.x) from git diffs.
 package prrisk
 
-import "time"
+import (
+	"time"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
+)
 
 // Version is the major report schema version.
 const Version = 2
 
 // VersionMinor is the minor report schema version.
-// v2.2 == Version=2, VersionMinor=2
-const VersionMinor = 2
+// v2.4 == Version=2, VersionMinor=4
+const VersionMinor = 4
 
 // Domain labels for changed-file classification (extensible).
 const (
@@ -41,7 +45,7 @@ type Signals struct {
 	FileCount             int            `json:"file_count"`
 	TotalAdded            int            `json:"total_added"`
 	TotalDeleted          int            `json:"total_deleted"`
-	TotalLOC              int            `json:"total_loc"` // added + deleted (diff churn)
+	TotalLOC              int            `json:"total_loc"`                // added + deleted (diff churn)
 	TestLOCRatio          float64        `json:"test_loc_ratio,omitempty"` // test LOC / total LOC
 	Files                 []FileChange   `json:"files"`
 	DomainHits            map[string]int `json:"domain_hits"` // domain -> file count
@@ -56,6 +60,8 @@ type Signals struct {
 	GitError              string         `json:"git_error,omitempty"`
 	ValidationNoteFound   bool           `json:"validation_note_found,omitempty"`
 	ValidationNoteSnippet string         `json:"validation_note_snippet,omitempty"`
+	// RepoRoot is the git worktree root used for contextual git queries (v2.4+).
+	RepoRoot string `json:"repo_root,omitempty"`
 }
 
 // RiskFactor is one explainable contributor to the score.
@@ -91,10 +97,10 @@ type RiskCategory struct {
 	Key        string               `json:"key"`
 	Label      string               `json:"label"`
 	RiskScore  float64              `json:"risk_score"`
-	Confidence float64              `json:"confidence,omitempty"`  // primarily used by test confidence category
-	Factors    []string             `json:"factors,omitempty"`     // factor IDs contributing to risk_score
-	Reducers   []string             `json:"reducers,omitempty"`    // reducer IDs affecting risk_score
-	Breakdown  *ConfidenceBreakdown `json:"breakdown,omitempty"`   // only set for test_confidence category
+	Confidence float64              `json:"confidence,omitempty"` // primarily used by test confidence category
+	Factors    []string             `json:"factors,omitempty"`    // factor IDs contributing to risk_score
+	Reducers   []string             `json:"reducers,omitempty"`   // reducer IDs affecting risk_score
+	Breakdown  *ConfidenceBreakdown `json:"breakdown,omitempty"`  // only set for test_confidence category
 }
 
 // RiskReducer is something that lowers risk deterministically (based on diff signals).
@@ -123,6 +129,18 @@ type Integrations struct {
 	PRCommentMarkdown string `json:"pr_comment_markdown,omitempty"`
 }
 
+// ScoreMath is the explicit, auditable score calculation (v2.3+; report minor v2.4 adds context).
+type ScoreMath struct {
+	FactorsSubtotal  float64  `json:"factors_subtotal"`  // sum of risk factor points
+	ReducersSubtotal float64  `json:"reducers_subtotal"` // sum of reducer points (positive)
+	NetBeforeFloor   float64  `json:"net_before_floor"`  // clamp100(factors − reducers)
+	FloorMinScore    float64  `json:"floor_min_score"`   // minimum enforced score when floor rules apply; 0 if none
+	FloorApplied     bool     `json:"floor_applied"`     // true if net was raised to meet floor
+	FloorReasons     []string `json:"floor_reasons,omitempty"`
+	FinalScore       float64  `json:"final_score"`
+	FinalBand        string   `json:"final_band"`
+}
+
 // Result is the full scoring output.
 type Result struct {
 	Version         int              `json:"version"`
@@ -130,8 +148,9 @@ type Result struct {
 	GeneratedAt     time.Time        `json:"generated_at"`
 	BaseRef         string           `json:"base_ref"`
 	Signals         Signals          `json:"signals"`
-	RiskScore       float64          `json:"risk_score"` // 0–100, higher = riskier
+	RiskScore       float64          `json:"risk_score"` // 0–100, higher = riskier (same as ScoreMath.FinalScore)
 	RiskBand        string           `json:"risk_band"`
+	ScoreMath       ScoreMath        `json:"score_math"`
 	Interpretation  string           `json:"interpretation,omitempty"` // plain-English summary
 	Factors         []RiskFactor     `json:"factors"`
 	Categories      []RiskCategory   `json:"categories,omitempty"`
@@ -139,6 +158,8 @@ type Result struct {
 	RequiredActions []RequiredAction `json:"required_actions,omitempty"`
 	Mitigations     []Mitigation     `json:"mitigations"`
 	Integrations    Integrations     `json:"integrations"`
+	// ContextInsights is deterministic contextual intelligence (v2.4+): proximity, concentration, hotspots, intent.
+	ContextInsights *riskcontext.ContextInsights `json:"context_insights,omitempty"`
 }
 
 // ScoreWeights tune deterministic contributions (sum capped at 100).
@@ -170,6 +191,12 @@ type ScoreWeights struct {
 	// If test LOC ratio >= threshold (but not all-test), reduce test confidence risk.
 	TestHeavyLOCRatioThreshold float64
 	TestHeavyReducerPoints     float64
+
+	// Contextual signals (v2.4+) — small additive factors; see internal/prrisk/context.
+	ContextProximityLowPoints   float64
+	ContextScatteredPoints      float64
+	ContextHotspotPoints        float64
+	ContextIntentMismatchPoints float64
 }
 
 // DefaultWeights returns built-in v2 weights.
@@ -192,12 +219,17 @@ func DefaultWeights() ScoreWeights {
 		ConfigPoints:        8,
 		TestsMissingPoints:  18,
 
-		ValidationNoteReducerPoints:   10,
-		WorkflowPartialReducerPoints:  6,
-		UnitTestEvidenceReducerPoints: 7,
-		E2ETestEvidenceReducerPoints:  14,
-		TestOnlyDiffReducerPoints:     10,
+		ValidationNoteReducerPoints:   6,
+		WorkflowPartialReducerPoints:  4,
+		UnitTestEvidenceReducerPoints: 5,
+		E2ETestEvidenceReducerPoints:  10,
+		TestOnlyDiffReducerPoints:     6,
 		TestHeavyLOCRatioThreshold:    0.40,
-		TestHeavyReducerPoints:        6,
+		TestHeavyReducerPoints:        4,
+
+		ContextProximityLowPoints:   5,
+		ContextScatteredPoints:      5,
+		ContextHotspotPoints:        4,
+		ContextIntentMismatchPoints: 6,
 	}
 }
