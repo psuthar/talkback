@@ -5,14 +5,26 @@ import (
 	"strings"
 )
 
-// ComputeEnforcement derives merge recommendation, validations, and review routing from a full Result.
+// ComputeEnforcement derives merge recommendation, validations, review routing, and evidence status
+// from a full Result. Evidence status (v2.6+) is computed from repo-local signals only.
 func ComputeEnforcement(r Result) Enforcement {
 	validations := ComputeRequiredValidations(r.Signals, r.RequiredActions)
 	hints := ComputeRoutingHints(r.Signals, r.Factors, r.ContextInsights)
+
+	// Compute evidence before finalising the recommendation so the upgrade can fire.
+	evidenceStatus, evidenceSummary := ComputeEvidenceStatus(r)
+
 	rec := mergeRecommendation(r)
+	rec = evidenceAwareUpgrade(rec, evidenceStatus, r.RequiredActions)
+
 	strategy := reviewStrategyFor(rec, r.RiskBand)
 	reqs := reviewRequirements(rec, r.RiskBand, r.RiskScore)
 	blocking := computeBlockingReasons(r, rec)
+	if rec != "pass" {
+		blocking = dedupeStrings(append(blocking, evidenceBlockingReasons(evidenceStatus, r.RequiredActions)...))
+	} else {
+		blocking = dedupeStrings(blocking)
+	}
 	reasons := computePolicyReasons(r, rec)
 
 	return Enforcement{
@@ -26,6 +38,8 @@ func ComputeEnforcement(r Result) Enforcement {
 		ReviewRequirements:  reqs,
 		BlockingReasons:     blocking,
 		Reasons:             reasons,
+		EvidenceStatus:      evidenceStatus,
+		EvidenceSummary:     evidenceSummary,
 	}
 }
 

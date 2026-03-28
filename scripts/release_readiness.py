@@ -328,14 +328,44 @@ def main() -> int:
     pr_risk_path = out_dir / "pr_risk.json"
     pr_risk = _read_json(pr_risk_path)
     if pr_risk and isinstance(pr_risk, dict) and "_parse_error" not in pr_risk:
+        enforcement = pr_risk.get("enforcement") or {}
+        evidence_summary = enforcement.get("evidence_summary") or {}
         payload["pr_risk"] = {
             "version": pr_risk.get("version"),
             "version_minor": pr_risk.get("version_minor"),
             "report_version": pr_risk.get("report_version"),
             "risk_score": pr_risk.get("risk_score"),
             "risk_band": pr_risk.get("risk_band"),
-            "enforcement": pr_risk.get("enforcement"),
+            "enforcement": enforcement,
+            # v2.6: evidence summary for downstream gate visibility
+            "evidence_summary": evidence_summary,
         }
+        # Warn when high-priority evidence items are FAIL or MISSING.
+        _HIGH_PRIORITY_IDS = {
+            "ci_fetch_depth_zero", "auth_e2e_gate", "rag_qna_citations_gate",
+            "migrations_validation_gate", "add_tests_or_evidence",
+        }
+        evidence_status = enforcement.get("evidence_status") or []
+        high_fails = [
+            e for e in evidence_status
+            if e.get("status") == "fail" and e.get("id") in _HIGH_PRIORITY_IDS
+        ]
+        high_missing = [
+            e for e in evidence_status
+            if e.get("status") == "missing" and e.get("id") in _HIGH_PRIORITY_IDS
+        ]
+        if high_fails:
+            for ev in high_fails:
+                print(
+                    f"PR Risk evidence FAIL [{ev.get('id')}]: {ev.get('rationale')}",
+                    file=sys.stderr,
+                )
+        if high_missing:
+            for ev in high_missing:
+                print(
+                    f"PR Risk evidence MISSING [{ev.get('id')}]: {ev.get('rationale')}",
+                    file=sys.stderr,
+                )
     override_note = f", overrides={len(result.outcome_overrides)}" if result.outcome_overrides else ""
     payload["deterministic_summary"] = (
         f"{result.outcome}: score={result.score:.1f}, blockers={len(result.blockers)}, warnings={len(result.warnings)}{override_note}"

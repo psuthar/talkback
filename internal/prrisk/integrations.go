@@ -16,6 +16,10 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 
 	rec := strings.ToUpper(enf.MergeRecommendation)
 	fmt.Fprintf(md, "**Merge recommendation:** **%s** — %s\n\n", rec, enf.Rationale)
+	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.UnknownCount+es.FailCount > 0 {
+		fmt.Fprintf(md, "**Evidence:** %d pass · %d missing · %d unknown · %d fail\n\n",
+			es.PassCount, es.MissingCount, es.UnknownCount, es.FailCount)
+	}
 	if strings.TrimSpace(enf.RecommendedReview.Strategy) != "" {
 		fmt.Fprintf(md, "**Review strategy:** %s\n\n", enf.RecommendedReview.Strategy)
 	}

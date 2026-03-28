@@ -53,6 +53,11 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
+	if enf.EvidenceSummary.PassCount+enf.EvidenceSummary.MissingCount+enf.EvidenceSummary.UnknownCount+enf.EvidenceSummary.FailCount > 0 {
+		es := enf.EvidenceSummary
+		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d unknown · %d fail |\n",
+			es.PassCount, es.MissingCount, es.UnknownCount, es.FailCount))
+	}
 	sb.WriteString("\n### Recommended review strategy\n\n")
 	sb.WriteString(enf.RecommendedReview.Strategy + "\n\n")
 	sb.WriteString("### Review routing (recommended)\n\n")
@@ -88,6 +93,22 @@ func WriteMarkdown(path string, r Result) error {
 	} else {
 		for _, v := range enf.RequiredValidations {
 			sb.WriteString(fmt.Sprintf("- %s\n", v))
+		}
+		sb.WriteString("\n")
+	}
+	if len(enf.EvidenceStatus) > 0 {
+		sb.WriteString("### Evidence status (repo-local signals)\n\n")
+		sum := enf.EvidenceSummary
+		sb.WriteString(fmt.Sprintf(
+			"> %d pass · %d missing · %d unknown · %d fail\n\n",
+			sum.PassCount, sum.MissingCount, sum.UnknownCount, sum.FailCount,
+		))
+		sb.WriteString("| Action / Validation | Status | Source | Rationale |\n")
+		sb.WriteString("|---------------------|--------|--------|-----------|\n")
+		for _, ev := range enf.EvidenceStatus {
+			icon := evidenceStatusIcon(ev.Status)
+			sb.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %s |\n",
+				ev.ID, icon, ev.Status, ev.Source, ev.Rationale))
 		}
 		sb.WriteString("\n")
 	}
@@ -131,7 +152,7 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString("### Test–code proximity\n\n")
 		sb.WriteString(fmt.Sprintf("- **Structural alignment:** `%s` — %s\n", ci.Proximity.StructuralAlignment, ci.Proximity.Detail))
 		if ci.Proximity.BehavioralCoverage != "" {
-			sb.WriteString(fmt.Sprintf("- **Behavioral coverage depth:** `%s` (unit/E2E overlap vs sensitive domains in this diff)\n", ci.Proximity.BehavioralCoverage))
+			sb.WriteString(fmt.Sprintf("- **Behavioral coverage depth:** `%s`\n", ci.Proximity.BehavioralCoverage))
 		}
 		sb.WriteString(fmt.Sprintf("- Non-test files: **%d** with nearby test in diff: **%d** (ratio **%.0f%%**)\n",
 			ci.Proximity.NonTestFiles, ci.Proximity.WithNearbyTestInDiff, ci.Proximity.Ratio*100))
@@ -170,7 +191,9 @@ func WriteMarkdown(path string, r Result) error {
 			sb.WriteString(fmt.Sprintf("- **Domains in diff (non-test):** %s\n", strings.Join(ci.Intent.DomainsInDiff, ", ")))
 		}
 		aligned := "yes"
-		if !ci.Intent.Aligned {
+		if ci.Intent.IntentStrength == "unknown" {
+			aligned = "n/a"
+		} else if !ci.Intent.Aligned {
 			aligned = "no"
 		}
 		sb.WriteString(fmt.Sprintf("- **Aligned:** %s — %s\n", aligned, ci.Intent.Detail))

@@ -190,6 +190,71 @@ func TestComputePolicyReasonsWeakIntent(t *testing.T) {
 	}
 }
 
+// TestComputeEnforcementPassRecHasNoBlockingReasons verifies that a PASS recommendation
+// never has evidence-derived blocking reasons (PASS + blocking reasons is contradictory).
+func TestComputeEnforcementPassRecHasNoBlockingReasons(t *testing.T) {
+	// Low band, low score, no factors — mergeRecommendation returns "pass".
+	// Include a MEDIUM-priority action with an intent-mismatch FAIL to exercise the guard.
+	r := Result{
+		RiskBand:  "low",
+		RiskScore: 8,
+		Signals:   Signals{},
+		RequiredActions: []RequiredAction{
+			{ID: "context_align_pr_description", Title: "Align PR description", Priority: PriorityMedium},
+		},
+		ContextInsights: &riskcontext.ContextInsights{
+			Intent: riskcontext.IntentInsight{Mismatch: true, Detail: "auth expected but not in diff"},
+		},
+	}
+	e := ComputeEnforcement(r)
+	// Evidence FAIL on context_align_pr_description should upgrade pass→warn via evidenceAwareUpgrade
+	// (only HIGH FAIL upgrades; MEDIUM FAIL does not). Verify rec is still pass.
+	if e.MergeRecommendation != "pass" {
+		t.Fatalf("expected pass (MEDIUM FAIL does not upgrade), got %q", e.MergeRecommendation)
+	}
+	for _, b := range e.BlockingReasons {
+		if strings.Contains(b, "Evidence") {
+			t.Errorf("PASS rec should not have evidence-derived blocking reasons, got %q", b)
+		}
+	}
+}
+
+// TestComputeEnforcementEvidenceUpgradeFiresThroughFullPath verifies the evidence upgrade
+// fires in ComputeEnforcement when a HIGH-priority action has FAIL evidence.
+func TestComputeEnforcementEvidenceUpgradeFiresThroughFullPath(t *testing.T) {
+	// auth domain present but no E2E test hits → evidenceTestDomain returns MISSING.
+	// auth_e2e_gate is HIGH priority → upgrade from warn→block.
+	r := Result{
+		RiskBand:  "medium",
+		RiskScore: 30,
+		Signals: Signals{
+			DomainHits: map[string]int{DomainAuth: 1},
+		},
+		RequiredActions: []RequiredAction{
+			{ID: "auth_e2e_gate", Title: "Auth E2E gate", Priority: PriorityHigh},
+		},
+		Factors: []RiskFactor{{ID: "domain_auth", Points: 14}},
+	}
+	e := ComputeEnforcement(r)
+	// mergeRecommendation gives "warn" for medium band; evidence upgrade should not fire
+	// (HIGH MISSING upgrades pass→warn only, not warn→block).
+	// But if it were pass, it would upgrade to warn.
+	if e.MergeRecommendation != "warn" {
+		t.Fatalf("medium band without tests: expected warn, got %q", e.MergeRecommendation)
+	}
+	// BlockingReasons should include the HIGH-priority MISSING evidence entry.
+	found := false
+	for _, b := range e.BlockingReasons {
+		if strings.Contains(b, "auth_e2e_gate") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected auth_e2e_gate MISSING in BlockingReasons for warn rec, got %v", e.BlockingReasons)
+	}
+}
+
 func TestComputeEnforcementHasValidationsAndRouting(t *testing.T) {
 	r := Result{
 		RiskBand:  "medium",

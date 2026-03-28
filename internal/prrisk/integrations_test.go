@@ -6,11 +6,12 @@ import (
 )
 
 // TestBuildIntegrationsVersionHeader verifies the PR comment markdown contains
-// the correct v2.5 version header.
+// the correct version header matching ReportVersionString().
 func TestBuildIntegrationsVersionHeader(t *testing.T) {
 	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
-	if !strings.Contains(integ.PRCommentMarkdown, "v2.5") {
-		t.Errorf("expected v2.5 in PR comment header, got:\n%s", integ.PRCommentMarkdown)
+	want := ReportVersionString()
+	if !strings.Contains(integ.PRCommentMarkdown, want) {
+		t.Errorf("expected %s in PR comment header, got:\n%s", want, integ.PRCommentMarkdown)
 	}
 }
 

@@ -129,6 +129,40 @@ type RecommendedReview struct {
 	RoutingHints []string `json:"routing_hints,omitempty"`
 }
 
+// ValidationStatus is the evidence state for one required validation or action (v2.6+).
+// Values: pass | missing | unknown | fail
+type ValidationStatus = string
+
+const (
+	EvidencePass    ValidationStatus = "pass"
+	EvidenceMissing ValidationStatus = "missing"
+	EvidenceUnknown ValidationStatus = "unknown"
+	EvidenceFail    ValidationStatus = "fail"
+)
+
+// ValidationEvidence captures the detected evidence state for one required validation or action (v2.6+).
+// Status is derived from repo-local, deterministic signals only — no LLM, no live API.
+type ValidationEvidence struct {
+	// ID matches RequiredAction.ID or a well-known validation key (e.g. "ci_baseline").
+	ID string `json:"id"`
+	// Label is the human-readable name of the action or validation.
+	Label string `json:"label"`
+	// Status is the detected evidence state: pass | missing | unknown | fail.
+	Status ValidationStatus `json:"status"`
+	// Source identifies the repo-local signal used (e.g. "git_signals", "intent", "proximity", "test_domain_hits").
+	Source string `json:"source,omitempty"`
+	// Rationale is a one-line explanation of how the status was determined.
+	Rationale string `json:"rationale,omitempty"`
+}
+
+// EvidenceSummary aggregates ValidationEvidence status counts (v2.6+).
+type EvidenceSummary struct {
+	PassCount    int `json:"pass_count"`
+	MissingCount int `json:"missing_count"`
+	UnknownCount int `json:"unknown_count"`
+	FailCount    int `json:"fail_count"`
+}
+
 // Enforcement is deterministic merge/review policy derived from score, factors, and context (v2.5+).
 type Enforcement struct {
 	MergeRecommendation string            `json:"merge_recommendation"` // pass | warn | block
@@ -138,6 +172,9 @@ type Enforcement struct {
 	ReviewRequirements  []string          `json:"review_requirements"`
 	BlockingReasons     []string          `json:"blocking_reasons,omitempty"`
 	Reasons             []string          `json:"reasons,omitempty"` // policy trace (deterministic)
+	// v2.6 additions: evidence-based validation status.
+	EvidenceStatus  []ValidationEvidence `json:"evidence_status,omitempty"`
+	EvidenceSummary EvidenceSummary      `json:"evidence_summary,omitempty"`
 }
 
 // ScoreMath is the explicit, auditable score calculation (v2.3+; report minor v2.4 adds context).
@@ -156,7 +193,7 @@ type ScoreMath struct {
 type Result struct {
 	Version         int              `json:"version"`
 	VersionMinor    int              `json:"version_minor"`
-	ReportVersion   string           `json:"report_version"` // canonical e.g. "v2.5"
+	ReportVersion   string           `json:"report_version"` // canonical e.g. "v2.6"
 	GeneratedAt     time.Time        `json:"generated_at"`
 	BaseRef         string           `json:"base_ref"`
 	Signals         Signals          `json:"signals"`
