@@ -6,11 +6,11 @@ import (
 )
 
 // TestBuildIntegrationsVersionHeader verifies the PR comment markdown contains
-// the correct v2.4 version header.
+// the correct v2.5 version header.
 func TestBuildIntegrationsVersionHeader(t *testing.T) {
-	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{})
-	if !strings.Contains(integ.PRCommentMarkdown, "v2.4") {
-		t.Errorf("expected v2.4 in PR comment header, got:\n%s", integ.PRCommentMarkdown)
+	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
+	if !strings.Contains(integ.PRCommentMarkdown, "v2.5") {
+		t.Errorf("expected v2.5 in PR comment header, got:\n%s", integ.PRCommentMarkdown)
 	}
 }
 
@@ -26,7 +26,7 @@ func TestBuildIntegrationsScoreMathBlock(t *testing.T) {
 		FinalScore:       26.0,
 		FinalBand:        "medium",
 	}
-	integ := BuildIntegrations(nil, 26.0, "origin/main", "", nil, math)
+	integ := BuildIntegrations(nil, 26.0, "origin/main", "", nil, math, Enforcement{})
 	md := integ.PRCommentMarkdown
 	if !strings.Contains(md, "36.0") {
 		t.Errorf("expected FactorsSubtotal 36.0 in markdown, got:\n%s", md)
@@ -51,7 +51,7 @@ func TestBuildIntegrationsScoreMathFloorApplied(t *testing.T) {
 		FinalScore:       20.0,
 		FinalBand:        "medium",
 	}
-	integ := BuildIntegrations(nil, 20.0, "origin/main", "", nil, math)
+	integ := BuildIntegrations(nil, 20.0, "origin/main", "", nil, math, Enforcement{})
 	md := integ.PRCommentMarkdown
 	if !strings.Contains(md, "20") {
 		t.Errorf("expected floor value 20 in markdown, got:\n%s", md)
@@ -64,7 +64,7 @@ func TestBuildIntegrationsScoreMathFloorApplied(t *testing.T) {
 // TestBuildIntegrationsScoreMathBlockAbsentWhenZero verifies the score math block
 // is omitted when all math fields are zero (empty diff).
 func TestBuildIntegrationsScoreMathBlockAbsentWhenZero(t *testing.T) {
-	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{})
+	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
 	md := integ.PRCommentMarkdown
 	if strings.Contains(md, "Score math:") {
 		t.Errorf("expected no score math block for zero math, got:\n%s", md)
@@ -74,7 +74,7 @@ func TestBuildIntegrationsScoreMathBlockAbsentWhenZero(t *testing.T) {
 // TestBuildIntegrationsJiraKey verifies the Jira issue key appears in the
 // markdown and is echoed on the Integrations struct.
 func TestBuildIntegrationsJiraKey(t *testing.T) {
-	integ := BuildIntegrations(nil, 30.0, "origin/main", "PROJ-42", nil, ScoreMath{})
+	integ := BuildIntegrations(nil, 30.0, "origin/main", "PROJ-42", nil, ScoreMath{}, Enforcement{})
 	if integ.JiraIssueKey != "PROJ-42" {
 		t.Errorf("expected JiraIssueKey=PROJ-42, got %q", integ.JiraIssueKey)
 	}
@@ -86,7 +86,7 @@ func TestBuildIntegrationsJiraKey(t *testing.T) {
 // TestBuildIntegrationsNoFactors verifies the "no factors" placeholder appears
 // when the factors slice is empty.
 func TestBuildIntegrationsNoFactors(t *testing.T) {
-	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{})
+	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "No specific risk factors matched") {
 		t.Errorf("expected no-factors placeholder, got:\n%s", integ.PRCommentMarkdown)
 	}
@@ -97,7 +97,7 @@ func TestBuildIntegrationsFactorsListed(t *testing.T) {
 	factors := []RiskFactor{
 		{ID: "domain_auth", Label: "Auth/session/invite area changed", Points: 14, Detail: "1 file(s)"},
 	}
-	integ := BuildIntegrations(factors, 14.0, "origin/main", "", nil, ScoreMath{FactorsSubtotal: 14})
+	integ := BuildIntegrations(factors, 14.0, "origin/main", "", nil, ScoreMath{FactorsSubtotal: 14}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "Auth/session/invite area changed") {
 		t.Errorf("expected factor label in PR comment, got:\n%s", integ.PRCommentMarkdown)
 	}
@@ -109,7 +109,7 @@ func TestBuildIntegrationsRequiredActionsListed(t *testing.T) {
 	actions := []RequiredAction{
 		{ID: "auth_e2e_gate", Title: "Run auth E2E gate", Checklist: []string{"Run smoke suite"}},
 	}
-	integ := BuildIntegrations(nil, 50.0, "origin/main", "", actions, ScoreMath{})
+	integ := BuildIntegrations(nil, 50.0, "origin/main", "", actions, ScoreMath{}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "Run auth E2E gate") {
 		t.Errorf("expected action title in PR comment, got:\n%s", integ.PRCommentMarkdown)
 	}
@@ -121,7 +121,7 @@ func TestBuildIntegrationsRequiredActionsListed(t *testing.T) {
 // TestBuildIntegrationsRequiredActionsNone verifies the "None" placeholder appears
 // when no required actions are provided.
 func TestBuildIntegrationsRequiredActionsNone(t *testing.T) {
-	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{})
+	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "_None._") {
 		t.Errorf("expected _None._ placeholder for empty actions, got:\n%s", integ.PRCommentMarkdown)
 	}
@@ -134,7 +134,7 @@ func TestBuildIntegrationsMoreThanFiveActions(t *testing.T) {
 	for i := range actions {
 		actions[i] = RequiredAction{ID: "a", Title: "Action item"}
 	}
-	integ := BuildIntegrations(nil, 60.0, "origin/main", "", actions, ScoreMath{})
+	integ := BuildIntegrations(nil, 60.0, "origin/main", "", actions, ScoreMath{}, Enforcement{})
 	md := integ.PRCommentMarkdown
 	if !strings.Contains(md, "and 2 more") {
 		t.Errorf("expected overflow note 'and 2 more', got:\n%s", md)
@@ -143,8 +143,35 @@ func TestBuildIntegrationsMoreThanFiveActions(t *testing.T) {
 
 // TestBuildIntegrationsBaseRefInHeader verifies the base ref appears in the score line.
 func TestBuildIntegrationsBaseRefInHeader(t *testing.T) {
-	integ := BuildIntegrations(nil, 15.0, "refs/heads/main", "", nil, ScoreMath{})
+	integ := BuildIntegrations(nil, 15.0, "refs/heads/main", "", nil, ScoreMath{}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "refs/heads/main") {
 		t.Errorf("expected base ref in PR comment header, got:\n%s", integ.PRCommentMarkdown)
+	}
+}
+
+func TestBuildIntegrationsEnforcementSections(t *testing.T) {
+	enf := Enforcement{
+		MergeRecommendation: "block",
+		Rationale:           "High risk band.",
+		ReviewStrategy:      "Do not merge until checklist is complete.",
+		RequiredValidations: []string{
+			"ci: required status checks must pass before merge",
+			"test: auth/session evidence",
+		},
+		RoutingHints: []string{"Include a reviewer familiar with auth flows."},
+	}
+	integ := BuildIntegrations(nil, 72.0, "origin/main", "", nil, ScoreMath{}, enf)
+	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "Merge recommendation") || !strings.Contains(md, "BLOCK") {
+		t.Errorf("expected merge recommendation block, got:\n%s", md)
+	}
+	if !strings.Contains(md, "ci: required status checks") {
+		t.Errorf("expected validation line in comment, got:\n%s", md)
+	}
+	if !strings.Contains(md, "Review routing") || !strings.Contains(md, "auth flows") {
+		t.Errorf("expected routing hint in comment, got:\n%s", md)
+	}
+	if !strings.Contains(md, "Review strategy") {
+		t.Errorf("expected review strategy in comment, got:\n%s", md)
 	}
 }

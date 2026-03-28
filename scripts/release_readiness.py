@@ -324,6 +324,17 @@ def main() -> int:
     payload["config_path"] = str(config_path)
     payload["base_ref"] = args.base_ref
     payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
+
+    pr_risk_path = out_dir / "pr_risk.json"
+    pr_risk = _read_json(pr_risk_path)
+    if pr_risk and isinstance(pr_risk, dict) and "_parse_error" not in pr_risk:
+        payload["pr_risk"] = {
+            "version": pr_risk.get("version"),
+            "version_minor": pr_risk.get("version_minor"),
+            "risk_score": pr_risk.get("risk_score"),
+            "risk_band": pr_risk.get("risk_band"),
+            "enforcement": pr_risk.get("enforcement"),
+        }
     override_note = f", overrides={len(result.outcome_overrides)}" if result.outcome_overrides else ""
     payload["deterministic_summary"] = (
         f"{result.outcome}: score={result.score:.1f}, blockers={len(result.blockers)}, warnings={len(result.warnings)}{override_note}"

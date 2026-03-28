@@ -27,7 +27,7 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString(fmt.Sprintf("> %s\n\n", r.Interpretation))
 	}
 	sb.WriteString("## Summary\n\n")
-	sb.WriteString(fmt.Sprintf("| Metric | Value |\n|--------|-------|\n"))
+	sb.WriteString("| Metric | Value |\n|--------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| Risk score | **%.1f** / 100 |\n", r.RiskScore))
 	sb.WriteString(fmt.Sprintf("| Band | **%s** |\n", r.RiskBand))
 	for _, c := range r.Categories {
@@ -47,6 +47,40 @@ func WriteMarkdown(path string, r Result) error {
 		sn := strings.ReplaceAll(r.Signals.ValidationNoteSnippet, "\n", " ")
 		sb.WriteString(fmt.Sprintf("| Validation note | yes (%s) |\n", sn))
 	}
+	enf := r.Enforcement
+	sb.WriteString("\n## Enforcement & merge\n\n")
+	sb.WriteString("| Item | Value |\n|------|-------|\n")
+	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
+	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
+	sb.WriteString("\n### Recommended review strategy\n\n")
+	sb.WriteString(enf.ReviewStrategy + "\n\n")
+	sb.WriteString("### Required validations before merge\n\n")
+	if len(enf.RequiredValidations) == 0 {
+		sb.WriteString("_None beyond standard CI._\n\n")
+	} else {
+		for _, v := range enf.RequiredValidations {
+			sb.WriteString(fmt.Sprintf("- %s\n", v))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("### Review requirements\n\n")
+	if len(enf.ReviewRequirements) == 0 {
+		sb.WriteString("_None._\n\n")
+	} else {
+		for _, v := range enf.ReviewRequirements {
+			sb.WriteString(fmt.Sprintf("- %s\n", v))
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("### Review routing hints\n\n")
+	if len(enf.RoutingHints) == 0 {
+		sb.WriteString("_None._\n")
+	} else {
+		for _, h := range enf.RoutingHints {
+			sb.WriteString(fmt.Sprintf("- %s\n", h))
+		}
+	}
+
 	sb.WriteString("\n## Score math\n\n")
 	sm := r.ScoreMath
 	sb.WriteString("| Step | Value |\n|------|------:|\n")

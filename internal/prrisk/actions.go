@@ -211,7 +211,7 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 				},
 			})
 		}
-		if insights.Proximity.Mode == "distant" && insights.Proximity.NonTestFiles >= 2 {
+		if insights.Proximity.Mode == "distant" && insights.Proximity.NonTestFiles >= 2 && hasSensitiveDomainHit(s) {
 			add(RequiredAction{
 				ID:      "context_improve_test_proximity",
 				Title:   "Improve test proximity for changed code",
@@ -239,4 +239,15 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 	_ = reducers
 
 	return out
+}
+
+// hasSensitiveDomainHit reports whether any sensitive domain has file hits in this diff.
+// Sensitive domains require elevated test evidence: auth, rag, processing, migrations, api, database.
+func hasSensitiveDomainHit(s Signals) bool {
+	return s.DomainHits[DomainAuth] > 0 ||
+		s.DomainHits[DomainRAG] > 0 ||
+		s.DomainHits[DomainProcessing] > 0 ||
+		s.DomainHits[DomainMigrations] > 0 ||
+		s.DomainHits[DomainAPI] > 0 ||
+		s.DomainHits[DomainDatabase] > 0
 }

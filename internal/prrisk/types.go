@@ -11,8 +11,8 @@ import (
 const Version = 2
 
 // VersionMinor is the minor report schema version.
-// v2.4 == Version=2, VersionMinor=4
-const VersionMinor = 4
+// v2.5 == Version=2, VersionMinor=5 (enforcement + merge recommendation)
+const VersionMinor = 5
 
 // Domain labels for changed-file classification (extensible).
 const (
@@ -129,6 +129,16 @@ type Integrations struct {
 	PRCommentMarkdown string `json:"pr_comment_markdown,omitempty"`
 }
 
+// Enforcement is deterministic merge/review policy derived from score, factors, and context (v2.5+).
+type Enforcement struct {
+	MergeRecommendation string   `json:"merge_recommendation"` // pass | warn | block
+	Rationale           string   `json:"rationale"`
+	ReviewStrategy      string   `json:"review_strategy"`
+	RequiredValidations []string `json:"required_validations"`
+	ReviewRequirements  []string `json:"review_requirements"`
+	RoutingHints        []string `json:"routing_hints,omitempty"`
+}
+
 // ScoreMath is the explicit, auditable score calculation (v2.3+; report minor v2.4 adds context).
 type ScoreMath struct {
 	FactorsSubtotal  float64  `json:"factors_subtotal"`  // sum of risk factor points
@@ -160,6 +170,8 @@ type Result struct {
 	Integrations    Integrations     `json:"integrations"`
 	// ContextInsights is deterministic contextual intelligence (v2.4+): proximity, concentration, hotspots, intent.
 	ContextInsights *riskcontext.ContextInsights `json:"context_insights,omitempty"`
+	// Enforcement is merge gating + validations + review routing (v2.5+).
+	Enforcement Enforcement `json:"enforcement"`
 }
 
 // ScoreWeights tune deterministic contributions (sum capped at 100).
