@@ -134,10 +134,11 @@ type RecommendedReview struct {
 type ValidationStatus = string
 
 const (
-	EvidencePass    ValidationStatus = "pass"
-	EvidenceMissing ValidationStatus = "missing"
-	EvidenceUnknown ValidationStatus = "unknown"
-	EvidenceFail    ValidationStatus = "fail"
+	EvidencePass         ValidationStatus = "pass"
+	EvidenceMissing      ValidationStatus = "missing"
+	EvidenceUnknown      ValidationStatus = "unknown"       // truly no information (e.g. not applicable)
+	EvidenceNotEvaluated ValidationStatus = "not_evaluated" // signal exists but cannot be confirmed from repo-local signals alone; requires human review
+	EvidenceFail         ValidationStatus = "fail"
 )
 
 // ValidationEvidence captures the detected evidence state for one required validation or action (v2.6+).
@@ -155,12 +156,13 @@ type ValidationEvidence struct {
 	Rationale string `json:"rationale,omitempty"`
 }
 
-// EvidenceSummary aggregates ValidationEvidence status counts (v2.6+).
+// EvidenceSummary aggregates ValidationEvidence status counts (v2.7+).
 type EvidenceSummary struct {
-	PassCount    int `json:"pass_count"`
-	MissingCount int `json:"missing_count"`
-	UnknownCount int `json:"unknown_count"`
-	FailCount    int `json:"fail_count"`
+	PassCount         int `json:"pass_count"`
+	MissingCount      int `json:"missing_count"`
+	UnknownCount      int `json:"unknown_count"`
+	NotEvaluatedCount int `json:"not_evaluated_count"` // requires human review; cannot be confirmed from repo-local signals
+	FailCount         int `json:"fail_count"`
 }
 
 // Enforcement is deterministic merge/review policy derived from score, factors, and context (v2.5+).

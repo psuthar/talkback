@@ -12,8 +12,12 @@ on:
         required: false
         default: ""
 
+# checks: write — publish "PR Risk / semantic-result" via Checks API (success / neutral / failure).
+# For required-check semantics on PASS vs WARN vs BLOCK, prefer protecting that check name in
+# branch rules rather than relying on the overall workflow job alone.
 permissions:
   contents: read
+  checks: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -83,6 +87,8 @@ jobs:
           fi
 
       - name: PR risk scoring (v2.6)
+        id: prrisk
+        continue-on-error: true
         run: |
           mkdir -p artifacts/release-readiness
           go run ./cmd/prrisk \
@@ -239,14 +245,6 @@ jobs:
             --output-dir artifacts/release-readiness \
             --enforcement-mode "${READINESS_ENFORCEMENT_MODE:-block_only}"
 
-      - name: Upload Release Readiness Artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-readiness
-          path: artifacts/
-          if-no-files-found: warn
-
       - name: Evaluate Release Readiness Outcome
         id: evaluate
         if: always()
@@ -288,6 +286,90 @@ jobs:
           echo "::error::Unknown outcome: $OUTCOME"
           exit 1
 
+      # Maps merge_recommendation to Checks API conclusions (PASS→success, WARN→neutral, BLOCK→failure).
+      # Does not use continue-on-error: the job must fail on BLOCK or generator/parsing errors.
+      - name: Evaluate PR risk semantic result
+        id: prrisk_semantic
+        if: always()
+        env:
+          PRRISK_GEN_OUTCOME: ${{ steps.prrisk.outcome }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/evaluate_pr_risk_semantic.py \
+            --pr-risk-json artifacts/pr-risk.json \
+            --generator-outcome "$PRRISK_GEN_OUTCOME" \
+            --semantic-json-out artifacts/pr-risk-semantic.json
+
+      - name: Publish PR Risk semantic check
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const headSha = context.payload.pull_request?.head?.sha || context.sha;
+            const semanticPath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-risk-semantic.json');
+            let payload;
+            try {
+              payload = JSON.parse(fs.readFileSync(semanticPath, 'utf8'));
+            } catch (e) {
+              payload = {
+                check_conclusion: 'failure',
+                title: 'PR Risk: error',
+                summary: 'Could not read artifacts/pr-risk-semantic.json — ' + String(e),
+                text: String(e),
+              };
+            }
+            const runUrl = process.env.GITHUB_RUN_URL || '';
+            if (runUrl) {
+              payload.summary = (payload.summary || '') + '\n\n**Workflow run / artifacts:** ' + runUrl;
+            }
+            const checkName = 'PR Risk / semantic-result';
+            const { data: listed } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+              check_name: checkName,
+            });
+            const runs = (listed.check_runs || []).slice().sort((a, b) => b.id - a.id);
+            const output = {
+              title: payload.title,
+              summary: payload.summary || '',
+              text: payload.text || '',
+            };
+            const common = {
+              status: 'completed',
+              conclusion: payload.check_conclusion,
+              output,
+            };
+            if (runs.length > 0) {
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: runs[0].id,
+                ...common,
+              });
+            } else {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: checkName,
+                head_sha: headSha,
+                ...common,
+              });
+            }
+
+      - name: Upload Release Readiness Artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-readiness
+          path: artifacts/
+          if-no-files-found: warn
+
       - name: Add PR Summary
         if: always()
         shell: bash
@@ -304,21 +386,20 @@ jobs:
             SCORE=$(jq -r '.score // 0' artifacts/release-readiness.json)
             WARNINGS=$(jq -r '.warnings // 0' artifacts/release-readiness.json)
             BLOCKERS=$(jq -r '.blockers // 0' artifacts/release-readiness.json)
-            echo "**Outcome:** ${OUTCOME}  "
-            echo "**Score:** ${SCORE}  | **Warnings:** ${WARNINGS} | **Blockers:** ${BLOCKERS}"
+            echo "**Score:** ${SCORE} · Warnings: ${WARNINGS} · Blockers: ${BLOCKERS}"
             echo ""
             case "$OUTCOME" in
               PASS)
-                echo "Ready to merge"
+                echo "🟢 **PASS** — Ready to merge"
                 ;;
               WARN)
-                echo "Review warnings before merge"
+                echo "🟡 **WARN** — Review warnings before merging"
                 ;;
               BLOCK)
-                echo "Blocked — do not merge"
+                echo "🔴 **BLOCK** — Do not merge; resolve blockers first"
                 ;;
               *)
-                echo "Outcome: ${OUTCOME}"
+                echo "⚪ **${OUTCOME}**"
                 ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"

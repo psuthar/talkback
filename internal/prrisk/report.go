@@ -53,9 +53,9 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
-	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount > 0 {
-		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail |\n",
-			es.PassCount, es.MissingCount, es.FailCount))
+	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount+es.NotEvaluatedCount > 0 {
+		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail · %d not evaluated |\n",
+			es.PassCount, es.MissingCount, es.FailCount, es.NotEvaluatedCount))
 	}
 	sb.WriteString("\n### Recommended review strategy\n\n")
 	sb.WriteString(enf.RecommendedReview.Strategy + "\n\n")
@@ -95,9 +95,8 @@ func WriteMarkdown(path string, r Result) error {
 		}
 		sb.WriteString("\n")
 	}
-	// Only show evidence items that are actionable: pass, missing, or fail.
-	// Unknown items ("user didn't provide X but it isn't required") are hidden —
-	// they convey no actionable signal and create noise.
+	// Show all evidence items except EvidenceUnknown (truly no-information entries).
+	// EvidenceNotEvaluated items are shown with 📋 to indicate human review is required.
 	var visibleEvidence []ValidationEvidence
 	for _, ev := range enf.EvidenceStatus {
 		if ev.Status != EvidenceUnknown {
@@ -108,15 +107,19 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString("### Evidence status (repo-local signals)\n\n")
 		sum := enf.EvidenceSummary
 		sb.WriteString(fmt.Sprintf(
-			"> %d pass · %d missing · %d fail\n\n",
-			sum.PassCount, sum.MissingCount, sum.FailCount,
+			"> ✅ %d pass · ⚠️ %d missing · ❌ %d fail · 📋 %d not evaluated (human review required)\n\n",
+			sum.PassCount, sum.MissingCount, sum.FailCount, sum.NotEvaluatedCount,
 		))
 		sb.WriteString("| Action / Validation | Status | Source | Rationale |\n")
 		sb.WriteString("|---------------------|--------|--------|-----------|\n")
 		for _, ev := range visibleEvidence {
 			icon := evidenceStatusIcon(ev.Status)
+			label := string(ev.Status)
+			if ev.Status == EvidenceNotEvaluated {
+				label = "not evaluated"
+			}
 			sb.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %s |\n",
-				ev.ID, icon, ev.Status, ev.Source, ev.Rationale))
+				ev.ID, icon, label, ev.Source, ev.Rationale))
 		}
 		sb.WriteString("\n")
 	}

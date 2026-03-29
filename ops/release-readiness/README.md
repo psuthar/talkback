@@ -7,7 +7,7 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
 3. **Outputs** — `artifacts/release-readiness/report.json`, `report.md`, and a **machine summary** at `artifacts/release-readiness.json` (`outcome`, `score`, `warnings`, `blockers`) for CI gates and PR summaries.
-4. **PR risk (v2.6)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` artifacts (same directory). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
+4. **PR risk (v2.6)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` under the output directory, plus a stable machine summary at **`artifacts/pr-risk.json`** (score, band, `merge_recommendation` as `PASS`/`WARN`/`BLOCK`, `required_validations`, `top_risk_factors`). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
 
 CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
 
@@ -74,7 +74,7 @@ The recommended initial policy is **`block_only`**: warnings are visible in the 
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2.6) and writes `pr_risk.json` and `pr_risk.md`.
+1. Runs `go run ./cmd/prrisk` (PR risk v2.6) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**. **Upload PR Risk artifacts** (`if: always()`) uploads those files so they exist even if a later step fails.
 2. Runs `go test ./...` and writes `smoke_results.json`.
 3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
 4. Builds the React frontend (`npm run build`).
@@ -83,9 +83,15 @@ GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_
 7. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
 8. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
 9. Runs `bash scripts/release-readiness.sh` (with `continue-on-error: true` so later steps still run).
-10. **Upload Release Readiness Artifact** — uploads the entire `artifacts/` directory (`if: always()`), including `release-readiness.json`, `release-readiness/report.*`, and PR risk files.
-11. **Evaluate Release Readiness Outcome** — reads `artifacts/release-readiness.json` with `jq`; fails the job on `READINESS_FAILED`, on `BLOCK`, or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`; emits `::warning::` for `WARN` in `block_only` mode (check stays green).
-12. **Add PR Summary** — appends outcome and score lines to `GITHUB_STEP_SUMMARY` for the Actions run summary UI.
+10. **Evaluate Release Readiness Outcome** — reads `artifacts/release-readiness.json` with `jq`; fails the job on `READINESS_FAILED`, on `BLOCK`, or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`; emits `::warning::` for `WARN` in `block_only` mode (workflow job stays green).
+11. **Evaluate PR risk semantic result** — `python3 scripts/evaluate_pr_risk_semantic.py` reads `artifacts/pr-risk.json` and the PR risk generator step outcome. Maps `merge_recommendation` to exit code: **PASS** and **WARN** exit 0 (workflow green); **BLOCK**, generator failure, or invalid/missing JSON exit 1 (workflow red). Writes `artifacts/pr-risk-semantic.json` and step outputs `semantic_conclusion`, `semantic_title`, `semantic_summary`.
+12. **Publish PR Risk semantic check** — uses the GitHub Checks API (`checks: write`) to create or update a check run named **`PR Risk / semantic-result`** with conclusion **success** (PASS), **neutral** (WARN), or **failure** (BLOCK or errors). The overall workflow job stays green for WARN because only the check is neutral, not the job.
+13. **Upload Release Readiness Artifact** — uploads the entire `artifacts/` directory (`if: always()`), including `release-readiness.json`, `pr-risk.json`, `pr-risk-semantic.json`, `release-readiness/report.*`, and PR risk markdown/JSON.
+14. **Add PR Summary** — appends release readiness outcome and score lines to `GITHUB_STEP_SUMMARY` for the Actions run summary UI (PR Risk semantic lines are appended by the evaluate step).
+
+### Branch protection vs PR Risk
+
+The **workflow job** turns red only when the semantic evaluator exits 1 (BLOCK or execution/parsing errors). **WARN** keeps the job green while the dedicated check **`PR Risk / semantic-result`** is **neutral**. If you need required-status rules that distinguish PASS vs WARN vs BLOCK, add a branch protection rule for the check name **`PR Risk / semantic-result`** (not only the workflow name). Fork PRs may be unable to create checks with the default `GITHUB_TOKEN` (read-only); same-repository PRs work with `permissions: checks: write`.
 
 ### E2E environment variables used in CI
 
