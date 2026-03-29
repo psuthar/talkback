@@ -212,8 +212,8 @@ func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 	}
 	integ := BuildIntegrations(nil, 72.0, "origin/main", "", nil, ScoreMath{}, enf)
 	md := integ.PRCommentMarkdown
-	if !strings.Contains(md, "Merge recommendation") || !strings.Contains(md, "BLOCK") {
-		t.Errorf("expected merge recommendation block, got:\n%s", md)
+	if !strings.Contains(md, "PR risk assessment") || !strings.Contains(md, "BLOCK") {
+		t.Errorf("expected PR risk assessment block, got:\n%s", md)
 	}
 	if !strings.Contains(md, "ci: required status checks") {
 		t.Errorf("expected validation line in comment, got:\n%s", md)
@@ -235,5 +235,30 @@ func TestBuildIntegrationsLinkToFullReport(t *testing.T) {
 	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
 	if !strings.Contains(integ.PRCommentMarkdown, "pr_risk.md") {
 		t.Errorf("expected link to pr_risk.md in PR comment, got:\n%s", integ.PRCommentMarkdown)
+	}
+}
+
+// TestBuildIntegrationsPassDisclaimerPresent verifies the PR comment always includes
+// the disclaimer that a PR risk assessment is not unconditional merge approval.
+func TestBuildIntegrationsPassDisclaimerPresent(t *testing.T) {
+	enf := Enforcement{MergeRecommendation: "pass"}
+	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, enf)
+	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "PR-risk score") && !strings.Contains(md, "normal merge prerequisites") && !strings.Contains(md, "Normal merge prerequisites") {
+		t.Errorf("PASS PR comment should include disclaimer about merge prerequisites, got:\n%s", md)
+	}
+}
+
+// TestBuildIntegrationsUsesRiskAssessmentLabel verifies the PR comment uses
+// "PR risk assessment" rather than "Merge recommendation" as the label.
+func TestBuildIntegrationsUsesRiskAssessmentLabel(t *testing.T) {
+	enf := Enforcement{MergeRecommendation: "warn"}
+	integ := BuildIntegrations(nil, 30.0, "origin/main", "", nil, ScoreMath{}, enf)
+	md := integ.PRCommentMarkdown
+	if strings.Contains(md, "**Merge recommendation:**") {
+		t.Errorf("PR comment should not use 'Merge recommendation' label, got:\n%s", md)
+	}
+	if !strings.Contains(md, "PR risk assessment") {
+		t.Errorf("expected 'PR risk assessment' label in PR comment, got:\n%s", md)
 	}
 }

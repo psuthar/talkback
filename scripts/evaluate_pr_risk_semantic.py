@@ -90,10 +90,16 @@ def build_semantic_record(
     lines = [
         f"**Score:** {score}  ",
         f"**Band:** {band}  ",
-        f"**Merge recommendation:** {emoji} {rec}  ",
+        f"**PR risk assessment:** {emoji} {rec}  ",
         "",
-        artifact_hint,
     ]
+    if rec == "PASS":
+        lines.append(
+            "_PASS means low PR risk — not unconditional merge approval. "
+            "CI checks, required reviews, and targeted testing still apply._  "
+        )
+        lines.append("")
+    lines.append(artifact_hint)
     if factors:
         lines.append("")
         lines.append("**Top risk factors:**")
@@ -105,7 +111,7 @@ def build_semantic_record(
     text_lines = [
         f"- Score: {score}",
         f"- Band: {band}",
-        f"- Merge recommendation: {rec}",
+        f"- PR risk assessment: {rec}",
     ]
     if req_val:
         text_lines.append("- Required validations:")
@@ -164,13 +170,22 @@ def append_step_summary(path: Path | None, data: dict[str, Any]) -> None:
     conc = data.get("semantic_conclusion")
     emoji = REC_EMOJI.get(rec, "⚪") if rec else "⚪"
     run_url = (os.environ.get("GITHUB_RUN_URL") or "").strip()
+    disclaimer = (
+        "_PASS = low PR risk, not unconditional merge approval. "
+        "Normal prerequisites still apply._"
+        if rec == "PASS"
+        else ""
+    )
     lines = [
         "## PR Risk",
         "",
-        f"{emoji} **{rec}** — Score: {data.get('score')} ({data.get('band')})",
+        f"{emoji} **PR risk assessment: {rec}** — Score: {data.get('score')} ({data.get('band')})",
         f"GitHub check: `{conc}` (PR Risk / semantic-result)",
-        "",
     ]
+    if disclaimer:
+        lines.append("")
+        lines.append(disclaimer)
+    lines.append("")
     if run_url:
         lines.append(f"Artifacts: {run_url}")
         lines.append("")

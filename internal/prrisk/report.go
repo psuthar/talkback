@@ -49,9 +49,10 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString(fmt.Sprintf("| Validation note | yes (%s) |\n", sn))
 	}
 	enf := r.Enforcement
-	sb.WriteString("\n## Enforcement & merge\n\n")
+	sb.WriteString("\n## PR risk assessment\n\n")
+	sb.WriteString("> _This report evaluates PR risk only. It does not replace branch protection, required CI checks, code review, or targeted testing._\n\n")
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
-	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
+	sb.WriteString(fmt.Sprintf("| **PR risk assessment** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
 	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount+es.NotEvaluatedCount > 0 {
 		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail · %d not evaluated |\n",

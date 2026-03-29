@@ -313,6 +313,48 @@ func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
 // TestCategoriesTestConfidenceDistantOnlySensitive is superseded by
 // TestCategoriesTestConfidenceSensitiveDistantUnknownBehavioralPenalty above.
 
+// TestCategoriesTestConfidenceShallowCoverageReducesConfidence verifies that
+// shallow behavioral coverage applies a modest penalty relative to adequate coverage.
+func TestCategoriesTestConfidenceShallowCoverageReducesConfidence(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  1,
+	}
+	ciShallow := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "shallow",
+		},
+	}
+	ciAdequate := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "adequate",
+		},
+	}
+	catsShallow := ComputeCategories(s, nil, nil, ciShallow)
+	catsAdequate := ComputeCategories(s, nil, nil, ciAdequate)
+	tcShallow := findCategory(catsShallow, CategoryTestConfidence)
+	tcAdequate := findCategory(catsAdequate, CategoryTestConfidence)
+	if tcShallow == nil || tcAdequate == nil {
+		t.Fatal("expected test_confidence category in both cases")
+	}
+	if tcShallow.Confidence >= tcAdequate.Confidence {
+		t.Errorf("shallow coverage (%.0f) should have lower confidence than adequate (%.0f)",
+			tcShallow.Confidence, tcAdequate.Confidence)
+	}
+	// Non-sensitive co_located: base 85; shallow -3 = 82.
+	if tcShallow.Confidence != 82 {
+		t.Errorf("expected confidence 82 for co_located+shallow, got %.0f", tcShallow.Confidence)
+	}
+	// Adequate: no behavioral penalty, confidence = 85.
+	if tcAdequate.Confidence != 85 {
+		t.Errorf("expected confidence 85 for co_located+adequate, got %.0f", tcAdequate.Confidence)
+	}
+}
+
 func findCategory(cats []RiskCategory, key string) *RiskCategory {
 	for i := range cats {
 		if cats[i].Key == key {

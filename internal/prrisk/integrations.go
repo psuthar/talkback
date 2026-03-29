@@ -18,11 +18,12 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 	fmt.Fprintf(md, "**Score:** %.1f/100 (%s) · base `%s`\n\n", score, band(score), baseRef)
 
 	rec := strings.ToUpper(enf.MergeRecommendation)
-	fmt.Fprintf(md, "**Merge recommendation:** **%s**", rec)
+	fmt.Fprintf(md, "**PR risk assessment:** **%s**", rec)
 	if enf.Rationale != "" {
 		fmt.Fprintf(md, " — %s", enf.Rationale)
 	}
 	md.WriteString("\n\n")
+	md.WriteString("_This is a PR-risk score. Normal merge prerequisites (CI, code review, targeted testing) still apply regardless of this assessment._\n\n")
 
 	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount+es.NotEvaluatedCount > 0 {
 		fmt.Fprintf(md, "**Evidence:** %d pass · %d missing · %d fail · %d not evaluated\n\n",

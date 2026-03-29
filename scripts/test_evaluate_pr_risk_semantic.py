@@ -34,7 +34,36 @@ class TestBuildSemanticRecord(unittest.TestCase):
         self.assertEqual(r["check_conclusion"], "success")
         self.assertEqual(r["semantic_conclusion"], "success")
         self.assertFalse(r["workflow_should_fail"])
-        self.assertIn("PR Risk: PASS", r["title"])
+        self.assertIn("PR Risk:", r["title"])
+        self.assertIn("PASS", r["title"])
+
+    def test_pass_summary_uses_risk_assessment_label(self):
+        """PASS summary must use 'PR risk assessment' not 'Merge recommendation'."""
+        r = build_semantic_record(
+            generator_outcome="success",
+            pr_risk_path=Path("artifacts/pr-risk.json"),
+            pr_risk_raw={
+                "score": 10.0,
+                "band": "low",
+                "merge_recommendation": "pass",
+            },
+        )
+        self.assertIn("PR risk assessment", r["summary"])
+        self.assertNotIn("Merge recommendation", r["summary"])
+        self.assertNotIn("Merge recommendation", r["text"])
+
+    def test_pass_summary_includes_prerequisite_disclaimer(self):
+        """PASS summary must clarify that normal merge prerequisites still apply."""
+        r = build_semantic_record(
+            generator_outcome="success",
+            pr_risk_path=Path("artifacts/pr-risk.json"),
+            pr_risk_raw={
+                "score": 10.0,
+                "band": "low",
+                "merge_recommendation": "pass",
+            },
+        )
+        self.assertIn("PASS means low PR risk", r["summary"])
 
     def test_warn(self):
         r = build_semantic_record(

@@ -165,6 +165,18 @@ func TestMergeRationaleWarnIncludesChecklist(t *testing.T) {
 	}
 }
 
+func TestMergeRationalePassMentionsPrerequisites(t *testing.T) {
+	// PASS rationale must make clear this is a risk score, not merge approval.
+	r := Result{RiskBand: "low", RiskScore: 10, Signals: Signals{}}
+	rat := mergeRationale(r, "pass")
+	if !strings.Contains(rat, "PR risk") {
+		t.Errorf("pass rationale should mention 'PR risk', got %q", rat)
+	}
+	if !strings.Contains(strings.ToLower(rat), "prerequisite") && !strings.Contains(strings.ToLower(rat), "still apply") {
+		t.Errorf("pass rationale should mention prerequisites or 'still apply', got %q", rat)
+	}
+}
+
 // TestComputePolicyReasonsWeakIntent verifies the weak-intent policy reason is emitted
 // when ContextInsights.Intent.IntentStrength == "weak".
 func TestComputePolicyReasonsWeakIntent(t *testing.T) {

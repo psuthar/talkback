@@ -111,6 +111,16 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 			})
 			score += partialAdj
 		}
+		// Behavioral coverage "shallow": modest -3 penalty — tests exist but cover only
+		// surface-level paths, so some behavioral risk remains unconfirmed.
+		if ci.Proximity.BehavioralCoverage == "shallow" {
+			const shallowCovAdj = -3.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "Behavioral coverage depth is shallow",
+				Delta:  shallowCovAdj,
+			})
+			score += shallowCovAdj
+		}
 		// Behavioral coverage "unknown": -5 base penalty for any diff with tests,
 		// plus -5 extra when sensitive domains changed (total -10 for sensitive).
 		// proximity.go uses a broader sensitive definition (includes api, database) than
