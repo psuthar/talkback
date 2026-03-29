@@ -103,10 +103,14 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 			})
 			score += distantAdj
 		}
-		if ci.Proximity.BehavioralCoverage == "unknown" {
+		// Behavioral coverage "unknown" only carries signal when sensitive domains changed.
+		// proximity.go uses a broader sensitive definition (includes api, database) than
+		// testConfidenceScore (auth, rag, processing, migrations). Gate this penalty on
+		// sensitiveChanged to stay consistent with the rest of the confidence logic.
+		if ci.Proximity.BehavioralCoverage == "unknown" && sensitiveChanged {
 			const unknownCovAdj = -10.0
 			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
-				Reason: "Behavioral coverage depth unknown",
+				Reason: "Behavioral coverage depth unknown for sensitive domain changes",
 				Delta:  unknownCovAdj,
 			})
 			score += unknownCovAdj

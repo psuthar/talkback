@@ -203,6 +203,7 @@ func TestCategoriesTestConfidenceBreakdownBaseScore(t *testing.T) {
 
 // TestCategoriesTestConfidenceDistantProximityLowersConfidence verifies that when tests
 // are structurally distant from changed code, confidence is reduced even for non-sensitive diffs.
+// The behavioral coverage penalty does NOT fire for non-sensitive diffs (see comment in categories.go).
 func TestCategoriesTestConfidenceDistantProximityLowersConfidence(t *testing.T) {
 	s := Signals{
 		DomainHits: map[string]int{DomainWeb: 1},
@@ -220,16 +221,42 @@ func TestCategoriesTestConfidenceDistantProximityLowersConfidence(t *testing.T) 
 	if tc == nil {
 		t.Fatal("expected test_confidence category")
 	}
-	// Base non-sensitive: 85, -15 (distant), -10 (unknown behavioral) = 60
-	if tc.Confidence != 60 {
-		t.Errorf("expected confidence 60 with distant+unknown penalties, got %.0f", tc.Confidence)
+	// Base non-sensitive: 85, -15 (distant). Behavioral penalty does not fire: sensitiveChanged=false.
+	if tc.Confidence != 70 {
+		t.Errorf("expected confidence 70 with distant penalty only (non-sensitive), got %.0f", tc.Confidence)
 	}
-	if tc.RiskScore != 40 {
-		t.Errorf("expected risk 40, got %.1f", tc.RiskScore)
+	if tc.RiskScore != 30 {
+		t.Errorf("expected risk 30, got %.1f", tc.RiskScore)
 	}
-	// Breakdown should include at least 3 adjustments: non-sensitive, distant, unknown
-	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 3 {
-		t.Errorf("expected at least 3 adjustments in breakdown, got %v", tc.Breakdown)
+	// Breakdown: non-sensitive (+35) and distant (-15) = 2 adjustments minimum
+	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 2 {
+		t.Errorf("expected at least 2 adjustments in breakdown, got %v", tc.Breakdown)
+	}
+}
+
+// TestCategoriesTestConfidenceSensitiveDistantUnknownBehavioralPenalty verifies that the
+// behavioral coverage penalty fires for sensitive domain diffs with unknown behavioral coverage.
+func TestCategoriesTestConfidenceSensitiveDistantUnknownBehavioralPenalty(t *testing.T) {
+	s := Signals{
+		DomainHits:    map[string]int{DomainAuth: 1},
+		UnitTestFiles: 1,
+		TestFiles:     1,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "distant",
+			StructuralAlignment: "distant",
+			BehavioralCoverage:  "unknown",
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	// Sensitive + unit tests: 40 + 20 = 60; -15 (distant) -10 (unknown behavioral, sensitive) = 35
+	if tc.Confidence != 35 {
+		t.Errorf("expected confidence 35 for sensitive+distant+unknown, got %.0f", tc.Confidence)
 	}
 }
 
@@ -283,31 +310,8 @@ func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
 	}
 }
 
-// TestCategoriesTestConfidenceDistantOnlySensitive verifies distance penalty on sensitive diff
-// where unit tests are present but structurally distant.
-func TestCategoriesTestConfidenceDistantOnlySensitive(t *testing.T) {
-	s := Signals{
-		DomainHits:    map[string]int{DomainAuth: 1},
-		UnitTestFiles: 1,
-		TestFiles:     1,
-	}
-	ci := &riskcontext.ContextInsights{
-		Proximity: riskcontext.ProximityInsight{
-			Mode:                "distant",
-			StructuralAlignment: "distant",
-			BehavioralCoverage:  "unknown",
-		},
-	}
-	cats := ComputeCategories(s, nil, nil, ci)
-	tc := findCategory(cats, CategoryTestConfidence)
-	if tc == nil {
-		t.Fatal("expected test_confidence category")
-	}
-	// Sensitive + unit tests: 40 + 20 = 60; -15 (distant) -10 (unknown behavioral) = 35
-	if tc.Confidence != 35 {
-		t.Errorf("expected confidence 35 for sensitive+distant+unknown, got %.0f", tc.Confidence)
-	}
-}
+// TestCategoriesTestConfidenceDistantOnlySensitive is superseded by
+// TestCategoriesTestConfidenceSensitiveDistantUnknownBehavioralPenalty above.
 
 func findCategory(cats []RiskCategory, key string) *RiskCategory {
 	for i := range cats {
