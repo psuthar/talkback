@@ -41,6 +41,7 @@ func main() {
 
 	jsonOut := filepath.Join(out, "pr_risk.json")
 	mdOut := filepath.Join(out, "pr_risk.md")
+	semanticOut := filepath.Clean(filepath.Join(out, "..", "pr-risk.json"))
 
 	if err := prrisk.WriteJSON(jsonOut, res); err != nil {
 		fmt.Fprintf(os.Stderr, "prrisk: write json: %v\n", err)
@@ -50,10 +51,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "prrisk: write markdown: %v\n", err)
 		os.Exit(1)
 	}
+	if err := prrisk.WriteSemanticPRRiskJSON(semanticOut, res); err != nil {
+		fmt.Fprintf(os.Stderr, "prrisk: write semantic json: %v\n", err)
+		os.Exit(1)
+	}
 
-	fmt.Printf("PR risk v%d.%d: score=%.1f (%s) — wrote %s/%s\n",
+	fmt.Printf("PR risk v%d.%d: score=%.1f (%s) — wrote %s/%s + %s\n",
 		prrisk.Version, prrisk.VersionMinor, res.RiskScore, res.RiskBand,
-		filepath.Base(jsonOut), filepath.Base(mdOut))
+		filepath.Base(jsonOut), filepath.Base(mdOut), filepath.Base(semanticOut))
 	if res.Signals.GitError != "" {
 		fmt.Fprintf(os.Stderr, "warning: git diff issue: %s\n", res.Signals.GitError)
 	}
