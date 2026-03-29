@@ -96,18 +96,6 @@ jobs:
             --base-ref "${{ steps.base.outputs.base_ref }}" \
             --output-dir artifacts/release-readiness
 
-      # Ensures PR Risk outputs exist in Actions artifacts even if a later step fails before the bundle upload.
-      - name: Upload PR Risk artifacts
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: pr-risk
-          path: |
-            artifacts/pr-risk.json
-            artifacts/release-readiness/pr_risk.json
-            artifacts/release-readiness/pr_risk.md
-          if-no-files-found: warn
-
       - name: Run Go tests (smoke signal + coverage)
         id: gotest
         continue-on-error: true
@@ -314,7 +302,7 @@ jobs:
 
       - name: Publish PR Risk semantic check
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
