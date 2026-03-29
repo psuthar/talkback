@@ -113,6 +113,7 @@ def evaluate(
     empty_diff: bool = False,
     commit_validation_note: bool = False,
     commit_validation_snippet: str = "",
+    pr_risk: Optional[dict] = None,
 ) -> ReadinessResult:
     changed = [] if empty_diff else git_changed_files(repo_root, base_ref)
     return compute_readiness(
@@ -125,6 +126,7 @@ def evaluate(
         migration_validated_cli=migration_validated_cli,
         commit_validation_note=commit_validation_note,
         commit_validation_snippet=commit_validation_snippet,
+        pr_risk=pr_risk,
     )
 
 
@@ -236,6 +238,44 @@ def render_markdown(r: ReadinessResult, config_version: Any) -> str:
     return "\n".join(lines)
 
 
+def write_machine_readiness_summary(
+    repo_root: Path,
+    result: ReadinessResult,
+    extra: Optional[dict[str, Any]] = None,
+) -> Path:
+    """Write machine-readable summary for CI (artifacts/release-readiness.json)."""
+    path = repo_root / "artifacts" / "release-readiness.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {
+        "outcome": result.outcome,
+        "score": round(float(result.score), 1),
+        "warnings": len(result.warnings),
+        "blockers": len(result.blockers),
+    }
+    if extra:
+        data.update(extra)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return path
+
+
+def write_machine_readiness_failure(repo_root: Path, message: str) -> Path:
+    """When the evaluator crashes, still emit a machine-readable BLOCK summary."""
+    path = repo_root / "artifacts" / "release-readiness.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {
+        "outcome": "BLOCK",
+        "score": 0.0,
+        "warnings": 0,
+        "blockers": 1,
+        "execution_failed": True,
+        "error": message[:500],
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return path
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="TalkBack release readiness (deterministic)")
     ap.add_argument("--repo-root", type=Path, default=Path("."))
@@ -276,6 +316,16 @@ def main() -> int:
     args = ap.parse_args()
 
     repo_root = args.repo_root.resolve()
+
+    try:
+        return _main_inner(args, repo_root)
+    except Exception as e:
+        write_machine_readiness_failure(repo_root, str(e))
+        print(f"ERROR: release readiness failed: {e}", file=sys.stderr)
+        return 1
+
+
+def _main_inner(args: argparse.Namespace, repo_root: Path) -> int:
     config_path = args.config if args.config.is_absolute() else repo_root / args.config
     with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -303,6 +353,15 @@ def main() -> int:
     commit_msgs = git_commit_messages(repo_root, args.base_ref)
     commit_note_found, commit_note_snippet = detect_validation_note(commit_msgs)
 
+    # Compute out_dir early so we can read pr_risk.json before evaluate().
+    # pr_risk.json is written by `go run ./cmd/prrisk` earlier in the same CI job.
+    # If absent or unparseable, pr_risk_data is None and the integration is skipped.
+    out_dir = args.output_dir if args.output_dir.is_absolute() else repo_root / args.output_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pr_risk_path = out_dir / "pr_risk.json"
+    pr_risk_data = _read_json(pr_risk_path) if not args.fixture_mode else None
+
     result = evaluate(
         repo_root,
         config,
@@ -315,18 +374,15 @@ def main() -> int:
         empty_diff=args.empty_diff or args.fixture_mode,
         commit_validation_note=commit_note_found,
         commit_validation_snippet=commit_note_snippet,
+        pr_risk=pr_risk_data,
     )
-
-    out_dir = args.output_dir if args.output_dir.is_absolute() else repo_root / args.output_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     payload = asdict(result)
     payload["config_path"] = str(config_path)
     payload["base_ref"] = args.base_ref
     payload["timestamp_utc"] = datetime.now(timezone.utc).isoformat()
 
-    pr_risk_path = out_dir / "pr_risk.json"
-    pr_risk = _read_json(pr_risk_path)
+    pr_risk = pr_risk_data
     if pr_risk and isinstance(pr_risk, dict) and "_parse_error" not in pr_risk:
         enforcement = pr_risk.get("enforcement") or {}
         evidence_summary = enforcement.get("evidence_summary") or {}
@@ -375,13 +431,16 @@ def main() -> int:
     with open(report_json, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
+    summary_path = write_machine_readiness_summary(repo_root, result)
+    print(f"Wrote {summary_path}", file=sys.stderr)
+
     md = render_markdown(result, config.get("version"))
     report_md = out_dir / "report.md"
     with open(report_md, "w", encoding="utf-8") as f:
         f.write(md)
 
     print(md)
-    print(f"\nWrote {report_json} and {report_md}", file=sys.stderr)
+    print(f"\nWrote {report_json}, {summary_path} and {report_md}", file=sys.stderr)
     print(f"Enforcement mode: {args.enforcement_mode}", file=sys.stderr)
 
     if result.outcome == "BLOCK":

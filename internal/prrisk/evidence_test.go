@@ -450,24 +450,19 @@ func TestComputeEvidenceStatusSummaryCountsAreCorrect(t *testing.T) {
 	}
 	evs, summary := ComputeEvidenceStatus(r)
 
-	// ci_baseline (unknown) + auth_e2e_gate (missing: no test domain hits) = 2 entries
-	if len(evs) != 2 {
-		t.Fatalf("expected 2 entries (ci_baseline + auth_e2e_gate), got %d", len(evs))
+	// ci_baseline is suppressed when git is healthy — always-unknown is noise.
+	// Only auth_e2e_gate (missing: no test domain hits) = 1 entry.
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 entry (auth_e2e_gate); ci_baseline suppressed when git healthy, got %d", len(evs))
 	}
-	if evs[0].ID != "ci_baseline" {
-		t.Errorf("first entry should be ci_baseline, got %q", evs[0].ID)
+	if evs[0].ID != "auth_e2e_gate" {
+		t.Errorf("first entry should be auth_e2e_gate, got %q", evs[0].ID)
 	}
-	if evs[0].Status != EvidenceUnknown {
-		t.Errorf("ci_baseline: CI pass/fail not detectable from diff, expected unknown, got %q", evs[0].Status)
+	if evs[0].Status != EvidenceMissing {
+		t.Errorf("auth_e2e_gate should be missing with no test hits, got %q", evs[0].Status)
 	}
-	if evs[1].ID != "auth_e2e_gate" {
-		t.Errorf("second entry should be auth_e2e_gate, got %q", evs[1].ID)
-	}
-	if evs[1].Status != EvidenceMissing {
-		t.Errorf("auth_e2e_gate should be missing with no test hits, got %q", evs[1].Status)
-	}
-	if summary.UnknownCount != 1 {
-		t.Errorf("want 1 unknown (ci_baseline), got %d", summary.UnknownCount)
+	if summary.UnknownCount != 0 {
+		t.Errorf("want 0 unknown (ci_baseline suppressed), got %d", summary.UnknownCount)
 	}
 	if summary.MissingCount != 1 {
 		t.Errorf("want 1 missing (auth_e2e_gate), got %d", summary.MissingCount)

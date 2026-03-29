@@ -48,7 +48,14 @@ func SortRequiredActions(actions []RequiredAction) []RequiredAction {
 	}
 	out := append([]RequiredAction(nil), actions...)
 	sort.SliceStable(out, func(i, j int) bool {
-		ri, rj := rank(out[i].Priority), rank(out[j].Priority)
+		pi, pj := out[i].Priority, out[j].Priority
+		if pi == "" {
+			pi = priorityForActionID(out[i].ID)
+		}
+		if pj == "" {
+			pj = priorityForActionID(out[j].ID)
+		}
+		ri, rj := rank(pi), rank(pj)
 		if ri != rj {
 			return ri < rj
 		}

@@ -244,6 +244,125 @@ class ReleaseReadinessEngineTests(unittest.TestCase):
         self.assertEqual(res.blockers, [])
 
 
+class PRRiskIntegrationTests(unittest.TestCase):
+    """Tests for the PR Risk → release-readiness integration."""
+
+    def _pr_risk(self, rec: str, band: str = "medium", score: float = 30.0,
+                 evidence_summary: dict | None = None) -> dict:
+        return {
+            "enforcement": {
+                "merge_recommendation": rec,
+                "evidence_summary": evidence_summary or {},
+            },
+            "risk_band": band,
+            "risk_score": score,
+        }
+
+    def test_pr_risk_none_gracefully_ignored(self):
+        """When pr_risk is absent, outcome is unaffected."""
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk=None,
+        )
+        self.assertEqual(res.outcome, "PASS")
+        self.assertNotIn("pr_risk_block", res.failed_checks)
+        self.assertNotIn("pr_risk_warn", res.failed_checks)
+
+    def test_pr_risk_pass_rec_does_not_affect_outcome(self):
+        """PR Risk PASS recommendation leaves readiness outcome unchanged."""
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk=self._pr_risk("pass"),
+        )
+        self.assertEqual(res.outcome, "PASS")
+        self.assertNotIn("pr_risk_block", res.failed_checks)
+        self.assertNotIn("pr_risk_warn", res.failed_checks)
+
+    def test_pr_risk_warn_rec_demotes_to_warn(self):
+        """PR Risk WARN adds a warning and caps readiness at WARN."""
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk=self._pr_risk("warn", band="medium", score=35.0),
+        )
+        # WARN warning should demote outcome from PASS to WARN.
+        self.assertEqual(res.outcome, "WARN")
+        self.assertIn("pr_risk_warn", res.failed_checks)
+        warn_text = " ".join(res.warnings)
+        # Message is a brief pointer — does not repeat prrisk details like band/score.
+        self.assertIn("PR Risk", warn_text)
+        self.assertIn("pr_risk.md", warn_text)
+
+    def test_pr_risk_block_rec_blocks_readiness(self):
+        """PR Risk BLOCK adds a hard blocker that blocks readiness."""
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk=self._pr_risk("block", band="high", score=65.0),
+        )
+        self.assertEqual(res.outcome, "BLOCK")
+        self.assertIn("pr_risk_block", res.failed_checks)
+        block_text = " ".join(res.blockers)
+        # Message is a brief pointer — does not repeat prrisk details like band/score.
+        self.assertIn("PR Risk", block_text)
+        self.assertIn("pr_risk.md", block_text)
+
+    def test_pr_risk_evidence_summary_not_in_reasons(self):
+        """PR Risk evidence details are not repeated in release readiness reasons — see pr_risk.md."""
+        evidence = {"pass_count": 3, "missing_count": 1, "unknown_count": 2, "fail_count": 0}
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk=self._pr_risk("pass", evidence_summary=evidence),
+        )
+        evidence_reason = next(
+            (r for r in res.reasons if "PR Risk evidence" in r), None
+        )
+        self.assertIsNone(evidence_reason, f"prrisk evidence should not be repeated in reasons: {res.reasons}")
+
+    def test_pr_risk_parse_error_ignored(self):
+        """A pr_risk dict with _parse_error is silently ignored."""
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+            pr_risk={"_parse_error": "invalid JSON"},
+        )
+        self.assertEqual(res.outcome, "PASS")
+        self.assertNotIn("pr_risk_block", res.failed_checks)
+
+
 if __name__ == "__main__":
     unittest.main()
 

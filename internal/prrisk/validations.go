@@ -1,7 +1,6 @@
 package prrisk
 
 import (
-	"sort"
 	"strings"
 )
 
@@ -62,13 +61,10 @@ func ComputeRequiredValidations(s Signals, actions []RequiredAction) []string {
 		add("ci: restore reliable git diff before merge (see git error in report)")
 	}
 
-	ids := make([]string, 0, len(actions))
+	// Emit validations in the order actions are given — callers should pass
+	// SortRequiredActions output so high-priority validations appear first.
 	for _, a := range actions {
-		ids = append(ids, a.ID)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if v, ok := validationForAction(id); ok {
+		if v, ok := validationForAction(a.ID); ok {
 			add(v)
 		}
 	}

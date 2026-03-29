@@ -84,61 +84,106 @@ func TestBuildIntegrationsJiraKey(t *testing.T) {
 	}
 }
 
-// TestBuildIntegrationsNoFactors verifies the "no factors" placeholder appears
+// TestBuildIntegrationsNoFactors verifies no "Top risk drivers" section appears
 // when the factors slice is empty.
 func TestBuildIntegrationsNoFactors(t *testing.T) {
 	integ := BuildIntegrations(nil, 0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
-	if !strings.Contains(integ.PRCommentMarkdown, "No specific risk factors matched") {
-		t.Errorf("expected no-factors placeholder, got:\n%s", integ.PRCommentMarkdown)
+	if strings.Contains(integ.PRCommentMarkdown, "Top risk drivers") {
+		t.Errorf("expected no risk drivers section for empty factors, got:\n%s", integ.PRCommentMarkdown)
 	}
 }
 
-// TestBuildIntegrationsFactorsListed verifies factor labels appear in the PR comment.
+// TestBuildIntegrationsFactorsListed verifies factor labels appear in the top risk drivers section.
 func TestBuildIntegrationsFactorsListed(t *testing.T) {
 	factors := []RiskFactor{
 		{ID: "domain_auth", Label: "Auth/session/invite area changed", Points: 14, Detail: "1 file(s)"},
 	}
 	integ := BuildIntegrations(factors, 14.0, "origin/main", "", nil, ScoreMath{FactorsSubtotal: 14}, Enforcement{})
-	if !strings.Contains(integ.PRCommentMarkdown, "Auth/session/invite area changed") {
-		t.Errorf("expected factor label in PR comment, got:\n%s", integ.PRCommentMarkdown)
-	}
-}
-
-// TestBuildIntegrationsRequiredActionsListed verifies required action titles
-// appear in the PR comment markdown.
-func TestBuildIntegrationsRequiredActionsListed(t *testing.T) {
-	actions := []RequiredAction{
-		{ID: "auth_e2e_gate", Title: "Run auth E2E gate", Checklist: []string{"Run smoke suite"}},
-	}
-	integ := BuildIntegrations(nil, 50.0, "origin/main", "", actions, ScoreMath{}, Enforcement{})
-	if !strings.Contains(integ.PRCommentMarkdown, "Run auth E2E gate") {
-		t.Errorf("expected action title in PR comment, got:\n%s", integ.PRCommentMarkdown)
-	}
-	if !strings.Contains(integ.PRCommentMarkdown, "Run smoke suite") {
-		t.Errorf("expected checklist item in PR comment, got:\n%s", integ.PRCommentMarkdown)
-	}
-}
-
-// TestBuildIntegrationsRequiredActionsNone verifies the "None" placeholder appears
-// when no required actions are provided.
-func TestBuildIntegrationsRequiredActionsNone(t *testing.T) {
-	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
-	if !strings.Contains(integ.PRCommentMarkdown, "_None._") {
-		t.Errorf("expected _None._ placeholder for empty actions, got:\n%s", integ.PRCommentMarkdown)
-	}
-}
-
-// TestBuildIntegrationsMoreThanFiveActions verifies that when more than 5 actions
-// are present, the overflow count is shown and only 5 are printed.
-func TestBuildIntegrationsMoreThanFiveActions(t *testing.T) {
-	actions := make([]RequiredAction, 7)
-	for i := range actions {
-		actions[i] = RequiredAction{ID: "a", Title: "Action item"}
-	}
-	integ := BuildIntegrations(nil, 60.0, "origin/main", "", actions, ScoreMath{}, Enforcement{})
 	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "Top risk drivers") {
+		t.Errorf("expected 'Top risk drivers' section, got:\n%s", md)
+	}
+	if !strings.Contains(md, "Auth/session/invite area changed") {
+		t.Errorf("expected factor label in risk drivers section, got:\n%s", md)
+	}
+}
+
+// TestBuildIntegrationsTopTwoRiskDriversOnly verifies only the top 2 factors are shown
+// when more than 2 are present.
+func TestBuildIntegrationsTopTwoRiskDriversOnly(t *testing.T) {
+	factors := []RiskFactor{
+		{ID: "f1", Label: "Factor One", Points: 20},
+		{ID: "f2", Label: "Factor Two", Points: 15},
+		{ID: "f3", Label: "Factor Three", Points: 10},
+	}
+	integ := BuildIntegrations(factors, 45.0, "origin/main", "", nil, ScoreMath{FactorsSubtotal: 45}, Enforcement{})
+	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "Factor One") {
+		t.Errorf("expected first factor, got:\n%s", md)
+	}
+	if !strings.Contains(md, "Factor Two") {
+		t.Errorf("expected second factor, got:\n%s", md)
+	}
+	if strings.Contains(md, "Factor Three") {
+		t.Errorf("expected third factor to be omitted (only top 2), got:\n%s", md)
+	}
+	if !strings.Contains(md, "and 1 more") {
+		t.Errorf("expected overflow note 'and 1 more' for 3 factors, got:\n%s", md)
+	}
+}
+
+// TestBuildIntegrationsTopTwoRequiredValidationsOnly verifies only the top 2 validations
+// are shown when more are present.
+func TestBuildIntegrationsTopTwoRequiredValidationsOnly(t *testing.T) {
+	enf := Enforcement{
+		MergeRecommendation: "warn",
+		RequiredValidations: []string{
+			"ci: required status checks must pass",
+			"test: auth/session/invite flows",
+			"test: migrations validation",
+			"db: rollback plan",
+		},
+	}
+	integ := BuildIntegrations(nil, 30.0, "origin/main", "", nil, ScoreMath{}, enf)
+	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "ci: required status checks") {
+		t.Errorf("expected first validation, got:\n%s", md)
+	}
+	if !strings.Contains(md, "test: auth/session") {
+		t.Errorf("expected second validation, got:\n%s", md)
+	}
+	if strings.Contains(md, "test: migrations") {
+		t.Errorf("expected third validation to be omitted (only top 2), got:\n%s", md)
+	}
 	if !strings.Contains(md, "and 2 more") {
-		t.Errorf("expected overflow note 'and 2 more', got:\n%s", md)
+		t.Errorf("expected overflow note 'and 2 more' for 4 validations, got:\n%s", md)
+	}
+}
+
+// TestBuildIntegrationsTopTwoRoutingHintsOnly verifies only top 2 routing hints are shown.
+func TestBuildIntegrationsTopTwoRoutingHintsOnly(t *testing.T) {
+	enf := Enforcement{
+		RecommendedReview: RecommendedReview{
+			RoutingHints: []string{
+				"Reviewer familiar with auth flows",
+				"Reviewer familiar with database migrations",
+				"Reviewer familiar with CI configuration",
+			},
+		},
+	}
+	integ := BuildIntegrations(nil, 30.0, "origin/main", "", nil, ScoreMath{}, enf)
+	md := integ.PRCommentMarkdown
+	if !strings.Contains(md, "auth flows") {
+		t.Errorf("expected first routing hint, got:\n%s", md)
+	}
+	if !strings.Contains(md, "database migrations") {
+		t.Errorf("expected second routing hint, got:\n%s", md)
+	}
+	if strings.Contains(md, "CI configuration") {
+		t.Errorf("expected third routing hint to be omitted (only top 2), got:\n%s", md)
+	}
+	if !strings.Contains(md, "and 1 more") {
+		t.Errorf("expected overflow note 'and 1 more' for 3 hints, got:\n%s", md)
 	}
 }
 
@@ -150,18 +195,20 @@ func TestBuildIntegrationsBaseRefInHeader(t *testing.T) {
 	}
 }
 
+// TestBuildIntegrationsEnforcementSections verifies merge recommendation, validations,
+// routing, and evidence summary appear in the comment.
 func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 	enf := Enforcement{
 		MergeRecommendation: "block",
 		Rationale:           "High risk band.",
 		RecommendedReview: RecommendedReview{
-			Strategy:     "Do not merge until checklist is complete.",
 			RoutingHints: []string{"Include a reviewer familiar with auth flows."},
 		},
 		RequiredValidations: []string{
 			"ci: required status checks must pass before merge",
 			"test: auth/session evidence",
 		},
+		EvidenceSummary: EvidenceSummary{PassCount: 1, MissingCount: 2, UnknownCount: 3, FailCount: 0},
 	}
 	integ := BuildIntegrations(nil, 72.0, "origin/main", "", nil, ScoreMath{}, enf)
 	md := integ.PRCommentMarkdown
@@ -174,7 +221,19 @@ func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 	if !strings.Contains(md, "Review routing") || !strings.Contains(md, "auth flows") {
 		t.Errorf("expected routing hint in comment, got:\n%s", md)
 	}
-	if !strings.Contains(md, "Review strategy") {
-		t.Errorf("expected review strategy in comment, got:\n%s", md)
+	if !strings.Contains(md, "Evidence:") {
+		t.Errorf("expected evidence summary line in comment, got:\n%s", md)
+	}
+	// Review strategy is in the full report (pr_risk.md), not in the PR comment.
+	if strings.Contains(md, "Review strategy") {
+		t.Errorf("review strategy should not appear in the short PR comment, got:\n%s", md)
+	}
+}
+
+// TestBuildIntegrationsLinkToFullReport verifies the PR comment includes the pr_risk.md link.
+func TestBuildIntegrationsLinkToFullReport(t *testing.T) {
+	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, Enforcement{})
+	if !strings.Contains(integ.PRCommentMarkdown, "pr_risk.md") {
+		t.Errorf("expected link to pr_risk.md in PR comment, got:\n%s", integ.PRCommentMarkdown)
 	}
 }

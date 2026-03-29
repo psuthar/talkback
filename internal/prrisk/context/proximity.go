@@ -39,6 +39,26 @@ func AnalyzeProximity(in Input) ProximityInsight {
 		}
 	}
 	if len(testPaths) == 0 {
+		// If every non-test file is a type that has no test convention (YAML, shell,
+		// markdown, lockfiles…), proximity is not applicable — don't flag it as missing.
+		allUntestable := len(in.IsUntestable) == len(in.Files)
+		if allUntestable {
+			for i, f := range in.Files {
+				if !in.IsTest[i] && !in.IsUntestable[i] {
+					_ = f
+					allUntestable = false
+					break
+				}
+			}
+		}
+		if allUntestable {
+			return ProximityInsight{
+				Mode:                "n_a",
+				StructuralAlignment: "n_a",
+				BehavioralCoverage:  "unknown",
+				Detail:              "Diff contains only config/tooling files (YAML, shell, docs…); test proximity is not applicable.",
+			}
+		}
 		return ProximityInsight{
 			Mode:                 "distant",
 			StructuralAlignment:  "distant",

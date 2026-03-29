@@ -248,6 +248,7 @@ def compute_readiness(
     migration_validated_cli: bool,
     commit_validation_note: bool = False,
     commit_validation_snippet: str = "",
+    pr_risk: Optional[dict] = None,
 ) -> ReadinessResult:
     penalties = config.get("scoring", {}).get("penalties", {}) or {}
     max_score = float(config.get("scoring", {}).get("max_score", 100))
@@ -338,6 +339,20 @@ def compute_readiness(
         warnings.append(f"Risky config/workflow paths changed without validation note: {files_note}")
         score -= float(penalties.get("risky_config_without_note", 10))
         failed_checks.append("risky_config_without_note")
+
+    # PR Risk integration: cap readiness outcome by PR Risk merge recommendation.
+    # When pr_risk.json is absent or unparseable, this block is skipped (graceful degradation).
+    # Messages are intentionally brief — the PR Risk report (pr_risk.md) is the source of
+    # truth for the specific signals; repeating them here would be redundant.
+    if pr_risk and isinstance(pr_risk, dict) and not pr_risk.get("_parse_error"):
+        enforcement = pr_risk.get("enforcement") or {}
+        pr_rec = str(enforcement.get("merge_recommendation") or "").lower()
+        if pr_rec == "block":
+            blockers.append("PR Risk: BLOCK — see pr_risk.md for required actions")
+            failed_checks.append("pr_risk_block")
+        elif pr_rec == "warn":
+            warnings.append("PR Risk: WARN — see pr_risk.md for required actions")
+            failed_checks.append("pr_risk_warn")
 
     # Risk validation blockers
     validations_required: set[str] = set()

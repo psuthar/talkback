@@ -6,8 +6,10 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 
 1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
-3. **Outputs** — `artifacts/release-readiness/report.json` and `report.md`.
-4. **PR risk (v2.2)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` artifacts (same directory).
+3. **Outputs** — `artifacts/release-readiness/report.json`, `report.md`, and a **machine summary** at `artifacts/release-readiness.json` (`outcome`, `score`, `warnings`, `blockers`) for CI gates and PR summaries.
+4. **PR risk (v2.6)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` artifacts (same directory). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
+
+CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
 
 ## Core validations (mapped to changed paths)
 
@@ -44,7 +46,8 @@ python scripts/release_readiness.py \
   --smoke-results smoke_results.json \
   --output-dir artifacts/release-readiness
 
-# Optional: PR risk v2.2 (git diff signals; no Python)
+# Optional but recommended: PR risk v2.6 (git diff signals; no Python)
+# Must run BEFORE release_readiness.py if you want PR Risk to influence the outcome.
 go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
 ```
 
@@ -71,7 +74,7 @@ The recommended initial policy is **`block_only`**: warnings are visible in the 
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2.2) and writes `pr_risk.json` and `pr_risk.md`.
+1. Runs `go run ./cmd/prrisk` (PR risk v2.6) and writes `pr_risk.json` and `pr_risk.md`.
 2. Runs `go test ./...` and writes `smoke_results.json`.
 3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
 4. Builds the React frontend (`npm run build`).
@@ -79,7 +82,10 @@ GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_
 6. Waits up to 30s for the API health check at `/health`.
 7. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
 8. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
-9. Runs the readiness script and **always uploads** `artifacts/release-readiness/` even when the outcome is WARN or BLOCK.
+9. Runs `bash scripts/release-readiness.sh` (with `continue-on-error: true` so later steps still run).
+10. **Upload Release Readiness Artifact** — uploads the entire `artifacts/` directory (`if: always()`), including `release-readiness.json`, `release-readiness/report.*`, and PR risk files.
+11. **Evaluate Release Readiness Outcome** — reads `artifacts/release-readiness.json` with `jq`; fails the job on `READINESS_FAILED`, on `BLOCK`, or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`; emits `::warning::` for `WARN` in `block_only` mode (check stays green).
+12. **Add PR Summary** — appends outcome and score lines to `GITHUB_STEP_SUMMARY` for the Actions run summary UI.
 
 ### E2E environment variables used in CI
 
@@ -142,6 +148,22 @@ python scripts/e2e_to_readiness.py \
 cat /tmp/e2e_results.json
 # expected: status=passed, all 5 validations=true
 ```
+
+## PR Risk integration
+
+When `pr_risk.json` is present in the output directory (written by `go run ./cmd/prrisk`), the readiness engine reads the `enforcement.merge_recommendation` field and applies these deterministic caps:
+
+| PR Risk recommendation | Effect on readiness |
+|------------------------|---------------------|
+| `pass` | No change; readiness outcome driven solely by smoke/E2E/coverage evidence |
+| `warn` | Adds a warning; outcome is at most WARN even if all other checks pass |
+| `block` | Adds a hard blocker; outcome is BLOCK regardless of other evidence |
+
+The evidence summary (`pass_count`, `missing_count`, `unknown_count`, `fail_count`) from PR Risk is also surfaced in the readiness `reasons` list for report visibility.
+
+**Graceful degradation:** if `pr_risk.json` is absent, unreadable, or has a parse error, the PR Risk block is silently skipped and readiness continues with evidence-only scoring.
+
+**Ordering requirement:** `go run ./cmd/prrisk` must complete before `python scripts/release_readiness.py`. The CI workflow already ensures this ordering.
 
 ## Suppressing the risky-config warning via commit messages
 

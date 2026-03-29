@@ -53,10 +53,9 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
 	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
-	if enf.EvidenceSummary.PassCount+enf.EvidenceSummary.MissingCount+enf.EvidenceSummary.UnknownCount+enf.EvidenceSummary.FailCount > 0 {
-		es := enf.EvidenceSummary
-		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d unknown · %d fail |\n",
-			es.PassCount, es.MissingCount, es.UnknownCount, es.FailCount))
+	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount > 0 {
+		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail |\n",
+			es.PassCount, es.MissingCount, es.FailCount))
 	}
 	sb.WriteString("\n### Recommended review strategy\n\n")
 	sb.WriteString(enf.RecommendedReview.Strategy + "\n\n")
@@ -96,16 +95,25 @@ func WriteMarkdown(path string, r Result) error {
 		}
 		sb.WriteString("\n")
 	}
-	if len(enf.EvidenceStatus) > 0 {
+	// Only show evidence items that are actionable: pass, missing, or fail.
+	// Unknown items ("user didn't provide X but it isn't required") are hidden —
+	// they convey no actionable signal and create noise.
+	var visibleEvidence []ValidationEvidence
+	for _, ev := range enf.EvidenceStatus {
+		if ev.Status != EvidenceUnknown {
+			visibleEvidence = append(visibleEvidence, ev)
+		}
+	}
+	if len(visibleEvidence) > 0 {
 		sb.WriteString("### Evidence status (repo-local signals)\n\n")
 		sum := enf.EvidenceSummary
 		sb.WriteString(fmt.Sprintf(
-			"> %d pass · %d missing · %d unknown · %d fail\n\n",
-			sum.PassCount, sum.MissingCount, sum.UnknownCount, sum.FailCount,
+			"> %d pass · %d missing · %d fail\n\n",
+			sum.PassCount, sum.MissingCount, sum.FailCount,
 		))
 		sb.WriteString("| Action / Validation | Status | Source | Rationale |\n")
 		sb.WriteString("|---------------------|--------|--------|-----------|\n")
-		for _, ev := range enf.EvidenceStatus {
+		for _, ev := range visibleEvidence {
 			icon := evidenceStatusIcon(ev.Status)
 			sb.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %s |\n",
 				ev.ID, icon, ev.Status, ev.Source, ev.Rationale))

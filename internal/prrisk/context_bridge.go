@@ -8,8 +8,10 @@ import (
 
 func contextInputFromSignals(s Signals) riskcontext.Input {
 	isTest := make([]bool, len(s.Files))
+	isUntestable := make([]bool, len(s.Files))
 	for i, f := range s.Files {
 		isTest[i] = IsTestPath(f.Path)
+		isUntestable[i] = IsUntestablePath(f.Path)
 	}
 	files := make([]riskcontext.FileChange, len(s.Files))
 	for i, f := range s.Files {
@@ -22,6 +24,7 @@ func contextInputFromSignals(s Signals) riskcontext.Input {
 		GitError:           s.GitError,
 		Files:              files,
 		IsTest:             isTest,
+		IsUntestable:       isUntestable,
 		DomainHits:         s.DomainHits,
 		TestUnitDomainHits: s.TestUnitDomainHits,
 		TestE2EDomainHits:  s.TestE2EDomainHits,

@@ -7,13 +7,18 @@ import (
 )
 
 // ComputeEvidenceStatus derives per-action evidence status from repo-local signals.
-// It always produces a ci_baseline entry, followed by one entry per RequiredAction.
+// It produces one entry per RequiredAction, plus a ci_baseline entry only when git
+// is broken (the only state where ci_baseline has actionable signal).
 // All detection is deterministic and requires no LLM or live GitHub API.
 func ComputeEvidenceStatus(r Result) ([]ValidationEvidence, EvidenceSummary) {
 	var out []ValidationEvidence
 
-	// ci_baseline is always evaluated regardless of required actions.
-	out = append(out, evidenceCIBaseline(r.Signals))
+	// ci_baseline is only emitted when git is broken — that's the only state where
+	// it carries signal. When git works, CI pass/fail cannot be determined from
+	// repo-local signals and the entry would always be "unknown", which is noise.
+	if r.Signals.GitError != "" {
+		out = append(out, evidenceCIBaseline(r.Signals))
+	}
 
 	for _, a := range r.RequiredActions {
 		out = append(out, evidenceForActionID(a.ID, a.Title, r))
@@ -76,7 +81,7 @@ func evidenceForActionID(id, label string, r Result) ValidationEvidence {
 }
 
 // evidenceCIBaseline evaluates baseline CI readiness from git signals.
-// FAIL when git history was unavailable; UNKNOWN otherwise (CI pass/fail needs live API).
+// Only called when GitError is non-empty; always returns FAIL in that case.
 func evidenceCIBaseline(s Signals) ValidationEvidence {
 	if s.GitError != "" {
 		return ValidationEvidence{

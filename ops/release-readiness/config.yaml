@@ -155,6 +155,16 @@ remediation:
     likely_cause: "Changed paths triggered a risk category but required validation evidence is missing from smoke/E2E results"
     recommended_action: "Ensure the relevant smoke and E2E tests ran and passed for the affected area; check infer_validations_when_pass in config.yaml"
     fix_type: test
+  pr_risk_block:
+    severity: block
+    likely_cause: "PR Risk scored the diff as merge-blocked (high/critical band or required actions incomplete)"
+    recommended_action: "Resolve the PR Risk required actions listed in pr_risk.md before deploying"
+    fix_type: process
+  pr_risk_warn:
+    severity: warn
+    likely_cause: "PR Risk scored the diff as WARN (elevated risk pending review)"
+    recommended_action: "Review the PR Risk required validations in pr_risk.md before deploying"
+    fix_type: process
 
 # E2E failure severity: tests matching these name substrings are "critical" for blocking
 e2e_critical_name_patterns:
