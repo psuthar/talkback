@@ -122,7 +122,7 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 	finalScore, floorApplied, floorMin, floorReasons := applyRiskFloor(netBeforeFloor, factors)
 
 	riskBand := band(finalScore)
-	cats := ComputeCategories(s, factors, reducers)
+	cats := ComputeCategories(s, factors, reducers, &cInsights)
 	req := ComputeRequiredActions(s, factors, reducers, finalScore, riskBand, &cInsights)
 
 	math := ScoreMath{

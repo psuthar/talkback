@@ -33,6 +33,8 @@ func ComputeEvidenceStatus(r Result) ([]ValidationEvidence, EvidenceSummary) {
 			summary.MissingCount++
 		case EvidenceFail:
 			summary.FailCount++
+		case EvidenceNotEvaluated:
+			summary.NotEvaluatedCount++
 		default:
 			summary.UnknownCount++
 		}
@@ -73,9 +75,9 @@ func evidenceForActionID(id, label string, r Result) ValidationEvidence {
 		return ValidationEvidence{
 			ID:        id,
 			Label:     label,
-			Status:    EvidenceUnknown,
+			Status:    EvidenceNotEvaluated,
 			Source:    "none",
-			Rationale: "No repo-local evidence detector defined for this action.",
+			Rationale: "No repo-local evidence detector defined for this action; requires human review.",
 		}
 	}
 }
@@ -141,8 +143,8 @@ func evidencePRReviewSummary(label string, ci *riskcontext.ContextInsights) Vali
 		return ValidationEvidence{ID: id, Label: label, Status: EvidenceMissing, Source: "intent",
 			Rationale: msg}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "intent",
-		Rationale: "Cannot determine PR description quality from available signals."}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "intent",
+		Rationale: "PR description quality could not be confirmed from available signals — requires human review."}
 }
 
 // evidenceWorkflowConfig evaluates workflow/config validation via commit validation note.
@@ -152,20 +154,20 @@ func evidenceWorkflowConfig(label string, s Signals) ValidationEvidence {
 		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "git_signals",
 			Rationale: "Validation note found in commit: " + noteSnippet(s.ValidationNoteSnippet)}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "git_signals",
-		Rationale: "No validation note in commit; CI check result not available from repo-local signals."}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "git_signals",
+		Rationale: "No validation note in commit; CI result not confirmable from repo-local signals — requires human review."}
 }
 
 // evidenceTestDomain evaluates E2E/unit test coverage for a sensitive domain.
-// PASS on E2E hits; UNKNOWN on unit-only (E2E not confirmed); MISSING when no hits at all.
+// PASS on E2E hits; NOT_EVALUATED on unit-only (E2E not confirmed — human review required); MISSING when no hits at all.
 func evidenceTestDomain(id, label, domain string, s Signals) ValidationEvidence {
 	if s.TestE2EDomainHits != nil && s.TestE2EDomainHits[domain] > 0 {
 		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "test_domain_hits",
 			Rationale: fmt.Sprintf("E2E test files touching %q domain in this diff (%d file(s)).", domain, s.TestE2EDomainHits[domain])}
 	}
 	if s.TestUnitDomainHits != nil && s.TestUnitDomainHits[domain] > 0 {
-		return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "test_domain_hits",
-			Rationale: fmt.Sprintf("Unit test files touching %q domain in diff (%d file(s)); E2E coverage not confirmed.", domain, s.TestUnitDomainHits[domain])}
+		return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "test_domain_hits",
+			Rationale: fmt.Sprintf("Unit test files touching %q domain in diff (%d file(s)); E2E coverage not confirmed — requires human review.", domain, s.TestUnitDomainHits[domain])}
 	}
 	return ValidationEvidence{ID: id, Label: label, Status: EvidenceMissing, Source: "test_domain_hits",
 		Rationale: fmt.Sprintf("No test domain hits for %q in this diff.", domain)}
@@ -206,11 +208,11 @@ func evidenceAddTests(label string, s Signals, ci *riskcontext.ContextInsights) 
 			Rationale: "No test files in this diff."}
 	}
 	if ci != nil && ci.Proximity.BehavioralCoverage == "shallow" {
-		return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "proximity",
-			Rationale: "Behavioral coverage is shallow: unit tests present but E2E coverage for sensitive domains not confirmed."}
+		return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "proximity",
+			Rationale: "Behavioral coverage is shallow: unit tests present but E2E coverage for sensitive domains not confirmed — requires human review."}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "test_loc_ratio",
-		Rationale: fmt.Sprintf("Test files present (%d) but coverage depth unclear.", s.TestFiles)}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "test_loc_ratio",
+		Rationale: fmt.Sprintf("Test files present (%d) but coverage depth could not be confirmed — requires human review.", s.TestFiles)}
 }
 
 // evidenceIntentAlignment evaluates PR description ↔ diff domain alignment.
@@ -228,8 +230,8 @@ func evidenceIntentAlignment(label string, ci *riskcontext.ContextInsights) Vali
 		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "intent",
 			Rationale: "PR description keywords are aligned with diff domains."}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "intent",
-		Rationale: "Intent alignment could not be determined (no strong keywords matched)."}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "intent",
+		Rationale: "Intent alignment could not be confirmed (no strong keywords matched) — requires human review."}
 }
 
 // evidenceScatteredReviewPlan evaluates whether a PR description covers a scattered change.
@@ -247,12 +249,9 @@ func evidenceScatteredReviewPlan(label string, ci *riskcontext.ContextInsights) 
 		return ValidationEvidence{ID: id, Label: label, Status: EvidenceMissing, Source: "intent",
 			Rationale: "PR description is weak or generic for a scattered multi-area change."}
 	}
-	if ci.Intent.IntentStrength == "unknown" {
-		return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "intent",
-			Rationale: "No domain-specific keywords matched; cannot confirm review plan covers all areas."}
-	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "intent",
-		Rationale: "Cannot determine whether review plan covers the scattered change."}
+	// "unknown" intent (no keywords matched) or any other state: cannot confirm review plan
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "intent",
+		Rationale: "Review plan coverage of scattered change could not be confirmed from available signals — requires human review."}
 }
 
 // evidenceTestProximity evaluates test co-location via proximity/behavioral coverage.
@@ -270,8 +269,8 @@ func evidenceTestProximity(label string, ci *riskcontext.ContextInsights) Valida
 		return ValidationEvidence{ID: id, Label: label, Status: EvidenceMissing, Source: "proximity",
 			Rationale: fmt.Sprintf("Structural alignment is %q with no test coverage evidence for this diff.", ci.Proximity.Mode)}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "proximity",
-		Rationale: fmt.Sprintf("Structural alignment is %q; behavioral coverage is %q.", ci.Proximity.Mode, ci.Proximity.BehavioralCoverage)}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "proximity",
+		Rationale: fmt.Sprintf("Structural alignment is %q; behavioral coverage is %q — requires human review.", ci.Proximity.Mode, ci.Proximity.BehavioralCoverage)}
 }
 
 // evidenceHotspotRegression evaluates targeted regression evidence via validation note.
@@ -281,8 +280,8 @@ func evidenceHotspotRegression(label string, s Signals) ValidationEvidence {
 		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "git_signals",
 			Rationale: "Validation note present in commit: " + noteSnippet(s.ValidationNoteSnippet)}
 	}
-	return ValidationEvidence{ID: id, Label: label, Status: EvidenceUnknown, Source: "git_signals",
-		Rationale: "No validation note detected; targeted regression coverage cannot be confirmed from diff alone."}
+	return ValidationEvidence{ID: id, Label: label, Status: EvidenceNotEvaluated, Source: "git_signals",
+		Rationale: "No validation note detected; targeted regression coverage cannot be confirmed from diff alone — requires human review."}
 }
 
 // noteSnippet returns a short display form of a validation note snippet.
@@ -367,6 +366,8 @@ func evidenceStatusIcon(status ValidationStatus) string {
 		return "⚠️"
 	case EvidenceFail:
 		return "❌"
+	case EvidenceNotEvaluated:
+		return "📋"
 	default:
 		return "❓"
 	}

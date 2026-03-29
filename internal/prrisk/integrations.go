@@ -24,9 +24,9 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 	}
 	md.WriteString("\n\n")
 
-	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount > 0 {
-		fmt.Fprintf(md, "**Evidence:** %d pass · %d missing · %d fail\n\n",
-			es.PassCount, es.MissingCount, es.FailCount)
+	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount+es.NotEvaluatedCount > 0 {
+		fmt.Fprintf(md, "**Evidence:** %d pass · %d missing · %d fail · %d not evaluated\n\n",
+			es.PassCount, es.MissingCount, es.FailCount, es.NotEvaluatedCount)
 	}
 
 	// Top 2 risk drivers

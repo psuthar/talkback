@@ -75,13 +75,13 @@ func TestEvidencePRReviewSummaryMissingOnWeakNoTitle(t *testing.T) {
 	}
 }
 
-func TestEvidencePRReviewSummaryUnknownOnUnknownStrength(t *testing.T) {
+func TestEvidencePRReviewSummaryNotEvaluatedOnUnknownStrength(t *testing.T) {
 	ci := &riskcontext.ContextInsights{
 		Intent: riskcontext.IntentInsight{IntentStrength: "unknown"},
 	}
 	ev := evidencePRReviewSummary("label", ci)
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated (quality indeterminate, human review required), got %q", ev.Status)
 	}
 }
 
@@ -101,10 +101,10 @@ func TestEvidenceWorkflowConfigPassOnValidationNote(t *testing.T) {
 	}
 }
 
-func TestEvidenceWorkflowConfigUnknownWithoutNote(t *testing.T) {
+func TestEvidenceWorkflowConfigNotEvaluatedWithoutNote(t *testing.T) {
 	ev := evidenceWorkflowConfig("label", Signals{})
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated (CI result not confirmable without note), got %q", ev.Status)
 	}
 }
 
@@ -118,13 +118,13 @@ func TestEvidenceTestDomainPassOnE2EHit(t *testing.T) {
 	}
 }
 
-func TestEvidenceTestDomainUnknownOnUnitOnlyHit(t *testing.T) {
+func TestEvidenceTestDomainNotEvaluatedOnUnitOnlyHit(t *testing.T) {
 	ev := evidenceTestDomain("auth_e2e_gate", "label", DomainAuth,
 		Signals{
 			TestUnitDomainHits: map[string]int{DomainAuth: 1},
 		})
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown for unit-only hit, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated for unit-only hit (E2E not confirmed), got %q", ev.Status)
 	}
 }
 
@@ -205,13 +205,13 @@ func TestEvidenceAddTestsMissingOnNoTestFiles(t *testing.T) {
 	}
 }
 
-func TestEvidenceAddTestsUnknownOnShallowCoverage(t *testing.T) {
+func TestEvidenceAddTestsNotEvaluatedOnShallowCoverage(t *testing.T) {
 	ci := &riskcontext.ContextInsights{
 		Proximity: riskcontext.ProximityInsight{BehavioralCoverage: "shallow"},
 	}
 	ev := evidenceAddTests("label", Signals{TestFiles: 1, TestLOCRatio: 0.10}, ci)
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown on shallow coverage, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated on shallow coverage (E2E not confirmed), got %q", ev.Status)
 	}
 }
 
@@ -237,13 +237,13 @@ func TestEvidenceIntentAlignmentFailOnMismatch(t *testing.T) {
 	}
 }
 
-func TestEvidenceIntentAlignmentUnknownWhenNeitherAlignedNorMismatch(t *testing.T) {
+func TestEvidenceIntentAlignmentNotEvaluatedWhenNeitherAlignedNorMismatch(t *testing.T) {
 	ci := &riskcontext.ContextInsights{
 		Intent: riskcontext.IntentInsight{},
 	}
 	ev := evidenceIntentAlignment("label", ci)
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown when no alignment verdict, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated when no alignment verdict, got %q", ev.Status)
 	}
 }
 
@@ -276,13 +276,13 @@ func TestEvidenceTestProximityMissingOnDistantUnknown(t *testing.T) {
 	}
 }
 
-func TestEvidenceTestProximityUnknownOnPartialShallow(t *testing.T) {
+func TestEvidenceTestProximityNotEvaluatedOnPartialShallow(t *testing.T) {
 	ci := &riskcontext.ContextInsights{
 		Proximity: riskcontext.ProximityInsight{Mode: "partial", BehavioralCoverage: "shallow"},
 	}
 	ev := evidenceTestProximity("label", ci)
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown for partial+shallow, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated for partial+shallow (requires human review), got %q", ev.Status)
 	}
 }
 
@@ -295,10 +295,10 @@ func TestEvidenceHotspotRegressionPassOnValidationNote(t *testing.T) {
 	}
 }
 
-func TestEvidenceHotspotRegressionUnknownWithoutNote(t *testing.T) {
+func TestEvidenceHotspotRegressionNotEvaluatedWithoutNote(t *testing.T) {
 	ev := evidenceHotspotRegression("label", Signals{})
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown without validation note, got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated without validation note (requires human review), got %q", ev.Status)
 	}
 }
 
@@ -324,15 +324,15 @@ func TestEvidenceScatteredReviewPlanMissingOnWeakStrength(t *testing.T) {
 	}
 }
 
-func TestEvidenceScatteredReviewPlanUnknownOnUnknownStrength(t *testing.T) {
-	// "unknown" means no domain keywords matched — we cannot confirm or deny a review plan.
-	// This is UNKNOWN, not MISSING (overclaiming absence).
+func TestEvidenceScatteredReviewPlanNotEvaluatedOnUnknownStrength(t *testing.T) {
+	// "unknown" means no domain keywords matched — we cannot confirm the review plan covers all areas.
+	// This is NOT_EVALUATED (requires human review), not MISSING (which would overclaim absence).
 	ci := &riskcontext.ContextInsights{
 		Intent: riskcontext.IntentInsight{IntentStrength: "unknown"},
 	}
 	ev := evidenceScatteredReviewPlan("label", ci)
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown on unknown strength (no keywords matched), got %q", ev.Status)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated on unknown strength (no keywords matched), got %q", ev.Status)
 	}
 }
 
@@ -355,6 +355,20 @@ func TestEvidenceAwareUpgradeNoOpOnUnknown(t *testing.T) {
 	got := evidenceAwareUpgrade("pass", evidence, actions)
 	if got != "pass" {
 		t.Errorf("unknown evidence should not upgrade, got %q", got)
+	}
+}
+
+func TestEvidenceAwareUpgradeNoOpOnNotEvaluated(t *testing.T) {
+	// not_evaluated items require human review but should not trigger machine upgrades.
+	evidence := []ValidationEvidence{
+		{ID: "auth_e2e_gate", Status: EvidenceNotEvaluated},
+	}
+	actions := []RequiredAction{
+		{ID: "auth_e2e_gate", Priority: PriorityHigh},
+	}
+	got := evidenceAwareUpgrade("pass", evidence, actions)
+	if got != "pass" {
+		t.Errorf("not_evaluated evidence should not upgrade (requires human review, not machine block), got %q", got)
 	}
 }
 
@@ -464,11 +478,62 @@ func TestComputeEvidenceStatusSummaryCountsAreCorrect(t *testing.T) {
 	if summary.UnknownCount != 0 {
 		t.Errorf("want 0 unknown (ci_baseline suppressed), got %d", summary.UnknownCount)
 	}
+	if summary.NotEvaluatedCount != 0 {
+		t.Errorf("want 0 not_evaluated for this simple case, got %d", summary.NotEvaluatedCount)
+	}
 	if summary.MissingCount != 1 {
 		t.Errorf("want 1 missing (auth_e2e_gate), got %d", summary.MissingCount)
 	}
 	if summary.PassCount != 0 || summary.FailCount != 0 {
 		t.Errorf("want 0 pass and 0 fail, got pass=%d fail=%d", summary.PassCount, summary.FailCount)
+	}
+}
+
+func TestComputeEvidenceStatusNotEvaluatedCountedInSummary(t *testing.T) {
+	// workflow_config_validation without a validation note → not_evaluated
+	r := Result{
+		Signals: Signals{GitError: ""},
+		RequiredActions: []RequiredAction{
+			{ID: "workflow_config_validation", Title: "Workflow config validation"},
+		},
+	}
+	evs, summary := ComputeEvidenceStatus(r)
+	if len(evs) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(evs))
+	}
+	if evs[0].Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated for workflow_config_validation without note, got %q", evs[0].Status)
+	}
+	if summary.NotEvaluatedCount != 1 {
+		t.Errorf("want not_evaluated_count=1, got %d", summary.NotEvaluatedCount)
+	}
+	if summary.UnknownCount != 0 {
+		t.Errorf("want unknown_count=0, got %d", summary.UnknownCount)
+	}
+}
+
+func TestComputeEvidenceStatusEveryRequiredActionHasEvidenceEntry(t *testing.T) {
+	// Every required action should produce exactly one evidence entry.
+	r := Result{
+		Signals: Signals{GitError: ""},
+		RequiredActions: []RequiredAction{
+			{ID: "auth_e2e_gate", Title: "Auth E2E gate"},
+			{ID: "workflow_config_validation", Title: "Workflow config"},
+			{ID: "context_hotspot_regression_focus", Title: "Hotspot regression"},
+		},
+	}
+	evs, _ := ComputeEvidenceStatus(r)
+	if len(evs) != 3 {
+		t.Fatalf("expected 1 evidence entry per required action (3 total), got %d", len(evs))
+	}
+	ids := make(map[string]bool)
+	for _, ev := range evs {
+		ids[ev.ID] = true
+	}
+	for _, a := range r.RequiredActions {
+		if !ids[a.ID] {
+			t.Errorf("required action %q has no evidence entry", a.ID)
+		}
 	}
 }
 
@@ -547,6 +612,20 @@ func TestEvidenceBlockingReasonsUnknownExcluded(t *testing.T) {
 	}
 }
 
+func TestEvidenceBlockingReasonsNotEvaluatedExcluded(t *testing.T) {
+	// not_evaluated items require human review but must not produce machine blocking reasons.
+	evidence := []ValidationEvidence{
+		{ID: "auth_e2e_gate", Status: EvidenceNotEvaluated},
+	}
+	actions := []RequiredAction{
+		{ID: "auth_e2e_gate", Priority: PriorityHigh},
+	}
+	reasons := evidenceBlockingReasons(evidence, actions)
+	if len(reasons) != 0 {
+		t.Errorf("not_evaluated status should produce no blocking reason (human review required), got %v", reasons)
+	}
+}
+
 // --- evidenceStatusIcon ---
 
 func TestEvidenceStatusIconCoversAllStatuses(t *testing.T) {
@@ -557,6 +636,7 @@ func TestEvidenceStatusIconCoversAllStatuses(t *testing.T) {
 		{EvidencePass, "✅"},
 		{EvidenceMissing, "⚠️"},
 		{EvidenceFail, "❌"},
+		{EvidenceNotEvaluated, "📋"},
 		{EvidenceUnknown, "❓"},
 		{"other", "❓"},
 	}

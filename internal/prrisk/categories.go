@@ -1,6 +1,10 @@
 package prrisk
 
-import "strings"
+import (
+	"strings"
+
+	riskcontext "github.com/psuthar/talkback/internal/prrisk/context"
+)
 
 const (
 	CategoryCode           = "code"
@@ -38,7 +42,7 @@ func laneForFactorID(factorID string) string {
 	}
 }
 
-func testConfidenceScore(s Signals) (float64, *ConfidenceBreakdown) {
+func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *ConfidenceBreakdown) {
 	const base = 50.0
 	bd := &ConfidenceBreakdown{BaseScore: base}
 	score := base
@@ -87,12 +91,34 @@ func testConfidenceScore(s Signals) (float64, *ConfidenceBreakdown) {
 		}
 	}
 
-	bd.FinalScore = score
-	return score, bd
+	// Proximity-based confidence clamps: apply only when testable code exists in diff
+	// (mode != "" and mode != "n_a") and tests are present (so we're not double-penalising
+	// the "no test files" branch above).
+	if s.TestFiles > 0 && ci != nil && ci.Proximity.Mode != "" && ci.Proximity.Mode != "n_a" {
+		if ci.Proximity.StructuralAlignment == "distant" {
+			const distantAdj = -15.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "Tests structurally distant from changed code",
+				Delta:  distantAdj,
+			})
+			score += distantAdj
+		}
+		if ci.Proximity.BehavioralCoverage == "unknown" {
+			const unknownCovAdj = -10.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "Behavioral coverage depth unknown",
+				Delta:  unknownCovAdj,
+			})
+			score += unknownCovAdj
+		}
+	}
+
+	bd.FinalScore = clamp100(score)
+	return clamp100(score), bd
 }
 
 // ComputeCategories builds the decision-grade risk category breakdown.
-func ComputeCategories(s Signals, factors []RiskFactor, reducers []RiskReducer) []RiskCategory {
+func ComputeCategories(s Signals, factors []RiskFactor, reducers []RiskReducer, ci *riskcontext.ContextInsights) []RiskCategory {
 	baseByLane := map[string]float64{}
 	factorsByLane := map[string][]string{}
 	for _, f := range factors {
@@ -116,7 +142,7 @@ func ComputeCategories(s Signals, factors []RiskFactor, reducers []RiskReducer) 
 	codeRisk := clamp100(baseByLane[CategoryCode] - reducerByLane[CategoryCode])
 	workflowRisk := clamp100(baseByLane[CategoryWorkflow] - reducerByLane[CategoryWorkflow])
 
-	conf, bd := testConfidenceScore(s)
+	conf, bd := testConfidenceScore(s, ci)
 	testConfidenceRisk := clamp100(100 - conf)
 	if s.GitError != "" {
 		// Git issues reduce confidence regardless of test evidence.
