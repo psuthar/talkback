@@ -91,29 +91,46 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 		}
 	}
 
-	// Proximity-based confidence clamps: apply only when testable code exists in diff
+	// Proximity-based confidence penalties: apply only when testable code exists in diff
 	// (mode != "" and mode != "n_a") and tests are present (so we're not double-penalising
 	// the "no test files" branch above).
 	if s.TestFiles > 0 && ci != nil && ci.Proximity.Mode != "" && ci.Proximity.Mode != "n_a" {
-		if ci.Proximity.StructuralAlignment == "distant" {
+		switch ci.Proximity.StructuralAlignment {
+		case "distant":
 			const distantAdj = -15.0
 			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
 				Reason: "Tests structurally distant from changed code",
 				Delta:  distantAdj,
 			})
 			score += distantAdj
-		}
-		// Behavioral coverage "unknown" only carries signal when sensitive domains changed.
-		// proximity.go uses a broader sensitive definition (includes api, database) than
-		// testConfidenceScore (auth, rag, processing, migrations). Gate this penalty on
-		// sensitiveChanged to stay consistent with the rest of the confidence logic.
-		if ci.Proximity.BehavioralCoverage == "unknown" && sensitiveChanged {
-			const unknownCovAdj = -10.0
+		case "partial":
+			const partialAdj = -8.0
 			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
-				Reason: "Behavioral coverage depth unknown for sensitive domain changes",
-				Delta:  unknownCovAdj,
+				Reason: "Tests only partially aligned with changed code",
+				Delta:  partialAdj,
 			})
-			score += unknownCovAdj
+			score += partialAdj
+		}
+		// Behavioral coverage "unknown": -5 base penalty for any diff with tests,
+		// plus -5 extra when sensitive domains changed (total -10 for sensitive).
+		// proximity.go uses a broader sensitive definition (includes api, database) than
+		// testConfidenceScore (auth, rag, processing, migrations). The extra penalty is
+		// gated on sensitiveChanged to stay consistent with the rest of the confidence logic.
+		if ci.Proximity.BehavioralCoverage == "unknown" {
+			const unknownCovBase = -5.0
+			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+				Reason: "Behavioral coverage depth unknown",
+				Delta:  unknownCovBase,
+			})
+			score += unknownCovBase
+			if sensitiveChanged {
+				const unknownCovSensitive = -5.0
+				bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+					Reason: "Behavioral coverage depth unknown for sensitive domain changes",
+					Delta:  unknownCovSensitive,
+				})
+				score += unknownCovSensitive
+			}
 		}
 	}
 

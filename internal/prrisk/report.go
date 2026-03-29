@@ -123,7 +123,7 @@ func WriteMarkdown(path string, r Result) error {
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("### Review requirements\n\n")
+	sb.WriteString("### Manual merge prerequisites\n\n")
 	if len(enf.ReviewRequirements) == 0 {
 		sb.WriteString("_None._\n\n")
 	} else {

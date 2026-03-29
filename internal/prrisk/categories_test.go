@@ -221,16 +221,16 @@ func TestCategoriesTestConfidenceDistantProximityLowersConfidence(t *testing.T) 
 	if tc == nil {
 		t.Fatal("expected test_confidence category")
 	}
-	// Base non-sensitive: 85, -15 (distant). Behavioral penalty does not fire: sensitiveChanged=false.
-	if tc.Confidence != 70 {
-		t.Errorf("expected confidence 70 with distant penalty only (non-sensitive), got %.0f", tc.Confidence)
+	// Base non-sensitive: 85, -15 (distant), -5 (behavioral unknown base) = 65.
+	if tc.Confidence != 65 {
+		t.Errorf("expected confidence 65 (distant + unknown base penalty, non-sensitive), got %.0f", tc.Confidence)
 	}
-	if tc.RiskScore != 30 {
-		t.Errorf("expected risk 30, got %.1f", tc.RiskScore)
+	if tc.RiskScore != 35 {
+		t.Errorf("expected risk 35, got %.1f", tc.RiskScore)
 	}
-	// Breakdown: non-sensitive (+35) and distant (-15) = 2 adjustments minimum
-	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 2 {
-		t.Errorf("expected at least 2 adjustments in breakdown, got %v", tc.Breakdown)
+	// Breakdown: non-sensitive (+35), distant (-15), behavioral unknown (-5) = 3 adjustments minimum
+	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 3 {
+		t.Errorf("expected at least 3 adjustments in breakdown, got %v", tc.Breakdown)
 	}
 }
 

@@ -7,18 +7,17 @@ import (
 )
 
 // ComputeEvidenceStatus derives per-action evidence status from repo-local signals.
-// It produces one entry per RequiredAction, plus a ci_baseline entry only when git
-// is broken (the only state where ci_baseline has actionable signal).
+// It always produces a ci_baseline entry (matching the "ci:" required validation line),
+// plus one entry per RequiredAction.
 // All detection is deterministic and requires no LLM or live GitHub API.
 func ComputeEvidenceStatus(r Result) ([]ValidationEvidence, EvidenceSummary) {
 	var out []ValidationEvidence
 
-	// ci_baseline is only emitted when git is broken — that's the only state where
-	// it carries signal. When git works, CI pass/fail cannot be determined from
-	// repo-local signals and the entry would always be "unknown", which is noise.
-	if r.Signals.GitError != "" {
-		out = append(out, evidenceCIBaseline(r.Signals))
-	}
+	// ci_baseline always emitted: it corresponds to the "ci: required status checks"
+	// validation that ComputeRequiredValidations unconditionally includes. When git is
+	// healthy the status is not_evaluated (CI pass/fail is not confirmable from local
+	// signals alone); when git is broken the status is fail.
+	out = append(out, evidenceCIBaseline(r.Signals))
 
 	for _, a := range r.RequiredActions {
 		out = append(out, evidenceForActionID(a.ID, a.Title, r))
@@ -83,7 +82,8 @@ func evidenceForActionID(id, label string, r Result) ValidationEvidence {
 }
 
 // evidenceCIBaseline evaluates baseline CI readiness from git signals.
-// Only called when GitError is non-empty; always returns FAIL in that case.
+// Always emitted; pass/fail cannot be determined from diff alone (not_evaluated),
+// except when git is broken in which case we know CI will fail.
 func evidenceCIBaseline(s Signals) ValidationEvidence {
 	if s.GitError != "" {
 		return ValidationEvidence{
@@ -97,9 +97,9 @@ func evidenceCIBaseline(s Signals) ValidationEvidence {
 	return ValidationEvidence{
 		ID:        "ci_baseline",
 		Label:     "CI: required status checks",
-		Status:    EvidenceUnknown,
+		Status:    EvidenceNotEvaluated,
 		Source:    "git_signals",
-		Rationale: "Git history available; CI check pass/fail cannot be determined from diff alone.",
+		Rationale: "CI pass/fail cannot be confirmed from diff signals alone; requires human/pipeline review.",
 	}
 }
 

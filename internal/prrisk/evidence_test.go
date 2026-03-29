@@ -9,11 +9,11 @@ import (
 
 // --- evidenceCIBaseline ---
 
-func TestEvidenceCIBaselineUnknownWhenNoGitError(t *testing.T) {
-	// CI pass/fail cannot be determined from the diff alone; UNKNOWN is correct.
+func TestEvidenceCIBaselineNotEvaluatedWhenNoGitError(t *testing.T) {
+	// CI pass/fail cannot be confirmed from diff alone; not_evaluated so row is visible.
 	ev := evidenceCIBaseline(Signals{})
-	if ev.Status != EvidenceUnknown {
-		t.Errorf("want unknown (CI not detectable from diff), got %q (rationale: %s)", ev.Status, ev.Rationale)
+	if ev.Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated (CI not detectable from diff), got %q (rationale: %s)", ev.Status, ev.Rationale)
 	}
 	if ev.ID != "ci_baseline" {
 		t.Errorf("expected id=ci_baseline, got %q", ev.ID)
@@ -464,22 +464,27 @@ func TestComputeEvidenceStatusSummaryCountsAreCorrect(t *testing.T) {
 	}
 	evs, summary := ComputeEvidenceStatus(r)
 
-	// ci_baseline is suppressed when git is healthy — always-unknown is noise.
-	// Only auth_e2e_gate (missing: no test domain hits) = 1 entry.
-	if len(evs) != 1 {
-		t.Fatalf("expected 1 entry (auth_e2e_gate); ci_baseline suppressed when git healthy, got %d", len(evs))
+	// ci_baseline is always emitted (not_evaluated when git healthy) + auth_e2e_gate = 2 entries.
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 entries (ci_baseline + auth_e2e_gate), got %d", len(evs))
 	}
-	if evs[0].ID != "auth_e2e_gate" {
-		t.Errorf("first entry should be auth_e2e_gate, got %q", evs[0].ID)
+	if evs[0].ID != "ci_baseline" {
+		t.Errorf("first entry should be ci_baseline, got %q", evs[0].ID)
 	}
-	if evs[0].Status != EvidenceMissing {
-		t.Errorf("auth_e2e_gate should be missing with no test hits, got %q", evs[0].Status)
+	if evs[0].Status != EvidenceNotEvaluated {
+		t.Errorf("ci_baseline should be not_evaluated when git healthy, got %q", evs[0].Status)
+	}
+	if evs[1].ID != "auth_e2e_gate" {
+		t.Errorf("second entry should be auth_e2e_gate, got %q", evs[1].ID)
+	}
+	if evs[1].Status != EvidenceMissing {
+		t.Errorf("auth_e2e_gate should be missing with no test hits, got %q", evs[1].Status)
 	}
 	if summary.UnknownCount != 0 {
-		t.Errorf("want 0 unknown (ci_baseline suppressed), got %d", summary.UnknownCount)
+		t.Errorf("want 0 unknown, got %d", summary.UnknownCount)
 	}
-	if summary.NotEvaluatedCount != 0 {
-		t.Errorf("want 0 not_evaluated for this simple case, got %d", summary.NotEvaluatedCount)
+	if summary.NotEvaluatedCount != 1 {
+		t.Errorf("want 1 not_evaluated (ci_baseline), got %d", summary.NotEvaluatedCount)
 	}
 	if summary.MissingCount != 1 {
 		t.Errorf("want 1 missing (auth_e2e_gate), got %d", summary.MissingCount)
@@ -490,7 +495,8 @@ func TestComputeEvidenceStatusSummaryCountsAreCorrect(t *testing.T) {
 }
 
 func TestComputeEvidenceStatusNotEvaluatedCountedInSummary(t *testing.T) {
-	// workflow_config_validation without a validation note → not_evaluated
+	// workflow_config_validation without a validation note → not_evaluated.
+	// ci_baseline (healthy git) → also not_evaluated. Total not_evaluated = 2.
 	r := Result{
 		Signals: Signals{GitError: ""},
 		RequiredActions: []RequiredAction{
@@ -498,14 +504,14 @@ func TestComputeEvidenceStatusNotEvaluatedCountedInSummary(t *testing.T) {
 		},
 	}
 	evs, summary := ComputeEvidenceStatus(r)
-	if len(evs) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(evs))
+	if len(evs) != 2 {
+		t.Fatalf("expected 2 entries (ci_baseline + workflow), got %d", len(evs))
 	}
-	if evs[0].Status != EvidenceNotEvaluated {
-		t.Errorf("want not_evaluated for workflow_config_validation without note, got %q", evs[0].Status)
+	if evs[1].Status != EvidenceNotEvaluated {
+		t.Errorf("want not_evaluated for workflow_config_validation without note, got %q", evs[1].Status)
 	}
-	if summary.NotEvaluatedCount != 1 {
-		t.Errorf("want not_evaluated_count=1, got %d", summary.NotEvaluatedCount)
+	if summary.NotEvaluatedCount != 2 {
+		t.Errorf("want not_evaluated_count=2 (ci_baseline + workflow), got %d", summary.NotEvaluatedCount)
 	}
 	if summary.UnknownCount != 0 {
 		t.Errorf("want unknown_count=0, got %d", summary.UnknownCount)
@@ -513,7 +519,7 @@ func TestComputeEvidenceStatusNotEvaluatedCountedInSummary(t *testing.T) {
 }
 
 func TestComputeEvidenceStatusEveryRequiredActionHasEvidenceEntry(t *testing.T) {
-	// Every required action should produce exactly one evidence entry.
+	// Every required action should produce exactly one evidence entry, plus ci_baseline.
 	r := Result{
 		Signals: Signals{GitError: ""},
 		RequiredActions: []RequiredAction{
@@ -523,12 +529,16 @@ func TestComputeEvidenceStatusEveryRequiredActionHasEvidenceEntry(t *testing.T) 
 		},
 	}
 	evs, _ := ComputeEvidenceStatus(r)
-	if len(evs) != 3 {
-		t.Fatalf("expected 1 evidence entry per required action (3 total), got %d", len(evs))
+	// ci_baseline (always emitted) + 3 required actions = 4 total
+	if len(evs) != 4 {
+		t.Fatalf("expected 4 entries (ci_baseline + 3 required actions), got %d", len(evs))
 	}
 	ids := make(map[string]bool)
 	for _, ev := range evs {
 		ids[ev.ID] = true
+	}
+	if !ids["ci_baseline"] {
+		t.Errorf("ci_baseline entry always expected")
 	}
 	for _, a := range r.RequiredActions {
 		if !ids[a.ID] {
