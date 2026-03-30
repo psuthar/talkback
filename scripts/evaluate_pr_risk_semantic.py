@@ -20,6 +20,8 @@ from typing import Any
 
 VALID_REC = frozenset({"PASS", "WARN", "BLOCK"})
 REC_EMOJI = {"PASS": "🟢", "WARN": "🟡", "BLOCK": "🔴"}
+# Display labels: PASS is annotated to make clear it is a risk assessment, not merge approval.
+REC_DISPLAY = {"PASS": "PASS (low risk)", "WARN": "WARN", "BLOCK": "BLOCK"}
 
 
 def normalize_rec(raw: Any) -> str | None:
@@ -86,11 +88,14 @@ def build_semantic_record(
     factors = pr_risk_raw.get("top_risk_factors") or []
 
     emoji = REC_EMOJI.get(rec, "⚪")
-    title = f"PR Risk: {emoji} {rec}"
+    display = REC_DISPLAY.get(rec, rec)
+    title = f"PR Risk: {emoji} {display}"
     lines = [
         f"**Score:** {score}  ",
         f"**Band:** {band}  ",
-        f"**Merge recommendation:** {emoji} {rec}  ",
+        f"**PR risk assessment:** {emoji} {display}  ",
+        "",
+        "_This is a PR-risk signal only. CI checks, code review, and required testing still apply regardless of this assessment._  ",
         "",
         artifact_hint,
     ]
@@ -105,7 +110,7 @@ def build_semantic_record(
     text_lines = [
         f"- Score: {score}",
         f"- Band: {band}",
-        f"- Merge recommendation: {rec}",
+        f"- PR risk assessment: {display}",
     ]
     if req_val:
         text_lines.append("- Required validations:")
@@ -164,11 +169,14 @@ def append_step_summary(path: Path | None, data: dict[str, Any]) -> None:
     conc = data.get("semantic_conclusion")
     emoji = REC_EMOJI.get(rec, "⚪") if rec else "⚪"
     run_url = (os.environ.get("GITHUB_RUN_URL") or "").strip()
+    display = REC_DISPLAY.get(rec, rec) if rec else rec
     lines = [
         "## PR Risk",
         "",
-        f"{emoji} **{rec}** — Score: {data.get('score')} ({data.get('band')})",
+        f"{emoji} **PR risk assessment: {display}** — Score: {data.get('score')} ({data.get('band')})",
         f"GitHub check: `{conc}` (PR Risk / semantic-result)",
+        "",
+        "_PR-risk signal only — CI, review, and testing still required before merging._",
         "",
     ]
     if run_url:

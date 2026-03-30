@@ -81,8 +81,8 @@ func mergeRationale(r Result, rec string) string {
 		)
 	default:
 		return fmt.Sprintf(
-			"Risk band is %s (score %.0f/100); standard review is sufficient from a PR-risk perspective.",
-			r.RiskBand, r.RiskScore,
+			"PR risk is low (score %.0f/100). Normal prerequisites — CI checks, required reviews, and any targeted testing — still apply before merging.",
+			r.RiskScore,
 		)
 	}
 }

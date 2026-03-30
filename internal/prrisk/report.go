@@ -49,9 +49,10 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString(fmt.Sprintf("| Validation note | yes (%s) |\n", sn))
 	}
 	enf := r.Enforcement
-	sb.WriteString("\n## Enforcement & merge\n\n")
+	sb.WriteString("\n## PR risk assessment\n\n")
+	sb.WriteString("> _This report evaluates PR risk only. It does not replace branch protection, required CI checks, code review, or targeted testing._\n\n")
 	sb.WriteString("| Item | Value |\n|------|-------|\n")
-	sb.WriteString(fmt.Sprintf("| **Merge recommendation** | **%s** |\n", strings.ToUpper(enf.MergeRecommendation)))
+	sb.WriteString(fmt.Sprintf("| **PR risk assessment** | **%s** |\n", displayRec(enf.MergeRecommendation)))
 	sb.WriteString(fmt.Sprintf("| Rationale | %s |\n", enf.Rationale))
 	if es := enf.EvidenceSummary; es.PassCount+es.MissingCount+es.FailCount+es.NotEvaluatedCount > 0 {
 		sb.WriteString(fmt.Sprintf("| Evidence | %d pass · %d missing · %d fail · %d not evaluated |\n",
@@ -107,7 +108,7 @@ func WriteMarkdown(path string, r Result) error {
 		sb.WriteString("### Evidence status (repo-local signals)\n\n")
 		sum := enf.EvidenceSummary
 		sb.WriteString(fmt.Sprintf(
-			"> ✅ %d pass · ⚠️ %d missing · ❌ %d fail · 📋 %d not evaluated (human review required)\n\n",
+			"> ✅ %d pass · ⚠️ %d missing · ❌ %d fail · 📋 %d not evaluated (requires CI/reviewer confirmation)\n\n",
 			sum.PassCount, sum.MissingCount, sum.FailCount, sum.NotEvaluatedCount,
 		))
 		sb.WriteString("| Action / Validation | Status | Source | Rationale |\n")
@@ -116,14 +117,14 @@ func WriteMarkdown(path string, r Result) error {
 			icon := evidenceStatusIcon(ev.Status)
 			label := string(ev.Status)
 			if ev.Status == EvidenceNotEvaluated {
-				label = "not evaluated"
+				label = "not evaluated (requires CI/reviewer confirmation)"
 			}
 			sb.WriteString(fmt.Sprintf("| `%s` | %s %s | %s | %s |\n",
 				ev.ID, icon, label, ev.Source, ev.Rationale))
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("### Review requirements\n\n")
+	sb.WriteString("### Manual merge prerequisites\n\n")
 	if len(enf.ReviewRequirements) == 0 {
 		sb.WriteString("_None._\n\n")
 	} else {
@@ -321,6 +322,21 @@ func WriteMarkdown(path string, r Result) error {
 	sb.WriteString(r.Integrations.PRCommentMarkdown)
 	sb.WriteString("\n```\n")
 	return os.WriteFile(path, []byte(sb.String()), 0644)
+}
+
+// displayRec returns the human-readable label for a merge recommendation value.
+// PASS is labelled "PASS (low risk)" to make clear it is a risk assessment, not merge approval.
+func displayRec(rec string) string {
+	switch rec {
+	case "pass":
+		return "PASS (low risk)"
+	case "warn":
+		return "WARN"
+	case "block":
+		return "BLOCK"
+	default:
+		return strings.ToUpper(rec)
+	}
 }
 
 func sortedDomainKeys(m map[string]int) []string {

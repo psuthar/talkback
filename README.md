@@ -48,12 +48,13 @@ This moves CI/CD from:
   - explicit override reasoning
   - remediation guidance
 
-**PR Risk Report (v2.2)** — a complementary, **git-diff-only** risk pass (runs in the same CI workflow before the Python evaluator):
+**PR Risk Report (v2.7)** — a complementary, **git-diff-only** risk pass (runs in the same CI workflow before the Python evaluator):
 
 - Deterministic scoring from changed paths and churn (no LLM in the decision path)
 - **Category breakdown:** code changes, workflow/deployment, and test confidence
 - **Reducers:** signals that *lower* risk (e.g. validation notes in commits, unit vs E2E test evidence for sensitive areas)
 - **Required actions before merge:** explicit checklist items, separate from optional mitigations
+- **Automatic PR comment:** every PR receives a risk summary comment (🟢/🟡/🔴 result, score, top signals); the comment updates on new commits — no artifact inspection needed
 - CLI: `go run ./cmd/prrisk --repo-root . --base-ref <ref> --output-dir artifacts/release-readiness`
 - Artifacts: `pr_risk.json` / `pr_risk.md`
 

@@ -221,16 +221,16 @@ func TestCategoriesTestConfidenceDistantProximityLowersConfidence(t *testing.T) 
 	if tc == nil {
 		t.Fatal("expected test_confidence category")
 	}
-	// Base non-sensitive: 85, -15 (distant). Behavioral penalty does not fire: sensitiveChanged=false.
-	if tc.Confidence != 70 {
-		t.Errorf("expected confidence 70 with distant penalty only (non-sensitive), got %.0f", tc.Confidence)
+	// Base non-sensitive: 85, -15 (distant), -5 (behavioral unknown base) = 65.
+	if tc.Confidence != 65 {
+		t.Errorf("expected confidence 65 (distant + unknown base penalty, non-sensitive), got %.0f", tc.Confidence)
 	}
-	if tc.RiskScore != 30 {
-		t.Errorf("expected risk 30, got %.1f", tc.RiskScore)
+	if tc.RiskScore != 35 {
+		t.Errorf("expected risk 35, got %.1f", tc.RiskScore)
 	}
-	// Breakdown: non-sensitive (+35) and distant (-15) = 2 adjustments minimum
-	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 2 {
-		t.Errorf("expected at least 2 adjustments in breakdown, got %v", tc.Breakdown)
+	// Breakdown: non-sensitive (+35), distant (-15), behavioral unknown (-5) = 3 adjustments minimum
+	if tc.Breakdown == nil || len(tc.Breakdown.Adjustments) < 3 {
+		t.Errorf("expected at least 3 adjustments in breakdown, got %v", tc.Breakdown)
 	}
 }
 
@@ -312,6 +312,48 @@ func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
 
 // TestCategoriesTestConfidenceDistantOnlySensitive is superseded by
 // TestCategoriesTestConfidenceSensitiveDistantUnknownBehavioralPenalty above.
+
+// TestCategoriesTestConfidenceShallowCoverageReducesConfidence verifies that
+// shallow behavioral coverage applies a modest penalty relative to adequate coverage.
+func TestCategoriesTestConfidenceShallowCoverageReducesConfidence(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  1,
+	}
+	ciShallow := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "shallow",
+		},
+	}
+	ciAdequate := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "adequate",
+		},
+	}
+	catsShallow := ComputeCategories(s, nil, nil, ciShallow)
+	catsAdequate := ComputeCategories(s, nil, nil, ciAdequate)
+	tcShallow := findCategory(catsShallow, CategoryTestConfidence)
+	tcAdequate := findCategory(catsAdequate, CategoryTestConfidence)
+	if tcShallow == nil || tcAdequate == nil {
+		t.Fatal("expected test_confidence category in both cases")
+	}
+	if tcShallow.Confidence >= tcAdequate.Confidence {
+		t.Errorf("shallow coverage (%.0f) should have lower confidence than adequate (%.0f)",
+			tcShallow.Confidence, tcAdequate.Confidence)
+	}
+	// Non-sensitive co_located: base 85; shallow -3 = 82.
+	if tcShallow.Confidence != 82 {
+		t.Errorf("expected confidence 82 for co_located+shallow, got %.0f", tcShallow.Confidence)
+	}
+	// Adequate: no behavioral penalty, confidence = 85.
+	if tcAdequate.Confidence != 85 {
+		t.Errorf("expected confidence 85 for co_located+adequate, got %.0f", tcAdequate.Confidence)
+	}
+}
 
 func findCategory(cats []RiskCategory, key string) *RiskCategory {
 	for i := range cats {

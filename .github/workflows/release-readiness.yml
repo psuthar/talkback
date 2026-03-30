@@ -18,6 +18,7 @@ on:
 permissions:
   contents: read
   checks: write
+  pull-requests: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -360,6 +361,89 @@ jobs:
                 head_sha: headSha,
                 ...common,
               });
+            }
+
+      - name: Post PR risk comment
+        # Only runs on pull_request events; skipped on push/workflow_dispatch.
+        # Updates existing comment (idempotent via <!-- pr-risk-bot --> marker) or creates a new one.
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const MARKER      = '<!-- pr-risk-bot -->';
+            const REC_DISPLAY = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
+            const REC_EMOJI   = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+
+            // Read the processed semantic JSON (written by evaluate_pr_risk_semantic.py).
+            const semanticPath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-risk-semantic.json');
+            let data;
+            try {
+              data = JSON.parse(fs.readFileSync(semanticPath, 'utf8'));
+            } catch (e) {
+              console.log('PR risk semantic JSON not available — skipping PR comment:', e.message);
+              return;
+            }
+
+            const rec     = ((data.merge_recommendation || 'UNKNOWN') + '').toUpperCase();
+            const display = REC_DISPLAY[rec] || rec;
+            const emoji   = REC_EMOJI[rec]   || '⚪';
+            const score   = data.score  != null ? data.score  : '?';
+            const band    = data.band   || 'unknown';
+            const factors = Array.isArray(data.top_risk_factors) ? data.top_risk_factors : [];
+            const runUrl  = (process.env.GITHUB_RUN_URL || '').trim();
+
+            const lines = [
+              MARKER,
+              '## 🤖 PR Risk Assessment',
+              '',
+              `**Result:** ${emoji} **${display}** &nbsp;·&nbsp; **Score:** ${score} / 100 (${band})`,
+              '',
+              '> _PR-risk signal only — CI, code review, and required testing still apply regardless of this result._',
+            ];
+
+            if (factors.length > 0) {
+              lines.push('', '**Top risk signals:**');
+              factors.slice(0, 5).forEach(f => lines.push(`- ${f}`));
+            } else {
+              lines.push('', '_No significant risk signals detected._');
+            }
+
+            lines.push('');
+            lines.push(runUrl
+              ? `_Full analysis in [workflow artifacts](${runUrl}) · \`pr_risk.md\`_`
+              : '_Full analysis in workflow artifacts · `pr_risk.md`_');
+
+            const body = lines.join('\n');
+
+            const prNumber = context.payload.pull_request.number;
+            const { owner, repo } = context.repo;
+
+            // Paginate through comments to find the existing bot comment (if any).
+            let existing = null;
+            for (let page = 1; !existing; page++) {
+              const { data: batch } = await github.rest.issues.listComments({
+                owner, repo, issue_number: prNumber, per_page: 100, page,
+              });
+              existing = batch.find(c => c.body && c.body.includes(MARKER)) || null;
+              if (batch.length < 100) break;
+            }
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner, repo, comment_id: existing.id, body,
+              });
+              console.log(`Updated PR risk comment #${existing.id}`);
+            } else {
+              const { data: created } = await github.rest.issues.createComment({
+                owner, repo, issue_number: prNumber, body,
+              });
+              console.log(`Created PR risk comment #${created.id}`);
             }
 
       - name: Upload Release Readiness Artifact
