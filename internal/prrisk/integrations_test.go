@@ -146,13 +146,13 @@ func TestBuildIntegrationsTopTwoRequiredValidationsOnly(t *testing.T) {
 	}
 	integ := BuildIntegrations(nil, 30.0, "origin/main", "", nil, ScoreMath{}, enf)
 	md := integ.PRCommentMarkdown
-	if !strings.Contains(md, "ci: required status checks") {
-		t.Errorf("expected first validation, got:\n%s", md)
+	if !strings.Contains(md, "Required status checks must pass") {
+		t.Errorf("expected first validation (polished), got:\n%s", md)
 	}
-	if !strings.Contains(md, "test: auth/session") {
-		t.Errorf("expected second validation, got:\n%s", md)
+	if !strings.Contains(md, "Auth/session/invite flows") {
+		t.Errorf("expected second validation (polished), got:\n%s", md)
 	}
-	if strings.Contains(md, "test: migrations") {
+	if strings.Contains(md, "Migrations validation") {
 		t.Errorf("expected third validation to be omitted (only top 2), got:\n%s", md)
 	}
 	if !strings.Contains(md, "and 2 more") {
@@ -206,7 +206,7 @@ func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 		},
 		RequiredValidations: []string{
 			"ci: required status checks must pass before merge",
-			"test: auth/session evidence",
+			"test: auth/session/invite flows exercised (E2E or equivalent evidence)",
 		},
 		EvidenceSummary: EvidenceSummary{PassCount: 1, MissingCount: 2, UnknownCount: 3, FailCount: 0},
 	}
@@ -215,8 +215,9 @@ func TestBuildIntegrationsEnforcementSections(t *testing.T) {
 	if !strings.Contains(md, "PR risk assessment") || !strings.Contains(md, "BLOCK") {
 		t.Errorf("expected PR risk assessment block, got:\n%s", md)
 	}
-	if !strings.Contains(md, "ci: required status checks") {
-		t.Errorf("expected validation line in comment, got:\n%s", md)
+	if !strings.Contains(md, "Required status checks must pass") ||
+		!strings.Contains(md, "Exercise auth/session/invite flows") {
+		t.Errorf("expected polished validation lines in comment, got:\n%s", md)
 	}
 	if !strings.Contains(md, "Review routing") || !strings.Contains(md, "auth flows") {
 		t.Errorf("expected routing hint in comment, got:\n%s", md)

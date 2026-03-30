@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pr_gate import GATE_FOOTER_MARKDOWN, format_required_actions_grouped_markdown
+
 CHECK_NAME = "TalkBack PR Gate"
 
 VALID_STATUSES = frozenset({"PASS", "WARN", "BLOCK"})
@@ -47,15 +49,12 @@ def build_summary_block(
     *,
     run_url: str = "",
 ) -> str:
-    """One–two sentences aligned with pr_gate.GATE_SUMMARIES via final_gate.summary."""
+    """Uses final_gate.summary from pr-gate-summary.json (already confidence-aware)."""
     base = (gate.get("summary") or "").strip()
-    conf = gate.get("confidence")
-    lines = [base]
-    if conf:
-        lines.append(f"Gate confidence: **{conf}**.")
+    lines = [base] if base else []
     if run_url:
         lines.append(f"Workflow run / artifacts: {run_url}")
-    return "\n\n".join(lines)
+    return "\n\n".join(lines) if lines else ""
 
 
 def build_text_detail(data: dict[str, Any], *, run_url: str = "") -> str:
@@ -85,10 +84,9 @@ def build_text_detail(data: dict[str, Any], *, run_url: str = "") -> str:
     ]
 
     if actions:
-        lines.append("### Top required actions")
+        lines.append("### Required actions before merge")
         lines.append("")
-        for a in actions[:12]:
-            lines.append(f"- {a}")
+        lines.append(format_required_actions_grouped_markdown(actions))
         lines.append("")
 
     lines.append("### Supporting detail")
@@ -126,6 +124,8 @@ def build_text_detail(data: dict[str, Any], *, run_url: str = "") -> str:
     )
     if run_url:
         lines.append(f"Job summary and logs: {run_url}")
+    lines.append("")
+    lines.append(GATE_FOOTER_MARKDOWN)
     return "\n".join(lines)
 
 

@@ -46,19 +46,67 @@ STANDARD_ACTIONS: list[str] = [
     "At least one approving review is required",
 ]
 
-GATE_SUMMARIES: dict[str, str] = {
-    "PASS": (
-        "Low-risk change and readiness checks passed. "
-        "Normal merge prerequisites still apply before merge."
-    ),
-    "WARN": (
-        "Not blocked, but elevated attention is required due to warnings. "
-        "Complete the required validations before merging."
-    ),
-    "BLOCK": (
+# Merged workflow/config validation (one line replaces overlapping sources).
+MERGED_WORKFLOW_CONFIG_ACTION: str = (
+    "Add a validation note and validate workflow/config changes against required checks"
+)
+
+# Single footer semantics for markdown, step summary, and GitHub Check text.
+GATE_FOOTER_MARKDOWN: str = (
+    "_This gate is deterministic. "
+    "**PASS** does not bypass branch protection or required code review. "
+    "**WARN** requires completing validations and review before merging. "
+    "**BLOCK** means do not merge until all blockers are resolved._"
+)
+
+
+def gate_decision_summary(gate_status: str, gate_confidence: str) -> str:
+    """
+    Confidence-aware decision text (deterministic). gate_confidence: high | moderate | low.
+    Mirrors policy thresholds from classify_gate_confidence without re-deriving numerics here.
+    """
+    if gate_status == "PASS":
+        if gate_confidence == "high":
+            return (
+                "Low-risk change and readiness checks passed with strong supporting confidence. "
+                "Normal merge prerequisites still apply before merge."
+            )
+        if gate_confidence == "moderate":
+            return (
+                "Low-risk change and readiness checks passed with moderate supporting confidence. "
+                "Normal merge prerequisites still apply before merge."
+            )
+        return (
+            "Low-risk change and readiness checks passed, but supporting confidence is limited. "
+            "Normal merge prerequisites still apply before merge."
+        )
+    if gate_status == "WARN":
+        if gate_confidence == "high":
+            return (
+                "Not blocked, but elevated attention is required due to warnings. "
+                "Complete the required validations and review before merging."
+            )
+        if gate_confidence == "moderate":
+            return (
+                "Not blocked, but elevated attention is required due to warnings "
+                "and only moderate supporting confidence. "
+                "Complete the required validations before merging."
+            )
+        return (
+            "Not blocked, but elevated attention is required due to warnings and low supporting confidence. "
+            "Complete the required validations and review before merging."
+        )
+    return (
         "One or more hard blockers detected. "
         "Do not merge until all blockers are resolved."
-    ),
+    )
+
+
+# Backward-compat for tests and simple lookups (non–confidence-aware PASS/WARN).
+GATE_SUMMARIES: dict[str, str] = {
+    "PASS": gate_decision_summary("PASS", "high"),
+    "WARN": gate_decision_summary("WARN", "moderate"),
+    "BLOCK": gate_decision_summary("BLOCK", "low"),
 }
 
 
@@ -85,12 +133,12 @@ _REWRITE_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Release-readiness warning: risky config/workflow path changed without a note.
     (
         re.compile(r"risky\s+(config|workflow).*changed\s+without\s+validation", re.IGNORECASE),
-        "Add a validation note for the workflow/config change",
+        MERGED_WORKFLOW_CONFIG_ACTION,
     ),
     # config: prefix specifically about workflow / deploy / go.mod
     (
         re.compile(r"^config:\s*(workflow|deploy|go\.mod)", re.IGNORECASE),
-        "Validate workflow/config changes against required checks",
+        MERGED_WORKFLOW_CONFIG_ACTION,
     ),
 ]
 
@@ -101,12 +149,6 @@ _STRIP_PREFIXES: tuple[str, ...] = ("config:", "test:", "process:")
 # so new taxonomy labels from the Go engine are stripped automatically without code changes.
 # URL schemes (https://, http://) are safe because they have "//" not " " after the colon.
 _GENERIC_PREFIX_RE: re.Pattern = re.compile(r"^([a-z]+):\s+(.+)", re.DOTALL)
-
-# Actions that are inserted immediately after STANDARD_ACTIONS (position 3+) regardless of
-# which signal source they came from. Use the _action_key form (lowercase, no trailing period).
-PRIORITY_ACTION_KEYS: frozenset[str] = frozenset({
-    "add a validation note for the workflow/config change",
-})
 
 
 def normalize_action(raw: str) -> str | None:
@@ -133,23 +175,25 @@ def normalize_action(raw: str) -> str | None:
     # Apply specific rewrites (first match wins).
     for pat, replacement in _REWRITE_PATTERNS:
         if pat.search(s):
-            return replacement
+            return _finalize_action_display(replacement)
 
     # Strip known taxonomy prefixes and capitalize the remainder.
     sl = s.lower()
     for prefix in _STRIP_PREFIXES:
         if sl.startswith(prefix):
             rest = s[len(prefix):].strip()
-            return (rest[0].upper() + rest[1:]) if rest else None
+            out = (rest[0].upper() + rest[1:]) if rest else None
+            return _finalize_action_display(out) if out else None
 
     # Generic catch-all: strip any unknown single-word lowercase prefix (e.g. "security:").
     # Ensures new labels from the Go engine never leak into user-facing output.
     m = _GENERIC_PREFIX_RE.match(s)
     if m:
         rest = m.group(2).strip()
-        return (rest[0].upper() + rest[1:]) if rest else None
+        out = (rest[0].upper() + rest[1:]) if rest else None
+        return _finalize_action_display(out) if out else None
 
-    return s
+    return _finalize_action_display(s)
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +292,88 @@ def classify_gate_confidence(
 def _action_key(s: str) -> str:
     """Normalise for deduplication: strip, remove trailing period, lowercase."""
     return s.strip().rstrip(".").lower()
+
+
+# Canonical phrase polish after taxonomy strip (keys = _action_key of interim text).
+_PHRASE_POLISH_BY_KEY: dict[str, str] = {
+    _action_key("Tests co-located or explicitly linked for changed code"): (
+        "Ensure test coverage is present or clearly linked for changed code"
+    ),
+    _action_key("Targeted regression for high-churn area touched by diff"): (
+        "Run targeted regression for high-churn areas"
+    ),
+    _action_key("Pr description with scoped, evidence-backed review plan"): (
+        "Ensure PR includes a clear, scoped review plan"
+    ),
+}
+
+
+def _finalize_action_display(s: str) -> str:
+    if not s:
+        return s
+    return _PHRASE_POLISH_BY_KEY.get(_action_key(s), s)
+
+
+# Inserted right after STANDARD_ACTIONS when any raw source normalizes to this key.
+PRIORITY_ACTION_KEYS: frozenset[str] = frozenset({
+    _action_key(MERGED_WORKFLOW_CONFIG_ACTION),
+})
+
+
+def bucket_action_priority(action: str) -> str:
+    """
+    Deterministic bucket for grouped display: high → medium → supporting.
+    Unlisted actions default to medium so they stay visible as substantive work.
+    """
+    k = _action_key(action)
+    high_keys = {
+        _action_key("CI checks must pass"),
+        _action_key(MERGED_WORKFLOW_CONFIG_ACTION),
+    }
+    medium_keys = {
+        _action_key("Run targeted regression for high-churn areas"),
+        _action_key("Ensure test coverage is present or clearly linked for changed code"),
+    }
+    supporting_keys = {
+        _action_key("Ensure PR includes a clear, scoped review plan"),
+        _action_key("At least one approving review is required"),
+    }
+    if k in high_keys:
+        return "high"
+    if k in medium_keys:
+        return "medium"
+    if k in supporting_keys:
+        return "supporting"
+    return "medium"
+
+
+def group_required_actions_for_gate(actions: list[str]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {"high": [], "medium": [], "supporting": []}
+    for a in actions:
+        out[bucket_action_priority(a)].append(a)
+    return out
+
+
+def format_required_actions_grouped_markdown(actions: list[str]) -> str:
+    """PR Gate markdown / check output — priority sections, omit empty buckets."""
+    g = group_required_actions_for_gate(actions)
+    lines: list[str] = []
+    for key, heading in (
+        ("high", "### High priority"),
+        ("medium", "### Medium priority"),
+        ("supporting", "### Supporting"),
+    ):
+        items = g.get(key, [])
+        if not items:
+            continue
+        lines.append(heading)
+        lines.append("")
+        for item in items:
+            lines.append(f"- {item}")
+        lines.append("")
+    if not lines:
+        return "_None beyond standard CI and review requirements._"
+    return "\n".join(lines).rstrip()
 
 
 def build_required_actions(risk: PRRiskInput, rr: ReadinessInput) -> list[str]:
@@ -391,6 +517,8 @@ def build_gate_json(
 ) -> dict:
     rr_conf = derive_rr_confidence(rr)
     gate_conf = classify_gate_confidence(risk.confidence, rr_conf, gate_status)
+    dec_summary = gate_decision_summary(gate_status, gate_conf)
+    by_pri = group_required_actions_for_gate(required_actions)
 
     pr_risk_section: dict = {
         "status": risk.status,
@@ -414,9 +542,10 @@ def build_gate_json(
         "final_gate": {
             "status": gate_status,
             "confidence": gate_conf,
-            "summary": GATE_SUMMARIES[gate_status],
+            "summary": dec_summary,
         },
         "required_actions": required_actions,
+        "required_actions_by_priority": by_pri,
         # True when release-readiness/report.json was read and contributed blocker/warning strings.
         # False means required_actions contains only standard items + PR risk validations.
         "report_enriched": rr.report_enriched,
@@ -437,6 +566,9 @@ def build_gate_markdown(
     if rr.warnings_count or rr.blockers_count:
         rr_label += f" · {rr.warnings_count} warn · {rr.blockers_count} block"
 
+    rr_conf = derive_rr_confidence(rr)
+    gate_conf = classify_gate_confidence(risk.confidence, rr_conf, gate_status)
+
     lines: list[str] = [
         "# TalkBack PR Gate Summary",
         "",
@@ -448,20 +580,13 @@ def build_gate_markdown(
         "",
         "## Decision",
         "",
-        GATE_SUMMARIES[gate_status],
+        gate_decision_summary(gate_status, gate_conf),
         "",
         "## Required actions before merge",
         "",
+        format_required_actions_grouped_markdown(required_actions),
+        "",
     ]
-
-    if required_actions:
-        for a in required_actions:
-            lines.append(f"- {a}")
-    else:
-        lines.append("_None beyond standard CI and review requirements._")
-
-    rr_conf = derive_rr_confidence(rr)
-    gate_conf = classify_gate_confidence(risk.confidence, rr_conf, gate_status)
 
     conf_lines: list[str] = []
     if risk.confidence is not None:
@@ -480,10 +605,7 @@ def build_gate_markdown(
     ] + conf_lines + [
         "",
         "---",
-        "_This gate is deterministic. "
-        "PASS does not bypass branch protection or required code review. "
-        "WARN requires completing all validations before merging. "
-        "BLOCK means do not merge until all blockers are resolved._",
+        GATE_FOOTER_MARKDOWN,
         "",
     ]
 
@@ -515,6 +637,7 @@ def _partial_gate_json(
             "summary": "Gate inputs could not be parsed — treated as BLOCK. " + " | ".join(errors),
         },
         "required_actions": list(STANDARD_ACTIONS),
+        "required_actions_by_priority": group_required_actions_for_gate(list(STANDARD_ACTIONS)),
         "report_enriched": False,
     }
 
@@ -565,6 +688,8 @@ def _append_step_summary(gate_json: dict) -> None:
         "| PR Risk | Release Readiness |",
         "|---------|-------------------|",
         f"| {risk.get('label', '?')}{risk_conf_str} | {rr_emoji} {rr.get('status', '?')} ({rr.get('score', '?')}/100){rr_conf_str} |",
+        "",
+        GATE_FOOTER_MARKDOWN,
         "",
     ]
     with open(summary_path, "a", encoding="utf-8") as f:

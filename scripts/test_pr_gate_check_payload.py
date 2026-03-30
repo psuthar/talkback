@@ -125,6 +125,8 @@ class TestWordingAlignment(unittest.TestCase):
         self.assertIn("43", out["text"])
         self.assertIn("pr-gate-summary.md", out["text"])
         self.assertIn("https://github.com", out["text"])
+        self.assertIn("### High priority", out["text"])
+        self.assertIn(pr_gate.GATE_FOOTER_MARKDOWN, out["text"])
 
 
 class TestCli(unittest.TestCase):

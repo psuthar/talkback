@@ -59,7 +59,7 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 			maxV = len(enf.RequiredValidations)
 		}
 		for i := 0; i < maxV; i++ {
-			fmt.Fprintf(md, "%d. %s\n", i+1, enf.RequiredValidations[i])
+			fmt.Fprintf(md, "%d. %s\n", i+1, polishRequiredValidationLine(enf.RequiredValidations[i]))
 		}
 		if len(enf.RequiredValidations) > maxV {
 			fmt.Fprintf(md, "_…and %d more in `pr_risk.md`_\n", len(enf.RequiredValidations)-maxV)

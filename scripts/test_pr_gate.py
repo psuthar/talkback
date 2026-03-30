@@ -10,17 +10,21 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from pr_gate import (
+    GATE_FOOTER_MARKDOWN,
     GATE_SUMMARIES,
+    MERGED_WORKFLOW_CONFIG_ACTION,
     PRIORITY_ACTION_KEYS,
     STANDARD_ACTIONS,
     PRRiskInput,
     ReadinessInput,
+    _action_key,
     build_gate_json,
     build_gate_markdown,
     build_required_actions,
     classify_gate_confidence,
     compute_gate_status,
     derive_rr_confidence,
+    format_required_actions_grouped_markdown,
     load_pr_risk,
     load_release_readiness,
     normalize_action,
@@ -231,14 +235,32 @@ class TestMarkdownSemantics(unittest.TestCase):
         md = build_gate_markdown(_make_risk("WARN"), _make_rr("WARN"), "WARN", STANDARD_ACTIONS)
         self.assertIn("Not blocked", md)
         self.assertIn("Complete", md)
+        self.assertIn("moderate supporting confidence", md.lower())
+
+    def test_required_actions_grouped_by_priority(self):
+        actions = STANDARD_ACTIONS + [
+            MERGED_WORKFLOW_CONFIG_ACTION,
+            "Run targeted regression for high-churn areas",
+        ]
+        md = format_required_actions_grouped_markdown(actions)
+        self.assertIn("### High priority", md)
+        self.assertIn("### Medium priority", md)
+        self.assertIn("### Supporting", md)
+        self.assertLess(md.index("### High priority"), md.index("### Medium priority"))
+        self.assertLess(md.index("### Medium priority"), md.index("### Supporting"))
+
+    def test_gate_footer_constant_matches_markdown(self):
+        md = build_gate_markdown(_make_risk("PASS"), _make_rr("PASS"), "PASS", STANDARD_ACTIONS)
+        self.assertIn(GATE_FOOTER_MARKDOWN, md)
 
     def test_footer_describes_warn_and_block_semantics(self):
         """Footer must mention WARN and BLOCK semantics alongside PASS disclaimer."""
         md = build_gate_markdown(_make_risk("PASS"), _make_rr("PASS"), "PASS", STANDARD_ACTIONS)
         self.assertIn("does not bypass branch protection", md)
-        self.assertIn("WARN", md)
-        self.assertIn("BLOCK", md)
+        self.assertIn("**WARN**", md)
+        self.assertIn("**BLOCK**", md)
         self.assertIn("do not merge", md.lower())
+        self.assertIn("review before merging", md.lower())
 
     def test_confidence_appears_in_supporting_detail(self):
         """When risk confidence is set, supporting detail shows all confidence lines."""
@@ -307,10 +329,10 @@ class TestActionNormalization(unittest.TestCase):
         self.assertFalse(any("review warnings before deploy" in a.lower() for a in actions))
 
     def test_config_workflow_action_becomes_concrete(self):
-        """'config: workflow...' → 'Validate workflow/config changes against required checks'."""
+        """'config: workflow...' merges into combined workflow/config action."""
         self.assertEqual(
             normalize_action("config: workflow / deploy / go.mod changes validated against required checks"),
-            "Validate workflow/config changes against required checks",
+            MERGED_WORKFLOW_CONFIG_ACTION,
         )
 
     def test_config_prefix_not_in_output(self):
@@ -326,14 +348,23 @@ class TestActionNormalization(unittest.TestCase):
             ".github/workflows/release-readiness.yml"
         ])
         actions = build_required_actions(_make_risk(), rr)
-        self.assertIn("Add a validation note for the workflow/config change", actions)
+        self.assertIn(MERGED_WORKFLOW_CONFIG_ACTION, actions)
 
     def test_process_prefix_stripped(self):
-        """'process:' prefix is stripped; remainder is capitalized and returned."""
+        """'process:' PR review plan normalizes to reviewer-friendly wording."""
         result = normalize_action("process: PR description with scoped, evidence-backed review plan")
-        self.assertIsNotNone(result)
-        self.assertFalse(result.lower().startswith("process:"))
-        self.assertTrue(result[0].isupper())
+        self.assertEqual(result, "Ensure PR includes a clear, scoped review plan")
+
+    def test_pr_risk_test_validations_polished(self):
+        """Proximity vs hotspot test validations get distinct polished phrasing."""
+        self.assertEqual(
+            normalize_action("test: tests co-located or explicitly linked for changed code"),
+            "Ensure test coverage is present or clearly linked for changed code",
+        )
+        self.assertEqual(
+            normalize_action("test: targeted regression for high-churn area touched by diff"),
+            "Run targeted regression for high-churn areas",
+        )
 
     def test_no_internal_prefixes_in_actions(self):
         """Taxonomy labels must not appear verbatim in the final actions list."""
@@ -389,8 +420,8 @@ class TestActionNormalization(unittest.TestCase):
 class TestPriorityElevation(unittest.TestCase):
 
     def test_priority_action_keys_is_nonempty(self):
-        """PRIORITY_ACTION_KEYS must contain at least the validation-note key."""
-        self.assertIn("add a validation note for the workflow/config change", PRIORITY_ACTION_KEYS)
+        """PRIORITY_ACTION_KEYS must contain the merged workflow/config action key."""
+        self.assertIn(_action_key(MERGED_WORKFLOW_CONFIG_ACTION), PRIORITY_ACTION_KEYS)
 
     def test_validation_note_elevated_above_pr_risk_validations(self):
         """Validation-note action from RR warnings is inserted before PR risk validations."""
@@ -544,8 +575,16 @@ class TestGateJson(unittest.TestCase):
     def test_schema_fields_present(self):
         j = build_gate_json(_make_risk("PASS", score=5.0), _make_rr("PASS", score=100.0), "PASS", STANDARD_ACTIONS)
         self.assertEqual(j["version"], "v1")
-        for key in ("pr_risk", "release_readiness", "final_gate", "required_actions", "report_enriched"):
+        for key in (
+            "pr_risk",
+            "release_readiness",
+            "final_gate",
+            "required_actions",
+            "required_actions_by_priority",
+            "report_enriched",
+        ):
             self.assertIn(key, j)
+        self.assertEqual(set(j["required_actions_by_priority"].keys()), {"high", "medium", "supporting"})
         # Confidence fields must be present in release_readiness and final_gate.
         self.assertIn("confidence", j["release_readiness"])
         self.assertIn("confidence", j["final_gate"])
