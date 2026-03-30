@@ -285,9 +285,11 @@ func TestCategoriesTestConfidenceNAProximityNoProximityPenalty(t *testing.T) {
 	}
 }
 
-// TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty verifies that the proximity
-// penalties do not fire when there are no test files (the "no tests" penalty already applied).
-func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
+// TestCategoriesTestConfidenceNoTestFilesProximityPenaltyApplies verifies that proximity
+// penalties fire even when no test files are in the diff. The absence of tests does not
+// exempt a diff from alignment/behavioral penalties when context signals are available.
+// NonTestFiles=0 in this fixture so the ratio penalty does not also fire.
+func TestCategoriesTestConfidenceNoTestFilesProximityPenaltyApplies(t *testing.T) {
 	s := Signals{
 		DomainHits: map[string]int{DomainWeb: 1},
 		TestFiles:  0,
@@ -297,6 +299,7 @@ func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
 			Mode:                "distant",
 			StructuralAlignment: "distant",
 			BehavioralCoverage:  "unknown",
+			// NonTestFiles=0: ratio penalty does not fire, isolating alignment+behavioral.
 		},
 	}
 	cats := ComputeCategories(s, nil, nil, ci)
@@ -304,9 +307,163 @@ func TestCategoriesTestConfidenceNoTestFilesNoProximityPenalty(t *testing.T) {
 	if tc == nil {
 		t.Fatal("expected test_confidence category")
 	}
-	// Non-sensitive, TestFiles=0: no proximity penalty (not applicable); confidence = 85
+	// Non-sensitive +35 → 85; distant -15 → 70; unknown behavioral base -5 → 65.
+	if tc.Confidence != 65 {
+		t.Errorf("expected confidence 65 (distant+unknown penalties apply without test files), got %.0f", tc.Confidence)
+	}
+}
+
+// TestCategoriesTestConfidenceDistantUnknownZeroRatioFullScenario reproduces the exact
+// regression scenario: non-sensitive diff, no test files, distant alignment, unknown
+// behavioral coverage, 0 % nearby-test ratio. Confidence must fall in the 50–65 range.
+func TestCategoriesTestConfidenceDistantUnknownZeroRatioFullScenario(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  0,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "distant",
+			StructuralAlignment: "distant",
+			BehavioralCoverage:  "unknown",
+			NonTestFiles:        4,
+			WithNearbyTestInDiff: 0,
+			Ratio:               0.0,
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	// Non-sensitive +35 → 85; distant -15 → 70; unknown behavioral -5 → 65;
+	// ratio=0 with NonTestFiles=4: -10 → 55.
+	if tc.Confidence != 55 {
+		t.Errorf("expected confidence 55 for full regression scenario, got %.0f", tc.Confidence)
+	}
+	if tc.Confidence < 50 || tc.Confidence > 65 {
+		t.Errorf("confidence %.0f is outside the expected 50–65 range for this scenario", tc.Confidence)
+	}
+}
+
+// TestCategoriesTestConfidenceNearbyTestRatioZeroAppliesPenalty verifies the -10 penalty
+// when no changed files have nearby tests (Ratio == 0, NonTestFiles > 0).
+func TestCategoriesTestConfidenceNearbyTestRatioZeroAppliesPenalty(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  1,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "adequate",
+			NonTestFiles:        4,
+			WithNearbyTestInDiff: 0,
+			Ratio:               0.0,
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	// Non-sensitive +35 → 85; co_located: no alignment penalty; adequate: no behavioral penalty;
+	// Ratio=0 with NonTestFiles=4: -10 → 75.
+	if tc.Confidence != 75 {
+		t.Errorf("expected confidence 75 (ratio=0 penalty), got %.0f", tc.Confidence)
+	}
+}
+
+// TestCategoriesTestConfidenceNearbyTestRatioLowAppliesModestPenalty verifies the -5 penalty
+// when fewer than 30 % of changed files have nearby tests.
+func TestCategoriesTestConfidenceNearbyTestRatioLowAppliesModestPenalty(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  1,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "adequate",
+			NonTestFiles:        4,
+			WithNearbyTestInDiff: 1,
+			Ratio:               0.25,
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	// Non-sensitive +35 → 85; no alignment or behavioral penalty; Ratio=0.25 < 0.3: -5 → 80.
+	if tc.Confidence != 80 {
+		t.Errorf("expected confidence 80 (low ratio penalty), got %.0f", tc.Confidence)
+	}
+}
+
+// TestCategoriesTestConfidenceNearbyTestRatioHighNoRatioPenalty verifies no ratio penalty
+// when ≥ 60 % of changed files have nearby tests.
+func TestCategoriesTestConfidenceNearbyTestRatioHighNoRatioPenalty(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  1,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "co_located",
+			StructuralAlignment: "co_located",
+			BehavioralCoverage:  "adequate",
+			NonTestFiles:        4,
+			WithNearbyTestInDiff: 3,
+			Ratio:               0.75,
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	// Ratio=0.75 ≥ 0.6: no ratio penalty; no other penalties → 85.
 	if tc.Confidence != 85 {
-		t.Errorf("expected confidence 85 when no test files (proximity penalty not applicable), got %.0f", tc.Confidence)
+		t.Errorf("expected confidence 85 (high ratio, no extra penalty), got %.0f", tc.Confidence)
+	}
+}
+
+// TestCategoriesTestConfidencePenaltiesVisibleInBreakdown verifies that negative penalty
+// adjustments are present in the breakdown, not just positive ones.
+func TestCategoriesTestConfidencePenaltiesVisibleInBreakdown(t *testing.T) {
+	s := Signals{
+		DomainHits: map[string]int{DomainWeb: 1},
+		TestFiles:  0,
+	}
+	ci := &riskcontext.ContextInsights{
+		Proximity: riskcontext.ProximityInsight{
+			Mode:                "distant",
+			StructuralAlignment: "distant",
+			BehavioralCoverage:  "unknown",
+			NonTestFiles:        4,
+			Ratio:               0.0,
+		},
+	}
+	cats := ComputeCategories(s, nil, nil, ci)
+	tc := findCategory(cats, CategoryTestConfidence)
+	if tc == nil {
+		t.Fatal("expected test_confidence category")
+	}
+	if tc.Breakdown == nil {
+		t.Fatal("expected Breakdown to be populated")
+	}
+	negCount := 0
+	for _, adj := range tc.Breakdown.Adjustments {
+		if adj.Delta < 0 {
+			negCount++
+		}
+	}
+	if negCount < 3 {
+		t.Errorf("expected at least 3 negative adjustments in breakdown (distant, unknown, ratio=0), got %d: %+v",
+			negCount, tc.Breakdown.Adjustments)
 	}
 }
 
