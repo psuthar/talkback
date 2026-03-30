@@ -104,10 +104,12 @@ jobs:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
         run: go test ./... -count=1 -coverprofile=coverage.out
 
+      # Go tests use a migrated DB (see internal/database/db_test.go). When tests pass, migrations are validated.
+      # Release readiness requires explicit migrations_validated for internal/migrations/** (see ops/release-readiness/README.md).
       - name: Write smoke_results.json
         run: |
           if [ "${{ steps.gotest.outcome }}" = "success" ]; then
-            echo '{"status":"passed","failed_count":0,"total_count":1}' > smoke_results.json
+            echo '{"status":"passed","failed_count":0,"total_count":1,"validations":{"migrations_validated":true}}' > smoke_results.json
           else
             echo '{"status":"failed","failed_count":1,"total_count":1}' > smoke_results.json
           fi
@@ -235,6 +237,11 @@ jobs:
         env:
           READINESS_ENFORCEMENT_MODE: ${{ env.READINESS_ENFORCEMENT_MODE }}
         run: |
+          set -euo pipefail
+          MIG_ARGS=()
+          if [ "${{ steps.gotest.outcome }}" = "success" ]; then
+            MIG_ARGS+=(--migration-validated)
+          fi
           bash scripts/release-readiness.sh \
             --repo-root . \
             --config ops/release-readiness/config.yaml \
@@ -244,7 +251,8 @@ jobs:
             --coverage coverage.json \
             --prod-health artifacts/release-readiness/prod_health.json \
             --output-dir artifacts/release-readiness \
-            --enforcement-mode "${READINESS_ENFORCEMENT_MODE:-block_only}"
+            --enforcement-mode "${READINESS_ENFORCEMENT_MODE:-block_only}" \
+            "${MIG_ARGS[@]}"
 
       - name: Evaluate Release Readiness Outcome
         id: evaluate
