@@ -625,6 +625,51 @@ type DecisionStanceWithUser struct {
 	UserEmail string `json:"user_email"`
 }
 
+// OrchestrationRecommendationType enumerates creator-facing recommendation categories for async decision progress.
+type OrchestrationRecommendationType string
+
+const (
+	RecommendationTypeUnansweredQuestion   OrchestrationRecommendationType = "unanswered_question"
+	RecommendationTypeMissingParticipant   OrchestrationRecommendationType = "missing_participant_input"
+	RecommendationTypeReviewDraftAnswer    OrchestrationRecommendationType = "review_draft_answer"
+	RecommendationTypeDecisionReadiness    OrchestrationRecommendationType = "decision_readiness"
+)
+
+// OrchestrationRecommendationStatus tracks the human-in-the-loop lifecycle of a recommendation.
+type OrchestrationRecommendationStatus string
+
+const (
+	RecommendationStatusNew       OrchestrationRecommendationStatus = "new"
+	RecommendationStatusReviewed  OrchestrationRecommendationStatus = "reviewed"
+	RecommendationStatusApproved  OrchestrationRecommendationStatus = "approved"
+	RecommendationStatusDismissed OrchestrationRecommendationStatus = "dismissed"
+	RecommendationStatusCompleted OrchestrationRecommendationStatus = "completed"
+)
+
+// RecommendationEvidenceRef links a recommendation to supporting session evidence.
+type RecommendationEvidenceRef struct {
+	SourceType string     `json:"source_type"`            // question | answer | stance | event | artifact | session
+	SourceID   *uuid.UUID `json:"source_id,omitempty"`    // generic source row ID when available
+	QuestionID *uuid.UUID `json:"question_id,omitempty"`  // optional linked question
+	AnswerID   *uuid.UUID `json:"answer_id,omitempty"`    // optional linked answer
+	Excerpt    *string    `json:"excerpt,omitempty"`      // optional human-readable evidence snippet
+}
+
+// OrchestrationRecommendation is a session-scoped recommendation presented to a creator for review/approval.
+type OrchestrationRecommendation struct {
+	ID                 uuid.UUID                           `json:"id"`
+	SessionID          uuid.UUID                           `json:"session_id"`
+	RecommendationType OrchestrationRecommendationType     `json:"recommendation_type"`
+	Status             OrchestrationRecommendationStatus   `json:"status"`
+	Summary            string                              `json:"summary"`
+	SuggestedAction    *string                             `json:"suggested_action,omitempty"`
+	Evidence           []RecommendationEvidenceRef         `json:"evidence,omitempty"`
+	ConfidenceScore    *float32                            `json:"confidence_score,omitempty"` // 0.0-1.0 optional confidence metadata
+	MetadataJSON       map[string]interface{}              `json:"metadata_json,omitempty"`
+	CreatedAt          time.Time                           `json:"created_at"`
+	UpdatedAt          time.Time                           `json:"updated_at"`
+}
+
 // StanceAggregate holds per-stance counts for a session.
 type StanceAggregate struct {
 	Agree        int `json:"agree"`
