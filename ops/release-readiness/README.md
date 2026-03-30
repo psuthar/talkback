@@ -8,6 +8,7 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
 3. **Outputs** — `artifacts/release-readiness/report.json`, `report.md`, and a **machine summary** at `artifacts/release-readiness.json` (`outcome`, `score`, `warnings`, `blockers`) for CI gates and PR summaries.
 4. **PR risk (v2.6)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` under the output directory, plus a stable machine summary at **`artifacts/pr-risk.json`** (score, band, `merge_recommendation` as `PASS`/`WARN`/`BLOCK`, `required_validations`, `top_risk_factors`). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
+5. **Unified PR gate** — `scripts/pr_gate.py` combines PR Risk + Release Readiness into **`pr-gate-summary.json`** / **`pr-gate-summary.md`**. **`scripts/pr_gate_check_payload.py`** turns that JSON into **`artifacts/pr-gate-check.json`** for the GitHub Check **TalkBack PR Gate** (no duplicated combining rules in YAML).
 
 CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
 
@@ -74,7 +75,7 @@ The recommended initial policy is **`block_only`**: warnings are visible in the 
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2.6) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**. **Upload PR Risk artifacts** (`if: always()`) uploads those files so they exist even if a later step fails.
+1. Runs `go run ./cmd/prrisk` (PR risk v2.6) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**.
 2. Runs `go test ./...` and writes `smoke_results.json`.
 3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
 4. Builds the React frontend (`npm run build`).
@@ -84,14 +85,19 @@ GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_
 8. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
 9. Runs `bash scripts/release-readiness.sh` (with `continue-on-error: true` so later steps still run).
 10. **Evaluate Release Readiness Outcome** — reads `artifacts/release-readiness.json` with `jq`; fails the job on `READINESS_FAILED`, on `BLOCK`, or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`; emits `::warning::` for `WARN` in `block_only` mode (workflow job stays green).
-11. **Evaluate PR risk semantic result** — `python3 scripts/evaluate_pr_risk_semantic.py` reads `artifacts/pr-risk.json` and the PR risk generator step outcome. Maps `merge_recommendation` to exit code: **PASS** and **WARN** exit 0 (workflow green); **BLOCK**, generator failure, or invalid/missing JSON exit 1 (workflow red). Writes `artifacts/pr-risk-semantic.json` and step outputs `semantic_conclusion`, `semantic_title`, `semantic_summary`.
-12. **Publish PR Risk semantic check** — uses the GitHub Checks API (`checks: write`) to create or update a check run named **`PR Risk / semantic-result`** with conclusion **success** (PASS), **neutral** (WARN), or **failure** (BLOCK or errors). The overall workflow job stays green for WARN because only the check is neutral, not the job.
-13. **Upload Release Readiness Artifact** — uploads the entire `artifacts/` directory (`if: always()`), including `release-readiness.json`, `pr-risk.json`, `pr-risk-semantic.json`, `release-readiness/report.*`, and PR risk markdown/JSON.
-14. **Add PR Summary** — appends release readiness outcome and score lines to `GITHUB_STEP_SUMMARY` for the Actions run summary UI (PR Risk semantic lines are appended by the evaluate step).
+11. **Compute PR gate summary** — `python3 scripts/pr_gate.py` writes **`pr-gate-summary.json`** and **`pr-gate-summary.md`** (unified PASS/WARN/BLOCK from PR Risk + Release Readiness) and appends the **PR Gate** section to `GITHUB_STEP_SUMMARY`.
+12. **Build PR gate GitHub Check payload** — `python3 scripts/pr_gate_check_payload.py` writes **`artifacts/pr-gate-check.json`** (title, summary, text, `workflow_should_fail`, `details_url`) from the gate JSON alone — no duplicated gate logic in YAML.
+13. **Smoke-check action normalization** — optional guard on `normalize_action`.
+14. **Evaluate PR risk semantic result** — `python3 scripts/evaluate_pr_risk_semantic.py` writes **`pr-risk-semantic.json`** (used for PR comment fallback and diagnostics).
+15. **Upload Release Readiness Artifact** — uploads the entire **`artifacts/`** directory (`if: always()`), including gate files, readiness outputs, and PR risk outputs — runs **before** the gate check is published so BLOCK still uploads artifacts.
+16. **Publish TalkBack PR Gate check** — GitHub Checks API (`checks: write`): creates or updates a check run named **`TalkBack PR Gate`** with conclusion **success** (PASS), **neutral** (WARN), or **failure** (BLOCK or gate/payload errors). **`details_url`** points at this workflow run when available.
+17. **Post PR gate comment** — unified table on pull requests (or PR-risk-only fallback).
+18. **Add PR Summary** — release readiness lines appended to the job summary UI.
+19. **Enforce TalkBack PR gate outcome** — reads **`pr-gate-check.json`**; exits **1** when `workflow_should_fail` is true (unified **BLOCK** or gate could not be computed). Runs **after** upload and check publication.
 
-### Branch protection vs PR Risk
+### Branch protection vs TalkBack PR Gate
 
-The **workflow job** turns red only when the semantic evaluator exits 1 (BLOCK or execution/parsing errors). **WARN** keeps the job green while the dedicated check **`PR Risk / semantic-result`** is **neutral**. If you need required-status rules that distinguish PASS vs WARN vs BLOCK, add a branch protection rule for the check name **`PR Risk / semantic-result`** (not only the workflow name). Fork PRs may be unable to create checks with the default `GITHUB_TOKEN` (read-only); same-repository PRs work with `permissions: checks: write`.
+The primary reviewer-facing semantic status is the GitHub Check **`TalkBack PR Gate`**: **PASS** → green (success), **WARN** → yellow (neutral), **BLOCK** → red (failure). **WARN** is cautionary, not a merge block by itself; **BLOCK** is a hard stop. Add a branch protection required check on **`TalkBack PR Gate`** if you want those semantics enforced independently of other CI jobs. You may still require separate workflows for tests/builds. Fork PRs often cannot create checks with the default `GITHUB_TOKEN` (read-only); same-repo PRs need `permissions: checks: write`.
 
 ### E2E environment variables used in CI
 

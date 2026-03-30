@@ -157,13 +157,13 @@ remediation:
     fix_type: test
   pr_risk_block:
     severity: block
-    likely_cause: "PR Risk scored the diff as merge-blocked (high/critical band or required actions incomplete)"
-    recommended_action: "Resolve the PR Risk required actions listed in pr_risk.md before deploying"
+    likely_cause: "PR Risk indicates a merge block (elevated risk or incomplete evidence)"
+    recommended_action: "Resolve PR Risk required items before deploy; use pr_risk.md as the detailed checklist"
     fix_type: process
   pr_risk_warn:
     severity: warn
-    likely_cause: "PR Risk scored the diff as WARN (elevated risk pending review)"
-    recommended_action: "Review the PR Risk required validations in pr_risk.md before deploying"
+    likely_cause: "PR Risk indicates elevated review may be needed (churn, config/workflow changes, or evidence gaps)"
+    recommended_action: "Complete PR Risk validations before deploy; use pr_risk.md for the full validation list"
     fix_type: process
 
 # E2E failure severity: tests matching these name substrings are "critical" for blocking

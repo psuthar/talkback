@@ -12,13 +12,13 @@ on:
         required: false
         default: ""
 
-# checks: write — publish "PR Risk / semantic-result" via Checks API (success / neutral / failure).
-# For required-check semantics on PASS vs WARN vs BLOCK, prefer protecting that check name in
-# branch rules rather than relying on the overall workflow job alone.
+# checks: write — publish "TalkBack PR Gate" (and any other Checks API steps) with success/neutral/failure.
+# Branch protection: to gate on PASS vs WARN vs BLOCK semantics, require the check named **TalkBack PR Gate**
+# (WARN = neutral). You may still require separate workflow/CI checks for tests and builds.
 permissions:
   contents: read
-  checks: write
   pull-requests: write
+  checks: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -287,6 +287,66 @@ jobs:
           echo "::error::Unknown outcome: $OUTCOME"
           exit 1
 
+      # Combines PR Risk + Release Readiness into a single unified gate decision.
+      # Runs before the PR risk semantic step so its section appears first in step summary.
+      # continue-on-error: true so a script bug never blocks the rest of the workflow.
+      - name: Compute PR gate summary
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/pr_gate.py \
+            --pr-risk-json artifacts/pr-risk.json \
+            --readiness-json artifacts/release-readiness.json \
+            --readiness-report-json artifacts/release-readiness/report.json \
+            --output-dir artifacts \
+            --step-summary
+
+      # Deterministic adapter: pr-gate-summary.json -> artifacts/pr-gate-check.json for GitHub Checks API.
+      - name: Build PR gate GitHub Check payload
+        if: always()
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/pr_gate_check_payload.py \
+            --gate-json artifacts/pr-gate-summary.json \
+            --output artifacts/pr-gate-check.json
+
+      # Verifies that normalize_action strips all taxonomy prefixes from the live pr-risk.json.
+      # Catches new labels added to the Go engine before they reach user-facing output.
+      - name: Smoke-check action normalization
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          sys.path.insert(0, 'scripts')
+          from pr_gate import normalize_action
+
+          path = 'artifacts/pr-risk.json'
+          try:
+              data = json.loads(open(path, encoding='utf-8').read())
+          except Exception as e:
+              print(f'Skipped: {path} not available ({e})')
+              sys.exit(0)
+
+          # A normalized action must not start with a single-word lowercase prefix followed by ": ".
+          _leaking = re.compile(r'^[a-z]+:\s')
+          validations = data.get('required_validations') or []
+          issues = []
+          for raw in validations:
+              result = normalize_action(raw)
+              if result and _leaking.match(result):
+                  issues.append(f'  raw={raw!r} => {result!r}')
+
+          if issues:
+              print(f'FAIL: normalize_action left {len(issues)} prefix label(s) in output:')
+              for i in issues:
+                  print(i)
+              sys.exit(1)
+          else:
+              print(f'OK: {len(validations)} required_validations normalized cleanly')
+          PY
+
       # Maps merge_recommendation to Checks API conclusions (PASS→success, WARN→neutral, BLOCK→failure).
       # Does not use continue-on-error: the job must fail on BLOCK or generator/parsing errors.
       - name: Evaluate PR risk semantic result
@@ -301,7 +361,15 @@ jobs:
             --generator-outcome "$PRRISK_GEN_OUTCOME" \
             --semantic-json-out artifacts/pr-risk-semantic.json
 
-      - name: Publish PR Risk semantic check
+      - name: Upload Release Readiness Artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-readiness
+          path: artifacts/
+          if-no-files-found: warn
+
+      - name: Publish TalkBack PR Gate check
         if: always()
         uses: actions/github-script@v8
         env:
@@ -311,24 +379,28 @@ jobs:
           script: |
             const fs = require('fs');
             const path = require('path');
-            const headSha = context.payload.pull_request?.head?.sha || context.sha;
-            const semanticPath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-risk-semantic.json');
+            const ws = process.env.GITHUB_WORKSPACE;
+            const checkPath = path.join(ws, 'artifacts/pr-gate-check.json');
             let payload;
             try {
-              payload = JSON.parse(fs.readFileSync(semanticPath, 'utf8'));
+              payload = JSON.parse(fs.readFileSync(checkPath, 'utf8'));
             } catch (e) {
+              const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
               payload = {
+                check_name: 'TalkBack PR Gate',
                 check_conclusion: 'failure',
-                title: 'PR Risk: error',
-                summary: 'Could not read artifacts/pr-risk-semantic.json — ' + String(e),
-                text: String(e),
+                title: 'TalkBack PR Gate: error',
+                summary: 'Could not read artifacts/pr-gate-check.json — ' + String(e),
+                text: '### Error\n\n' + String(e) + (runUrl ? '\n\n' + runUrl : ''),
+                details_url: runUrl || undefined,
               };
             }
-            const runUrl = process.env.GITHUB_RUN_URL || '';
-            if (runUrl) {
+            const headSha = context.payload.pull_request?.head?.sha || context.sha;
+            const checkName = payload.check_name || 'TalkBack PR Gate';
+            const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
+            if (runUrl && payload.summary && !payload.summary.includes(runUrl)) {
               payload.summary = (payload.summary || '') + '\n\n**Workflow run / artifacts:** ' + runUrl;
             }
-            const checkName = 'PR Risk / semantic-result';
             const { data: listed } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -346,6 +418,9 @@ jobs:
               conclusion: payload.check_conclusion,
               output,
             };
+            if (payload.details_url) {
+              common.details_url = payload.details_url;
+            }
             if (runs.length > 0) {
               await github.rest.checks.update({
                 owner: context.repo.owner,
@@ -363,9 +438,11 @@ jobs:
               });
             }
 
-      - name: Post PR risk comment
+      - name: Post PR gate comment
         # Only runs on pull_request events; skipped on push/workflow_dispatch.
-        # Updates existing comment (idempotent via <!-- pr-risk-bot --> marker) or creates a new one.
+        # Shows the unified gate table when pr-gate-summary.json is available;
+        # falls back to PR-risk-only view if the gate step was skipped or failed.
+        # Idempotent: updates existing comment via <!-- pr-risk-bot --> marker.
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v8
         env:
@@ -376,55 +453,120 @@ jobs:
             const fs   = require('fs');
             const path = require('path');
 
-            const MARKER      = '<!-- pr-risk-bot -->';
-            const REC_DISPLAY = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
-            const REC_EMOJI   = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+            const MARKER       = '<!-- pr-risk-bot -->';
+            const STATUS_EMOJI = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+            const REC_DISPLAY  = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
+            const ws           = process.env.GITHUB_WORKSPACE;
+            const runUrl       = (process.env.GITHUB_RUN_URL || '').trim();
 
-            // Read the processed semantic JSON (written by evaluate_pr_risk_semantic.py).
-            const semanticPath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-risk-semantic.json');
-            let data;
+            // Prefer the unified gate JSON; fall back to PR-risk-only semantic JSON.
+            let gateData     = null;
+            let semanticData = null;
+
             try {
-              data = JSON.parse(fs.readFileSync(semanticPath, 'utf8'));
+              gateData = JSON.parse(fs.readFileSync(path.join(ws, 'artifacts/pr-gate-summary.json'), 'utf8'));
             } catch (e) {
-              console.log('PR risk semantic JSON not available — skipping PR comment:', e.message);
-              return;
+              console.log('Gate summary not available, trying PR risk semantic:', e.message);
             }
 
-            const rec     = ((data.merge_recommendation || 'UNKNOWN') + '').toUpperCase();
-            const display = REC_DISPLAY[rec] || rec;
-            const emoji   = REC_EMOJI[rec]   || '⚪';
-            const score   = data.score  != null ? data.score  : '?';
-            const band    = data.band   || 'unknown';
-            const factors = Array.isArray(data.top_risk_factors) ? data.top_risk_factors : [];
-            const runUrl  = (process.env.GITHUB_RUN_URL || '').trim();
+            if (!gateData) {
+              try {
+                semanticData = JSON.parse(fs.readFileSync(path.join(ws, 'artifacts/pr-risk-semantic.json'), 'utf8'));
+              } catch (e) {
+                console.log('PR risk semantic JSON also unavailable — skipping PR comment:', e.message);
+                return;
+              }
+            }
 
-            const lines = [
-              MARKER,
-              '## 🤖 PR Risk Assessment',
-              '',
-              `**Result:** ${emoji} **${display}** &nbsp;·&nbsp; **Score:** ${score} / 100 (${band})`,
-              '',
-              '> _PR-risk signal only — CI, code review, and required testing still apply regardless of this result._',
-            ];
+            let body;
 
-            if (factors.length > 0) {
-              lines.push('', '**Top risk signals:**');
-              factors.slice(0, 5).forEach(f => lines.push(`- ${f}`));
+            if (gateData) {
+              // ── Unified gate table view ──────────────────────────────────────────
+              const gate    = gateData.final_gate        || {};
+              const prRisk  = gateData.pr_risk           || {};
+              const rr      = gateData.release_readiness || {};
+
+              const gateStatus = (gate.status   || 'UNKNOWN').toUpperCase();
+              const riskStatus = (prRisk.status || 'UNKNOWN').toUpperCase();
+              const rrStatus   = (rr.status     || 'UNKNOWN').toUpperCase();
+
+              const gateEmoji = STATUS_EMOJI[gateStatus] || '⚪';
+              const riskEmoji = STATUS_EMOJI[riskStatus] || '⚪';
+              const rrEmoji   = STATUS_EMOJI[rrStatus]   || '⚪';
+
+              const riskLabel = prRisk.label || REC_DISPLAY[riskStatus] || riskStatus;
+              const rrLabel   = `${rrStatus} (${rr.score != null ? rr.score : '?'}/100)`;
+
+              const actions = Array.isArray(gateData.required_actions) ? gateData.required_actions : [];
+              const factors = Array.isArray(prRisk.top_risk_factors)  ? prRisk.top_risk_factors   : [];
+
+              const lines = [
+                MARKER,
+                '## 🤖 PR Gate Summary',
+                '',
+                '| Signal | Result |',
+                '|--------|--------|',
+                `| PR Risk | ${riskEmoji} ${riskLabel} |`,
+                `| Release Readiness | ${rrEmoji} ${rrLabel} |`,
+                `| **Final Gate** | **${gateEmoji} ${gateStatus}** |`,
+                '',
+                '> _This gate is deterministic. PASS does not bypass branch protection or required code review._',
+              ];
+
+              if (factors.length > 0) {
+                lines.push('', '**Top risk signals:**');
+                factors.slice(0, 4).forEach(f => lines.push(`- ${f}`));
+              }
+
+              if (actions.length > 0) {
+                lines.push('', '**Required before merge:**');
+                actions.slice(0, 5).forEach(a => lines.push(`- ${a}`));
+              }
+
+              lines.push('');
+              lines.push(runUrl
+                ? `_Full analysis: [pr-gate-summary.md](${runUrl})_`
+                : '_Full analysis in workflow artifacts · `pr-gate-summary.md`_');
+
+              body = lines.join('\n');
+
             } else {
-              lines.push('', '_No significant risk signals detected._');
+              // ── Fallback: PR-risk-only view (gate step unavailable) ──────────────
+              const rec     = ((semanticData.merge_recommendation || 'UNKNOWN') + '').toUpperCase();
+              const display = REC_DISPLAY[rec] || rec;
+              const emoji   = STATUS_EMOJI[rec] || '⚪';
+              const score   = semanticData.score != null ? semanticData.score : '?';
+              const band    = semanticData.band  || 'unknown';
+              const factors = Array.isArray(semanticData.top_risk_factors) ? semanticData.top_risk_factors : [];
+
+              const lines = [
+                MARKER,
+                '## 🤖 PR Risk Assessment',
+                '',
+                `**Result:** ${emoji} **${display}** &nbsp;·&nbsp; **Score:** ${score} / 100 (${band})`,
+                '',
+                '> _PR-risk signal only — CI, code review, and required testing still apply._',
+              ];
+
+              if (factors.length > 0) {
+                lines.push('', '**Top risk signals:**');
+                factors.slice(0, 5).forEach(f => lines.push(`- ${f}`));
+              } else {
+                lines.push('', '_No significant risk signals detected._');
+              }
+
+              lines.push('');
+              lines.push(runUrl
+                ? `_Full analysis in [workflow artifacts](${runUrl}) · \`pr_risk.md\`_`
+                : '_Full analysis in workflow artifacts · `pr_risk.md`_');
+
+              body = lines.join('\n');
             }
-
-            lines.push('');
-            lines.push(runUrl
-              ? `_Full analysis in [workflow artifacts](${runUrl}) · \`pr_risk.md\`_`
-              : '_Full analysis in workflow artifacts · `pr_risk.md`_');
-
-            const body = lines.join('\n');
 
             const prNumber = context.payload.pull_request.number;
             const { owner, repo } = context.repo;
 
-            // Paginate through comments to find the existing bot comment (if any).
+            // Paginate through existing comments to find the bot comment (idempotent).
             let existing = null;
             for (let page = 1; !existing; page++) {
               const { data: batch } = await github.rest.issues.listComments({
@@ -438,21 +580,13 @@ jobs:
               await github.rest.issues.updateComment({
                 owner, repo, comment_id: existing.id, body,
               });
-              console.log(`Updated PR risk comment #${existing.id}`);
+              console.log(`Updated PR gate comment #${existing.id}`);
             } else {
               const { data: created } = await github.rest.issues.createComment({
                 owner, repo, issue_number: prNumber, body,
               });
-              console.log(`Created PR risk comment #${created.id}`);
+              console.log(`Created PR gate comment #${created.id}`);
             }
-
-      - name: Upload Release Readiness Artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-readiness
-          path: artifacts/
-          if-no-files-found: warn
 
       - name: Add PR Summary
         if: always()
@@ -487,3 +621,19 @@ jobs:
                 ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # After artifacts upload and GitHub Check publication — fail only on unified gate BLOCK or payload error.
+      - name: Enforce TalkBack PR gate outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f artifacts/pr-gate-check.json ]]; then
+            echo "::error::TalkBack PR Gate: artifacts/pr-gate-check.json missing"
+            exit 1
+          fi
+          if jq -e '.workflow_should_fail == true' artifacts/pr-gate-check.json >/dev/null 2>&1; then
+            echo "::error::TalkBack PR Gate: final status is BLOCK or gate could not be computed. Do not merge until resolved."
+            exit 1
+          fi
+          echo "TalkBack PR Gate: ok (PASS or WARN)"

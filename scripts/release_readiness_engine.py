@@ -348,10 +348,17 @@ def compute_readiness(
         enforcement = pr_risk.get("enforcement") or {}
         pr_rec = str(enforcement.get("merge_recommendation") or "").lower()
         if pr_rec == "block":
-            blockers.append("PR Risk: BLOCK — see pr_risk.md for required actions")
+            blockers.append(
+                "PR Risk indicates a merge block (elevated risk or incomplete evidence). "
+                "Resolve the required items before deploy; see pr_risk.md for detail."
+            )
             failed_checks.append("pr_risk_block")
         elif pr_rec == "warn":
-            warnings.append("PR Risk: WARN — see pr_risk.md for required actions")
+            warnings.append(
+                "PR Risk indicates elevated review may be needed (churn, workflow or config "
+                "changes, or evidence gaps). Complete required validations before deploy; "
+                "see pr_risk.md for detail."
+            )
             failed_checks.append("pr_risk_warn")
 
     # Risk validation blockers

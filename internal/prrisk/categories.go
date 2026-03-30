@@ -91,10 +91,12 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 		}
 	}
 
-	// Proximity-based confidence penalties: apply only when testable code exists in diff
-	// (mode != "" and mode != "n_a") and tests are present (so we're not double-penalising
-	// the "no test files" branch above).
-	if s.TestFiles > 0 && ci != nil && ci.Proximity.Mode != "" && ci.Proximity.Mode != "n_a" {
+	// Proximity-based confidence penalties: apply whenever context insights are available
+	// and the diff is in testable territory (mode set, not "n_a").
+	// The TestFiles guard is intentionally absent: proximity signals are meaningful even
+	// when no test files are in the diff — code changes with distant or zero nearby tests
+	// carry real coverage risk regardless of whether tests appear in this PR.
+	if ci != nil && ci.Proximity.Mode != "" && ci.Proximity.Mode != "n_a" {
 		switch ci.Proximity.StructuralAlignment {
 		case "distant":
 			const distantAdj = -15.0
@@ -121,11 +123,9 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 			})
 			score += shallowCovAdj
 		}
-		// Behavioral coverage "unknown": -5 base penalty for any diff with tests,
-		// plus -5 extra when sensitive domains changed (total -10 for sensitive).
-		// proximity.go uses a broader sensitive definition (includes api, database) than
-		// testConfidenceScore (auth, rag, processing, migrations). The extra penalty is
-		// gated on sensitiveChanged to stay consistent with the rest of the confidence logic.
+		// Behavioral coverage "unknown": -5 base penalty, plus -5 extra when sensitive
+		// domains changed (total -10 for sensitive). The extra penalty is gated on
+		// sensitiveChanged to stay consistent with the rest of the confidence logic.
 		if ci.Proximity.BehavioralCoverage == "unknown" {
 			const unknownCovBase = -5.0
 			bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
@@ -140,6 +140,34 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 					Delta:  unknownCovSensitive,
 				})
 				score += unknownCovSensitive
+			}
+		}
+		// Nearby-test-ratio penalty: fraction of non-test files with an adjacent test in the diff.
+		// Complements structural alignment (WHERE tests are) with a coverage-fraction signal
+		// (WHAT PROPORTION of changed files have adjacent test coverage).
+		if ci.Proximity.NonTestFiles > 0 {
+			switch {
+			case ci.Proximity.Ratio == 0:
+				const noNearbyAdj = -10.0
+				bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+					Reason: "No changed files have nearby tests in diff",
+					Delta:  noNearbyAdj,
+				})
+				score += noNearbyAdj
+			case ci.Proximity.Ratio < 0.3:
+				const fewNearbyAdj = -5.0
+				bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+					Reason: "Few changed files have nearby tests in diff",
+					Delta:  fewNearbyAdj,
+				})
+				score += fewNearbyAdj
+			case ci.Proximity.Ratio < 0.6:
+				const someNearbyAdj = -2.0
+				bd.Adjustments = append(bd.Adjustments, ConfidenceAdjustment{
+					Reason: "Some changed files lack nearby tests",
+					Delta:  someNearbyAdj,
+				})
+				score += someNearbyAdj
 			}
 		}
 	}
