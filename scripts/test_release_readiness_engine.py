@@ -1,6 +1,10 @@
+import sys
 import unittest
+from pathlib import Path
 
-from scripts.release_readiness_engine import build_remediation_items, compute_readiness
+# Allow `python -m unittest discover` from `scripts/` (same pattern as other script tests).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_readiness_engine import build_remediation_items, compute_readiness
 
 
 BASE_CONFIG = {

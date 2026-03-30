@@ -12,9 +12,13 @@ on:
         required: false
         default: ""
 
+# checks: write — publish "TalkBack PR Gate" (and any other Checks API steps) with success/neutral/failure.
+# Branch protection: to gate on PASS vs WARN vs BLOCK semantics, require the check named **TalkBack PR Gate**
+# (WARN = neutral). You may still require separate workflow/CI checks for tests and builds.
 permissions:
   contents: read
   pull-requests: write
+  checks: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -297,6 +301,16 @@ jobs:
             --output-dir artifacts \
             --step-summary
 
+      # Deterministic adapter: pr-gate-summary.json -> artifacts/pr-gate-check.json for GitHub Checks API.
+      - name: Build PR gate GitHub Check payload
+        if: always()
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 scripts/pr_gate_check_payload.py \
+            --gate-json artifacts/pr-gate-summary.json \
+            --output artifacts/pr-gate-check.json
+
       # Verifies that normalize_action strips all taxonomy prefixes from the live pr-risk.json.
       # Catches new labels added to the Go engine before they reach user-facing output.
       - name: Smoke-check action normalization
@@ -346,6 +360,83 @@ jobs:
             --pr-risk-json artifacts/pr-risk.json \
             --generator-outcome "$PRRISK_GEN_OUTCOME" \
             --semantic-json-out artifacts/pr-risk-semantic.json
+
+      - name: Upload Release Readiness Artifact
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-readiness
+          path: artifacts/
+          if-no-files-found: warn
+
+      - name: Publish TalkBack PR Gate check
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const ws = process.env.GITHUB_WORKSPACE;
+            const checkPath = path.join(ws, 'artifacts/pr-gate-check.json');
+            let payload;
+            try {
+              payload = JSON.parse(fs.readFileSync(checkPath, 'utf8'));
+            } catch (e) {
+              const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
+              payload = {
+                check_name: 'TalkBack PR Gate',
+                check_conclusion: 'failure',
+                title: 'TalkBack PR Gate: error',
+                summary: 'Could not read artifacts/pr-gate-check.json — ' + String(e),
+                text: '### Error\n\n' + String(e) + (runUrl ? '\n\n' + runUrl : ''),
+                details_url: runUrl || undefined,
+              };
+            }
+            const headSha = context.payload.pull_request?.head?.sha || context.sha;
+            const checkName = payload.check_name || 'TalkBack PR Gate';
+            const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
+            if (runUrl && payload.summary && !payload.summary.includes(runUrl)) {
+              payload.summary = (payload.summary || '') + '\n\n**Workflow run / artifacts:** ' + runUrl;
+            }
+            const { data: listed } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+              check_name: checkName,
+            });
+            const runs = (listed.check_runs || []).slice().sort((a, b) => b.id - a.id);
+            const output = {
+              title: payload.title,
+              summary: payload.summary || '',
+              text: payload.text || '',
+            };
+            const common = {
+              status: 'completed',
+              conclusion: payload.check_conclusion,
+              output,
+            };
+            if (payload.details_url) {
+              common.details_url = payload.details_url;
+            }
+            if (runs.length > 0) {
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: runs[0].id,
+                ...common,
+              });
+            } else {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: checkName,
+                head_sha: headSha,
+                ...common,
+              });
+            }
 
       - name: Post PR gate comment
         # Only runs on pull_request events; skipped on push/workflow_dispatch.
@@ -497,14 +588,6 @@ jobs:
               console.log(`Created PR gate comment #${created.id}`);
             }
 
-      - name: Upload Release Readiness Artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-readiness
-          path: artifacts/
-          if-no-files-found: warn
-
       - name: Add PR Summary
         if: always()
         shell: bash
@@ -538,3 +621,19 @@ jobs:
                 ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # After artifacts upload and GitHub Check publication — fail only on unified gate BLOCK or payload error.
+      - name: Enforce TalkBack PR gate outcome
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f artifacts/pr-gate-check.json ]]; then
+            echo "::error::TalkBack PR Gate: artifacts/pr-gate-check.json missing"
+            exit 1
+          fi
+          if jq -e '.workflow_should_fail == true' artifacts/pr-gate-check.json >/dev/null 2>&1; then
+            echo "::error::TalkBack PR Gate: final status is BLOCK or gate could not be computed. Do not merge until resolved."
+            exit 1
+          fi
+          echo "TalkBack PR Gate: ok (PASS or WARN)"
