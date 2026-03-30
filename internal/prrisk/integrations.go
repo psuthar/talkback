@@ -17,7 +17,7 @@ func BuildIntegrations(factors []RiskFactor, score float64, baseRef, jiraKey str
 	fmt.Fprintf(md, "## PR Risk (%s)\n\n", ReportVersionString())
 	fmt.Fprintf(md, "**Score:** %.1f/100 (%s) · base `%s`\n\n", score, band(score), baseRef)
 
-	rec := strings.ToUpper(enf.MergeRecommendation)
+	rec := displayRec(enf.MergeRecommendation)
 	fmt.Fprintf(md, "**PR risk assessment:** **%s**", rec)
 	if enf.Rationale != "" {
 		fmt.Fprintf(md, " — %s", enf.Rationale)

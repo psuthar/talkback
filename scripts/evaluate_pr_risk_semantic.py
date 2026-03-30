@@ -20,6 +20,8 @@ from typing import Any
 
 VALID_REC = frozenset({"PASS", "WARN", "BLOCK"})
 REC_EMOJI = {"PASS": "🟢", "WARN": "🟡", "BLOCK": "🔴"}
+# Display labels: PASS is annotated to make clear it is a risk assessment, not merge approval.
+REC_DISPLAY = {"PASS": "PASS (low risk)", "WARN": "WARN", "BLOCK": "BLOCK"}
 
 
 def normalize_rec(raw: Any) -> str | None:
@@ -86,20 +88,17 @@ def build_semantic_record(
     factors = pr_risk_raw.get("top_risk_factors") or []
 
     emoji = REC_EMOJI.get(rec, "⚪")
-    title = f"PR Risk: {emoji} {rec}"
+    display = REC_DISPLAY.get(rec, rec)
+    title = f"PR Risk: {emoji} {display}"
     lines = [
         f"**Score:** {score}  ",
         f"**Band:** {band}  ",
-        f"**PR risk assessment:** {emoji} {rec}  ",
+        f"**PR risk assessment:** {emoji} {display}  ",
         "",
+        "_This is a PR-risk signal only. CI checks, code review, and required testing still apply regardless of this assessment._  ",
+        "",
+        artifact_hint,
     ]
-    if rec == "PASS":
-        lines.append(
-            "_PASS means low PR risk — not unconditional merge approval. "
-            "CI checks, required reviews, and targeted testing still apply._  "
-        )
-        lines.append("")
-    lines.append(artifact_hint)
     if factors:
         lines.append("")
         lines.append("**Top risk factors:**")
@@ -111,7 +110,7 @@ def build_semantic_record(
     text_lines = [
         f"- Score: {score}",
         f"- Band: {band}",
-        f"- PR risk assessment: {rec}",
+        f"- PR risk assessment: {display}",
     ]
     if req_val:
         text_lines.append("- Required validations:")
@@ -170,22 +169,16 @@ def append_step_summary(path: Path | None, data: dict[str, Any]) -> None:
     conc = data.get("semantic_conclusion")
     emoji = REC_EMOJI.get(rec, "⚪") if rec else "⚪"
     run_url = (os.environ.get("GITHUB_RUN_URL") or "").strip()
-    disclaimer = (
-        "_PASS = low PR risk, not unconditional merge approval. "
-        "Normal prerequisites still apply._"
-        if rec == "PASS"
-        else ""
-    )
+    display = REC_DISPLAY.get(rec, rec) if rec else rec
     lines = [
         "## PR Risk",
         "",
-        f"{emoji} **PR risk assessment: {rec}** — Score: {data.get('score')} ({data.get('band')})",
+        f"{emoji} **PR risk assessment: {display}** — Score: {data.get('score')} ({data.get('band')})",
         f"GitHub check: `{conc}` (PR Risk / semantic-result)",
+        "",
+        "_PR-risk signal only — CI, review, and testing still required before merging._",
+        "",
     ]
-    if disclaimer:
-        lines.append("")
-        lines.append(disclaimer)
-    lines.append("")
     if run_url:
         lines.append(f"Artifacts: {run_url}")
         lines.append("")

@@ -244,8 +244,13 @@ func TestBuildIntegrationsPassDisclaimerPresent(t *testing.T) {
 	enf := Enforcement{MergeRecommendation: "pass"}
 	integ := BuildIntegrations(nil, 10.0, "origin/main", "", nil, ScoreMath{}, enf)
 	md := integ.PRCommentMarkdown
-	if !strings.Contains(md, "PR-risk score") && !strings.Contains(md, "normal merge prerequisites") && !strings.Contains(md, "Normal merge prerequisites") {
+	// Must include the disclaimer about merge prerequisites.
+	if !strings.Contains(md, "PR-risk score") && !strings.Contains(md, "still apply") {
 		t.Errorf("PASS PR comment should include disclaimer about merge prerequisites, got:\n%s", md)
+	}
+	// Display label must include low-risk annotation.
+	if !strings.Contains(md, "PASS (low risk)") {
+		t.Errorf("PASS PR comment should show 'PASS (low risk)', got:\n%s", md)
 	}
 }
 
@@ -260,5 +265,18 @@ func TestBuildIntegrationsUsesRiskAssessmentLabel(t *testing.T) {
 	}
 	if !strings.Contains(md, "PR risk assessment") {
 		t.Errorf("expected 'PR risk assessment' label in PR comment, got:\n%s", md)
+	}
+}
+
+// TestDisplayRecLabels verifies displayRec annotates PASS and leaves WARN/BLOCK unchanged.
+func TestDisplayRecLabels(t *testing.T) {
+	if got := displayRec("pass"); got != "PASS (low risk)" {
+		t.Errorf("pass → want 'PASS (low risk)', got %q", got)
+	}
+	if got := displayRec("warn"); got != "WARN" {
+		t.Errorf("warn → want 'WARN', got %q", got)
+	}
+	if got := displayRec("block"); got != "BLOCK" {
+		t.Errorf("block → want 'BLOCK', got %q", got)
 	}
 }
