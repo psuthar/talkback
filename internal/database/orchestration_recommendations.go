@@ -126,6 +126,15 @@ func (db *DB) ListOrchestrationRecommendationsBySessionID(ctx context.Context, s
 	return out, nil
 }
 
+// DeleteOrchestrationRecommendationsBySessionID removes all recommendations for a session (e.g. before re-sync).
+func (db *DB) DeleteOrchestrationRecommendationsBySessionID(ctx context.Context, sessionID uuid.UUID) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM orchestration_recommendations WHERE session_id = $1`, sessionID)
+	if err != nil {
+		return fmt.Errorf("delete orchestration recommendations by session: %w", err)
+	}
+	return nil
+}
+
 // UpdateOrchestrationRecommendationStatus changes the recommendation lifecycle state.
 func (db *DB) UpdateOrchestrationRecommendationStatus(ctx context.Context, recommendationID uuid.UUID, status models.OrchestrationRecommendationStatus) error {
 	_, err := db.Pool.Exec(
