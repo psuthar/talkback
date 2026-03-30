@@ -283,8 +283,29 @@ def main() -> None:
         )
         sys.exit(0)
 
+    raw = input_path.read_text(encoding="utf-8")
+    if not raw.strip():
+        # Empty file — Playwright produced no output (e.g. browser setup failed or tests were skipped).
+        print(f"WARNING: {input_path} is empty — treating as no tests ran", file=sys.stderr)
+        output_path.write_text(
+            json.dumps(
+                {
+                    "status": "skipped",
+                    "failed_count": 0,
+                    "total_count": 0,
+                    "retries": 0,
+                    "failures": [],
+                    "validations": {},
+                    "note": "playwright-results.json was empty; no E2E tests ran",
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        sys.exit(0)
+
     try:
-        playwright_data = json.loads(input_path.read_text(encoding="utf-8"))
+        playwright_data = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"ERROR: failed to parse {input_path}: {exc}", file=sys.stderr)
         output_path.write_text(
