@@ -18,7 +18,9 @@ from pr_gate import (
     build_gate_json,
     build_gate_markdown,
     build_required_actions,
+    classify_gate_confidence,
     compute_gate_status,
+    derive_rr_confidence,
     load_pr_risk,
     load_release_readiness,
     normalize_action,
@@ -39,12 +41,14 @@ def _make_risk(
     band: str = "low",
     req_val: list | None = None,
     factors: list | None = None,
+    confidence: int | None = None,
 ) -> PRRiskInput:
     return PRRiskInput(
         status=status,
         score=score,
         band=band,
         label=REC_DISPLAY.get(status, status),
+        confidence=confidence,
         required_validations=req_val or [],
         top_risk_factors=factors or [],
     )
@@ -236,6 +240,22 @@ class TestMarkdownSemantics(unittest.TestCase):
         self.assertIn("BLOCK", md)
         self.assertIn("do not merge", md.lower())
 
+    def test_confidence_appears_in_supporting_detail(self):
+        """When risk confidence is set, supporting detail shows all confidence lines."""
+        md = build_gate_markdown(_make_risk("PASS", confidence=75), _make_rr("PASS", score=90.0), "PASS", [])
+        self.assertIn("PR Risk test confidence", md)
+        self.assertIn("75", md)
+        self.assertIn("Release Readiness confidence", md)
+        self.assertIn("Gate confidence", md)
+
+    def test_no_pr_risk_confidence_line_when_none(self):
+        """When risk.confidence is None, PR Risk test confidence line is omitted."""
+        md = build_gate_markdown(_make_risk("PASS", confidence=None), _make_rr("PASS"), "PASS", [])
+        self.assertNotIn("PR Risk test confidence", md)
+        # But RR and gate confidence lines still present.
+        self.assertIn("Release Readiness confidence", md)
+        self.assertIn("Gate confidence", md)
+
     def test_no_internal_prefixes_in_markdown(self):
         """Taxonomy labels (ci:, config:, test:, process:) must not appear in rendered markdown."""
         risk = _make_risk("WARN", req_val=[
@@ -426,6 +446,95 @@ class TestPriorityElevation(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Confidence helpers
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveRRConfidence(unittest.TestCase):
+
+    def test_high_score_no_issues_returns_near_score(self):
+        rr = _make_rr("PASS", score=95.0, warnings=0, blockers=0)
+        self.assertEqual(derive_rr_confidence(rr), 95)
+
+    def test_score_capped_at_95(self):
+        """Perfect 100 score yields confidence 95, not 100."""
+        rr = _make_rr("PASS", score=100.0, warnings=0, blockers=0)
+        self.assertEqual(derive_rr_confidence(rr), 95)
+
+    def test_blockers_cap_at_50(self):
+        rr = _make_rr("BLOCK", score=90.0, warnings=0, blockers=2)
+        self.assertLessEqual(derive_rr_confidence(rr), 50)
+
+    def test_moderate_score_no_blockers(self):
+        rr = _make_rr("WARN", score=75.0, warnings=2, blockers=0)
+        self.assertEqual(derive_rr_confidence(rr), 75)
+
+    def test_low_score_blockers(self):
+        rr = _make_rr("BLOCK", score=20.0, warnings=3, blockers=1)
+        # min(95, 20) = 20, then capped at 50 → 20
+        self.assertEqual(derive_rr_confidence(rr), 20)
+
+    def test_zero_score(self):
+        rr = _make_rr("BLOCK", score=0.0, warnings=0, blockers=5)
+        self.assertEqual(derive_rr_confidence(rr), 0)
+
+    def test_returns_int(self):
+        rr = _make_rr("PASS", score=87.3, warnings=0, blockers=0)
+        result = derive_rr_confidence(rr)
+        self.assertIsInstance(result, int)
+
+
+class TestClassifyGateConfidence(unittest.TestCase):
+
+    def test_block_always_low(self):
+        """BLOCK gate always returns 'low' regardless of signal confidence."""
+        self.assertEqual(classify_gate_confidence(90, 95, "BLOCK"), "low")
+        self.assertEqual(classify_gate_confidence(None, 95, "BLOCK"), "low")
+        self.assertEqual(classify_gate_confidence(10, 10, "BLOCK"), "low")
+
+    def test_pass_both_high_returns_high(self):
+        # combined = (85 + 95) // 2 = 90 → high
+        self.assertEqual(classify_gate_confidence(85, 95, "PASS"), "high")
+
+    def test_pass_moderate_combined_returns_moderate(self):
+        # combined = (60 + 75) // 2 = 67 → moderate
+        self.assertEqual(classify_gate_confidence(60, 75, "PASS"), "moderate")
+
+    def test_pass_low_combined_returns_low(self):
+        # combined = (40 + 50) // 2 = 45 → low
+        self.assertEqual(classify_gate_confidence(40, 50, "PASS"), "low")
+
+    def test_warn_moderate_confidence(self):
+        # combined = (60 + 90) // 2 = 75 → moderate
+        self.assertEqual(classify_gate_confidence(60, 90, "WARN"), "moderate")
+
+    def test_none_risk_confidence_treated_as_50(self):
+        # combined = (50 + 90) // 2 = 70 → moderate
+        self.assertEqual(classify_gate_confidence(None, 90, "PASS"), "moderate")
+
+    def test_boundary_80_is_high(self):
+        # combined = (80 + 80) // 2 = 80 → high (boundary inclusive)
+        self.assertEqual(classify_gate_confidence(80, 80, "PASS"), "high")
+
+    def test_boundary_79_is_moderate(self):
+        # combined = (79 + 79) // 2 = 79 → moderate
+        self.assertEqual(classify_gate_confidence(79, 79, "PASS"), "moderate")
+
+    def test_boundary_60_is_moderate(self):
+        # combined = (60 + 60) // 2 = 60 → moderate (boundary inclusive)
+        self.assertEqual(classify_gate_confidence(60, 60, "PASS"), "moderate")
+
+    def test_boundary_59_is_low(self):
+        # combined = (59 + 59) // 2 = 59 → low
+        self.assertEqual(classify_gate_confidence(59, 59, "PASS"), "low")
+
+    def test_returns_valid_label(self):
+        for status in ("PASS", "WARN", "BLOCK"):
+            result = classify_gate_confidence(70, 80, status)
+            self.assertIn(result, ("high", "moderate", "low"))
+
+
+# ---------------------------------------------------------------------------
 # Gate JSON shape
 # ---------------------------------------------------------------------------
 
@@ -437,6 +546,30 @@ class TestGateJson(unittest.TestCase):
         self.assertEqual(j["version"], "v1")
         for key in ("pr_risk", "release_readiness", "final_gate", "required_actions", "report_enriched"):
             self.assertIn(key, j)
+        # Confidence fields must be present in release_readiness and final_gate.
+        self.assertIn("confidence", j["release_readiness"])
+        self.assertIn("confidence", j["final_gate"])
+
+    def test_rr_confidence_present_as_int(self):
+        j = build_gate_json(_make_risk(), _make_rr("PASS", score=90.0), "PASS", [])
+        self.assertIsInstance(j["release_readiness"]["confidence"], int)
+
+    def test_gate_confidence_present_as_string(self):
+        j = build_gate_json(_make_risk(), _make_rr("PASS", score=100.0), "PASS", [])
+        self.assertIn(j["final_gate"]["confidence"], ("high", "moderate", "low"))
+
+    def test_pr_risk_confidence_absent_when_none(self):
+        """When risk.confidence is None, the key must not appear in pr_risk section."""
+        j = build_gate_json(_make_risk(confidence=None), _make_rr(), "PASS", [])
+        self.assertNotIn("confidence", j["pr_risk"])
+
+    def test_pr_risk_confidence_present_when_set(self):
+        j = build_gate_json(_make_risk(confidence=70), _make_rr(), "PASS", [])
+        self.assertEqual(j["pr_risk"]["confidence"], 70)
+
+    def test_block_gate_confidence_is_low(self):
+        j = build_gate_json(_make_risk("BLOCK", confidence=80), _make_rr("PASS"), "BLOCK", [])
+        self.assertEqual(j["final_gate"]["confidence"], "low")
 
     def test_report_enriched_false_by_default(self):
         """_make_rr() produces report_enriched=False; gate JSON reflects this."""
@@ -502,6 +635,31 @@ class TestLoaders(unittest.TestCase):
             self.assertEqual(risk.label, "WARN")
             self.assertEqual(risk.required_validations, ["run e2e tests"])
             self.assertEqual(risk.top_risk_factors, ["Large diff"])
+            # No test_confidence in input → confidence is None.
+            self.assertIsNone(risk.confidence)
+        finally:
+            os.unlink(p)
+
+    def test_load_pr_risk_with_test_confidence(self):
+        """test_confidence field is loaded as an int when present."""
+        p = self._tmp_json({
+            "merge_recommendation": "PASS", "score": 5.0, "band": "low",
+            "test_confidence": 72,
+        })
+        try:
+            risk = load_pr_risk(p)
+            self.assertEqual(risk.confidence, 72)
+        finally:
+            os.unlink(p)
+
+    def test_load_pr_risk_without_test_confidence(self):
+        """Missing test_confidence field yields confidence=None (legacy inputs)."""
+        p = self._tmp_json({
+            "merge_recommendation": "PASS", "score": 5.0, "band": "low",
+        })
+        try:
+            risk = load_pr_risk(p)
+            self.assertIsNone(risk.confidence)
         finally:
             os.unlink(p)
 

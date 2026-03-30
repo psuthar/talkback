@@ -163,6 +163,9 @@ class PRRiskInput:
     score: float
     band: str
     label: str             # e.g. "PASS (low risk)"
+    # Test confidence score (0–100) from the test_confidence category in pr-risk.json.
+    # None when the upstream engine did not emit categories (legacy results).
+    confidence: Optional[int] = None
     required_validations: list[str] = field(default_factory=list)
     top_risk_factors: list[str] = field(default_factory=list)
 
@@ -201,6 +204,45 @@ def compute_gate_status(rr_status: str, risk_status: str) -> str:
     if rr_status == "WARN" or risk_status == "WARN":
         return "WARN"
     return "PASS"
+
+
+def derive_rr_confidence(rr: ReadinessInput) -> int:
+    """
+    Derive a 0–100 confidence score for the release-readiness signal.
+
+    The RR confidence reflects how certain we are that the readiness check is
+    a reliable signal — not just whether the score is high.  A high score with
+    blockers is contradictory, so blockers cap confidence at 50.  Warnings
+    already drive the score down; no extra penalty is applied here.
+    """
+    base = min(95, int(rr.score))
+    if rr.blockers_count > 0:
+        base = min(base, 50)
+    return base
+
+
+def classify_gate_confidence(
+    risk_conf: Optional[int],
+    rr_conf: int,
+    gate_status: str,
+) -> str:
+    """
+    Classify combined gate confidence as 'high', 'moderate', or 'low'.
+
+    BLOCK always returns 'low' — something is definitely not ready.
+    Otherwise uses the average of risk and RR confidence:
+      ≥ 80 → high, ≥ 60 → moderate, < 60 → low.
+    When risk confidence is unknown (None), it is treated as 50 (neutral).
+    """
+    if gate_status == "BLOCK":
+        return "low"
+    rc = risk_conf if risk_conf is not None else 50
+    combined = (rc + rr_conf) // 2
+    if combined >= 80:
+        return "high"
+    if combined >= 60:
+        return "moderate"
+    return "low"
 
 
 def _action_key(s: str) -> str:
@@ -275,11 +317,14 @@ def load_pr_risk(path: Path) -> PRRiskInput:
     """Load and validate artifacts/pr-risk.json."""
     data = json.loads(path.read_text(encoding="utf-8"))
     rec = normalize_status(data.get("merge_recommendation", ""))
+    raw_conf = data.get("test_confidence")
+    confidence = int(raw_conf) if raw_conf is not None else None
     return PRRiskInput(
         status=rec,
         score=float(data.get("score") or 0),
         band=str(data.get("band") or "unknown"),
         label=REC_DISPLAY.get(rec, rec),
+        confidence=confidence,
         required_validations=[str(v) for v in (data.get("required_validations") or [])],
         top_risk_factors=[str(f) for f in (data.get("top_risk_factors") or [])],
     )
@@ -344,22 +389,31 @@ def build_gate_json(
     gate_status: str,
     required_actions: list[str],
 ) -> dict:
+    rr_conf = derive_rr_confidence(rr)
+    gate_conf = classify_gate_confidence(risk.confidence, rr_conf, gate_status)
+
+    pr_risk_section: dict = {
+        "status": risk.status,
+        "label": risk.label,
+        "score": round(risk.score, 1),
+        "top_risk_factors": risk.top_risk_factors,
+    }
+    if risk.confidence is not None:
+        pr_risk_section["confidence"] = risk.confidence
+
     return {
         "version": VERSION,
-        "pr_risk": {
-            "status": risk.status,
-            "label": risk.label,
-            "score": round(risk.score, 1),
-            "top_risk_factors": risk.top_risk_factors,
-        },
+        "pr_risk": pr_risk_section,
         "release_readiness": {
             "status": rr.status,
             "score": round(rr.score, 1),
             "warnings": rr.warnings_count,
             "blockers": rr.blockers_count,
+            "confidence": rr_conf,
         },
         "final_gate": {
             "status": gate_status,
+            "confidence": gate_conf,
             "summary": GATE_SUMMARIES[gate_status],
         },
         "required_actions": required_actions,
@@ -406,6 +460,15 @@ def build_gate_markdown(
     else:
         lines.append("_None beyond standard CI and review requirements._")
 
+    rr_conf = derive_rr_confidence(rr)
+    gate_conf = classify_gate_confidence(risk.confidence, rr_conf, gate_status)
+
+    conf_lines: list[str] = []
+    if risk.confidence is not None:
+        conf_lines.append(f"- PR Risk test confidence: {risk.confidence} / 100")
+    conf_lines.append(f"- Release Readiness confidence: {rr_conf} / 100")
+    conf_lines.append(f"- Gate confidence: {gate_conf}")
+
     lines += [
         "",
         "## Supporting detail",
@@ -414,6 +477,7 @@ def build_gate_markdown(
         f"- Release Readiness score: {rr.score:.1f} / 100",
         f"- Release Readiness warnings: {rr.warnings_count}",
         f"- Release Readiness blockers: {rr.blockers_count}",
+    ] + conf_lines + [
         "",
         "---",
         "_This gate is deterministic. "
@@ -441,11 +505,13 @@ def _partial_gate_json(
         ),
         "release_readiness": (
             {"status": rr.status, "score": round(rr.score, 1),
-             "warnings": rr.warnings_count, "blockers": rr.blockers_count}
+             "warnings": rr.warnings_count, "blockers": rr.blockers_count,
+             "confidence": derive_rr_confidence(rr)}
             if rr else {"status": "UNKNOWN", "error": "Failed to parse release readiness input"}
         ),
         "final_gate": {
             "status": "BLOCK",
+            "confidence": "low",
             "summary": "Gate inputs could not be parsed — treated as BLOCK. " + " | ".join(errors),
         },
         "required_actions": list(STANDARD_ACTIONS),
@@ -484,14 +550,21 @@ def _append_step_summary(gate_json: dict) -> None:
     rr = gate_json.get("release_readiness", {})
     rr_emoji = STATUS_EMOJI.get(str(rr.get("status", "")), "⚪")
 
+    gate_conf = gate.get("confidence", "")
+    conf_suffix = f" &nbsp;·&nbsp; confidence: {gate_conf}" if gate_conf else ""
+    rr_conf = rr.get("confidence")
+    rr_conf_str = f" · conf {rr_conf}/100" if rr_conf is not None else ""
+    risk_conf = risk.get("confidence")
+    risk_conf_str = f" · conf {risk_conf}/100" if risk_conf is not None else ""
+
     lines = [
         "## PR Gate",
         "",
-        f"{emoji} **Final gate: {status}** &nbsp;·&nbsp; {gate.get('summary', '')}",
+        f"{emoji} **Final gate: {status}**{conf_suffix} &nbsp;·&nbsp; {gate.get('summary', '')}",
         "",
         "| PR Risk | Release Readiness |",
         "|---------|-------------------|",
-        f"| {risk.get('label', '?')} | {rr_emoji} {rr.get('status', '?')} ({rr.get('score', '?')}/100) |",
+        f"| {risk.get('label', '?')}{risk_conf_str} | {rr_emoji} {rr.get('status', '?')} ({rr.get('score', '?')}/100){rr_conf_str} |",
         "",
     ]
     with open(summary_path, "a", encoding="utf-8") as f:

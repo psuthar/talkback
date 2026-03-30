@@ -2,6 +2,7 @@ package prrisk
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,9 @@ type SemanticPRRiskFile struct {
 	MergeRecommendation string   `json:"merge_recommendation"` // PASS | WARN | BLOCK
 	RequiredValidations []string `json:"required_validations"`
 	TopRiskFactors      []string `json:"top_risk_factors,omitempty"`
+	// TestConfidence is the test confidence score (0–100) from the test_confidence category.
+	// Omitted when categories are not available (e.g. legacy results).
+	TestConfidence *int `json:"test_confidence,omitempty"`
 }
 
 const semanticTopFactors = 5
@@ -33,6 +37,14 @@ func WriteSemanticPRRiskJSON(path string, r Result) error {
 		rec = "UNKNOWN"
 	}
 	top := topFactorLabels(r.Factors, semanticTopFactors)
+	var testConf *int
+	for _, c := range r.Categories {
+		if c.Key == CategoryTestConfidence {
+			v := int(math.Round(c.Confidence))
+			testConf = &v
+			break
+		}
+	}
 	payload := SemanticPRRiskFile{
 		ReportVersion:       r.ReportVersion,
 		Score:               r.RiskScore,
@@ -40,6 +52,7 @@ func WriteSemanticPRRiskJSON(path string, r Result) error {
 		MergeRecommendation: rec,
 		RequiredValidations: append([]string(nil), enf.RequiredValidations...),
 		TopRiskFactors:      top,
+		TestConfidence:      testConf,
 	}
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
