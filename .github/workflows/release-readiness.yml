@@ -297,6 +297,42 @@ jobs:
             --output-dir artifacts \
             --step-summary
 
+      # Verifies that normalize_action strips all taxonomy prefixes from the live pr-risk.json.
+      # Catches new labels added to the Go engine before they reach user-facing output.
+      - name: Smoke-check action normalization
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import json, re, sys
+          sys.path.insert(0, 'scripts')
+          from pr_gate import normalize_action
+
+          path = 'artifacts/pr-risk.json'
+          try:
+              data = json.loads(open(path, encoding='utf-8').read())
+          except Exception as e:
+              print(f'Skipped: {path} not available ({e})')
+              sys.exit(0)
+
+          # A normalized action must not start with a single-word lowercase prefix followed by ": ".
+          _leaking = re.compile(r'^[a-z]+:\s')
+          validations = data.get('required_validations') or []
+          issues = []
+          for raw in validations:
+              result = normalize_action(raw)
+              if result and _leaking.match(result):
+                  issues.append(f'  raw={raw!r} => {result!r}')
+
+          if issues:
+              print(f'FAIL: normalize_action left {len(issues)} prefix label(s) in output:')
+              for i in issues:
+                  print(i)
+              sys.exit(1)
+          else:
+              print(f'OK: {len(validations)} required_validations normalized cleanly')
+          PY
+
       # Maps merge_recommendation to Checks API conclusions (PASS→success, WARN→neutral, BLOCK→failure).
       # Does not use continue-on-error: the job must fail on BLOCK or generator/parsing errors.
       - name: Evaluate PR risk semantic result

@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pr_gate import (
     GATE_SUMMARIES,
+    PRIORITY_ACTION_KEYS,
     STANDARD_ACTIONS,
     PRRiskInput,
     ReadinessInput,
@@ -20,6 +21,7 @@ from pr_gate import (
     compute_gate_status,
     load_pr_risk,
     load_release_readiness,
+    normalize_action,
     normalize_status,
     run,
     REC_DISPLAY,
@@ -200,7 +202,7 @@ class TestMarkdownSemantics(unittest.TestCase):
 
     def test_warn_is_cautionary_not_hard_stop(self):
         md = build_gate_markdown(_make_risk("WARN"), _make_rr("PASS"), "WARN", STANDARD_ACTIONS)
-        self.assertIn("Elevated attention", md)
+        self.assertIn("Not blocked", md)
         self.assertNotIn("Do not merge", md)
 
     def test_table_contains_all_three_signals(self):
@@ -219,6 +221,208 @@ class TestMarkdownSemantics(unittest.TestCase):
         self.assertIn("run smoke tests", md)
         for sa in STANDARD_ACTIONS:
             self.assertIn(sa, md)
+
+    def test_warn_decision_text_is_directive(self):
+        """WARN decision text must say 'not blocked' and 'complete the required validations'."""
+        md = build_gate_markdown(_make_risk("WARN"), _make_rr("WARN"), "WARN", STANDARD_ACTIONS)
+        self.assertIn("Not blocked", md)
+        self.assertIn("Complete", md)
+
+    def test_footer_describes_warn_and_block_semantics(self):
+        """Footer must mention WARN and BLOCK semantics alongside PASS disclaimer."""
+        md = build_gate_markdown(_make_risk("PASS"), _make_rr("PASS"), "PASS", STANDARD_ACTIONS)
+        self.assertIn("does not bypass branch protection", md)
+        self.assertIn("WARN", md)
+        self.assertIn("BLOCK", md)
+        self.assertIn("do not merge", md.lower())
+
+    def test_no_internal_prefixes_in_markdown(self):
+        """Taxonomy labels (ci:, config:, test:, process:) must not appear in rendered markdown."""
+        risk = _make_risk("WARN", req_val=[
+            "ci: required status checks must pass before merge",
+            "config: workflow / deploy / go.mod changes validated against required checks",
+            "test: run targeted regression on hotspot area",
+            "process: PR description with scoped, evidence-backed review plan",
+        ])
+        actions = build_required_actions(risk, _make_rr())
+        md = build_gate_markdown(risk, _make_rr("WARN"), "WARN", actions)
+        for prefix in ("ci:", "config:", "test:", "process:"):
+            self.assertNotIn(prefix, md.lower(), f"Internal prefix '{prefix}' found in markdown")
+
+
+# ---------------------------------------------------------------------------
+# Action normalization
+# ---------------------------------------------------------------------------
+
+
+class TestActionNormalization(unittest.TestCase):
+
+    def test_ci_prefix_collapses_to_canonical(self):
+        """'ci: required status checks...' normalizes to 'CI checks must pass'."""
+        self.assertEqual(normalize_action("ci: required status checks must pass before merge"),
+                         "CI checks must pass")
+
+    def test_ci_checks_wording_collapses_to_canonical(self):
+        """'CI checks must pass before merge' normalizes to 'CI checks must pass'."""
+        self.assertEqual(normalize_action("CI checks must pass before merge"), "CI checks must pass")
+
+    def test_ci_items_deduplicate_with_standard_action(self):
+        """ci:-prefixed item and STANDARD_ACTIONS CI item collapse to one entry."""
+        risk = _make_risk(req_val=["ci: required status checks must pass before merge"])
+        actions = build_required_actions(risk, _make_rr())
+        ci_count = sum(1 for a in actions if "ci checks must pass" in a.lower())
+        self.assertEqual(ci_count, 1, f"Expected 1 CI action, got {ci_count}: {actions}")
+
+    def test_meta_action_pr_risk_status_dropped(self):
+        """'PR Risk: WARN — see pr_risk.md...' must not appear in required actions."""
+        rr = _make_rr(recommended=["PR Risk: WARN — see pr_risk.md for required actions"])
+        actions = build_required_actions(_make_risk(), rr)
+        self.assertFalse(any("pr_risk.md" in a.lower() for a in actions))
+        self.assertFalse(any(a.lower().startswith("pr risk") for a in actions))
+
+    def test_meta_action_review_warnings_dropped(self):
+        """'Review warnings before deploy' is a non-actionable meta item and must be excluded."""
+        rr = _make_rr(recommended=["Review warnings before deploy"])
+        actions = build_required_actions(_make_risk(), rr)
+        self.assertFalse(any("review warnings before deploy" in a.lower() for a in actions))
+
+    def test_config_workflow_action_becomes_concrete(self):
+        """'config: workflow...' → 'Validate workflow/config changes against required checks'."""
+        self.assertEqual(
+            normalize_action("config: workflow / deploy / go.mod changes validated against required checks"),
+            "Validate workflow/config changes against required checks",
+        )
+
+    def test_config_prefix_not_in_output(self):
+        """'config:' prefix is never surfaced in the actions list."""
+        risk = _make_risk(req_val=["config: workflow / deploy / go.mod changes validated against required checks"])
+        actions = build_required_actions(risk, _make_rr())
+        self.assertFalse(any("config:" in a.lower() for a in actions))
+
+    def test_risky_config_warning_becomes_concrete_action(self):
+        """RR warning about config path without validation note → concrete user-facing action."""
+        rr = _make_rr(warning_msgs=[
+            "Risky config/workflow paths changed without validation note: "
+            ".github/workflows/release-readiness.yml"
+        ])
+        actions = build_required_actions(_make_risk(), rr)
+        self.assertIn("Add a validation note for the workflow/config change", actions)
+
+    def test_process_prefix_stripped(self):
+        """'process:' prefix is stripped; remainder is capitalized and returned."""
+        result = normalize_action("process: PR description with scoped, evidence-backed review plan")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.lower().startswith("process:"))
+        self.assertTrue(result[0].isupper())
+
+    def test_no_internal_prefixes_in_actions(self):
+        """Taxonomy labels must not appear verbatim in the final actions list."""
+        risk = _make_risk(req_val=[
+            "ci: required status checks must pass before merge",
+            "config: workflow / deploy / go.mod changes validated against required checks",
+            "test: run targeted regression on hotspot area",
+            "process: PR description with scoped, evidence-backed review plan",
+        ])
+        actions = build_required_actions(risk, _make_rr())
+        combined = " ".join(actions).lower()
+        for prefix in ("ci:", "config:", "test:", "process:"):
+            self.assertNotIn(prefix, combined, f"Found internal prefix '{prefix}' in: {actions}")
+
+    # --- Suggestion 1: generic prefix catch-all ---
+
+    def test_unknown_prefix_stripped_generically(self):
+        """An unknown single-word lowercase prefix like 'security:' is stripped automatically."""
+        result = normalize_action("security: review auth changes before merge")
+        self.assertIsNotNone(result)
+        self.assertFalse(result.lower().startswith("security:"),
+                         f"Prefix leaked into output: {result!r}")
+        self.assertEqual(result, "Review auth changes before merge")
+
+    def test_unknown_prefix_infra_stripped(self):
+        """'infra:' prefix is stripped; remainder is capitalized."""
+        result = normalize_action("infra: ensure staging environment is healthy")
+        self.assertIsNotNone(result)
+        self.assertEqual(result, "Ensure staging environment is healthy")
+
+    def test_url_scheme_not_stripped(self):
+        """Real URL schemes (https://) are not touched — no space after colon."""
+        url_action = "See https://docs.example.com for more context"
+        result = normalize_action(url_action)
+        self.assertEqual(result, url_action)
+        self.assertIn("https://", result)
+
+    def test_generic_prefix_strips_any_new_go_engine_label(self):
+        """Any new single-word prefix from the Go engine is stripped without code changes."""
+        for prefix in ("deploy:", "perf:", "docs:", "audit:"):
+            raw = f"{prefix} some action text here"
+            result = normalize_action(raw)
+            self.assertIsNotNone(result, f"normalize_action({raw!r}) returned None")
+            self.assertNotIn(prefix, result.lower(),
+                             f"Prefix '{prefix}' leaked into output: {result!r}")
+
+
+# ---------------------------------------------------------------------------
+# Priority elevation
+# ---------------------------------------------------------------------------
+
+
+class TestPriorityElevation(unittest.TestCase):
+
+    def test_priority_action_keys_is_nonempty(self):
+        """PRIORITY_ACTION_KEYS must contain at least the validation-note key."""
+        self.assertIn("add a validation note for the workflow/config change", PRIORITY_ACTION_KEYS)
+
+    def test_validation_note_elevated_above_pr_risk_validations(self):
+        """Validation-note action from RR warnings is inserted before PR risk validations."""
+        risk = _make_risk(req_val=["Run targeted regression on hotspot area"])
+        rr = _make_rr(warning_msgs=[
+            "Risky config/workflow paths changed without validation note: "
+            ".github/workflows/release-readiness.yml"
+        ])
+        actions = build_required_actions(risk, rr)
+        note_idx = next(i for i, a in enumerate(actions) if "validation note" in a.lower())
+        regression_idx = next(i for i, a in enumerate(actions) if "regression" in a.lower())
+        self.assertLess(note_idx, regression_idx,
+                        f"Validation note (idx {note_idx}) should precede regression "
+                        f"(idx {regression_idx}): {actions}")
+
+    def test_validation_note_elevated_above_rr_recommended(self):
+        """Validation-note from recommended_actions is also elevated."""
+        rr = _make_rr(
+            recommended=[
+                "Add more smoke tests",
+                "Risky config/workflow paths changed without validation note: some/path.yml",
+            ]
+        )
+        actions = build_required_actions(_make_risk(), rr)
+        note_idx = next(i for i, a in enumerate(actions) if "validation note" in a.lower())
+        smoke_idx = next(i for i, a in enumerate(actions) if "smoke tests" in a.lower())
+        self.assertLess(note_idx, smoke_idx,
+                        f"Validation note (idx {note_idx}) should precede smoke-test "
+                        f"(idx {smoke_idx}): {actions}")
+
+    def test_priority_item_appears_exactly_once(self):
+        """A priority item present in multiple sources is not duplicated."""
+        msg = "Risky config/workflow paths changed without validation note: x.yml"
+        rr = _make_rr(
+            warning_msgs=[msg],
+            recommended=[msg],
+        )
+        actions = build_required_actions(_make_risk(), rr)
+        count = sum(1 for a in actions if "validation note" in a.lower())
+        self.assertEqual(count, 1, f"Expected 1, got {count}: {actions}")
+
+    def test_priority_items_come_after_standard_actions(self):
+        """Standard actions always precede any elevated priority item."""
+        rr = _make_rr(warning_msgs=[
+            "Risky config/workflow paths changed without validation note: x.yml"
+        ])
+        actions = build_required_actions(_make_risk(), rr)
+        sa_max_idx = max(actions.index(sa) for sa in STANDARD_ACTIONS if sa in actions)
+        note_idx = next(i for i, a in enumerate(actions) if "validation note" in a.lower())
+        self.assertLess(sa_max_idx, note_idx,
+                        f"Standard actions (max idx {sa_max_idx}) must precede "
+                        f"validation note (idx {note_idx}): {actions}")
 
 
 # ---------------------------------------------------------------------------

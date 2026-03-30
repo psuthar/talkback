@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,8 +42,8 @@ STATUS_EMOJI: dict[str, str] = {
 
 # Always-present standard merge prerequisites — placed first, before per-signal items.
 STANDARD_ACTIONS: list[str] = [
-    "CI checks must pass before merge",
-    "At least one approving review required",
+    "CI checks must pass",
+    "At least one approving review is required",
 ]
 
 GATE_SUMMARIES: dict[str, str] = {
@@ -51,14 +52,104 @@ GATE_SUMMARIES: dict[str, str] = {
         "Normal merge prerequisites still apply before merge."
     ),
     "WARN": (
-        "Elevated attention needed. "
-        "Review all warnings and required actions before merging."
+        "Not blocked, but elevated attention is required due to warnings. "
+        "Complete the required validations before merging."
     ),
     "BLOCK": (
         "One or more hard blockers detected. "
         "Do not merge until all blockers are resolved."
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Action normalization
+# ---------------------------------------------------------------------------
+
+# Items matching any of these patterns are meta/non-actionable and must not
+# appear in the user-facing required-actions list.
+_META_DROPS: list[re.Pattern] = [
+    re.compile(r"^pr\s+risk\s*:?\s*(pass|warn|block)", re.IGNORECASE),
+    re.compile(r"\bsee\s+pr_risk\.md\b", re.IGNORECASE),
+    re.compile(r"\bfor\s+required\s+actions\b", re.IGNORECASE),
+    re.compile(r"^review\s+warnings\s+before\s+deploy\.?$", re.IGNORECASE),
+]
+
+# Patterns that map to a specific canonical human action (first match wins).
+_REWRITE_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Any CI "checks/status must pass" phrasing, with or without "ci:" prefix.
+    (
+        re.compile(r"(^ci\s*:|ci\s+(checks|required\s+status)\b.*pass)", re.IGNORECASE),
+        "CI checks must pass",
+    ),
+    # Release-readiness warning: risky config/workflow path changed without a note.
+    (
+        re.compile(r"risky\s+(config|workflow).*changed\s+without\s+validation", re.IGNORECASE),
+        "Add a validation note for the workflow/config change",
+    ),
+    # config: prefix specifically about workflow / deploy / go.mod
+    (
+        re.compile(r"^config:\s*(workflow|deploy|go\.mod)", re.IGNORECASE),
+        "Validate workflow/config changes against required checks",
+    ),
+]
+
+# Taxonomy prefixes with explicit handling; the remainder is capitalized and used as-is.
+_STRIP_PREFIXES: tuple[str, ...] = ("config:", "test:", "process:")
+
+# Generic catch-all: matches any single lowercase word followed by ": " (e.g. "security: ...")
+# so new taxonomy labels from the Go engine are stripped automatically without code changes.
+# URL schemes (https://, http://) are safe because they have "//" not " " after the colon.
+_GENERIC_PREFIX_RE: re.Pattern = re.compile(r"^([a-z]+):\s+(.+)", re.DOTALL)
+
+# Actions that are inserted immediately after STANDARD_ACTIONS (position 3+) regardless of
+# which signal source they came from. Use the _action_key form (lowercase, no trailing period).
+PRIORITY_ACTION_KEYS: frozenset[str] = frozenset({
+    "add a validation note for the workflow/config change",
+})
+
+
+def normalize_action(raw: str) -> str | None:
+    """
+    Translate a raw action string into clean human-readable form.
+
+    Returns None when the item is meta/non-actionable (e.g. "PR Risk: WARN —
+    see pr_risk.md") and should be excluded from user-facing output.
+
+    Strips internal taxonomy prefixes (ci:, config:, test:, process:, and any
+    future single-word lowercase prefix) and maps known patterns to canonical
+    wording so that semantically equivalent items from different sources
+    deduplicate cleanly.
+    """
+    s = raw.strip()
+    if not s:
+        return None
+
+    # Drop meta / non-actionable items first.
+    for pat in _META_DROPS:
+        if pat.search(s):
+            return None
+
+    # Apply specific rewrites (first match wins).
+    for pat, replacement in _REWRITE_PATTERNS:
+        if pat.search(s):
+            return replacement
+
+    # Strip known taxonomy prefixes and capitalize the remainder.
+    sl = s.lower()
+    for prefix in _STRIP_PREFIXES:
+        if sl.startswith(prefix):
+            rest = s[len(prefix):].strip()
+            return (rest[0].upper() + rest[1:]) if rest else None
+
+    # Generic catch-all: strip any unknown single-word lowercase prefix (e.g. "security:").
+    # Ensures new labels from the Go engine never leak into user-facing output.
+    m = _GENERIC_PREFIX_RE.match(s)
+    if m:
+        rest = m.group(2).strip()
+        return (rest[0].upper() + rest[1:]) if rest else None
+
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -120,19 +211,49 @@ def _action_key(s: str) -> str:
 def build_required_actions(risk: PRRiskInput, rr: ReadinessInput) -> list[str]:
     """
     Deduplicated, ordered required-actions list.
-    Order: standard always-present → PR risk validations → RR blockers → RR warnings → RR recommended.
+
+    Order:
+      1. Standard always-present items (CI, approving review)
+      2. Priority items — elevated from any source (e.g. validation-note for config changes)
+      3. PR risk validations
+      4. RR blockers
+      5. RR warnings
+      6. RR recommended actions
+
+    Each item is passed through normalize_action() before deduplication:
+    - meta/non-actionable items are dropped
+    - internal taxonomy prefixes (ci:, config:, test:, process:, any future prefix) are stripped
+    - semantically equivalent items from different sources collapse to one
     """
     seen: set[str] = set()
     result: list[str] = []
 
     def add(item: str) -> None:
-        key = _action_key(item)
+        normalized = normalize_action(item)
+        if normalized is None:
+            return
+        key = _action_key(normalized)
         if key and key not in seen:
             seen.add(key)
-            result.append(item.strip())
+            result.append(normalized)
 
+    # 1. Standard always-present items.
     for a in STANDARD_ACTIONS:
         add(a)
+
+    # 2. Priority items from any signal source, inserted right after standard items.
+    all_signal_items = (
+        list(risk.required_validations)
+        + list(rr.blocker_messages)
+        + list(rr.warning_messages)
+        + list(rr.recommended_actions)
+    )
+    for item in all_signal_items:
+        normalized = normalize_action(item)
+        if normalized and _action_key(normalized) in PRIORITY_ACTION_KEYS:
+            add(item)
+
+    # 3–6. Per-signal ordering.
     for v in risk.required_validations:
         add(v)
     for b in rr.blocker_messages:
@@ -295,7 +416,10 @@ def build_gate_markdown(
         f"- Release Readiness blockers: {rr.blockers_count}",
         "",
         "---",
-        "_This gate is deterministic. PASS does not bypass branch protection or required code review._",
+        "_This gate is deterministic. "
+        "PASS does not bypass branch protection or required code review. "
+        "WARN requires completing all validations before merging. "
+        "BLOCK means do not merge until all blockers are resolved._",
         "",
     ]
 
