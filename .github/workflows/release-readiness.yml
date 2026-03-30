@@ -287,6 +287,20 @@ jobs:
           echo "::error::Unknown outcome: $OUTCOME"
           exit 1
 
+      # Combines PR Risk + Release Readiness into a single unified gate decision.
+      # Runs before the PR risk semantic step so its section appears first in step summary.
+      # continue-on-error: true so a script bug never blocks the rest of the workflow.
+      - name: Compute PR gate summary
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/pr_gate.py \
+            --pr-risk-json artifacts/pr-risk.json \
+            --readiness-json artifacts/release-readiness.json \
+            --readiness-report-json artifacts/release-readiness/report.json \
+            --output-dir artifacts \
+            --step-summary
+
       # Maps merge_recommendation to Checks API conclusions (PASS→success, WARN→neutral, BLOCK→failure).
       # Does not use continue-on-error: the job must fail on BLOCK or generator/parsing errors.
       - name: Evaluate PR risk semantic result
@@ -363,9 +377,108 @@ jobs:
               });
             }
 
-      - name: Post PR risk comment
+      - name: Publish PR gate unified check
+        # Primary semantic status for the PR. Reads pr-gate-summary.json (PASS/WARN/BLOCK)
+        # and creates/updates a GitHub Check run named "PR Gate / unified".
+        # This check is the single source of truth for PR merge readiness from this workflow.
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const STATUS_EMOJI   = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+            const GATE_CONCLUSION = { PASS: 'success', WARN: 'neutral', BLOCK: 'failure' };
+            const GATE_DISPLAY   = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
+
+            const headSha = context.payload.pull_request?.head?.sha || context.sha;
+            const runUrl  = (process.env.GITHUB_RUN_URL || '').trim();
+            const gatePath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-gate-summary.json');
+
+            let conclusion, title, summary, text;
+
+            try {
+              const data     = JSON.parse(fs.readFileSync(gatePath, 'utf8'));
+              const gate     = data.final_gate        || {};
+              const prRisk   = data.pr_risk           || {};
+              const rr       = data.release_readiness || {};
+              const gateStatus = (gate.status || 'UNKNOWN').toUpperCase();
+
+              conclusion = GATE_CONCLUSION[gateStatus] || 'failure';
+              const gateEmoji = STATUS_EMOJI[gateStatus] || '⚪';
+              const riskEmoji = STATUS_EMOJI[(prRisk.status || '').toUpperCase()] || '⚪';
+              const rrEmoji   = STATUS_EMOJI[(rr.status   || '').toUpperCase()] || '⚪';
+
+              title = `PR Gate: ${gateEmoji} ${GATE_DISPLAY[gateStatus] || gateStatus}`;
+
+              const rrLabel = `${(rr.status || '?').toUpperCase()} (${rr.score != null ? rr.score : '?'}/100)`;
+              const summaryLines = [
+                `**PR risk:** ${riskEmoji} ${prRisk.label || prRisk.status || '?'}`,
+                `**Release readiness:** ${rrEmoji} ${rrLabel}`,
+                `**Final gate:** ${gateEmoji} **${gateStatus}**`,
+                '',
+                gate.summary || '',
+                '',
+                '_This gate is deterministic. PASS does not bypass branch protection or required code review._',
+              ];
+              if (runUrl) {
+                summaryLines.push('', `**Workflow run / artifacts:** ${runUrl} · \`pr-gate-summary.md\``);
+              }
+              summary = summaryLines.join('\n');
+
+              const actions = Array.isArray(data.required_actions) ? data.required_actions : [];
+              const textLines = [];
+              if (actions.length > 0) {
+                textLines.push('## Required actions before merge', '');
+                actions.forEach(a => textLines.push(`- ${a}`));
+              }
+              if (!data.report_enriched) {
+                textLines.push(
+                  '',
+                  '_Note: `release-readiness/report.json` was not available — required actions may be incomplete._',
+                );
+              }
+              text = textLines.join('\n');
+
+            } catch (e) {
+              conclusion = 'failure';
+              title      = 'PR Gate: ⚠ error reading gate summary';
+              summary    = `Could not read artifacts/pr-gate-summary.json — ${String(e)}`;
+              text       = String(e);
+            }
+
+            const checkName = 'PR Gate / unified';
+            const { data: listed } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              ref:   headSha,
+              check_name: checkName,
+            });
+            const runs = (listed.check_runs || []).slice().sort((a, b) => b.id - a.id);
+            const output = { title, summary, text };
+            const common = { status: 'completed', conclusion, output };
+
+            if (runs.length > 0) {
+              await github.rest.checks.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                check_run_id: runs[0].id, ...common,
+              });
+            } else {
+              await github.rest.checks.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                name: checkName, head_sha: headSha, ...common,
+              });
+            }
+
+      - name: Post PR gate comment
         # Only runs on pull_request events; skipped on push/workflow_dispatch.
-        # Updates existing comment (idempotent via <!-- pr-risk-bot --> marker) or creates a new one.
+        # Shows the unified gate table when pr-gate-summary.json is available;
+        # falls back to PR-risk-only view if the gate step was skipped or failed.
+        # Idempotent: updates existing comment via <!-- pr-risk-bot --> marker.
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v8
         env:
@@ -376,55 +489,120 @@ jobs:
             const fs   = require('fs');
             const path = require('path');
 
-            const MARKER      = '<!-- pr-risk-bot -->';
-            const REC_DISPLAY = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
-            const REC_EMOJI   = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+            const MARKER       = '<!-- pr-risk-bot -->';
+            const STATUS_EMOJI = { PASS: '🟢', WARN: '🟡', BLOCK: '🔴' };
+            const REC_DISPLAY  = { PASS: 'PASS (low risk)', WARN: 'WARN', BLOCK: 'BLOCK' };
+            const ws           = process.env.GITHUB_WORKSPACE;
+            const runUrl       = (process.env.GITHUB_RUN_URL || '').trim();
 
-            // Read the processed semantic JSON (written by evaluate_pr_risk_semantic.py).
-            const semanticPath = path.join(process.env.GITHUB_WORKSPACE, 'artifacts/pr-risk-semantic.json');
-            let data;
+            // Prefer the unified gate JSON; fall back to PR-risk-only semantic JSON.
+            let gateData     = null;
+            let semanticData = null;
+
             try {
-              data = JSON.parse(fs.readFileSync(semanticPath, 'utf8'));
+              gateData = JSON.parse(fs.readFileSync(path.join(ws, 'artifacts/pr-gate-summary.json'), 'utf8'));
             } catch (e) {
-              console.log('PR risk semantic JSON not available — skipping PR comment:', e.message);
-              return;
+              console.log('Gate summary not available, trying PR risk semantic:', e.message);
             }
 
-            const rec     = ((data.merge_recommendation || 'UNKNOWN') + '').toUpperCase();
-            const display = REC_DISPLAY[rec] || rec;
-            const emoji   = REC_EMOJI[rec]   || '⚪';
-            const score   = data.score  != null ? data.score  : '?';
-            const band    = data.band   || 'unknown';
-            const factors = Array.isArray(data.top_risk_factors) ? data.top_risk_factors : [];
-            const runUrl  = (process.env.GITHUB_RUN_URL || '').trim();
+            if (!gateData) {
+              try {
+                semanticData = JSON.parse(fs.readFileSync(path.join(ws, 'artifacts/pr-risk-semantic.json'), 'utf8'));
+              } catch (e) {
+                console.log('PR risk semantic JSON also unavailable — skipping PR comment:', e.message);
+                return;
+              }
+            }
 
-            const lines = [
-              MARKER,
-              '## 🤖 PR Risk Assessment',
-              '',
-              `**Result:** ${emoji} **${display}** &nbsp;·&nbsp; **Score:** ${score} / 100 (${band})`,
-              '',
-              '> _PR-risk signal only — CI, code review, and required testing still apply regardless of this result._',
-            ];
+            let body;
 
-            if (factors.length > 0) {
-              lines.push('', '**Top risk signals:**');
-              factors.slice(0, 5).forEach(f => lines.push(`- ${f}`));
+            if (gateData) {
+              // ── Unified gate table view ──────────────────────────────────────────
+              const gate    = gateData.final_gate        || {};
+              const prRisk  = gateData.pr_risk           || {};
+              const rr      = gateData.release_readiness || {};
+
+              const gateStatus = (gate.status   || 'UNKNOWN').toUpperCase();
+              const riskStatus = (prRisk.status || 'UNKNOWN').toUpperCase();
+              const rrStatus   = (rr.status     || 'UNKNOWN').toUpperCase();
+
+              const gateEmoji = STATUS_EMOJI[gateStatus] || '⚪';
+              const riskEmoji = STATUS_EMOJI[riskStatus] || '⚪';
+              const rrEmoji   = STATUS_EMOJI[rrStatus]   || '⚪';
+
+              const riskLabel = prRisk.label || REC_DISPLAY[riskStatus] || riskStatus;
+              const rrLabel   = `${rrStatus} (${rr.score != null ? rr.score : '?'}/100)`;
+
+              const actions = Array.isArray(gateData.required_actions) ? gateData.required_actions : [];
+              const factors = Array.isArray(prRisk.top_risk_factors)  ? prRisk.top_risk_factors   : [];
+
+              const lines = [
+                MARKER,
+                '## 🤖 PR Gate Summary',
+                '',
+                '| Signal | Result |',
+                '|--------|--------|',
+                `| PR Risk | ${riskEmoji} ${riskLabel} |`,
+                `| Release Readiness | ${rrEmoji} ${rrLabel} |`,
+                `| **Final Gate** | **${gateEmoji} ${gateStatus}** |`,
+                '',
+                '> _This gate is deterministic. PASS does not bypass branch protection or required code review._',
+              ];
+
+              if (factors.length > 0) {
+                lines.push('', '**Top risk signals:**');
+                factors.slice(0, 4).forEach(f => lines.push(`- ${f}`));
+              }
+
+              if (actions.length > 0) {
+                lines.push('', '**Required before merge:**');
+                actions.slice(0, 5).forEach(a => lines.push(`- ${a}`));
+              }
+
+              lines.push('');
+              lines.push(runUrl
+                ? `_Full analysis: [pr-gate-summary.md](${runUrl})_`
+                : '_Full analysis in workflow artifacts · `pr-gate-summary.md`_');
+
+              body = lines.join('\n');
+
             } else {
-              lines.push('', '_No significant risk signals detected._');
+              // ── Fallback: PR-risk-only view (gate step unavailable) ──────────────
+              const rec     = ((semanticData.merge_recommendation || 'UNKNOWN') + '').toUpperCase();
+              const display = REC_DISPLAY[rec] || rec;
+              const emoji   = STATUS_EMOJI[rec] || '⚪';
+              const score   = semanticData.score != null ? semanticData.score : '?';
+              const band    = semanticData.band  || 'unknown';
+              const factors = Array.isArray(semanticData.top_risk_factors) ? semanticData.top_risk_factors : [];
+
+              const lines = [
+                MARKER,
+                '## 🤖 PR Risk Assessment',
+                '',
+                `**Result:** ${emoji} **${display}** &nbsp;·&nbsp; **Score:** ${score} / 100 (${band})`,
+                '',
+                '> _PR-risk signal only — CI, code review, and required testing still apply._',
+              ];
+
+              if (factors.length > 0) {
+                lines.push('', '**Top risk signals:**');
+                factors.slice(0, 5).forEach(f => lines.push(`- ${f}`));
+              } else {
+                lines.push('', '_No significant risk signals detected._');
+              }
+
+              lines.push('');
+              lines.push(runUrl
+                ? `_Full analysis in [workflow artifacts](${runUrl}) · \`pr_risk.md\`_`
+                : '_Full analysis in workflow artifacts · `pr_risk.md`_');
+
+              body = lines.join('\n');
             }
-
-            lines.push('');
-            lines.push(runUrl
-              ? `_Full analysis in [workflow artifacts](${runUrl}) · \`pr_risk.md\`_`
-              : '_Full analysis in workflow artifacts · `pr_risk.md`_');
-
-            const body = lines.join('\n');
 
             const prNumber = context.payload.pull_request.number;
             const { owner, repo } = context.repo;
 
-            // Paginate through comments to find the existing bot comment (if any).
+            // Paginate through existing comments to find the bot comment (idempotent).
             let existing = null;
             for (let page = 1; !existing; page++) {
               const { data: batch } = await github.rest.issues.listComments({
@@ -438,12 +616,12 @@ jobs:
               await github.rest.issues.updateComment({
                 owner, repo, comment_id: existing.id, body,
               });
-              console.log(`Updated PR risk comment #${existing.id}`);
+              console.log(`Updated PR gate comment #${existing.id}`);
             } else {
               const { data: created } = await github.rest.issues.createComment({
                 owner, repo, issue_number: prNumber, body,
               });
-              console.log(`Created PR risk comment #${created.id}`);
+              console.log(`Created PR gate comment #${created.id}`);
             }
 
       - name: Upload Release Readiness Artifact

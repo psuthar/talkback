@@ -1,0 +1,640 @@
+#!/usr/bin/env python3
+"""Unit tests for pr_gate.py — unified PR gate combiner."""
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+
+from pr_gate import (
+    GATE_SUMMARIES,
+    STANDARD_ACTIONS,
+    PRRiskInput,
+    ReadinessInput,
+    build_gate_json,
+    build_gate_markdown,
+    build_required_actions,
+    compute_gate_status,
+    load_pr_risk,
+    load_release_readiness,
+    normalize_status,
+    run,
+    REC_DISPLAY,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_risk(
+    status: str = "PASS",
+    score: float = 5.0,
+    band: str = "low",
+    req_val: list | None = None,
+    factors: list | None = None,
+) -> PRRiskInput:
+    return PRRiskInput(
+        status=status,
+        score=score,
+        band=band,
+        label=REC_DISPLAY.get(status, status),
+        required_validations=req_val or [],
+        top_risk_factors=factors or [],
+    )
+
+
+def _make_rr(
+    status: str = "PASS",
+    score: float = 100.0,
+    warnings: int = 0,
+    blockers: int = 0,
+    blocker_msgs: list | None = None,
+    warning_msgs: list | None = None,
+    recommended: list | None = None,
+) -> ReadinessInput:
+    return ReadinessInput(
+        status=status,
+        score=score,
+        warnings_count=warnings,
+        blockers_count=blockers,
+        blocker_messages=blocker_msgs or [],
+        warning_messages=warning_msgs or [],
+        recommended_actions=recommended or [],
+    )
+
+
+class TestNormalizeStatus(unittest.TestCase):
+    def test_valid_pass(self):
+        self.assertEqual(normalize_status("pass"), "PASS")
+        self.assertEqual(normalize_status("PASS"), "PASS")
+        self.assertEqual(normalize_status("  Pass  "), "PASS")
+
+    def test_valid_warn(self):
+        self.assertEqual(normalize_status("warn"), "WARN")
+
+    def test_valid_block(self):
+        self.assertEqual(normalize_status("block"), "BLOCK")
+
+    def test_invalid_raises(self):
+        with self.assertRaises(ValueError):
+            normalize_status("MAYBE")
+
+    def test_empty_raises(self):
+        with self.assertRaises(ValueError):
+            normalize_status("")
+
+
+# ---------------------------------------------------------------------------
+# Gate combining logic — §8 requirements (all 7 combos + extras)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeGateStatus(unittest.TestCase):
+
+    def test_pass_pass(self):
+        self.assertEqual(compute_gate_status("PASS", "PASS"), "PASS")
+
+    def test_pass_warn(self):
+        # PR risk WARN, RR PASS → WARN
+        self.assertEqual(compute_gate_status("PASS", "WARN"), "WARN")
+
+    def test_warn_pass(self):
+        # RR WARN, PR risk PASS → WARN
+        self.assertEqual(compute_gate_status("WARN", "PASS"), "WARN")
+
+    def test_warn_warn(self):
+        self.assertEqual(compute_gate_status("WARN", "WARN"), "WARN")
+
+    def test_block_pass(self):
+        # RR BLOCK, PR risk PASS → BLOCK
+        self.assertEqual(compute_gate_status("BLOCK", "PASS"), "BLOCK")
+
+    def test_pass_block(self):
+        # RR PASS, PR risk BLOCK → BLOCK
+        self.assertEqual(compute_gate_status("PASS", "BLOCK"), "BLOCK")
+
+    def test_block_block(self):
+        self.assertEqual(compute_gate_status("BLOCK", "BLOCK"), "BLOCK")
+
+    def test_block_warn(self):
+        # BLOCK wins over WARN from either side.
+        self.assertEqual(compute_gate_status("BLOCK", "WARN"), "BLOCK")
+        self.assertEqual(compute_gate_status("WARN", "BLOCK"), "BLOCK")
+
+
+# ---------------------------------------------------------------------------
+# Required actions
+# ---------------------------------------------------------------------------
+
+
+class TestRequiredActions(unittest.TestCase):
+
+    def test_standard_actions_always_present(self):
+        actions = build_required_actions(_make_risk(), _make_rr())
+        for sa in STANDARD_ACTIONS:
+            self.assertIn(sa, actions)
+
+    def test_standard_actions_appear_first(self):
+        risk = _make_risk(req_val=["run targeted regression"])
+        actions = build_required_actions(risk, _make_rr())
+        sa_max_idx = max(actions.index(sa) for sa in STANDARD_ACTIONS)
+        target_idx = next(i for i, a in enumerate(actions) if "regression" in a.lower())
+        self.assertLess(sa_max_idx, target_idx)
+
+    def test_pr_risk_validations_before_rr_blockers(self):
+        risk = _make_risk(req_val=["run targeted regression"])
+        rr = _make_rr(blocker_msgs=["deploy to staging first"])
+        actions = build_required_actions(risk, rr)
+        risk_idx = next(i for i, a in enumerate(actions) if "regression" in a.lower())
+        rr_idx = next(i for i, a in enumerate(actions) if "staging" in a.lower())
+        self.assertLess(risk_idx, rr_idx)
+
+    def test_deduplication_exact_match(self):
+        risk = _make_risk(req_val=["CI checks must pass before merge"])
+        rr = _make_rr(blocker_msgs=["CI checks must pass before merge"])
+        actions = build_required_actions(risk, rr)
+        ci_count = sum(1 for a in actions if "ci checks must pass" in a.lower())
+        self.assertEqual(ci_count, 1, f"Expected 1, got {ci_count} in {actions}")
+
+    def test_deduplication_trailing_period(self):
+        """Items differing only by trailing period deduplicate."""
+        risk = _make_risk(req_val=["Review migration scripts."])
+        rr = _make_rr(blocker_msgs=["Review migration scripts"])
+        actions = build_required_actions(risk, rr)
+        count = sum(1 for a in actions if "review migration" in a.lower())
+        self.assertEqual(count, 1)
+
+    def test_deduplication_case_insensitive(self):
+        risk = _make_risk(req_val=["Run E2E Tests"])
+        rr = _make_rr(recommended=["run e2e tests"])
+        actions = build_required_actions(risk, rr)
+        count = sum(1 for a in actions if "e2e" in a.lower())
+        self.assertEqual(count, 1)
+
+    def test_empty_sources_returns_standard_actions_only(self):
+        actions = build_required_actions(_make_risk(), _make_rr())
+        self.assertEqual(actions, STANDARD_ACTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Markdown semantics
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownSemantics(unittest.TestCase):
+
+    def test_pass_mentions_prerequisites_and_disclaimer(self):
+        """PASS markdown must not imply unconditional merge approval."""
+        md = build_gate_markdown(_make_risk("PASS"), _make_rr("PASS"), "PASS", STANDARD_ACTIONS)
+        self.assertIn("prerequisites", md.lower())
+        self.assertIn("does not bypass branch protection", md)
+
+    def test_block_wording_is_unambiguous(self):
+        md = build_gate_markdown(_make_risk("BLOCK", score=75), _make_rr("PASS"), "BLOCK", STANDARD_ACTIONS)
+        self.assertIn("Do not merge", md)
+
+    def test_warn_is_cautionary_not_hard_stop(self):
+        md = build_gate_markdown(_make_risk("WARN"), _make_rr("PASS"), "WARN", STANDARD_ACTIONS)
+        self.assertIn("Elevated attention", md)
+        self.assertNotIn("Do not merge", md)
+
+    def test_table_contains_all_three_signals(self):
+        md = build_gate_markdown(_make_risk("PASS"), _make_rr("WARN", score=72.0), "WARN", STANDARD_ACTIONS)
+        self.assertIn("PR Risk", md)
+        self.assertIn("Release Readiness", md)
+        self.assertIn("Final Gate", md)
+
+    def test_rr_score_appears_in_table(self):
+        md = build_gate_markdown(_make_risk("PASS"), _make_rr("PASS", score=85.0), "PASS", STANDARD_ACTIONS)
+        self.assertIn("85", md)
+
+    def test_required_actions_listed(self):
+        actions = STANDARD_ACTIONS + ["run smoke tests"]
+        md = build_gate_markdown(_make_risk("WARN"), _make_rr("WARN"), "WARN", actions)
+        self.assertIn("run smoke tests", md)
+        for sa in STANDARD_ACTIONS:
+            self.assertIn(sa, md)
+
+
+# ---------------------------------------------------------------------------
+# Gate JSON shape
+# ---------------------------------------------------------------------------
+
+
+class TestGateJson(unittest.TestCase):
+
+    def test_schema_fields_present(self):
+        j = build_gate_json(_make_risk("PASS", score=5.0), _make_rr("PASS", score=100.0), "PASS", STANDARD_ACTIONS)
+        self.assertEqual(j["version"], "v1")
+        for key in ("pr_risk", "release_readiness", "final_gate", "required_actions", "report_enriched"):
+            self.assertIn(key, j)
+
+    def test_report_enriched_false_by_default(self):
+        """_make_rr() produces report_enriched=False; gate JSON reflects this."""
+        j = build_gate_json(_make_risk(), _make_rr(), "PASS", STANDARD_ACTIONS)
+        self.assertFalse(j["report_enriched"])
+
+    def test_report_enriched_true_when_set(self):
+        rr = _make_rr()
+        rr.report_enriched = True
+        j = build_gate_json(_make_risk(), rr, "PASS", STANDARD_ACTIONS)
+        self.assertTrue(j["report_enriched"])
+
+    def test_final_gate_status_matches(self):
+        j = build_gate_json(_make_risk("WARN"), _make_rr("PASS"), "WARN", STANDARD_ACTIONS)
+        self.assertEqual(j["final_gate"]["status"], "WARN")
+
+    def test_scores_rounded_to_one_decimal(self):
+        j = build_gate_json(_make_risk(score=5.123), _make_rr(score=100.0), "PASS", [])
+        self.assertEqual(j["pr_risk"]["score"], 5.1)
+
+    def test_top_risk_factors_included(self):
+        risk = _make_risk("WARN", factors=["Large diff", "Auth area changed"])
+        j = build_gate_json(risk, _make_rr("PASS"), "WARN", [])
+        self.assertEqual(j["pr_risk"]["top_risk_factors"], ["Large diff", "Auth area changed"])
+
+    def test_required_actions_deduplicated_in_json(self):
+        risk = _make_risk(req_val=["CI checks must pass before merge"])
+        j = build_gate_json(risk, _make_rr(), "PASS", build_required_actions(risk, _make_rr()))
+        ci_count = sum(1 for a in j["required_actions"] if "ci checks must pass" in a.lower())
+        self.assertEqual(ci_count, 1)
+
+
+# ---------------------------------------------------------------------------
+# Loaders
+# ---------------------------------------------------------------------------
+
+
+class TestLoaders(unittest.TestCase):
+
+    def _tmp_json(self, data: dict) -> Path:
+        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(data, f)
+        f.close()
+        return Path(f.name)
+
+    def tearDown(self):
+        # Temp files are cleaned up individually in each test via os.unlink.
+        pass
+
+    def test_load_pr_risk_valid(self):
+        p = self._tmp_json({
+            "merge_recommendation": "WARN",
+            "score": 42.5,
+            "band": "medium",
+            "required_validations": ["run e2e tests"],
+            "top_risk_factors": ["Large diff"],
+        })
+        try:
+            risk = load_pr_risk(p)
+            self.assertEqual(risk.status, "WARN")
+            self.assertAlmostEqual(risk.score, 42.5)
+            self.assertEqual(risk.band, "medium")
+            self.assertEqual(risk.label, "WARN")
+            self.assertEqual(risk.required_validations, ["run e2e tests"])
+            self.assertEqual(risk.top_risk_factors, ["Large diff"])
+        finally:
+            os.unlink(p)
+
+    def test_load_pr_risk_pass_label(self):
+        p = self._tmp_json({"merge_recommendation": "PASS", "score": 5.0, "band": "low"})
+        try:
+            risk = load_pr_risk(p)
+            self.assertEqual(risk.label, "PASS (low risk)")
+        finally:
+            os.unlink(p)
+
+    def test_load_pr_risk_missing_file_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            load_pr_risk(Path("/nonexistent/pr-risk.json"))
+
+    def test_load_pr_risk_invalid_status_raises(self):
+        p = self._tmp_json({"merge_recommendation": "MAYBE", "score": 10})
+        try:
+            with self.assertRaises(ValueError):
+                load_pr_risk(p)
+        finally:
+            os.unlink(p)
+
+    def test_load_pr_risk_malformed_json_raises(self):
+        p = Path(tempfile.mktemp(suffix=".json"))
+        p.write_text("{not valid json}", encoding="utf-8")
+        try:
+            with self.assertRaises(Exception):
+                load_pr_risk(p)
+        finally:
+            p.unlink()
+
+    def test_load_readiness_valid(self):
+        p = self._tmp_json({"outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0})
+        try:
+            rr = load_release_readiness(p)
+            self.assertEqual(rr.status, "PASS")
+            self.assertAlmostEqual(rr.score, 100.0)
+            self.assertEqual(rr.warnings_count, 0)
+            self.assertEqual(rr.blockers_count, 0)
+        finally:
+            os.unlink(p)
+
+    def test_load_readiness_missing_file_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            load_release_readiness(Path("/nonexistent/readiness.json"))
+
+    def test_load_readiness_report_enriched_false_when_no_report_path(self):
+        p = self._tmp_json({"outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0})
+        try:
+            rr = load_release_readiness(p)  # no report_path
+            self.assertFalse(rr.report_enriched)
+        finally:
+            os.unlink(p)
+
+    def test_load_readiness_report_enriched_true_when_report_present(self):
+        sp = self._tmp_json({"outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0})
+        rp = self._tmp_json({"blockers": [], "warnings": [], "recommended_actions": []})
+        try:
+            rr = load_release_readiness(sp, rp)
+            self.assertTrue(rr.report_enriched)
+        finally:
+            os.unlink(sp)
+            os.unlink(rp)
+
+    def test_load_readiness_report_enriched_false_when_corrupt(self):
+        sp = self._tmp_json({"outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0})
+        rp = Path(tempfile.mktemp(suffix=".json"))
+        rp.write_text("not json", encoding="utf-8")
+        try:
+            rr = load_release_readiness(sp, rp)
+            self.assertFalse(rr.report_enriched)
+        finally:
+            os.unlink(sp)
+            rp.unlink()
+
+    def test_load_readiness_enriched_by_report(self):
+        sp = self._tmp_json({"outcome": "WARN", "score": 72.0, "warnings": 1, "blockers": 0})
+        rp = self._tmp_json({
+            "warnings": ["No smoke tests present"],
+            "blockers": [],
+            "recommended_actions": ["Add smoke test coverage"],
+        })
+        try:
+            rr = load_release_readiness(sp, rp)
+            self.assertEqual(rr.warning_messages, ["No smoke tests present"])
+            self.assertEqual(rr.recommended_actions, ["Add smoke test coverage"])
+            self.assertEqual(rr.blocker_messages, [])
+        finally:
+            os.unlink(sp)
+            os.unlink(rp)
+
+    def test_load_readiness_enrichment_gracefully_skipped_on_corrupt_report(self):
+        """Corrupt report.json should degrade gracefully, not raise."""
+        sp = self._tmp_json({"outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0})
+        rp = Path(tempfile.mktemp(suffix=".json"))
+        rp.write_text("this is not json", encoding="utf-8")
+        try:
+            rr = load_release_readiness(sp, rp)  # must not raise
+            self.assertEqual(rr.status, "PASS")
+            self.assertEqual(rr.blocker_messages, [])
+        finally:
+            os.unlink(sp)
+            rp.unlink()
+
+
+# ---------------------------------------------------------------------------
+# run() integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestRun(unittest.TestCase):
+
+    def _write(self, dir_: Path, name: str, data: dict) -> Path:
+        p = dir_ / name
+        p.write_text(json.dumps(data), encoding="utf-8")
+        return p
+
+    def test_pass_pass_produces_pass_exit0(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 5.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "PASS")
+            self.assertTrue((tdp / "out" / "pr-gate-summary.json").exists())
+            self.assertTrue((tdp / "out" / "pr-gate-summary.md").exists())
+
+    def test_warn_pass_produces_warn(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "WARN", "score": 30.0, "band": "medium",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "WARN")
+
+    def test_pass_warn_produces_warn(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 10.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "WARN", "score": 75.0, "warnings": 2, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "WARN")
+
+    def test_warn_warn_produces_warn(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "WARN", "score": 30.0, "band": "medium",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "WARN", "score": 75.0, "warnings": 1, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "WARN")
+
+    def test_block_pass_produces_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "BLOCK", "score": 80.0, "band": "critical",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+
+    def test_pass_block_produces_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 5.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "BLOCK", "score": 20.0, "warnings": 3, "blockers": 1,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+
+    def test_block_block_produces_block(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "BLOCK", "score": 80.0, "band": "critical",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "BLOCK", "score": 20.0, "warnings": 2, "blockers": 2,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 0)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+
+    def test_missing_pr_risk_produces_block_exit1(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, code = run(tdp / "nonexistent.json", rrp, None, tdp / "out")
+            self.assertEqual(code, 1)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+            # Partial outputs still written.
+            self.assertTrue((tdp / "out" / "pr-gate-summary.json").exists())
+            self.assertTrue((tdp / "out" / "pr-gate-summary.md").exists())
+
+    def test_missing_readiness_produces_block_exit1(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 5.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            result, code = run(rp, tdp / "nonexistent.json", None, tdp / "out")
+            self.assertEqual(code, 1)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+
+    def test_malformed_pr_risk_produces_block_exit1(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = tdp / "pr-risk.json"
+            rp.write_text("{not valid json}", encoding="utf-8")
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, code = run(rp, rrp, None, tdp / "out")
+            self.assertEqual(code, 1)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+
+    def test_both_missing_produces_block_exit1(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            result, code = run(
+                tdp / "a.json", tdp / "b.json", None, tdp / "out"
+            )
+            self.assertEqual(code, 1)
+            self.assertEqual(result["final_gate"]["status"], "BLOCK")
+            # Both partial fields should show error state.
+            self.assertIn("UNKNOWN", str(result["pr_risk"]["status"]))
+            self.assertIn("UNKNOWN", str(result["release_readiness"]["status"]))
+
+    def test_required_actions_merged_and_deduplicated(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "WARN",
+                "score": 30.0,
+                "band": "medium",
+                "required_validations": [
+                    "run targeted regression",
+                    "CI checks must pass before merge",  # duplicate of STANDARD_ACTIONS
+                ],
+                "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, _ = run(rp, rrp, None, tdp / "out")
+            actions = result["required_actions"]
+            ci_count = sum(1 for a in actions if "ci checks must pass" in a.lower())
+            self.assertEqual(ci_count, 1)
+            self.assertIn("run targeted regression", actions)
+            for sa in STANDARD_ACTIONS:
+                self.assertIn(sa, actions)
+
+    def test_output_json_is_valid_and_readable(self):
+        """Output JSON must round-trip through json.loads."""
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 0.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            run(rp, rrp, None, tdp / "out")
+            written = json.loads((tdp / "out" / "pr-gate-summary.json").read_text())
+            self.assertEqual(written["version"], "v1")
+            self.assertEqual(written["final_gate"]["status"], "PASS")
+
+    def test_report_enriched_false_when_no_report_path(self):
+        """report_enriched=False when report.json is not provided to run()."""
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 0.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            result, _ = run(rp, rrp, None, tdp / "out")
+            self.assertFalse(result["report_enriched"])
+
+    def test_report_enriched_true_when_report_json_present(self):
+        """report_enriched=True when report.json is provided and readable."""
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            rp = self._write(tdp, "pr-risk.json", {
+                "merge_recommendation": "PASS", "score": 0.0, "band": "low",
+                "required_validations": [], "top_risk_factors": [],
+            })
+            rrp = self._write(tdp, "readiness.json", {
+                "outcome": "PASS", "score": 100.0, "warnings": 0, "blockers": 0,
+            })
+            rep = self._write(tdp, "report.json", {
+                "blockers": [], "warnings": [], "recommended_actions": [],
+            })
+            result, _ = run(rp, rrp, rep, tdp / "out")
+            self.assertTrue(result["report_enriched"])
+
+
+if __name__ == "__main__":
+    unittest.main()
