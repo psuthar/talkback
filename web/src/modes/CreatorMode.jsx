@@ -1986,10 +1986,11 @@ export function CreatorMode({
           </div>
           {!rightPanelCollapsed && (
             <div className="creator-qa-scroll">
-              <div style={{ margin: '10px 12px', padding: '10px', border: '1px solid #e3e3e3', borderRadius: '6px', backgroundColor: '#fafafa' }}>
+              <div data-testid="orchestration-panel" style={{ margin: '10px 12px', padding: '10px', border: '1px solid #e3e3e3', borderRadius: '6px', backgroundColor: '#fafafa' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
                   <strong style={{ fontSize: '13px' }}>AI Suggested Next Actions</strong>
                   <button
+                    data-testid="orchestration-refresh-btn"
                     type="button"
                     onClick={() => loadOrchestrationRecommendations(currentSession?.session?.id, { sync: true })}
                     disabled={orchestrationLoading || !currentSession?.session?.id}
@@ -1999,12 +2000,12 @@ export function CreatorMode({
                   </button>
                 </div>
                 {orchestrationFeedback?.message && (
-                  <div className={orchestrationFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
+                  <div data-testid="orchestration-feedback" className={orchestrationFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
                     {orchestrationFeedback.message}
                   </div>
                 )}
                 {orchestrationRecommendations.length === 0 ? (
-                  <div style={{ fontSize: '12px', color: '#666' }}>
+                  <div data-testid="orchestration-empty" style={{ fontSize: '12px', color: '#666' }}>
                     No recommendations right now.
                   </div>
                 ) : (
@@ -2014,26 +2015,26 @@ export function CreatorMode({
                       const isUnanswered = rec.recommendation_type === 'unanswered_question'
                       const actioning = orchestrationActioningId === rec.id
                       return (
-                        <div key={rec.id} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: isDraftReview ? '#fff8e1' : '#fff' }}>
+                        <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: isDraftReview ? '#fff8e1' : '#fff' }}>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '11px' }}>
                             <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
-                            <span style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
+                            <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
                           </div>
                           <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#222' }}>{rec.summary}</div>
                           {rec.suggested_action && <div style={{ fontSize: '12px', color: '#444', marginBottom: '6px' }}>{rec.suggested_action}</div>}
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {isDraftReview && (
                               <>
-                                <button type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                                <button data-testid={`orchestration-approve-${rec.id}`} type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
                                   {actioning ? '…' : 'Approve draft'}
                                 </button>
-                                <button type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#ef9a9a' }}>
+                                <button data-testid={`orchestration-dismiss-draft-${rec.id}`} type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#ef9a9a' }}>
                                   Dismiss draft
                                 </button>
                               </>
                             )}
                             {isUnanswered && (
-                              <button type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                              <button data-testid={`orchestration-generate-${rec.id}`} type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
                                 Generate draft
                               </button>
                             )}

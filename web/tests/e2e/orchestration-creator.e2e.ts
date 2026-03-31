@@ -1,0 +1,279 @@
+import { test, expect } from '@playwright/test'
+import {
+  API_BASE,
+  createSession,
+  createUserAndLoginWithId,
+  deleteSession,
+  deleteUserViaAdmin,
+  loginAsAdmin,
+  pasteMaterial,
+  uniqueEmail,
+} from './fixtures'
+
+/**
+ * E2E coverage for the creator orchestration panel (SCRUM-18).
+ *
+ * The orchestration panel is AI-driven: recommendations come from the backend
+ * evaluator. In CI there is no live AI backend, so API responses that carry
+ * recommendation payloads are route-intercepted with deterministic fixtures.
+ * Auth, session creation, and page-load requests hit the real backend.
+ *
+ * Scenarios
+ * ---------
+ * A) Panel renders and manual refresh calls the sync endpoint
+ * B) Draft-review card: Approve draft → confirm + status-update calls
+ * C) Draft-review card: Dismiss draft → delete draft-answer + status-update calls
+ * D) Unanswered-question card: Generate draft → POST draft-answers call
+ */
+
+// Allow extra time for CI cold-starts; panel interactions are local (mocked).
+test.setTimeout(90_000)
+
+// ── Shared fixture IDs ──────────────────────────────────────────────────────
+let seededUserId = ''
+let seededSessionId = ''
+
+// ── Mock data ───────────────────────────────────────────────────────────────
+const MOCK_ANSWER_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
+const MOCK_QUESTION_ID = 'bbbbbbbb-0000-0000-0000-000000000001'
+
+const MOCK_REC_DRAFT: Record<string, unknown> = {
+  id: 'rec-draft-001',
+  recommendation_type: 'review_draft_answer',
+  status: 'new',
+  summary: 'A draft answer is ready for your review.',
+  suggested_action: 'Review and approve or dismiss the draft below.',
+  evidence: [{ answer_id: MOCK_ANSWER_ID, question_id: MOCK_QUESTION_ID }],
+}
+
+const MOCK_REC_UNANSWERED: Record<string, unknown> = {
+  id: 'rec-unanswered-001',
+  recommendation_type: 'unanswered_question',
+  status: 'new',
+  summary: 'A participant question has not been answered yet.',
+  suggested_action: 'Generate an AI draft to speed up your response.',
+  evidence: [{ question_id: MOCK_QUESTION_ID }],
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Navigate to the creator view for a session. */
+async function navigateToCreatorSession(page: import('@playwright/test').Page, sessionId: string) {
+  const params = new URLSearchParams({ session: sessionId, mode: 'edit', api: API_BASE })
+  await page.goto(`/?${params.toString()}`)
+  await page.waitForLoadState('networkidle')
+}
+
+/** Wait for the orchestration panel to be visible. */
+async function waitForPanel(page: import('@playwright/test').Page) {
+  await expect(page.getByTestId('orchestration-panel')).toBeVisible({ timeout: 20_000 })
+}
+
+// ── Seed once for all tests ─────────────────────────────────────────────────
+test.beforeAll(async ({ request, browser }) => {
+  const context = await browser.newContext()
+  const email = uniqueEmail('orch')
+  seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch Creator')
+  const session = await createSession(request, 'E2E Orchestration Session')
+  seededSessionId = session.id
+  // Add paste material so the session has indexable content.
+  await pasteMaterial(request, seededSessionId, 'Session notes', 'Key decision: adopt new auth flow.')
+  await context.close()
+})
+
+test.afterAll(async ({ request }) => {
+  await loginAsAdmin(request)
+  if (seededSessionId) await deleteSession(request, seededSessionId)
+  if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
+})
+
+// ── Scenario A: panel renders + refresh calls sync endpoint ─────────────────
+test('orchestration panel renders and refresh triggers sync', async ({ page, context, request }) => {
+  // Re-login so this browser context is authenticated.
+  const email = uniqueEmail('orch-a')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch A')
+  const session = await createSession(request, 'E2E Orch-A Session')
+
+  // Mock the sync endpoint to return an empty list (no AI dependency).
+  let syncCalled = false
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations/sync`, (route) => {
+    syncCalled = true
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [] }) })
+  })
+  // Mock the initial GET as well (called on load).
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations`, (route) => {
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [] }) })
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+
+  // Empty state shown when no recommendations.
+  await expect(page.getByTestId('orchestration-empty')).toBeVisible({ timeout: 10_000 })
+
+  // Click refresh — should call sync endpoint.
+  const refreshBtn = page.getByTestId('orchestration-refresh-btn')
+  await expect(refreshBtn).toBeVisible()
+  await refreshBtn.click()
+
+  // Wait for the sync call to be intercepted.
+  await expect.poll(() => syncCalled, { timeout: 10_000 }).toBe(true)
+  // Refresh button returns to ready state.
+  await expect(refreshBtn).toHaveText('Refresh', { timeout: 5_000 })
+
+  // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
+
+// ── Scenario B: approve draft ────────────────────────────────────────────────
+test('orchestration panel: approve draft calls confirm + approved status update', async ({ page, context, request }) => {
+  const email = uniqueEmail('orch-b')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch B')
+  const session = await createSession(request, 'E2E Orch-B Session')
+  const recId = MOCK_REC_DRAFT.id as string
+
+  // Mock sync to return one draft-review recommendation.
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations**`, (route) => {
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [MOCK_REC_DRAFT] }) })
+  })
+
+  // Capture the confirm PATCH call.
+  let confirmCalled = false
+  let confirmPayload: unknown = null
+  await page.route(`**/sessions/${session.id}/answers/${MOCK_ANSWER_ID}/confirm`, async (route) => {
+    confirmCalled = true
+    confirmPayload = JSON.parse(route.request().postData() ?? '{}')
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: MOCK_ANSWER_ID, confirmed: true }) })
+  })
+
+  // Capture the recommendation status PATCH.
+  let statusUpdateCalled = false
+  let statusUpdatePayload: unknown = null
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations/${recId}`, async (route) => {
+    if (route.request().method() === 'PATCH') {
+      statusUpdateCalled = true
+      statusUpdatePayload = JSON.parse(route.request().postData() ?? '{}')
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_REC_DRAFT, status: 'approved' }) })
+    } else {
+      route.continue()
+    }
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+
+  // Recommendation card visible.
+  await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
+
+  // Click Approve draft.
+  await page.getByTestId(`orchestration-approve-${recId}`).click()
+
+  // Both API calls should have fired.
+  await expect.poll(() => confirmCalled, { timeout: 10_000 }).toBe(true)
+  await expect.poll(() => statusUpdateCalled, { timeout: 10_000 }).toBe(true)
+
+  expect((confirmPayload as Record<string, unknown>).confirmed).toBe(true)
+  expect((statusUpdatePayload as Record<string, unknown>).status).toBe('approved')
+
+  // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
+
+// ── Scenario C: dismiss draft ────────────────────────────────────────────────
+test('orchestration panel: dismiss draft calls delete draft-answer + dismissed status update', async ({ page, context, request }) => {
+  const email = uniqueEmail('orch-c')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch C')
+  const session = await createSession(request, 'E2E Orch-C Session')
+  const recId = MOCK_REC_DRAFT.id as string
+
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations**`, (route) => {
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [MOCK_REC_DRAFT] }) })
+  })
+
+  // Capture the DELETE draft-answer call.
+  let deleteCalled = false
+  await page.route(`**/api/sessions/${session.id}/orchestration/draft-answers/${MOCK_ANSWER_ID}`, (route) => {
+    if (route.request().method() === 'DELETE') {
+      deleteCalled = true
+      route.fulfill({ status: 204, body: '' })
+    } else {
+      route.continue()
+    }
+  })
+
+  // Capture the recommendation status PATCH.
+  let statusUpdatePayload: unknown = null
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations/${recId}`, async (route) => {
+    if (route.request().method() === 'PATCH') {
+      statusUpdatePayload = JSON.parse(route.request().postData() ?? '{}')
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...MOCK_REC_DRAFT, status: 'dismissed' }) })
+    } else {
+      route.continue()
+    }
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+  await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
+
+  await page.getByTestId(`orchestration-dismiss-draft-${recId}`).click()
+
+  await expect.poll(() => deleteCalled, { timeout: 10_000 }).toBe(true)
+  await expect.poll(() => statusUpdatePayload !== null, { timeout: 10_000 }).toBe(true)
+  expect((statusUpdatePayload as Record<string, unknown>).status).toBe('dismissed')
+
+  // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
+
+// ── Scenario D: generate draft for unanswered question ───────────────────────
+test('orchestration panel: generate draft calls POST draft-answers with question_id', async ({ page, context, request }) => {
+  const email = uniqueEmail('orch-d')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch D')
+  const session = await createSession(request, 'E2E Orch-D Session')
+  const recId = MOCK_REC_UNANSWERED.id as string
+
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations**`, (route) => {
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [MOCK_REC_UNANSWERED] }) })
+  })
+
+  // Capture the POST draft-answers call.
+  let generateCalled = false
+  let generatePayload: unknown = null
+  await page.route(`**/api/sessions/${session.id}/orchestration/draft-answers`, async (route) => {
+    if (route.request().method() === 'POST') {
+      generateCalled = true
+      generatePayload = JSON.parse(route.request().postData() ?? '{}')
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: MOCK_ANSWER_ID, question_id: MOCK_QUESTION_ID, confirmed: false }),
+      })
+    } else {
+      route.continue()
+    }
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+  await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
+
+  await page.getByTestId(`orchestration-generate-${recId}`).click()
+
+  await expect.poll(() => generateCalled, { timeout: 10_000 }).toBe(true)
+  expect((generatePayload as Record<string, unknown>).question_id).toBe(MOCK_QUESTION_ID)
+
+  // Success feedback shown.
+  await expect(page.getByTestId('orchestration-feedback')).toContainText('Draft answer generated', { timeout: 5_000 })
+
+  // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
