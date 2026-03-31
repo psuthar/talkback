@@ -143,14 +143,26 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 ### Pull Request
 - Push branch to GitHub
-- Create PR targeting main
+- Create PR targeting `main`
 
-PR must include:
-- summary of changes
-- testing performed
-- risks / edge cases
-- follow-up items
-- Jira ticket reference
+**PR description format (match SCRUM-15 / PR-quality comments):** Use clear Markdown with these sections:
+
+1. **Plan (executed)** — numbered list of what you did in order.
+2. **Summary of changes** — bullets; nest file paths or subsystems under top-level bullets when helpful.
+3. **Validation** — bullets with exact commands run (and pass/fail if relevant).
+4. **Acceptance criteria coverage** — bullets mapping the work to the ticket’s acceptance criteria (or goals).
+5. **Refs:** ticket key(s), e.g. `SCRUM-12`, parent epic if useful.
+
+Also cover risks, follow-ups, and Jira reference where they fit (e.g. under Summary or a short **Risks / follow-up** subsection).
+
+**GitHub CLI and Markdown (avoid broken PR bodies):** On Windows, PowerShell treats **backtick** as an escape character. Passing `gh pr create --body "..."` inline often **mangles** backticks, code fences, and paths (stray `\` characters, broken words). **Do not** use long inline `--body` for formatted descriptions.
+
+- **Preferred:** write the description to a file (e.g. `pr-body.md` in the repo root or a temp path), then run:
+  - `gh pr create --base main --head feat/TICKET-N --title "..." --body-file pr-body.md`
+  - or after opening the PR: `gh pr edit N --body-file pr-body.md`
+- Use fenced code blocks in the file for multi-line commands; use normal Markdown **bold** and lists like SCRUM-15.
+
+Remove or `.gitignore` local `pr-body.md` if you do not want it committed; or commit it only when the team wants a permanent record.
 
 ### Completion Output
 Return (mirror the Jira completion comment where applicable):
