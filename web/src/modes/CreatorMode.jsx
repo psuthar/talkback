@@ -6,6 +6,7 @@ import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
+import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
 const PROGRESSION_TICK_MS = 200 // Advance displayed step at most one per tick
@@ -147,6 +148,7 @@ export function CreatorMode({
   sessionProcessingReadyVersion = 0,
   sessionUpdatedVersion = 0,
   stanceVersion = 0,
+  orchestrationRefreshTrigger = 0,
   refetchSession,
   artifactId,
   setArtifactId,
@@ -217,6 +219,7 @@ export function CreatorMode({
   const [orchestrationLoading, setOrchestrationLoading] = useState(false)
   const [orchestrationFeedback, setOrchestrationFeedback] = useState({ type: '', message: '' })
   const [orchestrationActioningId, setOrchestrationActioningId] = useState(null)
+  const orchestrationAutoDebounceRef = useRef(null)
   // When answering a question, expand that card so the answer form is visible
   useEffect(() => {
     if (answeringQuestionId) {
@@ -522,10 +525,12 @@ export function CreatorMode({
     }
   }
 
-  const loadOrchestrationRecommendations = useCallback(async (sessionId, { sync = false } = {}) => {
+  const loadOrchestrationRecommendations = useCallback(async (sessionId, { sync = false, silent = false } = {}) => {
     if (!sessionId) return
-    setOrchestrationLoading(true)
-    setOrchestrationFeedback({ type: '', message: '' })
+    if (!silent) {
+      setOrchestrationLoading(true)
+      setOrchestrationFeedback({ type: '', message: '' })
+    }
     try {
       const path = sync
         ? `${apiBaseUrl}/api/sessions/${sessionId}/orchestration/recommendations/sync`
@@ -540,13 +545,15 @@ export function CreatorMode({
         return
       }
       setOrchestrationRecommendations(Array.isArray(data?.recommendations) ? data.recommendations : [])
-      if (sync) {
+      if (sync && !silent) {
         setOrchestrationFeedback({ type: 'success', message: 'Recommendations refreshed.' })
       }
     } catch (err) {
       setOrchestrationFeedback({ type: 'error', message: `Failed to load recommendations: ${err.message}` })
     } finally {
-      setOrchestrationLoading(false)
+      if (!silent) {
+        setOrchestrationLoading(false)
+      }
     }
   }, [apiBaseUrl])
 
@@ -716,6 +723,24 @@ export function CreatorMode({
     if (!sid) return
     loadOrchestrationRecommendations(sid)
   }, [currentSession?.session?.id, loadOrchestrationRecommendations])
+
+  // SCRUM-16: debounced sync when App bumps orchestrationRefreshTrigger on session WebSocket events
+  useEffect(() => {
+    if (!orchestrationRefreshTrigger) return
+    const sid = currentSession?.session?.id
+    if (!sid) return
+    if (orchestrationAutoDebounceRef.current) clearTimeout(orchestrationAutoDebounceRef.current)
+    orchestrationAutoDebounceRef.current = setTimeout(() => {
+      orchestrationAutoDebounceRef.current = null
+      loadOrchestrationRecommendations(sid, { sync: true, silent: true })
+    }, ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS)
+    return () => {
+      if (orchestrationAutoDebounceRef.current) {
+        clearTimeout(orchestrationAutoDebounceRef.current)
+        orchestrationAutoDebounceRef.current = null
+      }
+    }
+  }, [orchestrationRefreshTrigger, currentSession?.session?.id, loadOrchestrationRecommendations])
 
   // Determine if we have a valid session - only show participant link when session exists
   const hasValidSession = currentSession && (
