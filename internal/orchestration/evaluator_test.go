@@ -409,3 +409,33 @@ func TestEvaluator_SyncSessionRecommendations(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, stored2, len(stored))
 }
+
+func TestEvaluator_NoAutonomousDraftCreationDuringSync(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+	session := createTestSession(t, db, "No-autonomous-send")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "A", nil)
+	require.NoError(t, err)
+
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      session.ID,
+		QuestionText:   "Should this auto-answer?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, db.CreateQuestion(ctx, q))
+
+	// Sync should only persist recommendations; it must not auto-create answers.
+	ev := orchestration.NewEvaluator(db)
+	recs, err := ev.SyncSessionRecommendations(ctx, session.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, recs)
+
+	ans, err := db.GetLatestAnswerByQuestionID(ctx, q.ID)
+	require.NoError(t, err)
+	assert.Nil(t, ans, "MVP must not autonomously send/post answers during orchestration sync")
+}
