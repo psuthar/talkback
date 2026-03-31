@@ -2,6 +2,7 @@ package orchestration_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -227,6 +228,113 @@ func TestEvaluator_MissingParticipantStance(t *testing.T) {
 	}
 	require.NotNil(t, missing)
 	assert.Equal(t, u.ID.String(), missing.MetadataJSON["user_id"])
+	assert.Equal(t, "not_viewed", missing.MetadataJSON["engagement_level"])
+	assert.Equal(t, "p1@example.com", missing.MetadataJSON["participant_email"])
+	assert.Equal(t, "missing_participant_input:"+u.ID.String(), missing.MetadataJSON["dedupe_key"])
+	assert.Equal(t, false, missing.MetadataJSON["has_material_view"])
+	assert.Equal(t, false, missing.MetadataJSON["has_question_view"])
+}
+
+func TestEvaluator_MissingParticipant_ViewedNotResponded(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+	session := createTestSession(t, db, "Viewed session")
+
+	pd := "Decide soon"
+	require.NoError(t, db.UpdateSessionContext(ctx, session.ID, nil, &pd, nil))
+
+	u := &models.User{
+		ID:          uuid.New(),
+		Email:       "engaged@example.com",
+		DisplayName: "Engaged",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleParticipant,
+	}
+	require.NoError(t, db.CreateUser(ctx, u))
+	require.NoError(t, db.CreateSessionMembership(ctx, session.ID, u.ID, "participant", nil))
+
+	artifact, err := db.CreateArtifact(ctx, session.ID, "A", nil)
+	require.NoError(t, err)
+	mid := uuid.New()
+	require.NoError(t, db.CreateMaterial(ctx, &models.Material{
+		ID:          mid,
+		ArtifactID:  artifact.ID,
+		SessionID:   session.ID,
+		Kind:        "document",
+		Filename:    "doc.txt",
+		ContentType: "text/plain",
+		StorageURL:  "data/doc.txt",
+		TextStatus:  models.MaterialTextStatusReady,
+	}))
+	require.NoError(t, db.MarkMaterialsSeenByParticipant(ctx, session.ID, strings.ToLower(strings.TrimSpace(u.Email)), []uuid.UUID{mid}))
+
+	ev := orchestration.NewEvaluator(db)
+	recs, err := ev.EvaluateSession(ctx, session.ID)
+	require.NoError(t, err)
+
+	var missing *models.OrchestrationRecommendation
+	for _, r := range recs {
+		if r.RecommendationType == models.RecommendationTypeMissingParticipant {
+			missing = r
+			break
+		}
+	}
+	require.NotNil(t, missing)
+	assert.Equal(t, "viewed_not_responded", missing.MetadataJSON["engagement_level"])
+	assert.Equal(t, true, missing.MetadataJSON["has_material_view"])
+	assert.Contains(t, missing.Summary, "has viewed session content")
+}
+
+func TestEvaluator_MissingParticipant_MarkDismissedInDB(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+	session := createTestSession(t, db, "Dismiss session")
+	pd := "PD"
+	require.NoError(t, db.UpdateSessionContext(ctx, session.ID, nil, &pd, nil))
+
+	u := &models.User{
+		ID:          uuid.New(),
+		Email:       "dismiss@example.com",
+		DisplayName: "D",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleParticipant,
+	}
+	require.NoError(t, db.CreateUser(ctx, u))
+	require.NoError(t, db.CreateSessionMembership(ctx, session.ID, u.ID, "participant", nil))
+
+	ev := orchestration.NewEvaluator(db)
+	_, err := ev.SyncSessionRecommendations(ctx, session.ID)
+	require.NoError(t, err)
+
+	list, err := db.ListOrchestrationRecommendationsBySessionID(ctx, session.ID)
+	require.NoError(t, err)
+	var target uuid.UUID
+	for _, r := range list {
+		if r.RecommendationType == models.RecommendationTypeMissingParticipant {
+			target = r.ID
+			break
+		}
+	}
+	require.NotEqual(t, uuid.Nil, target)
+
+	require.NoError(t, db.UpdateOrchestrationRecommendationStatus(ctx, target, models.RecommendationStatusDismissed))
+	list2, err := db.ListOrchestrationRecommendationsBySessionID(ctx, session.ID)
+	require.NoError(t, err)
+	var found *models.OrchestrationRecommendation
+	for _, r := range list2 {
+		if r.ID == target {
+			found = r
+			break
+		}
+	}
+	require.NotNil(t, found)
+	assert.Equal(t, models.RecommendationStatusDismissed, found.Status)
 }
 
 func TestEvaluator_DecisionReadinessPositive(t *testing.T) {
