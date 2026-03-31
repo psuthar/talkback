@@ -187,6 +187,22 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "orchestration" && len(parts) >= 5 && parts[4] == "recommendations" {
+		if len(parts) == 5 && r.Method == http.MethodGet {
+			h.RequireAuth(h.ListOrchestrationRecommendations)(w, r)
+			return
+		}
+		if len(parts) == 6 && parts[5] == "sync" && r.Method == http.MethodPost {
+			h.RequireAuth(h.SyncOrchestrationRecommendations)(w, r)
+			return
+		}
+		if len(parts) == 6 && (r.Method == http.MethodPatch || r.Method == http.MethodPut) {
+			h.RequireAuth(h.UpdateOrchestrationRecommendationStatus)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "stance" {
 		if r.Method == http.MethodPost {
 			h.RequireAuth(h.SessionSubmitStance)(w, r)
@@ -545,6 +561,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/orchestration/recommendations - GET
+		if parts[2] == "orchestration" && parts[3] == "recommendations" {
+			if r.Method == http.MethodGet {
+				h.RequireAuth(h.ListOrchestrationRecommendations)(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// /sessions/{id}/materials/{material_id} - DELETE (4 path segments)
 		if parts[2] == "materials" && r.Method == http.MethodDelete {
 			h.DeleteSessionMaterial(w, r)
@@ -622,6 +647,24 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		if parts[2] == "orchestration" && parts[3] == "draft-answers" {
 			if r.Method == http.MethodDelete {
 				h.RequireAuth(h.DeleteOrchestrationDraftAnswer)(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/orchestration/recommendations/sync - POST
+		if parts[2] == "orchestration" && parts[3] == "recommendations" && parts[4] == "sync" {
+			if r.Method == http.MethodPost {
+				h.RequireAuth(h.SyncOrchestrationRecommendations)(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/orchestration/recommendations/{recommendation_id} - PATCH/PUT
+		if parts[2] == "orchestration" && parts[3] == "recommendations" {
+			if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+				h.RequireAuth(h.UpdateOrchestrationRecommendationStatus)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

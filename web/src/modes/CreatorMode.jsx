@@ -213,6 +213,10 @@ export function CreatorMode({
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
   const [answerSubmitting, setAnswerSubmitting] = useState(false)
   const [questionCardsExpanded, setQuestionCardsExpanded] = useState({}) // per-question collapse; default all collapsed
+  const [orchestrationRecommendations, setOrchestrationRecommendations] = useState([])
+  const [orchestrationLoading, setOrchestrationLoading] = useState(false)
+  const [orchestrationFeedback, setOrchestrationFeedback] = useState({ type: '', message: '' })
+  const [orchestrationActioningId, setOrchestrationActioningId] = useState(null)
   // When answering a question, expand that card so the answer form is visible
   useEffect(() => {
     if (answeringQuestionId) {
@@ -518,6 +522,149 @@ export function CreatorMode({
     }
   }
 
+  const loadOrchestrationRecommendations = useCallback(async (sessionId, { sync = false } = {}) => {
+    if (!sessionId) return
+    setOrchestrationLoading(true)
+    setOrchestrationFeedback({ type: '', message: '' })
+    try {
+      const path = sync
+        ? `${apiBaseUrl}/api/sessions/${sessionId}/orchestration/recommendations/sync`
+        : `${apiBaseUrl}/api/sessions/${sessionId}/orchestration/recommendations`
+      const res = await fetch(path, {
+        method: sync ? 'POST' : 'GET',
+        credentials: 'include'
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setOrchestrationFeedback({ type: 'error', message: data?.error || data?.message || `Failed to load recommendations (${res.status})` })
+        return
+      }
+      setOrchestrationRecommendations(Array.isArray(data?.recommendations) ? data.recommendations : [])
+      if (sync) {
+        setOrchestrationFeedback({ type: 'success', message: 'Recommendations refreshed.' })
+      }
+    } catch (err) {
+      setOrchestrationFeedback({ type: 'error', message: `Failed to load recommendations: ${err.message}` })
+    } finally {
+      setOrchestrationLoading(false)
+    }
+  }, [apiBaseUrl])
+
+  const updateRecommendationStatus = useCallback(async (sessionId, recommendationId, status) => {
+    if (!sessionId || !recommendationId || !status) return
+    setOrchestrationActioningId(recommendationId)
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/orchestration/recommendations/${recommendationId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setOrchestrationFeedback({ type: 'error', message: data?.error || data?.message || `Failed to update recommendation (${res.status})` })
+        return
+      }
+      setOrchestrationRecommendations(prev => prev.map(rec => rec.id === recommendationId ? { ...rec, status } : rec))
+      setOrchestrationFeedback({ type: 'success', message: `Recommendation marked ${status}.` })
+    } catch (err) {
+      setOrchestrationFeedback({ type: 'error', message: `Failed to update recommendation: ${err.message}` })
+    } finally {
+      setOrchestrationActioningId(null)
+    }
+  }, [apiBaseUrl])
+
+  const recommendationEvidenceId = (rec, field) => {
+    const evid = Array.isArray(rec?.evidence) ? rec.evidence : []
+    for (const e of evid) {
+      if (e && e[field]) return String(e[field])
+    }
+    return null
+  }
+
+  const approveDraftAnswerFromRecommendation = useCallback(async (sessionId, rec) => {
+    const answerId = recommendationEvidenceId(rec, 'answer_id')
+    if (!sessionId || !answerId) {
+      setOrchestrationFeedback({ type: 'error', message: 'No draft answer found on recommendation evidence.' })
+      return
+    }
+    setOrchestrationActioningId(rec.id)
+    try {
+      const res = await fetch(`${apiBaseUrl}/sessions/${sessionId}/answers/${answerId}/confirm`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmed: true })
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        setOrchestrationFeedback({ type: 'error', message: `Failed to approve draft: ${text || res.status}` })
+        return
+      }
+      await updateRecommendationStatus(sessionId, rec.id, 'approved')
+      if (fetchSessionQuestions) await fetchSessionQuestions(sessionId)
+    } catch (err) {
+      setOrchestrationFeedback({ type: 'error', message: `Failed to approve draft: ${err.message}` })
+    } finally {
+      setOrchestrationActioningId(null)
+    }
+  }, [apiBaseUrl, fetchSessionQuestions, updateRecommendationStatus])
+
+  const dismissDraftAnswerFromRecommendation = useCallback(async (sessionId, rec) => {
+    const answerId = recommendationEvidenceId(rec, 'answer_id')
+    if (!sessionId || !answerId) {
+      setOrchestrationFeedback({ type: 'error', message: 'No draft answer found on recommendation evidence.' })
+      return
+    }
+    setOrchestrationActioningId(rec.id)
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/orchestration/draft-answers/${answerId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        setOrchestrationFeedback({ type: 'error', message: `Failed to dismiss draft: ${text || res.status}` })
+        return
+      }
+      await updateRecommendationStatus(sessionId, rec.id, 'dismissed')
+      if (fetchSessionQuestions) await fetchSessionQuestions(sessionId)
+    } catch (err) {
+      setOrchestrationFeedback({ type: 'error', message: `Failed to dismiss draft: ${err.message}` })
+    } finally {
+      setOrchestrationActioningId(null)
+    }
+  }, [apiBaseUrl, fetchSessionQuestions, updateRecommendationStatus])
+
+  const generateDraftForRecommendation = useCallback(async (sessionId, rec) => {
+    const questionId = recommendationEvidenceId(rec, 'question_id')
+    if (!sessionId || !questionId) {
+      setOrchestrationFeedback({ type: 'error', message: 'No question found on recommendation evidence.' })
+      return
+    }
+    setOrchestrationActioningId(rec.id)
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/orchestration/draft-answers`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question_id: questionId })
+      })
+      if (!res.ok) {
+        const text = await res.text()
+        setOrchestrationFeedback({ type: 'error', message: `Failed to generate draft: ${text || res.status}` })
+        return
+      }
+      setOrchestrationFeedback({ type: 'success', message: 'Draft answer generated.' })
+      if (fetchSessionQuestions) await fetchSessionQuestions(sessionId)
+      await loadOrchestrationRecommendations(sessionId, { sync: true })
+    } catch (err) {
+      setOrchestrationFeedback({ type: 'error', message: `Failed to generate draft: ${err.message}` })
+    } finally {
+      setOrchestrationActioningId(null)
+    }
+  }, [apiBaseUrl, fetchSessionQuestions, loadOrchestrationRecommendations])
+
   const confirmAnswerVoice = async () => {
     if (!answerVoiceTranscribedText.trim()) {
       setAnswerVoiceFeedback({ type: 'error', message: 'Please enter an answer before submitting.' })
@@ -563,6 +710,12 @@ export function CreatorMode({
     fetchSessionQuestions(sessionId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSession?.session?.id])
+
+  useEffect(() => {
+    const sid = currentSession?.session?.id
+    if (!sid) return
+    loadOrchestrationRecommendations(sid)
+  }, [currentSession?.session?.id, loadOrchestrationRecommendations])
 
   // Determine if we have a valid session - only show participant link when session exists
   const hasValidSession = currentSession && (
@@ -1808,6 +1961,70 @@ export function CreatorMode({
           </div>
           {!rightPanelCollapsed && (
             <div className="creator-qa-scroll">
+              <div style={{ margin: '10px 12px', padding: '10px', border: '1px solid #e3e3e3', borderRadius: '6px', backgroundColor: '#fafafa' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '13px' }}>AI Suggested Next Actions</strong>
+                  <button
+                    type="button"
+                    onClick={() => loadOrchestrationRecommendations(currentSession?.session?.id, { sync: true })}
+                    disabled={orchestrationLoading || !currentSession?.session?.id}
+                    style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}
+                  >
+                    {orchestrationLoading ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                </div>
+                {orchestrationFeedback?.message && (
+                  <div className={orchestrationFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
+                    {orchestrationFeedback.message}
+                  </div>
+                )}
+                {orchestrationRecommendations.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: '#666' }}>
+                    No recommendations right now.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {orchestrationRecommendations.map((rec) => {
+                      const isDraftReview = rec.recommendation_type === 'review_draft_answer'
+                      const isUnanswered = rec.recommendation_type === 'unanswered_question'
+                      const actioning = orchestrationActioningId === rec.id
+                      return (
+                        <div key={rec.id} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: isDraftReview ? '#fff8e1' : '#fff' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '11px' }}>
+                            <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
+                            <span style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
+                          </div>
+                          <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#222' }}>{rec.summary}</div>
+                          {rec.suggested_action && <div style={{ fontSize: '12px', color: '#444', marginBottom: '6px' }}>{rec.suggested_action}</div>}
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {isDraftReview && (
+                              <>
+                                <button type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                                  {actioning ? '…' : 'Approve draft'}
+                                </button>
+                                <button type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#ef9a9a' }}>
+                                  Dismiss draft
+                                </button>
+                              </>
+                            )}
+                            {isUnanswered && (
+                              <button type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                                Generate draft
+                              </button>
+                            )}
+                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                              Mark complete
+                            </button>
+                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e0e0', color: '#333' }}>
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
               {questions.length > 0 && (
                 <div style={{ padding: '4px 12px', fontSize: '12px', color: '#666', borderBottom: '1px solid #e0e0e0' }}>
                   {questions.length} question{questions.length !== 1 ? 's' : ''}
