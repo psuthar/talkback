@@ -75,7 +75,7 @@ When working in this repository, Claude must:
 When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12"), follow this workflow:
 
 ### Jira Status Management
-- Before any code edits, test execution, or implementation-side branch work, move the Jira ticket to:
+- Before any code edits, test execution, or **implementation commits**, move the Jira ticket to:
   In Progress
 - When all implementation, validation, and PR creation are complete, move the Jira ticket to:
   In Review
@@ -83,11 +83,13 @@ When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12
 ### Jira Status Enforcement (MANDATORY)
 - Required implementation sequence:
   1) Transition ticket to **In Progress**
-  2) Implement + validate
-  3) Create PR
-  4) Transition ticket to **In Review**
+  2) **Create the feature branch from `main`** (`feat/<ticket-number>`) and do all implementation work on that branch—**before** writing product code or committing implementation changes, check out the branch so passing tests map cleanly to a PR from that branch.
+  3) Implement + validate (commits on the feature branch only)
+  4) Push branch and create PR
+  5) Transition ticket to **In Review**
 - Hard-stop rules:
   - Do not modify product code, run implementation tests, or open/finalize a PR until step (1) is complete.
+  - Do not put implementation work directly on `main`; create `feat/<ticket>` first, then commit there.
   - Do not transition to **In Review** before PR creation is complete.
 - Verification evidence required in completion output:
   - confirmation that **In Progress** transition was applied
@@ -99,10 +101,12 @@ When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12
   - add a Jira comment noting correction and linking the implementation branch/PR
 
 ### Branching
-- Create a new branch from main:
+- **Order:** After **In Progress**, create and check out the branch **before** implementation commits (e.g. `git fetch origin`, `git checkout main`, `git pull`, `git checkout -b feat/<ticket-number>`).
+- Branch name:
   feat/<ticket-number>
 - Example:
   feat/SCRUM-12
+- Rationale: if tests pass, you push the same branch and open the PR without moving commits off `main` or cherry-picking.
 
 ### Scope & Approach
 - Read and understand the Jira ticket before coding

@@ -24,6 +24,8 @@ type Handlers struct {
 	Hub               *SessionHub
 	Storage           storage.Interface
 	InvitationService *invitations.Service
+	// OrchestrationDraftGuard limits draft-generation rate and concurrency (SCRUM-20). Never nil after NewHandlers.
+	OrchestrationDraftGuard *orchestrationDraftGuard
 	// IndexAsync triggers async RAG re-indexing for a session. nil means no-op (used in tests).
 	// In production, set to: func(id uuid.UUID) { rag.IndexSessionAsync(id, db, store) }
 	IndexAsync func(sessionID uuid.UUID)
@@ -41,11 +43,12 @@ func NewHandlers(db *database.DB, jobProcessor *utils.JobProcessor, store storag
 	hub := NewSessionHub()
 	go hub.Run()
 	return &Handlers{
-		DB:                db,
-		JobProcessor:      jobProcessor,
-		Hub:               hub,
-		Storage:           store,
-		InvitationService: invSvc,
+		DB:                      db,
+		JobProcessor:            jobProcessor,
+		Hub:                     hub,
+		Storage:                 store,
+		InvitationService:       invSvc,
+		OrchestrationDraftGuard: newOrchestrationDraftGuardFromEnv(),
 	}
 }
 
