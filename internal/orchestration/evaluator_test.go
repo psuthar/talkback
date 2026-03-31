@@ -56,11 +56,94 @@ func TestEvaluator_UnansweredRootQuestion(t *testing.T) {
 	}
 	require.NotNil(t, unanswered)
 	assert.Equal(t, models.RecommendationStatusNew, unanswered.Status)
-	assert.Contains(t, unanswered.Summary, "Unanswered")
+	assert.Contains(t, unanswered.Summary, "Unanswered question")
 	require.Len(t, unanswered.Evidence, 1)
 	assert.Equal(t, "question", unanswered.Evidence[0].SourceType)
+	require.NotNil(t, unanswered.MetadataJSON)
+	assert.Equal(t, "unanswered", unanswered.MetadataJSON["reason"])
+	assert.Equal(t, false, unanswered.MetadataJSON["overdue"])
+	assert.Equal(t, "unanswered_question:"+q.ID.String(), unanswered.MetadataJSON["dedupe_key"])
 	require.NotNil(t, readiness)
 	assert.Equal(t, "inputs_incomplete", readiness.MetadataJSON["readiness"])
+}
+
+func TestEvaluator_OverdueUnansweredQuestion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+	session := createTestSession(t, db, "Overdue session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "A", nil)
+	require.NoError(t, err)
+
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      session.ID,
+		QuestionText:   "Stale question?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, db.CreateQuestion(ctx, q))
+
+	_, err = db.Pool.Exec(ctx, `UPDATE questions SET created_at = now() - interval '72 hours' WHERE id = $1`, q.ID)
+	require.NoError(t, err)
+
+	ev := orchestration.NewEvaluator(db)
+	recs, err := ev.EvaluateSession(ctx, session.ID)
+	require.NoError(t, err)
+
+	var unanswered *models.OrchestrationRecommendation
+	for _, r := range recs {
+		if r.RecommendationType == models.RecommendationTypeUnansweredQuestion {
+			unanswered = r
+			break
+		}
+	}
+	require.NotNil(t, unanswered)
+	assert.Contains(t, unanswered.Summary, "Overdue unanswered question")
+	assert.Equal(t, "overdue_unanswered", unanswered.MetadataJSON["reason"])
+	assert.Equal(t, true, unanswered.MetadataJSON["overdue"])
+}
+
+func TestEvaluator_TwoUnansweredQuestionsDistinctDedupeKeys(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+
+	ctx := context.Background()
+	session := createTestSession(t, db, "Dedupe session")
+	artifact, err := db.CreateArtifact(ctx, session.ID, "A", nil)
+	require.NoError(t, err)
+
+	for i := 0; i < 2; i++ {
+		q := &models.Question{
+			ID:             uuid.New(),
+			ArtifactID:     artifact.ID,
+			SessionID:      session.ID,
+			QuestionText:   "Q?",
+			QuestionSource: models.QuestionSourceText,
+		}
+		require.NoError(t, db.CreateQuestion(ctx, q))
+	}
+
+	ev := orchestration.NewEvaluator(db)
+	recs, err := ev.EvaluateSession(ctx, session.ID)
+	require.NoError(t, err)
+
+	keys := make(map[string]struct{})
+	var unanswered int
+	for _, r := range recs {
+		if r.RecommendationType != models.RecommendationTypeUnansweredQuestion {
+			continue
+		}
+		unanswered++
+		k := r.MetadataJSON["dedupe_key"].(string)
+		require.NotEmpty(t, k)
+		require.NotContains(t, keys, k, "duplicate dedupe_key for two questions")
+		keys[k] = struct{}{}
+	}
+	assert.Equal(t, 2, unanswered, "one recommendation per unanswered root question")
 }
 
 func TestEvaluator_ReviewDraftAnswer(t *testing.T) {
