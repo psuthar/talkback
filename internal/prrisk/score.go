@@ -80,6 +80,10 @@ func Score(s Signals, w ScoreWeights, jiraKey string) Result {
 		add("domain_processing", "Processing/transcription pipeline changed", w.ProcessingPoints,
 			fmt.Sprintf("%d file(s)", s.DomainHits[DomainProcessing]))
 	}
+	if s.DomainHits[DomainOrchestration] > 0 {
+		add("domain_orchestration", "Creator orchestration/recommendation flow changed", w.OrchestrationPoints,
+			fmt.Sprintf("%d file(s)", s.DomainHits[DomainOrchestration]))
+	}
 
 	webLOC := webChurn(s)
 	if webLOC >= w.WebLargeLOC {

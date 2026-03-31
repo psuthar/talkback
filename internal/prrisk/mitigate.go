@@ -36,6 +36,10 @@ var mitigationMap = map[string][]string{
 		"Run material upload + processing pipeline smoke on a sample file.",
 		"Confirm Whisper/job worker env in target environment.",
 	},
+	"domain_orchestration": {
+		"Validate creator orchestration flows (recommendation list/sync, draft approve/reject).",
+		"Verify orchestration remains human-in-the-loop (no autonomous send/post actions).",
+	},
 	"web_large": {
 		"Run `npm run build` and spot-check creator/participant UIs.",
 		"Cross-browser smoke if CSS/layout changed.",

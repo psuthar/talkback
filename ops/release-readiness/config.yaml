@@ -15,6 +15,8 @@ validations:
     description: "Viewer renders uploaded materials"
   qa_rag:
     description: "Q&A and answer generation with citations"
+  orchestration:
+    description: "Creator orchestration recommendations and draft approval/rejection flows"
 
 # Map changed paths → risk categories (first match wins per file; a file can trigger multiple via multiple rules)
 risk_from_paths:
@@ -56,6 +58,12 @@ risk_from_paths:
       - "internal/handlers/session_ask.go"
       - "internal/rag/**"
       - "internal/handlers/*question*"
+  - categories: [orchestration]
+    patterns:
+      - "internal/orchestration/**"
+      - "internal/handlers/session_orchestration*.go"
+      - "internal/database/orchestration_recommendations.go"
+      - "web/src/modes/CreatorMode*"
   - categories: [migrations]
     patterns:
       - "db/migrations/**"
@@ -75,11 +83,13 @@ infer_validations_when_pass:
     - auth_session
     - upload_extraction
     - qa_rag
+    - orchestration
   e2e:
     - auth_session
     - nav_assets
     - viewer_materials
     - qa_rag
+    - orchestration
 
 scoring:
   max_score: 100

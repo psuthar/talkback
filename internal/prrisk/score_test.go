@@ -34,13 +34,14 @@ func TestScoreAuthAndMigrations(t *testing.T) {
 		Files: []FileChange{
 			{Path: "internal/auth/x.go", Added: 10, Deleted: 0},
 			{Path: "db/migrations/1.up.sql", Added: 5, Deleted: 0},
+			{Path: "internal/orchestration/evaluator.go", Added: 3, Deleted: 0},
 			{Path: "internal/foo/bar_test.go", Added: 20, Deleted: 0},
 		},
-		FileCount:      3,
-		TotalAdded:     35,
+		FileCount:      4,
+		TotalAdded:     38,
 		TotalDeleted:   0,
-		TotalLOC:       35,
-		DomainHits:     map[string]int{DomainAuth: 1, DomainMigrations: 1, DomainTests: 1},
+		TotalLOC:       38,
+		DomainHits:     map[string]int{DomainAuth: 1, DomainMigrations: 1, DomainOrchestration: 1, DomainTests: 1},
 		TestFiles:      1,
 		MigrationFiles: 1,
 	}
@@ -70,10 +71,11 @@ func TestScoreSpecificFactors(t *testing.T) {
 		Files: []FileChange{
 			{Path: "internal/auth/x.go", Added: 10},
 			{Path: "db/migrations/1.up.sql", Added: 5},
+			{Path: "internal/orchestration/evaluator.go", Added: 1},
 		},
-		FileCount:      2,
-		TotalLOC:       15,
-		DomainHits:     map[string]int{DomainAuth: 1, DomainMigrations: 1},
+		FileCount:      3,
+		TotalLOC:       16,
+		DomainHits:     map[string]int{DomainAuth: 1, DomainMigrations: 1, DomainOrchestration: 1},
 		MigrationFiles: 1,
 	}
 	r := Score(s, DefaultWeights(), "")
@@ -82,6 +84,9 @@ func TestScoreSpecificFactors(t *testing.T) {
 	}
 	if !hasFactorID(r.Factors, "domain_migrations") {
 		t.Error("expected domain_migrations factor")
+	}
+	if !hasFactorID(r.Factors, "domain_orchestration") {
+		t.Error("expected domain_orchestration factor")
 	}
 	if r.RiskBand != "high" && r.RiskBand != "critical" {
 		t.Errorf("expected high or critical risk band, got %s", r.RiskBand)

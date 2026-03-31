@@ -66,12 +66,20 @@ func ClassifyArea(path string) string {
 	// Storage and remaining internal areas.
 	case strings.HasPrefix(p, "internal/storage/"):
 		return DomainStorage
+	case strings.HasPrefix(p, "internal/orchestration/"):
+		return DomainOrchestration
+	case strings.Contains(p, "internal/handlers/session_orchestration"):
+		return DomainOrchestration
+	case strings.Contains(p, "internal/database/orchestration_recommendations"):
+		return DomainOrchestration
 	case strings.HasPrefix(p, "internal/database/"):
 		return DomainDatabase
 	case strings.HasPrefix(p, "internal/handlers/"):
 		return DomainAPI
 
 	// Frontend.
+	case strings.Contains(p, "web/src/modes/creatormode"):
+		return DomainOrchestration
 	case strings.HasPrefix(p, "web/"):
 		return DomainWeb
 
@@ -188,7 +196,7 @@ func touchesSensitiveCodeWithoutTests(s Signals) bool {
 		}
 		d := ClassifyDomain(f.Path)
 		switch d {
-		case DomainAuth, DomainAPI, DomainDatabase, DomainRAG, DomainProcessing, DomainWeb, DomainMigrations:
+		case DomainAuth, DomainAPI, DomainDatabase, DomainRAG, DomainProcessing, DomainOrchestration, DomainWeb, DomainMigrations:
 			return true
 		}
 	}

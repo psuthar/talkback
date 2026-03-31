@@ -26,6 +26,7 @@ func laneForFactorID(factorID string) string {
 		"domain_migrations",
 		"domain_rag",
 		"domain_processing",
+		"domain_orchestration",
 		"web_large":
 		return CategoryCode
 	case
@@ -50,6 +51,7 @@ func testConfidenceScore(s Signals, ci *riskcontext.ContextInsights) (float64, *
 	sensitiveChanged := s.DomainHits[DomainAuth] > 0 ||
 		s.DomainHits[DomainRAG] > 0 ||
 		s.DomainHits[DomainProcessing] > 0 ||
+		s.DomainHits[DomainOrchestration] > 0 ||
 		s.DomainHits[DomainMigrations] > 0
 
 	if !sensitiveChanged {

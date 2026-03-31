@@ -144,6 +144,25 @@ func TestReducerE2ETakesPriorityOverUnit(t *testing.T) {
 	}
 }
 
+// TestReducerE2EEvidenceLowersOrchestrationRisk verifies orchestration domain
+// gets E2E evidence reducer support.
+func TestReducerE2EEvidenceLowersOrchestrationRisk(t *testing.T) {
+	s := Signals{
+		DomainHits:        map[string]int{DomainOrchestration: 1},
+		TestE2EDomainHits: map[string]int{DomainOrchestration: 1},
+	}
+	factors := []RiskFactor{{ID: "domain_orchestration", Points: 10}}
+	w := DefaultWeights()
+	reducers := DetectReducers(s, factors, w)
+	found := findReducer(reducers, "domain_orchestration_e2e_evidence")
+	if found == nil {
+		t.Fatal("expected domain_orchestration_e2e_evidence reducer")
+	}
+	if found.Points != w.E2ETestEvidenceReducerPoints {
+		t.Errorf("points: want %v got %v", w.E2ETestEvidenceReducerPoints, found.Points)
+	}
+}
+
 // TestReducerTestOnlyDiff verifies the reducer fires when all changed files are tests.
 func TestReducerTestOnlyDiff(t *testing.T) {
 	s := Signals{
