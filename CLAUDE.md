@@ -93,6 +93,7 @@ When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12
   - confirmation that **In Progress** transition was applied
   - confirmation that **In Review** transition was applied
   - PR URL
+  - confirmation that a **structured Jira completion comment** was posted (see **Jira completion comment** below)
 - If a transition is missed:
   - immediately correct status sequence in Jira
   - add a Jira comment noting correction and linking the implementation branch/PR
@@ -120,11 +121,20 @@ When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12
   - any affected integration or E2E flows
 - Do not proceed if validation fails
 
+### Jira completion comment (MANDATORY)
+When implementation and the PR are ready (before or immediately after transitioning to **In Review**), add a **regular issue comment** on the Jira ticket—not only transition text—so the Comments tab has a durable record. Use this structure (same spirit as SCRUM-15):
+
+1. **Opening line:** `{TICKET} complete.` (or `Implementation complete.`) plus the **full PR URL** (e.g. `https://github.com/psuthar/talkback/pull/N`).
+2. **Delivered:** bullet list of concrete outcomes (what shipped: behavior, APIs, migrations, notable files or subsystems—enough for support/product to skim).
+3. **Validation:** bullet list of **exact commands** run (e.g. `go test ./...`, targeted packages, smoke/E2E if applicable) and pass/fail outcome.
+4. **Risks / deployment:** short bullets if relevant (migrations, ordering, env flags, backward compatibility).
+5. **Follow-up:** optional bullets (tech debt, future tickets, monitoring).
+
+If Jira MCP or API is available, use it to post this comment; otherwise note in completion output that the user should paste it. Do not rely on GitHub–Jira dev links alone to replace this narrative.
+
 ### Jira Updates
-- Update the Jira ticket with:
-  - implementation notes (if helpful)
-  - follow-up work discovered during implementation
-- Do not silently expand scope
+- Beyond the completion comment above, add mid-flight notes when useful (blockers, scope clarifications).
+- Do not silently expand scope.
 
 ### Commits
 - Use commit messages prefixed with the ticket number
@@ -143,11 +153,12 @@ PR must include:
 - Jira ticket reference
 
 ### Completion Output
-Return:
+Return (mirror the Jira completion comment where applicable):
 - branch name
-- validations executed
+- validations executed (commands + outcome)
 - PR link
 - Jira status transition confirmations (In Progress and In Review)
+- confirmation that the structured Jira completion comment was posted (or paste the comment body if posting failed)
 - summary of changes
 - follow-up actions
 
