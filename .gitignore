@@ -36,7 +36,8 @@ venv/
 *.out
 go.work
 
-# Cursor MCP config (may contain GitHub PAT)
+# MCP configs (may contain API tokens/secrets)
+.mcp.json
 .cursor/mcp.json
 
 # GitHub CLI: local PR description for `gh pr create/edit --body-file` (CLAUDE.md §7)
