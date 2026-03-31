@@ -1,11 +1,13 @@
-// Package orchestration implements creator-facing session orchestration (SCRUM-7/9):
+// Package orchestration implements creator-facing session orchestration (SCRUM-7/9/10):
 // evaluating session state and producing typed recommendations (human-in-the-loop; no autonomous actions).
+// Unanswered/overdue question handling: see OverdueUnansweredAfter and buildUnansweredQuestionRecommendation.
 package orchestration
 
 import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
@@ -14,9 +16,15 @@ import (
 
 const maxQuestionsScan = 500
 
+// OverdueUnansweredAfter is how long a root question may remain without an answer before it is flagged overdue (SCRUM-10 MVP).
+// Exposed so callers/tests can adjust; future: env or session policy.
+var OverdueUnansweredAfter = 48 * time.Hour
+
 // Evaluator loads TalkBack session state and emits orchestration recommendations.
 type Evaluator struct {
 	DB *database.DB
+	// Now overrides the clock for tests; nil uses time.Now.
+	Now func() time.Time
 }
 
 // NewEvaluator returns an evaluator backed by the given DB.
@@ -45,8 +53,9 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 	}
 
 	var out []*models.OrchestrationRecommendation
+	now := e.now()
 
-	// 1) Root questions without an answer → unanswered_question
+	// 1) Root questions without an answer → unanswered_question (SCRUM-10: overdue + reason/context + dedupe_key; one rec per question)
 	for _, q := range questions {
 		if q.ParentQuestionID != nil {
 			continue
@@ -56,18 +65,8 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 			return nil, fmt.Errorf("orchestration: answer for question %s: %w", q.ID, err)
 		}
 		if ans == nil {
-			summary := fmt.Sprintf("Unanswered question: %s", truncate(q.QuestionText, 120))
-			action := "Review the question and add or generate an answer."
-			out = append(out, &models.OrchestrationRecommendation{
-				SessionID:          sessionID,
-				RecommendationType: models.RecommendationTypeUnansweredQuestion,
-				Status:             models.RecommendationStatusNew,
-				Summary:            summary,
-				SuggestedAction:    &action,
-				Evidence: []models.RecommendationEvidenceRef{
-					{SourceType: "question", QuestionID: &q.ID},
-				},
-			})
+			rec := buildUnansweredQuestionRecommendation(sessionID, q, now)
+			out = append(out, rec)
 			continue
 		}
 		// 2) AI-generated answer not confirmed → review_draft_answer
@@ -186,6 +185,77 @@ func (e *Evaluator) SyncSessionRecommendations(ctx context.Context, sessionID uu
 		}
 	}
 	return recs, nil
+}
+
+func (e *Evaluator) now() time.Time {
+	if e != nil && e.Now != nil {
+		return e.Now()
+	}
+	return time.Now()
+}
+
+// buildUnansweredQuestionRecommendation emits a single recommendation per root question (no duplicate unanswered vs overdue rows).
+func buildUnansweredQuestionRecommendation(sessionID uuid.UUID, q *models.Question, now time.Time) *models.OrchestrationRecommendation {
+	dedupeKey := "unanswered_question:" + q.ID.String()
+	age := now.Sub(q.CreatedAt)
+	overdue := age >= OverdueUnansweredAfter
+	ageStr := humanizeDuration(age)
+
+	reason := "unanswered"
+	if overdue {
+		reason = "overdue_unanswered"
+	}
+
+	var summary string
+	if overdue {
+		summary = fmt.Sprintf(
+			"Overdue unanswered question (open %s, threshold %s): %s",
+			ageStr,
+			humanizeDuration(OverdueUnansweredAfter),
+			truncate(q.QuestionText, 100),
+		)
+	} else {
+		summary = fmt.Sprintf("Unanswered question (open %s): %s", ageStr, truncate(q.QuestionText, 110))
+	}
+	action := "Review the question and add or generate an answer."
+	if overdue {
+		a := "Prioritize answering or explicitly defer this question so participants are not blocked."
+		action = a
+	}
+
+	return &models.OrchestrationRecommendation{
+		SessionID:          sessionID,
+		RecommendationType: models.RecommendationTypeUnansweredQuestion,
+		Status:             models.RecommendationStatusNew,
+		Summary:            summary,
+		SuggestedAction:    &action,
+		Evidence: []models.RecommendationEvidenceRef{
+			{SourceType: "question", QuestionID: &q.ID},
+		},
+		MetadataJSON: map[string]interface{}{
+			"dedupe_key":                dedupeKey,
+			"reason":                    reason,
+			"question_age_seconds":      int64(age.Seconds()),
+			"overdue":                   overdue,
+			"overdue_threshold_seconds": int64(OverdueUnansweredAfter.Seconds()),
+		},
+	}
+}
+
+func humanizeDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Minute {
+		return "under 1m"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%.0fh", d.Hours())
+	}
+	return fmt.Sprintf("%.0fd", d.Hours()/24)
 }
 
 func isAIDraftPendingReview(a *models.Answer) bool {
