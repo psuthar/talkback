@@ -70,6 +70,109 @@ When working in this repository, Claude must:
 
 ---
 
+## 7. Jira Ticket Execution Workflow
+
+When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12"), follow this workflow:
+
+### Jira Status Management
+- Before any code edits, test execution, or implementation-side branch work, move the Jira ticket to:
+  In Progress
+- When all implementation, validation, and PR creation are complete, move the Jira ticket to:
+  In Review
+
+### Jira Status Enforcement (MANDATORY)
+- Required implementation sequence:
+  1) Transition ticket to **In Progress**
+  2) Implement + validate
+  3) Create PR
+  4) Transition ticket to **In Review**
+- Hard-stop rules:
+  - Do not modify product code, run implementation tests, or open/finalize a PR until step (1) is complete.
+  - Do not transition to **In Review** before PR creation is complete.
+- Verification evidence required in completion output:
+  - confirmation that **In Progress** transition was applied
+  - confirmation that **In Review** transition was applied
+  - PR URL
+- If a transition is missed:
+  - immediately correct status sequence in Jira
+  - add a Jira comment noting correction and linking the implementation branch/PR
+
+### Branching
+- Create a new branch from main:
+  feat/<ticket-number>
+- Example:
+  feat/SCRUM-12
+
+### Scope & Approach
+- Read and understand the Jira ticket before coding
+- Implement only the requested scope unless additional changes are required for correctness
+- Prefer minimal, clean, well-structured changes
+- Do not introduce unrelated refactors
+
+### Testing
+- Add or update automated tests for all new or changed behavior
+- Ensure meaningful coverage
+- Do not skip tests
+
+### Validation
+- Run relevant validation before completion:
+  - backend tests (`go test ./...`)
+  - any affected integration or E2E flows
+- Do not proceed if validation fails
+
+### Jira Updates
+- Update the Jira ticket with:
+  - implementation notes (if helpful)
+  - follow-up work discovered during implementation
+- Do not silently expand scope
+
+### Commits
+- Use commit messages prefixed with the ticket number
+- Example:
+  SCRUM-12: add session state evaluator
+
+### Pull Request
+- Push branch to GitHub
+- Create PR targeting main
+
+PR must include:
+- summary of changes
+- testing performed
+- risks / edge cases
+- follow-up items
+- Jira ticket reference
+
+### Completion Output
+Return:
+- branch name
+- validations executed
+- PR link
+- Jira status transition confirmations (In Progress and In Review)
+- summary of changes
+- follow-up actions
+
+---
+
+## 8. Planning Mode Behavior
+
+If the user explicitly requests planning (e.g. "Plan SCRUM-13"):
+
+- Do NOT:
+  - write code
+  - create branches
+  - update Jira status
+
+- Instead:
+  - analyze scope
+  - identify impacted systems (backend, frontend, DB)
+  - define test strategy
+  - highlight risks and unknowns
+  - propose implementation plan
+
+Wait for confirmation before proceeding to implementation.
+
+---
+
 ## Subagent routing
 
 Route tasks to specialized TalkBack subagents as follows:
