@@ -72,6 +72,8 @@ func ClassifyArea(path string) string {
 		return DomainOrchestration
 	case strings.Contains(p, "internal/database/orchestration_recommendations"):
 		return DomainOrchestration
+	case strings.Contains(p, "internal/database/orchestration_recommendation_audit"):
+		return DomainOrchestration
 	case strings.HasPrefix(p, "internal/database/"):
 		return DomainDatabase
 	case strings.HasPrefix(p, "internal/handlers/"):

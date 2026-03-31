@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS orchestration_recommendation_status_audit;

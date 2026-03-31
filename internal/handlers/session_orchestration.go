@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/orchestration"
 )
@@ -85,6 +88,37 @@ func (h *Handlers) ListOrchestrationRecommendations(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, map[string]interface{}{"recommendations": recs})
 }
 
+// ListOrchestrationRecommendationStatusAudit handles GET /api/sessions/:id/orchestration/recommendations/audit.
+func (h *Handlers) ListOrchestrationRecommendationStatusAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionID, action, tail, ok := parseSessionOrchestrationPath(r.URL.Path)
+	if !ok || action != "recommendations" || tail != "audit" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	if _, _, ok := h.requireCreatorOrAdminForSession(w, r, sessionID); !ok {
+		return
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 500 {
+			http.Error(w, "Invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = n
+	}
+	rows, err := h.DB.ListOrchestrationRecommendationStatusAuditBySessionID(r.Context(), sessionID, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list recommendation status audit: %v", err), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status_audit": rows})
+}
+
 // SyncOrchestrationRecommendations handles POST /api/sessions/:id/orchestration/recommendations/sync.
 func (h *Handlers) SyncOrchestrationRecommendations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -119,7 +153,8 @@ func (h *Handlers) UpdateOrchestrationRecommendationStatus(w http.ResponseWriter
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	if _, _, ok := h.requireCreatorOrAdminForSession(w, r, sessionID); !ok {
+	user, _, ok := h.requireCreatorOrAdminForSession(w, r, sessionID)
+	if !ok {
 		return
 	}
 	recID, err := uuid.Parse(recIDStr)
@@ -144,7 +179,8 @@ func (h *Handlers) UpdateOrchestrationRecommendationStatus(w http.ResponseWriter
 		return
 	}
 	var req struct {
-		Status models.OrchestrationRecommendationStatus `json:"status"`
+		Status        models.OrchestrationRecommendationStatus `json:"status"`
+		ClientSurface *string                                  `json:"client_surface,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -160,11 +196,14 @@ func (h *Handlers) UpdateOrchestrationRecommendationStatus(w http.ResponseWriter
 		http.Error(w, "Invalid status", http.StatusBadRequest)
 		return
 	}
-	if err := h.DB.UpdateOrchestrationRecommendationStatus(r.Context(), recID, req.Status); err != nil {
+	if err := h.DB.UpdateOrchestrationRecommendationStatusWithAudit(r.Context(), sessionID, recID, req.Status, user.ID, req.ClientSurface); err != nil {
+		if errors.Is(err, database.ErrOrchestrationRecommendationNotFound) {
+			http.Error(w, "Recommendation not found in this session", http.StatusNotFound)
+			return
+		}
 		http.Error(w, fmt.Sprintf("Failed to update recommendation status: %v", err), http.StatusInternalServerError)
 		return
 	}
 	found.Status = req.Status
 	writeJSON(w, http.StatusOK, found)
 }
-
