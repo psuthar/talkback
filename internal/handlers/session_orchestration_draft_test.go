@@ -193,3 +193,72 @@ func TestOrchestrationDraft_DeleteDraft(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, again)
 }
+
+// TestOrchestrationDraft_CreatorApproveAndRejectFlow verifies creator can approve a draft answer
+// and can reject (delete) an unconfirmed draft in the review flow.
+func TestOrchestrationDraft_CreatorApproveAndRejectFlow(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, ls, sess := seedCreatorAndSession(t, h, "draft-review-flow")
+	ctx := context.Background()
+	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact", nil)
+	require.NoError(t, err)
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      sess.ID,
+		QuestionText:   "Approve this draft?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, h.DB.CreateQuestion(ctx, q))
+	dm := orchestration.DraftAnswerModel
+	a := &models.Answer{
+		ID:           uuid.New(),
+		QuestionID:   q.ID,
+		AnswerText:   "suggested",
+		AnswerStatus: models.AnswerStatusAnswered,
+		Confidence:   0.7,
+		Citations:    []models.Citation{},
+		Model:        &dm,
+		Confirmed:    false,
+	}
+	require.NoError(t, h.DB.CreateAnswer(ctx, a))
+
+	// Approve (confirm=true)
+	approveBody, _ := json.Marshal(map[string]bool{"confirmed": true})
+	approveReq := httptest.NewRequest(http.MethodPatch, "/sessions/"+sess.ID.String()+"/answers/"+a.ID.String()+"/confirm", bytes.NewReader(approveBody))
+	approveReq.Header.Set("Content-Type", "application/json")
+	approveReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	approveW := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateAnswerConfirmed)(approveW, approveReq)
+	require.Equal(t, http.StatusOK, approveW.Code, approveW.Body.String())
+
+	approved, err := h.DB.GetAnswerByID(ctx, a.ID)
+	require.NoError(t, err)
+	require.NotNil(t, approved)
+	assert.True(t, approved.Confirmed)
+
+	// New unconfirmed draft can be rejected (deleted)
+	a2 := &models.Answer{
+		ID:           uuid.New(),
+		QuestionID:   q.ID,
+		AnswerText:   "another suggested",
+		AnswerStatus: models.AnswerStatusAnswered,
+		Confidence:   0.6,
+		Citations:    []models.Citation{},
+		Model:        &dm,
+		Confirmed:    false,
+	}
+	require.NoError(t, h.DB.CreateAnswer(ctx, a2))
+	rejectReq := httptest.NewRequest(http.MethodDelete, "/sessions/"+sess.ID.String()+"/orchestration/draft-answers/"+a2.ID.String(), nil)
+	rejectReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	rejectW := httptest.NewRecorder()
+	h.RequireAuth(h.DeleteOrchestrationDraftAnswer)(rejectW, rejectReq)
+	require.Equal(t, http.StatusNoContent, rejectW.Code, rejectW.Body.String())
+
+	afterReject, err := h.DB.GetAnswerByID(ctx, a2.ID)
+	require.NoError(t, err)
+	assert.Nil(t, afterReject)
+}
