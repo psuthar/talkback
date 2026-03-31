@@ -57,6 +57,16 @@ func TestActionsProcessingGate(t *testing.T) {
 	}
 }
 
+// TestActionsOrchestrationGate verifies orchestration_creator_gate fires at high risk.
+func TestActionsOrchestrationGate(t *testing.T) {
+	s := Signals{DomainHits: map[string]int{DomainOrchestration: 1}}
+	factors := []RiskFactor{{ID: "domain_orchestration", Points: 10}}
+	acts := ComputeRequiredActions(s, factors, nil, 50, "high", nil)
+	if !hasAction(acts, "orchestration_creator_gate") {
+		t.Error("expected orchestration_creator_gate action")
+	}
+}
+
 // TestActionsWorkflowConfigValidation verifies workflow_config_validation fires at high risk.
 func TestActionsWorkflowConfigValidation(t *testing.T) {
 	s := Signals{DomainHits: map[string]int{DomainWorkflows: 1}}

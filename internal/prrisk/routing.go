@@ -42,6 +42,9 @@ func ComputeRoutingHints(s Signals, factors []RiskFactor, insights *riskcontext.
 	if s.DomainHits[DomainRAG] > 0 || s.DomainHits[DomainProcessing] > 0 {
 		add("Route processing/RAG changes to someone who owns ingestion, jobs, and Q&A quality.")
 	}
+	if s.DomainHits[DomainOrchestration] > 0 {
+		add("Include reviewer familiar with creator orchestration recommendations and draft-approval flows.")
+	}
 	if s.DomainHits[DomainWeb] > 0 || okBool(has, "web_large") {
 		add("Include frontend review for web/ UI and client behavior.")
 	}

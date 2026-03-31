@@ -58,6 +58,8 @@ func evidenceForActionID(id, label string, r Result) ValidationEvidence {
 		return evidenceTestDomain(id, label, DomainRAG, s)
 	case "materials_processing_gate":
 		return evidenceTestDomain(id, label, DomainProcessing, s)
+	case "orchestration_creator_gate":
+		return evidenceTestDomain(id, label, DomainOrchestration, s)
 	case "migrations_validation_gate":
 		return evidenceMigrationsGate(label, s)
 	case "add_tests_or_evidence":

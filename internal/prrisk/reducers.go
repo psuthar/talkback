@@ -60,6 +60,7 @@ func DetectReducers(s Signals, factors []RiskFactor, w ScoreWeights) []RiskReduc
 		{factorID: "domain_auth", domain: DomainAuth, unitPts: w.UnitTestEvidenceReducerPoints, e2ePts: w.E2ETestEvidenceReducerPoints},
 		{factorID: "domain_rag", domain: DomainRAG, unitPts: w.UnitTestEvidenceReducerPoints, e2ePts: w.E2ETestEvidenceReducerPoints},
 		{factorID: "domain_processing", domain: DomainProcessing, unitPts: w.UnitTestEvidenceReducerPoints, e2ePts: w.E2ETestEvidenceReducerPoints},
+		{factorID: "domain_orchestration", domain: DomainOrchestration, unitPts: w.UnitTestEvidenceReducerPoints, e2ePts: w.E2ETestEvidenceReducerPoints},
 		{factorID: "domain_migrations", domain: DomainMigrations, unitPts: w.UnitTestEvidenceReducerPoints, e2ePts: w.E2ETestEvidenceReducerPoints},
 	}
 
@@ -94,6 +95,7 @@ func DetectReducers(s Signals, factors []RiskFactor, w ScoreWeights) []RiskReduc
 	sensitiveInDiff := s.DomainHits[DomainAuth] > 0 ||
 		s.DomainHits[DomainRAG] > 0 ||
 		s.DomainHits[DomainProcessing] > 0 ||
+		s.DomainHits[DomainOrchestration] > 0 ||
 		s.DomainHits[DomainMigrations] > 0
 	if !sensitiveInDiff && s.TestFiles > 0 && s.FileCount > 0 && s.TestFiles == s.FileCount {
 		reducers = append(reducers, RiskReducer{

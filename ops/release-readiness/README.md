@@ -21,6 +21,7 @@ CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_rea
 | nav assets | `MaterialsTreePanel` in web |
 | viewer | `SlideDeckViewer`, modes |
 | Q&A / RAG | `session_ask`, `rag` |
+| orchestration | `internal/orchestration/**`, `session_orchestration*`, creator recommendations UI |
 | migrations | `db/migrations`, `internal/migrations` |
 
 When a risk category is triggered by the diff, the report must show that validation satisfied **unless** smoke/E2E pass and infer coverage (see `infer_validations_when_pass` in `config.yaml`). **Migrations** require explicit `migrations_validated: true` in smoke JSON or `--migration-validated` / CI flag.
@@ -128,6 +129,7 @@ The primary reviewer-facing semantic status is the GitHub Check **`TalkBack PR G
   | `nav_assets` | material-viewers |
   | `viewer_materials` | material-viewers, pptx-polling-stop |
   | `qa_rag` | qa-history |
+  | `orchestration` | creator-access, qa-history (plus orchestration-targeted smoke as added) |
 
 - Sets a validation key to `true` if all tests in its group passed, `false` if any failed, or omits the key if no tests from that group ran (so the engine can apply inference instead of an explicit `false`).
 - Counts retried tests (specs with more than one result entry) and surfaces them as `retries`.

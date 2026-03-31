@@ -15,6 +15,7 @@ const (
 	DomainMigrations = "migrations"
 	DomainRAG        = "rag"
 	DomainProcessing = "processing"
+	DomainOrchestration = "orchestration"
 	DomainStorage    = "storage"
 	DomainWeb        = "web"
 	DomainWorkflows  = "workflows"
@@ -227,6 +228,7 @@ type ScoreWeights struct {
 	MigrationsPoints    float64
 	RAGPoints           float64
 	ProcessingPoints    float64
+	OrchestrationPoints float64
 	WebLargeLOC         int
 	WebLargePoints      float64
 	WorkflowsPoints     float64
@@ -265,6 +267,7 @@ func DefaultWeights() ScoreWeights {
 		MigrationsPoints:    22,
 		RAGPoints:           10,
 		ProcessingPoints:    10,
+		OrchestrationPoints: 10,
 		WebLargeLOC:         400,
 		WebLargePoints:      12,
 		WorkflowsPoints:     12,

@@ -144,6 +144,25 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 				Checklist:   checklist,
 			})
 		}
+		if okBool(has, "domain_orchestration") {
+			level := evidenceLevel(DomainOrchestration)
+			checklist := []string{
+				"Run creator orchestration recommendation flow checks (list/sync + approve/reject draft paths).",
+				"Confirm no autonomous send/post behavior is introduced in orchestration paths.",
+			}
+			if level == "none" {
+				checklist[0] = "Run orchestration smoke/E2E before merge (recommendations panel + draft approve/reject)."
+			} else if level == "unit" {
+				checklist[0] = "Confirm orchestration unit/integration tests pass; run creator orchestration smoke before merge."
+			}
+			add(RequiredAction{
+				ID:          "orchestration_creator_gate",
+				Title:       "Validate creator orchestration recommendation flows",
+				FixType:     "test",
+				AppliesWhen: "orchestration recommendation/review paths changed",
+				Checklist:   checklist,
+			})
+		}
 
 		if okBool(has, "domain_migrations") {
 			level := evidenceLevel(DomainMigrations)
@@ -250,6 +269,7 @@ func hasSensitiveDomainHit(s Signals) bool {
 	return s.DomainHits[DomainAuth] > 0 ||
 		s.DomainHits[DomainRAG] > 0 ||
 		s.DomainHits[DomainProcessing] > 0 ||
+		s.DomainHits[DomainOrchestration] > 0 ||
 		s.DomainHits[DomainMigrations] > 0 ||
 		s.DomainHits[DomainAPI] > 0 ||
 		s.DomainHits[DomainDatabase] > 0
