@@ -192,6 +192,10 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 			h.RequireAuth(h.ListOrchestrationRecommendations)(w, r)
 			return
 		}
+		if len(parts) == 6 && parts[5] == "audit" && r.Method == http.MethodGet {
+			h.RequireAuth(h.ListOrchestrationRecommendationStatusAudit)(w, r)
+			return
+		}
 		if len(parts) == 6 && parts[5] == "sync" && r.Method == http.MethodPost {
 			h.RequireAuth(h.SyncOrchestrationRecommendations)(w, r)
 			return
@@ -656,6 +660,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		if parts[2] == "orchestration" && parts[3] == "recommendations" && parts[4] == "sync" {
 			if r.Method == http.MethodPost {
 				h.RequireAuth(h.SyncOrchestrationRecommendations)(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/orchestration/recommendations/audit - GET
+		if parts[2] == "orchestration" && parts[3] == "recommendations" && parts[4] == "audit" {
+			if r.Method == http.MethodGet {
+				h.RequireAuth(h.ListOrchestrationRecommendationStatusAudit)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

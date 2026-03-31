@@ -67,6 +67,72 @@ func TestOrchestrationRecommendations_ListAndUpdate(t *testing.T) {
 	assert.Equal(t, models.RecommendationStatusDismissed, stored[0].Status)
 }
 
+func TestOrchestrationRecommendations_StatusAuditTrail(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	creator, ls, sess := seedCreatorAndSession(t, h, "orch-audit")
+	ctx := context.Background()
+	rec := &models.OrchestrationRecommendation{
+		ID:                 uuid.New(),
+		SessionID:          sess.ID,
+		RecommendationType: models.RecommendationTypeReviewDraftAnswer,
+		Status:             models.RecommendationStatusNew,
+		Summary:            "Needs review",
+	}
+	require.NoError(t, h.DB.CreateOrchestrationRecommendation(ctx, rec))
+
+	upBody, _ := json.Marshal(map[string]string{
+		"status":         string(models.RecommendationStatusDismissed),
+		"client_surface": "creator_web",
+	})
+	upReq := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+sess.ID.String()+"/orchestration/recommendations/"+rec.ID.String(), bytes.NewReader(upBody))
+	upReq.Header.Set("Content-Type", "application/json")
+	upReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	upW := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateOrchestrationRecommendationStatus)(upW, upReq)
+	require.Equal(t, http.StatusOK, upW.Code, upW.Body.String())
+
+	auditReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/orchestration/recommendations/audit?limit=10", nil)
+	auditReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	auditW := httptest.NewRecorder()
+	h.RequireAuth(h.ListOrchestrationRecommendationStatusAudit)(auditW, auditReq)
+	require.Equal(t, http.StatusOK, auditW.Code, auditW.Body.String())
+	var auditResp struct {
+		StatusAudit []*models.OrchestrationRecommendationStatusAudit `json:"status_audit"`
+	}
+	require.NoError(t, json.NewDecoder(auditW.Body).Decode(&auditResp))
+	require.Len(t, auditResp.StatusAudit, 1)
+	a := auditResp.StatusAudit[0]
+	assert.Equal(t, rec.ID, a.RecommendationID)
+	assert.Equal(t, creator.ID, a.ActorUserID)
+	require.NotNil(t, a.FromStatus)
+	assert.Equal(t, models.RecommendationStatusNew, *a.FromStatus)
+	assert.Equal(t, models.RecommendationStatusDismissed, a.ToStatus)
+	require.NotNil(t, a.ClientSurface)
+	assert.Equal(t, "creator_web", *a.ClientSurface)
+
+	// Idempotent PATCH (same status): no new audit row
+	dupBody, _ := json.Marshal(map[string]string{"status": string(models.RecommendationStatusDismissed)})
+	dupReq := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+sess.ID.String()+"/orchestration/recommendations/"+rec.ID.String(), bytes.NewReader(dupBody))
+	dupReq.Header.Set("Content-Type", "application/json")
+	dupReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	dupW := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateOrchestrationRecommendationStatus)(dupW, dupReq)
+	require.Equal(t, http.StatusOK, dupW.Code, dupW.Body.String())
+
+	auditReq2 := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/orchestration/recommendations/audit", nil)
+	auditReq2.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	auditW2 := httptest.NewRecorder()
+	h.RequireAuth(h.ListOrchestrationRecommendationStatusAudit)(auditW2, auditReq2)
+	require.Equal(t, http.StatusOK, auditW2.Code)
+	var auditResp2 struct {
+		StatusAudit []*models.OrchestrationRecommendationStatusAudit `json:"status_audit"`
+	}
+	require.NoError(t, json.NewDecoder(auditW2.Body).Decode(&auditResp2))
+	require.Len(t, auditResp2.StatusAudit, 1)
+}
+
 func TestOrchestrationRecommendations_ForbiddenForNonCreator(t *testing.T) {
 	t.Parallel()
 	h, cleanup := setupTestHandlersParallel(t)
@@ -114,4 +180,3 @@ func TestOrchestrationRecommendations_Sync(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, recs)
 }
-
