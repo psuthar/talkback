@@ -17,6 +17,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// seedArtifactAndQuestion is a test helper that creates an artifact and a question for a session.
+func seedArtifactAndQuestion(t *testing.T, h *Handlers, sess *models.Session, suffix string) *models.Question {
+	t.Helper()
+	ctx := context.Background()
+	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact-"+suffix, nil)
+	require.NoError(t, err)
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      sess.ID,
+		QuestionText:   "Test question " + suffix + "?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, h.DB.CreateQuestion(ctx, q))
+	return q
+}
+
 // TestOrchestrationDraft_Unauthorized verifies POST without session cookie returns 401.
 func TestOrchestrationDraft_Unauthorized(t *testing.T) {
 	t.Parallel()
@@ -261,4 +278,112 @@ func TestOrchestrationDraft_CreatorApproveAndRejectFlow(t *testing.T) {
 	afterReject, err := h.DB.GetAnswerByID(ctx, a2.ID)
 	require.NoError(t, err)
 	assert.Nil(t, afterReject)
+}
+
+// TestOrchestrationDraft_ParticipantCannotSeeUnconfirmedDraft verifies that an unconfirmed
+// orchestration draft is never returned to callers of GET /sessions/{id}/questions or
+// GET /sessions/{id}/timeline. Once the draft is confirmed (approved), it becomes visible.
+func TestOrchestrationDraft_ParticipantCannotSeeUnconfirmedDraft(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, ls, sess := seedCreatorAndSession(t, h, "vis-hidden")
+	ctx := context.Background()
+	q := seedArtifactAndQuestion(t, h, sess, "vis-hidden")
+
+	dm := orchestration.DraftAnswerModel
+	draft := &models.Answer{
+		ID:           uuid.New(),
+		QuestionID:   q.ID,
+		AnswerText:   "This is a draft answer",
+		AnswerStatus: models.AnswerStatusAnswered,
+		Confidence:   0.8,
+		Citations:    []models.Citation{},
+		Model:        &dm,
+		Confirmed:    false,
+	}
+	require.NoError(t, h.DB.CreateAnswer(ctx, draft))
+
+	// GET /sessions/{id}/questions — answers array must be empty (draft filtered out)
+	questionsReq := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID.String()+"/questions", nil)
+	questionsW := httptest.NewRecorder()
+	h.GetSessionQuestions(questionsW, questionsReq)
+	require.Equal(t, http.StatusOK, questionsW.Code, questionsW.Body.String())
+	var qResp GetQuestionsResponse
+	require.NoError(t, json.NewDecoder(questionsW.Body).Decode(&qResp))
+	require.Len(t, qResp.Questions, 1, "question itself must still appear")
+	assert.Empty(t, qResp.Answers, "unconfirmed orchestration draft must not appear in answers array")
+
+	// GET /sessions/{id}/timeline — entry for the question must have answer=nil
+	timelineReq := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID.String()+"/timeline", nil)
+	timelineW := httptest.NewRecorder()
+	h.GetSessionTimeline(timelineW, timelineReq)
+	require.Equal(t, http.StatusOK, timelineW.Code, timelineW.Body.String())
+	var tlResp struct {
+		Timeline []struct {
+			Question *models.Question `json:"question"`
+			Answer   *models.Answer   `json:"answer"`
+		} `json:"timeline"`
+	}
+	require.NoError(t, json.NewDecoder(timelineW.Body).Decode(&tlResp))
+	require.Len(t, tlResp.Timeline, 1, "question must still appear in timeline")
+	assert.Nil(t, tlResp.Timeline[0].Answer, "unconfirmed orchestration draft must not appear in timeline entry")
+
+	// Approve the draft: PATCH /sessions/{id}/answers/{aid}/confirm
+	approveBody, _ := json.Marshal(map[string]bool{"confirmed": true})
+	approveReq := httptest.NewRequest(http.MethodPatch, "/sessions/"+sess.ID.String()+"/answers/"+draft.ID.String()+"/confirm", bytes.NewReader(approveBody))
+	approveReq.Header.Set("Content-Type", "application/json")
+	approveReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	approveW := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateAnswerConfirmed)(approveW, approveReq)
+	require.Equal(t, http.StatusOK, approveW.Code, approveW.Body.String())
+
+	// After approval, answers array must contain the now-confirmed answer
+	questionsReq2 := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID.String()+"/questions", nil)
+	questionsW2 := httptest.NewRecorder()
+	h.GetSessionQuestions(questionsW2, questionsReq2)
+	require.Equal(t, http.StatusOK, questionsW2.Code, questionsW2.Body.String())
+	var qResp2 GetQuestionsResponse
+	require.NoError(t, json.NewDecoder(questionsW2.Body).Decode(&qResp2))
+	require.Len(t, qResp2.Answers, 1, "confirmed draft must appear in answers after approval")
+	assert.Equal(t, draft.ID, qResp2.Answers[0].ID)
+}
+
+// TestOrchestrationDraft_NonDraftUnconfirmedAnswerRemainsBehaviorUnchanged verifies that
+// existing answers without the orchestration-draft model are not affected by the draft filter,
+// preserving backward-compatible behavior for all non-draft answer paths.
+func TestOrchestrationDraft_NonDraftUnconfirmedAnswerRemainsBehaviorUnchanged(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, _, sess := seedCreatorAndSession(t, h, "vis-nondraft")
+	ctx := context.Background()
+	q := seedArtifactAndQuestion(t, h, sess, "vis-nondraft")
+
+	// Regular RAG answer — model is NOT orchestration-draft, confirmed=false (legacy default)
+	ragModel := "gpt-4o-mini"
+	ragAnswer := &models.Answer{
+		ID:           uuid.New(),
+		QuestionID:   q.ID,
+		AnswerText:   "RAG-generated answer",
+		AnswerStatus: models.AnswerStatusAnswered,
+		Confidence:   0.9,
+		Citations:    []models.Citation{},
+		Model:        &ragModel,
+		Confirmed:    false,
+	}
+	require.NoError(t, h.DB.CreateAnswer(ctx, ragAnswer))
+
+	// GET /sessions/{id}/questions — non-draft answer must still appear (backward compatible)
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+sess.ID.String()+"/questions", nil)
+	w := httptest.NewRecorder()
+	h.GetSessionQuestions(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var resp GetQuestionsResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.Len(t, resp.Questions, 1)
+	require.Len(t, resp.Answers, 1, "non-draft answer must still be visible regardless of confirmed flag")
+	assert.Equal(t, ragAnswer.ID, resp.Answers[0].ID)
 }

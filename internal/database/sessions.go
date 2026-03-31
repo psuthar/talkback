@@ -319,8 +319,11 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 		limit = 20
 	}
 
+	// Orchestration drafts (confirmed=false, model='orchestration-draft') are never visible
+	// in the question list. They exist only for creator review via the orchestration panel.
+	// Confirmed answers (including approved drafts) are returned normally.
 	query := `
-		SELECT 
+		SELECT
 			q.id, q.artifact_id, q.session_id, q.parent_question_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
 			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
@@ -328,6 +331,7 @@ func (db *DB) GetQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID, 
 			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
+			  AND NOT (confirmed = false AND model IS NOT DISTINCT FROM 'orchestration-draft')
 			ORDER BY created_at DESC
 			LIMIT 1
 		) a ON true
@@ -511,8 +515,11 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 		limit = 100 // Default to more for timeline (can be large for long sessions)
 	}
 
+	// Orchestration drafts (confirmed=false, model='orchestration-draft') are never visible
+	// in the timeline. They exist only for creator review via the orchestration panel.
+	// Confirmed answers (including approved drafts) are returned normally.
 	query := `
-		SELECT 
+		SELECT
 			q.id, q.artifact_id, q.session_id, q.asked_by, q.question_text, q.question_source, q.video_time_seconds, q.created_at,
 			a.id, a.question_id, a.answer_text, a.answer_status, a.confidence, a.citations, a.model, a.answered_by, a.confirmed, a.created_at
 		FROM questions q
@@ -520,6 +527,7 @@ func (db *DB) GetSessionTimeline(ctx context.Context, sessionID uuid.UUID, limit
 			SELECT id, question_id, answer_text, answer_status, confidence, citations, model, answered_by, confirmed, created_at
 			FROM answers
 			WHERE question_id = q.id
+			  AND NOT (confirmed = false AND model IS NOT DISTINCT FROM 'orchestration-draft')
 			ORDER BY created_at DESC
 			LIMIT 1
 		) a ON true
