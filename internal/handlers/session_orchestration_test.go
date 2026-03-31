@@ -180,3 +180,37 @@ func TestOrchestrationRecommendations_Sync(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, recs)
 }
+
+func TestOrchestrationRecommendations_SyncIdempotent(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	_, ls, sess := seedCreatorAndSession(t, h, "orch-sync-idem")
+	ctx := context.Background()
+	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "A", nil)
+	require.NoError(t, err)
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      sess.ID,
+		QuestionText:   "Sync twice?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, h.DB.CreateQuestion(ctx, q))
+
+	sync := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID.String()+"/orchestration/recommendations/sync", nil)
+		req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.SyncOrchestrationRecommendations)(w, req)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp struct {
+			Recommendations []models.OrchestrationRecommendation `json:"recommendations"`
+		}
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		return len(resp.Recommendations)
+	}
+	n1 := sync()
+	n2 := sync()
+	assert.Equal(t, n1, n2, "duplicate sync should return stable recommendation count")
+}

@@ -152,6 +152,8 @@ function App() {
   const [sessionProcessingReadyVersion, setSessionProcessingReadyVersion] = useState(0) // bumped when WebSocket session_processing_ready; CreatorMode uses to show progress until refetch completes
   const [sessionUpdatedVersion, setSessionUpdatedVersion] = useState(0) // bumped when WebSocket session_updated (e.g. slides ready); SlideDeckViewer refetches slides on change
   const [stanceVersion, setStanceVersion] = useState(0) // bumped when WebSocket stance_updated; mode components use to refetch stances
+  /** Bumped on session WebSocket events while creator is in session view; CreatorMode debounces POST /orchestration/recommendations/sync (SCRUM-16). */
+  const [orchestrationRefreshTrigger, setOrchestrationRefreshTrigger] = useState(0)
   const [replyingToQuestionId, setReplyingToQuestionId] = useState(null) // Threaded reply: parent question id when user clicked "Reply"
 
   // TalkBack auth: logged-in user from GET /api/me (cookie or Bearer accept_token for incognito)
@@ -2726,6 +2728,10 @@ function App() {
       console.log('WebSocket: Received message without type:', message)
       return
     }
+    const maybeBumpOrchestrationRefresh = () => {
+      if (isParticipantMode || viewMode !== 'session' || !currentSession) return
+      setOrchestrationRefreshTrigger((v) => v + 1)
+    }
     const data = message.data ?? message.Data
     if (!data && (message.type === 'question_created' || message.type === 'answer_created' || message.type === 'answer_updated')) {
       console.warn('WebSocket: Message missing data', message)
@@ -2760,16 +2766,19 @@ function App() {
           fetchSessionQuestions(effectiveSessionId)
         }
       }
+      maybeBumpOrchestrationRefresh()
     } else if (message.type === 'session_processing_ready') {
       const msgSessionId = message.SessionID ?? message.session_id
       if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
         console.log('WebSocket: Session processing ready, refetching session...')
         setSessionProcessingReadyVersion((v) => v + 1)
         refetchSession()
+        maybeBumpOrchestrationRefresh()
       }
     } else if (message.type === 'session_updated') {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
       if (msgSessionId && (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id))) {
+        maybeBumpOrchestrationRefresh()
         const now = Date.now()
         const withinGuard = (now - lastMaterialUploadAtRef.current) < 4000
         // Always bump the version so any open slide viewer refetches.
@@ -2803,14 +2812,20 @@ function App() {
       setMySessions((prev) => prev.filter((item) => (item.session?.id ?? item.session_id ?? item.id) !== deletedId))
     } else if (message.type === 'invitation_accepted') {
       const msgSessionId = message.SessionID ?? message.session_id ?? (message.data && message.data.session_id)
-      if (msgSessionId && typeof fetchSessionInvitations === 'function') {
+      if (
+        msgSessionId &&
+        (msgSessionId === effectiveSessionId || msgSessionId === (currentSession?.session?.id || currentSession?.id)) &&
+        typeof fetchSessionInvitations === 'function'
+      ) {
         console.log('WebSocket: Invitation accepted, refetching invitations...')
         fetchSessionInvitations(msgSessionId)
+        maybeBumpOrchestrationRefresh()
       }
     } else if (message.type === 'stance_updated') {
       // Bump stanceVersion so ParticipantMode and CreatorMode refetch GET /stances and update responses list + aggregate in real time
       console.log('WebSocket: Stance updated, bumping stanceVersion...')
       setStanceVersion((v) => v + 1)
+      maybeBumpOrchestrationRefresh()
     } else if (message.type === 'answer_created' || message.type === 'answer_updated') {
       console.log('WebSocket: Answer created/updated, refreshing questions...')
       
@@ -2845,8 +2860,9 @@ function App() {
           fetchSessionQuestions(effectiveSessionId)
         }
       }
+      maybeBumpOrchestrationRefresh()
     }
-  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, setStanceVersion, setCurrentSession, setSessionMode, setMySessions])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, currentSession, isParticipantMode, viewMode, setStanceVersion, setCurrentSession, setSessionMode, setMySessions])
 
   // Clear all question state when session changes so we never show the previous session's questions
   useEffect(() => {
@@ -2854,6 +2870,10 @@ function App() {
     setPendingSessionQuestions([])
     setQuestions([])
     setUnreadQuestionIds([])
+  }, [effectiveSessionId])
+
+  useEffect(() => {
+    setOrchestrationRefreshTrigger(0)
   }, [effectiveSessionId])
 
   // Server questions + mock, sorted by created_at. No optimistic pending so only one entry per question.
@@ -3985,6 +4005,7 @@ function App() {
               sessionProcessingReadyVersion={sessionProcessingReadyVersion}
               sessionUpdatedVersion={sessionUpdatedVersion}
               stanceVersion={stanceVersion}
+              orchestrationRefreshTrigger={orchestrationRefreshTrigger}
               refetchSession={refetchSession}
               artifactId={artifactId}
               setArtifactId={setArtifactId}
