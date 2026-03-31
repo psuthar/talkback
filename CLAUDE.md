@@ -70,6 +70,93 @@ When working in this repository, Claude must:
 
 ---
 
+---
+
+## 7. Jira Ticket Execution Workflow
+
+When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12"), follow this workflow:
+
+### Jira Status Management
+- When beginning implementation (not planning), move the Jira ticket to:
+  In Progress
+- When all implementation, validation, and PR creation are complete, move the Jira ticket to:
+  In Review
+
+### Branching
+- Create a new branch from main:
+  feat/<ticket-number>
+- Example:
+  feat/SCRUM-12
+
+### Scope & Approach
+- Read and understand the Jira ticket before coding
+- Implement only the requested scope unless additional changes are required for correctness
+- Prefer minimal, clean, well-structured changes
+- Do not introduce unrelated refactors
+
+### Testing
+- Add or update automated tests for all new or changed behavior
+- Ensure meaningful coverage
+- Do not skip tests
+
+### Validation
+- Run relevant validation before completion:
+  - backend tests (`go test ./...`)
+  - any affected integration or E2E flows
+- Do not proceed if validation fails
+
+### Jira Updates
+- Update the Jira ticket with:
+  - implementation notes (if helpful)
+  - follow-up work discovered during implementation
+- Do not silently expand scope
+
+### Commits
+- Use commit messages prefixed with the ticket number
+- Example:
+  SCRUM-12: add session state evaluator
+
+### Pull Request
+- Push branch to GitHub
+- Create PR targeting main
+
+PR must include:
+- summary of changes
+- testing performed
+- risks / edge cases
+- follow-up items
+- Jira ticket reference
+
+### Completion Output
+Return:
+- branch name
+- validations executed
+- PR link
+- summary of changes
+- follow-up actions
+
+---
+
+## 8. Jira ticket planning Mode Behavior
+
+If the user explicitly requests planning (e.g. "Plan SCRUM-13"):
+
+- Do NOT:
+  - write code
+  - create branches
+  - update Jira status
+
+- Instead:
+  - analyze scope
+  - identify impacted systems (backend, frontend, DB)
+  - define test strategy
+  - highlight risks and unknowns
+  - propose implementation plan
+
+Wait for confirmation before proceeding to implementation.
+
+---
+
 ## Subagent routing
 
 Route tasks to specialized TalkBack subagents as follows:
