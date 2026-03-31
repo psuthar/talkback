@@ -1,6 +1,8 @@
-// Package orchestration implements creator-facing session orchestration (SCRUM-7/9/10):
+// Package orchestration implements creator-facing session orchestration (SCRUM-7/9/10/11):
 // evaluating session state and producing typed recommendations (human-in-the-loop; no autonomous actions).
 // Unanswered/overdue question handling: see OverdueUnansweredAfter and buildUnansweredQuestionRecommendation.
+// Missing participant input (SCRUM-11): engagement_level not_viewed vs viewed_not_responded from material_views / question_views.
+// Creator dismiss/complete: use database.UpdateOrchestrationRecommendationStatus (HTTP wiring in a later story).
 package orchestration
 
 import (
@@ -88,7 +90,7 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 		}
 	}
 
-	// 3) Invited participants without a stance when primary decision is set → missing_participant_input
+	// 3) Invited participants without a stance when primary decision is set → missing_participant_input (SCRUM-11: engagement + context)
 	pd := ""
 	if session.PrimaryDecision != nil {
 		pd = strings.TrimSpace(*session.PrimaryDecision)
@@ -106,24 +108,23 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 			if err != nil {
 				return nil, fmt.Errorf("orchestration: stance %s: %w", m.UserID, err)
 			}
-			if st == nil {
-				summary := "Participant has not recorded a stance on the primary decision."
-				action := "Invite follow-up or record input so the decision can proceed."
-				uid := m.UserID
-				out = append(out, &models.OrchestrationRecommendation{
-					SessionID:          sessionID,
-					RecommendationType: models.RecommendationTypeMissingParticipant,
-					Status:             models.RecommendationStatusNew,
-					Summary:            summary,
-					SuggestedAction:    &action,
-					Evidence: []models.RecommendationEvidenceRef{
-						{SourceType: "session_membership", SourceID: &uid},
-					},
-					MetadataJSON: map[string]interface{}{
-						"user_id": uid.String(),
-					},
-				})
+			if st != nil {
+				continue
 			}
+			u, err := e.DB.GetUserByID(ctx, m.UserID)
+			if err != nil {
+				return nil, fmt.Errorf("orchestration: get user %s: %w", m.UserID, err)
+			}
+			ref := participantRefForOrchestration(u, m.UserID)
+			matView, err := e.DB.ParticipantHasAnyMaterialView(ctx, sessionID, ref)
+			if err != nil {
+				return nil, fmt.Errorf("orchestration: material views: %w", err)
+			}
+			qView, err := e.DB.ParticipantHasAnyQuestionView(ctx, sessionID, ref)
+			if err != nil {
+				return nil, fmt.Errorf("orchestration: question views: %w", err)
+			}
+			out = append(out, buildMissingParticipantRecommendation(sessionID, m.UserID, u, matView, qView))
 		}
 	}
 
@@ -238,6 +239,70 @@ func buildUnansweredQuestionRecommendation(sessionID uuid.UUID, q *models.Questi
 			"question_age_seconds":      int64(age.Seconds()),
 			"overdue":                   overdue,
 			"overdue_threshold_seconds": int64(OverdueUnansweredAfter.Seconds()),
+		},
+	}
+}
+
+func participantRefForOrchestration(u *models.User, userID uuid.UUID) string {
+	if u != nil {
+		e := strings.TrimSpace(u.Email)
+		if e != "" {
+			return strings.ToLower(e)
+		}
+	}
+	return userID.String()
+}
+
+func buildMissingParticipantRecommendation(
+	sessionID uuid.UUID,
+	userID uuid.UUID,
+	u *models.User,
+	matView, qView bool,
+) *models.OrchestrationRecommendation {
+	engaged := matView || qView
+	engagementLevel := "not_viewed"
+	if engaged {
+		engagementLevel = "viewed_not_responded"
+	}
+	label := userID.String()
+	email := ""
+	display := ""
+	if u != nil {
+		email = u.Email
+		display = u.DisplayName
+		if strings.TrimSpace(u.Email) != "" {
+			label = strings.TrimSpace(u.Email)
+		} else if strings.TrimSpace(u.DisplayName) != "" {
+			label = strings.TrimSpace(u.DisplayName)
+		}
+	}
+
+	var summary string
+	if engaged {
+		summary = fmt.Sprintf("Participant (%s) has viewed session content but has not recorded a stance on the primary decision.", label)
+	} else {
+		summary = fmt.Sprintf("Participant (%s) has no material or Q&A views recorded yet and has not recorded a stance on the primary decision.", label)
+	}
+	action := "Follow up with the participant or record their stance when they respond."
+	ref := participantRefForOrchestration(u, userID)
+	return &models.OrchestrationRecommendation{
+		SessionID:          sessionID,
+		RecommendationType: models.RecommendationTypeMissingParticipant,
+		Status:             models.RecommendationStatusNew,
+		Summary:            summary,
+		SuggestedAction:    &action,
+		Evidence: []models.RecommendationEvidenceRef{
+			{SourceType: "session_membership", SourceID: &userID},
+		},
+		MetadataJSON: map[string]interface{}{
+			"dedupe_key":               "missing_participant_input:" + userID.String(),
+			"engagement_level":         engagementLevel,
+			"participant_email":        email,
+			"participant_display_name": display,
+			"user_id":                  userID.String(),
+			"has_material_view":        matView,
+			"has_question_view":        qView,
+			"participant_ref":          ref,
 		},
 	}
 }
