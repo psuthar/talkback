@@ -175,6 +175,18 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "orchestration" && len(parts) >= 5 && parts[4] == "draft-answers" {
+		if len(parts) == 5 && r.Method == http.MethodPost {
+			h.RequireAuth(h.CreateOrchestrationDraftAnswer)(w, r)
+			return
+		}
+		if len(parts) == 6 && r.Method == http.MethodDelete {
+			h.RequireAuth(h.DeleteOrchestrationDraftAnswer)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "stance" {
 		if r.Method == http.MethodPost {
 			h.RequireAuth(h.SessionSubmitStance)(w, r)
@@ -524,6 +536,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/orchestration/draft-answers - POST (AI draft; SCRUM-12)
+		if parts[2] == "orchestration" && parts[3] == "draft-answers" {
+			if r.Method == http.MethodPost {
+				h.RequireAuth(h.CreateOrchestrationDraftAnswer)(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// /sessions/{id}/materials/{material_id} - DELETE (4 path segments)
 		if parts[2] == "materials" && r.Method == http.MethodDelete {
 			h.DeleteSessionMaterial(w, r)
@@ -592,6 +613,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		if parts[2] == "transcript-jobs" {
 			if r.Method == http.MethodGet {
 				h.GetTranscriptJobStatus(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// /sessions/{id}/orchestration/draft-answers/{answer_id} - DELETE (dismiss draft)
+		if parts[2] == "orchestration" && parts[3] == "draft-answers" {
+			if r.Method == http.MethodDelete {
+				h.RequireAuth(h.DeleteOrchestrationDraftAnswer)(w, r)
 				return
 			}
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
