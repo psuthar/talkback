@@ -113,6 +113,20 @@ The primary reviewer-facing semantic status is the GitHub Check **`TalkBack PR G
 | `TALKBACK_ADMIN_EMAIL` | ci-admin@smoke.test | Admin user for test teardown |
 | `TALKBACK_ADMIN_PASSWORD` | SmokePass123! | Admin password for teardown |
 
+### E2E debug artifacts (CI)
+
+The Release Readiness job stages Playwright outputs under **`artifacts/e2e-playwright/`**, which is included in the **`release-readiness`** artifact upload (`if: always()`), so you can inspect failures without parsing the job log alone:
+
+| Path | Contents |
+|------|----------|
+| `README.txt` | Short summary: failed specs (file + title when `ok: false`), plus `e2e_results.json` fields |
+| `playwright-results.json` | Raw `npx playwright test --reporter=json` output |
+| `e2e_results.json` | Output of `scripts/e2e_to_readiness.py` |
+| `playwright-report/` | HTML report — open `index.html` locally after download |
+| `test-results/` | Traces, screenshots (from Playwright config: trace on first retry, screenshot on failure) |
+
+Playwright is run with `--reporter=json --reporter=html` so both machine-readable and HTML reports are produced.
+
 ## E2E → readiness converter (`scripts/e2e_to_readiness.py`)
 
 `scripts/e2e_to_readiness.py` converts the raw Playwright `--reporter=json` output into the `e2e_results.json` schema that `release_readiness_engine.py` expects.
