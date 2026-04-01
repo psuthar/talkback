@@ -91,7 +91,8 @@ export function AdminUsers({
   }, [fetchUsers])
 
   useEffect(() => {
-    if (sessionsExpanded && apiBaseUrl) fetchSessions()
+    // Empty-string apiBaseUrl is valid (relative /api); only null/undefined should block fetch.
+    if (sessionsExpanded && apiBaseUrl != null) fetchSessions()
   }, [sessionsExpanded, apiBaseUrl, fetchSessions])
 
   const handleAddUser = async (e) => {
