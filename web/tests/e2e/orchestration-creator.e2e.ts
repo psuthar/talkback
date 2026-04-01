@@ -24,6 +24,7 @@ import {
  * B) Draft-review card: Approve draft → confirm + status-update calls
  * C) Draft-review card: Dismiss draft → delete draft-answer + status-update calls
  * D) Unanswered-question card: Generate draft → POST draft-answers call
+ * E) Decision readiness (inputs_complete): Record outcome → PATCH session + PATCH recommendation; card removed
  */
 
 // Allow extra time for CI cold-starts; panel interactions are local (mocked).
@@ -53,6 +54,15 @@ const MOCK_REC_UNANSWERED: Record<string, unknown> = {
   summary: 'A participant question has not been answered yet.',
   suggested_action: 'Generate an AI draft to speed up your response.',
   evidence: [{ question_id: MOCK_QUESTION_ID }],
+}
+
+const MOCK_REC_DECISION_READY: Record<string, unknown> = {
+  id: 'rec-decision-ready-001',
+  recommendation_type: 'decision_readiness',
+  status: 'new',
+  summary: 'Core decision inputs are present and participant stances exist; review before finalizing.',
+  suggested_action: 'Review stances and decision outcome before closing the session.',
+  metadata_json: { readiness: 'inputs_complete' },
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -273,6 +283,87 @@ test('orchestration panel: generate draft calls POST draft-answers with question
   await expect(page.getByTestId('orchestration-feedback')).toContainText('Draft answer generated', { timeout: 5_000 })
 
   // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
+
+// ── Scenario E: record decision outcome (SCRUM-21) ───────────────────────────
+test('orchestration panel: record outcome PATCHes session then recommendation; card removed', async ({ page, context, request }) => {
+  const email = uniqueEmail('orch-e')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch E')
+  const session = await createSession(request, 'E2E Orch-E Session')
+  const recId = MOCK_REC_DECISION_READY.id as string
+
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations**`, (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ recommendations: [MOCK_REC_DECISION_READY] }),
+    })
+  })
+
+  let sessionPatchCalled = false
+  let sessionPatchPayload: unknown = null
+  const sessionResourcePath = `/api/sessions/${session.id}`
+  await page.route(
+    (url) => {
+      const path = url.pathname
+      return path === sessionResourcePath || path === `${sessionResourcePath}/`
+    },
+    async (route) => {
+      if (route.request().method() === 'PATCH') {
+        sessionPatchCalled = true
+        sessionPatchPayload = JSON.parse(route.request().postData() ?? '{}')
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            id: session.id,
+            title: session.title ?? 'E2E Orch-E Session',
+            decision_outcome: (sessionPatchPayload as Record<string, unknown>).decision_outcome,
+          }),
+        })
+      }
+      return route.continue()
+    },
+  )
+
+  let recPatchCalled = false
+  let recPatchPayload: unknown = null
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations/${recId}`, async (route) => {
+    if (route.request().method() === 'PATCH') {
+      recPatchCalled = true
+      recPatchPayload = JSON.parse(route.request().postData() ?? '{}')
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...MOCK_REC_DECISION_READY, status: 'completed' }),
+      })
+    } else {
+      route.continue()
+    }
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+  await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
+
+  await page.getByTestId(`orchestration-record-outcome-${recId}`).click()
+  const input = page.getByTestId(`orchestration-outcome-input-${recId}`)
+  await expect(input).toBeVisible()
+  await input.fill('Approved: ship v1 in Q2.')
+
+  await page.getByTestId(`orchestration-save-outcome-${recId}`).click()
+
+  await expect.poll(() => sessionPatchCalled, { timeout: 10_000 }).toBe(true)
+  await expect.poll(() => recPatchCalled, { timeout: 10_000 }).toBe(true)
+  expect((sessionPatchPayload as Record<string, unknown>).decision_outcome).toBe('Approved: ship v1 in Q2.')
+  expect((recPatchPayload as Record<string, unknown>).status).toBe('completed')
+
+  await expect(page.getByTestId(`orchestration-rec-${recId}`)).not.toBeVisible({ timeout: 5_000 })
+  await expect(page.getByTestId('orchestration-feedback')).toContainText('Decision outcome recorded', { timeout: 5_000 })
+
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)

@@ -37,6 +37,12 @@ function processingStateToStepIndex(state) {
   return 0
 }
 
+/** SCRUM-21: decision_readiness card with evaluator metadata readiness=inputs_complete. */
+function isDecisionReadinessInputsComplete(rec) {
+  const readiness = rec?.metadata_json?.readiness
+  return rec?.recommendation_type === 'decision_readiness' && readiness === 'inputs_complete'
+}
+
 function relativeTime(isoString) {
   if (!isoString) return ''
   const d = new Date(isoString)
@@ -219,6 +225,10 @@ export function CreatorMode({
   const [orchestrationLoading, setOrchestrationLoading] = useState(false)
   const [orchestrationFeedback, setOrchestrationFeedback] = useState({ type: '', message: '' })
   const [orchestrationActioningId, setOrchestrationActioningId] = useState(null)
+  /** SCRUM-21: inline record-outcome UI for decision_readiness / inputs_complete */
+  const [recordOutcomeRecId, setRecordOutcomeRecId] = useState(null)
+  const [recordOutcomeText, setRecordOutcomeText] = useState('')
+  const [recordOutcomeError, setRecordOutcomeError] = useState('')
   const orchestrationAutoDebounceRef = useRef(null)
   // When answering a question, expand that card so the answer form is visible
   useEffect(() => {
@@ -678,6 +688,63 @@ export function CreatorMode({
       setOrchestrationActioningId(null)
     }
   }, [apiBaseUrl, fetchSessionQuestions, loadOrchestrationRecommendations])
+
+  const saveDecisionOutcomeFromOrchestration = useCallback(async (sessionId, rec, outcomeText) => {
+    const trimmed = (outcomeText || '').trim()
+    if (!sessionId || !rec?.id) return
+    if (!trimmed) {
+      setRecordOutcomeError('Enter a decision outcome before saving.')
+      return
+    }
+    setRecordOutcomeError('')
+    setOrchestrationActioningId(rec.id)
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    try {
+      const patchRes = await fetch(`${base}/api/sessions/${sessionId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision_outcome: trimmed }),
+      })
+      const patchRaw = await patchRes.text()
+      if (!patchRes.ok) {
+        let msg = patchRaw || `HTTP ${patchRes.status}`
+        try {
+          const j = JSON.parse(patchRaw)
+          if (j && typeof j.error === 'string') msg = j.error
+        } catch {
+          /* keep raw */
+        }
+        setRecordOutcomeError(msg)
+        return
+      }
+      const statusRes = await fetch(`${base}/api/sessions/${sessionId}/orchestration/recommendations/${rec.id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'completed' }),
+      })
+      const statusData = await statusRes.json().catch(() => ({}))
+      if (!statusRes.ok) {
+        setRecordOutcomeError(
+          statusData?.error ||
+            statusData?.message ||
+            `Could not update recommendation (${statusRes.status}). Outcome was saved — try Refresh.`,
+        )
+        if (refetchSession) await refetchSession()
+        return
+      }
+      if (refetchSession) await refetchSession()
+      setOrchestrationRecommendations((prev) => prev.filter((r) => r.id !== rec.id))
+      setRecordOutcomeRecId(null)
+      setRecordOutcomeText('')
+      setOrchestrationFeedback({ type: 'success', message: 'Decision outcome recorded.' })
+    } catch (err) {
+      setRecordOutcomeError(err?.message || 'Request failed')
+    } finally {
+      setOrchestrationActioningId(null)
+    }
+  }, [apiBaseUrl, refetchSession])
 
   const confirmAnswerVoice = async () => {
     if (!answerVoiceTranscribedText.trim()) {
@@ -2020,15 +2087,60 @@ export function CreatorMode({
                     {orchestrationRecommendations.map((rec) => {
                       const isDraftReview = rec.recommendation_type === 'review_draft_answer'
                       const isUnanswered = rec.recommendation_type === 'unanswered_question'
+                      const decisionReadinessComplete = isDecisionReadinessInputsComplete(rec)
                       const actioning = orchestrationActioningId === rec.id
+                      const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
+                      let cardBg = '#fff'
+                      if (isDraftReview) cardBg = '#fff8e1'
+                      else if (decisionReadinessComplete) cardBg = '#e8f5e9'
                       return (
-                        <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: isDraftReview ? '#fff8e1' : '#fff' }}>
+                        <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: cardBg }}>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '11px' }}>
                             <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
                             <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
                           </div>
                           <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#222' }}>{rec.summary}</div>
                           {rec.suggested_action && <div style={{ fontSize: '12px', color: '#444', marginBottom: '6px' }}>{rec.suggested_action}</div>}
+                          {outcomeFormOpen && (
+                            <div style={{ width: '100%', marginBottom: '8px' }}>
+                              <textarea
+                                data-testid={`orchestration-outcome-input-${rec.id}`}
+                                value={recordOutcomeText}
+                                onChange={(e) => setRecordOutcomeText(e.target.value)}
+                                rows={3}
+                                placeholder="Decision outcome"
+                                disabled={actioning}
+                                style={{ width: '100%', boxSizing: 'border-box', fontSize: '12px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
+                              />
+                              {recordOutcomeError ? (
+                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '11px', color: '#c62828' }}>
+                                  {recordOutcomeError}
+                                </div>
+                              ) : null}
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                                <button
+                                  data-testid={`orchestration-save-outcome-${rec.id}`}
+                                  type="button"
+                                  disabled={actioning}
+                                  onClick={() => saveDecisionOutcomeFromOrchestration(currentSession?.session?.id, rec, recordOutcomeText)}
+                                  style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}
+                                >
+                                  {actioning ? '…' : 'Save outcome'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={actioning}
+                                  onClick={() => {
+                                    setRecordOutcomeRecId(null)
+                                    setRecordOutcomeError('')
+                                  }}
+                                  style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e0e0', color: '#333' }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {isDraftReview && (
                               <>
@@ -2043,6 +2155,21 @@ export function CreatorMode({
                             {isUnanswered && (
                               <button data-testid={`orchestration-generate-${rec.id}`} type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
                                 Generate draft
+                              </button>
+                            )}
+                            {decisionReadinessComplete && !outcomeFormOpen && (
+                              <button
+                                data-testid={`orchestration-record-outcome-${rec.id}`}
+                                type="button"
+                                disabled={actioning}
+                                onClick={() => {
+                                  setRecordOutcomeRecId(rec.id)
+                                  setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
+                                  setRecordOutcomeError('')
+                                }}
+                                style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}
+                              >
+                                Record outcome
                               </button>
                             )}
                             <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
