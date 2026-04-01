@@ -119,7 +119,9 @@ test('orchestration panel renders and refresh triggers sync', async ({ page, con
   await waitForPanel(page)
 
   // Empty state shown when no recommendations.
-  await expect(page.getByTestId('orchestration-empty')).toBeVisible({ timeout: 10_000 })
+  const emptyState = page.getByTestId('orchestration-empty')
+  await expect(emptyState).toBeVisible({ timeout: 10_000 })
+  await expect(emptyState).toContainText('Add transcript or materials, then collect participant questions', { timeout: 10_000 })
 
   // Click refresh — should call sync endpoint.
   const refreshBtn = page.getByTestId('orchestration-refresh-btn')
