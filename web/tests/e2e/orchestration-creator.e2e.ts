@@ -368,3 +368,58 @@ test('orchestration panel: record outcome PATCHes session then recommendation; c
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
 })
+
+// ── Scenario F: audit trail (SCRUM-22) ──────────────────────────────────────
+test('orchestration panel: activity section collapsed by default, expands and shows entries', async ({ page, context, request }) => {
+  const email = uniqueEmail('orch-f')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Orch F')
+  const session = await createSession(request, 'E2E Orch-F Session')
+
+  const MOCK_AUDIT = [
+    {
+      id: 'audit-001',
+      recommendation_type: 'review_draft_answer',
+      from_status: 'new',
+      to_status: 'approved',
+      changed_by: 'orch-f@example.com',
+      changed_at: '2026-01-15T10:30:00Z',
+    },
+  ]
+
+  await page.route(`**/api/sessions/${session.id}/orchestration/recommendations**`, (route) => {
+    const url = route.request().url()
+    if (url.includes('/audit')) {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ status_audit: MOCK_AUDIT }) })
+    } else {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommendations: [] }) })
+    }
+  })
+
+  await navigateToCreatorSession(page, session.id)
+  await waitForPanel(page)
+
+  // Audit list should not be visible initially (collapsed).
+  await expect(page.getByTestId('orchestration-audit-list')).not.toBeVisible()
+
+  // Toggle open.
+  const toggle = page.getByTestId('orchestration-audit-toggle')
+  await expect(toggle).toBeVisible()
+  await toggle.click()
+
+  // Audit list should now be visible with the mocked entry.
+  const auditList = page.getByTestId('orchestration-audit-list')
+  await expect(auditList).toBeVisible({ timeout: 10_000 })
+  const entry = page.getByTestId('orchestration-audit-entry-0')
+  await expect(entry).toBeVisible()
+  await expect(entry).toContainText('review draft answer')
+  await expect(entry).toContainText('new → approved')
+
+  // Toggle closed again — list hidden.
+  await toggle.click()
+  await expect(auditList).not.toBeVisible()
+
+  // Teardown
+  await loginAsAdmin(request)
+  await deleteSession(request, session.id)
+  await deleteUserViaAdmin(request, userId)
+})
