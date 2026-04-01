@@ -222,13 +222,95 @@ jobs:
           TALKBACK_ADMIN_EMAIL: "ci-admin@smoke.test"
           TALKBACK_ADMIN_PASSWORD: "SmokePass123!"
         run: |
-          npx playwright test --reporter=json 2>/dev/null > ../playwright-results.json || true
+          # JSON for e2e_to_readiness.py; HTML report + test-results/ for debugging (see artifacts/e2e-playwright).
+          npx playwright test --reporter=json --reporter=html > ../playwright-results.json || true
 
       - name: Convert Playwright results to readiness schema
+        continue-on-error: true
         run: |
           python scripts/e2e_to_readiness.py \
             --input playwright-results.json \
             --output e2e_results.json
+
+      - name: Stage E2E artifacts (JSON, HTML report, traces/screenshots)
+        if: always()
+        run: |
+          mkdir -p artifacts/e2e-playwright
+          for f in playwright-results.json e2e_results.json; do
+            if [ -f "$f" ]; then cp -f "$f" artifacts/e2e-playwright/; fi
+          done
+          if [ -d web/playwright-report ]; then cp -R web/playwright-report artifacts/e2e-playwright/; fi
+          if [ -d web/test-results ]; then cp -R web/test-results artifacts/e2e-playwright/; fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          def walk_failed_specs(node, file_hint=""):
+              rows = []
+              f = node.get("file") or file_hint
+              for spec in node.get("specs", []):
+                  sf = spec.get("file") or f
+                  if spec.get("ok") is False:
+                      rows.append((sf, spec.get("title", "")))
+              for child in node.get("suites", []):
+                  rows.extend(walk_failed_specs(child, f))
+              return rows
+
+          out = Path("artifacts/e2e-playwright/README.txt")
+          lines = [
+              "E2E artifact bundle (uploaded on every run; see release-readiness artifact).",
+              "",
+              "Files:",
+              "  playwright-results.json — raw Playwright --reporter=json",
+              "  e2e_results.json — readiness schema (scripts/e2e_to_readiness.py)",
+              "  playwright-report/index.html — open locally after download",
+              "  test-results/ — traces, screenshots (when failures/retries)",
+              "",
+          ]
+          pr = Path("playwright-results.json")
+          if pr.exists():
+              try:
+                  pw = json.loads(pr.read_text(encoding="utf-8"))
+                  failed_specs = []
+                  for root in pw.get("suites", []):
+                      failed_specs.extend(walk_failed_specs(root))
+                  if failed_specs:
+                      lines.append("Failed specs (file + title from playwright-results.json):")
+                      for fp, title in failed_specs:
+                          lines.append(f"  - {fp}")
+                          lines.append(f"    {title}")
+                  else:
+                      lines.append("Failed specs: (none with ok=false in JSON — see stats.unexpected or HTML report)")
+              except Exception as e:
+                  lines.append(f"(Could not parse playwright-results.json: {e})")
+          else:
+              lines.append("(playwright-results.json missing)")
+          lines.append("")
+          p = Path("e2e_results.json")
+          if p.exists():
+              try:
+                  d = json.loads(p.read_text(encoding="utf-8"))
+                  lines.append("Summary from e2e_results.json:")
+                  lines.append(f"  status={d.get('status')}")
+                  lines.append(f"  failed_count={d.get('failed_count')}")
+                  lines.append(f"  total_count={d.get('total_count')}")
+                  lines.append(f"  retries={d.get('retries')}")
+                  fails = d.get("failures") or []
+                  if fails:
+                      lines.append("  failures[].title:")
+                      for item in fails:
+                          t = item.get("title") or item.get("name") or "?"
+                          lines.append(f"    - {t}")
+                  else:
+                      lines.append("  failures: (empty)")
+              except Exception as e:
+                  lines.append(f"(Could not parse e2e_results.json: {e})")
+          else:
+              lines.append("(e2e_results.json missing — convert step may have failed.)")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(out.read_text(encoding="utf-8"))
+          PY
 
       - name: Run release readiness
         id: readiness
