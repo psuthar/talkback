@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,6 +33,25 @@ func seedArtifactAndQuestion(t *testing.T, h *Handlers, sess *models.Session, su
 	}
 	require.NoError(t, h.DB.CreateQuestion(ctx, q))
 	return q
+}
+
+// seedIndexableMaterial inserts a material with ExtractedText so sessionHasIndexableContent is true (SCRUM-20).
+func seedIndexableMaterial(t *testing.T, h *Handlers, sess *models.Session, artifact *models.Artifact) {
+	t.Helper()
+	ctx := context.Background()
+	txt := "Indexable text for orchestration draft RAG and guard tests."
+	m := &models.Material{
+		ID:            uuid.New(),
+		ArtifactID:    artifact.ID,
+		SessionID:     sess.ID,
+		Kind:          string(models.MaterialKindDocument),
+		Filename:      "doc.txt",
+		ContentType:   "text/plain",
+		StorageURL:    "",
+		TextStatus:    models.MaterialTextStatusReady,
+		ExtractedText: strPtr(txt),
+	}
+	require.NoError(t, h.DB.CreateMaterial(ctx, m))
 }
 
 // TestOrchestrationDraft_Unauthorized verifies POST without session cookie returns 401.
@@ -97,6 +117,7 @@ func TestOrchestrationDraft_CreatorCreatesDraft_NoBroadcastPath(t *testing.T) {
 	ctx := context.Background()
 	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact", nil)
 	require.NoError(t, err)
+	seedIndexableMaterial(t, h, sess, artifact)
 	q := &models.Question{
 		ID:             uuid.New(),
 		ArtifactID:     artifact.ID,
@@ -138,6 +159,7 @@ func TestOrchestrationDraft_ConflictWhenManualAnswerExists(t *testing.T) {
 	ctx := context.Background()
 	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact", nil)
 	require.NoError(t, err)
+	seedIndexableMaterial(t, h, sess, artifact)
 	q := &models.Question{
 		ID:             uuid.New(),
 		ArtifactID:     artifact.ID,
@@ -386,4 +408,86 @@ func TestOrchestrationDraft_NonDraftUnconfirmedAnswerRemainsBehaviorUnchanged(t 
 	require.Len(t, resp.Questions, 1)
 	require.Len(t, resp.Answers, 1, "non-draft answer must still be visible regardless of confirmed flag")
 	assert.Equal(t, ragAnswer.ID, resp.Answers[0].ID)
+}
+
+// TestOrchestrationDraft_NoIndexableContent returns 400 when the session has no transcript/material text to index.
+func TestOrchestrationDraft_NoIndexableContent(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, ls, sess := seedCreatorAndSession(t, h, "draft-no-idx")
+	ctx := context.Background()
+	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact", nil)
+	require.NoError(t, err)
+	q := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      sess.ID,
+		QuestionText:   "Any question?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, h.DB.CreateQuestion(ctx, q))
+
+	body, _ := json.Marshal(map[string]string{"question_id": q.ID.String()})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID.String()+"/orchestration/draft-answers", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	w := httptest.NewRecorder()
+	h.RequireAuth(h.CreateOrchestrationDraftAnswer)(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "no_indexable_content", resp["error_code"])
+}
+
+// TestOrchestrationDraft_RateLimit returns 429 after ORCHESTRATION_DRAFT_MAX_PER_MIN draft POSTs for the same user+session.
+func TestOrchestrationDraft_RateLimit(t *testing.T) {
+	t.Setenv("ORCHESTRATION_DRAFT_MAX_PER_MIN", "2")
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, ls, sess := seedCreatorAndSession(t, h, "draft-rate")
+	ctx := context.Background()
+	artifact, err := h.DB.CreateArtifact(ctx, sess.ID, "Artifact", nil)
+	require.NoError(t, err)
+	seedIndexableMaterial(t, h, sess, artifact)
+
+	postDraft := func(questionID uuid.UUID) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"question_id": questionID.String()})
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID.String()+"/orchestration/draft-answers", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.CreateOrchestrationDraftAnswer)(w, req)
+		return w
+	}
+
+	for i := 0; i < 2; i++ {
+		q := &models.Question{
+			ID:             uuid.New(),
+			ArtifactID:     artifact.ID,
+			SessionID:      sess.ID,
+			QuestionText:   fmt.Sprintf("Rate limit Q%d?", i),
+			QuestionSource: models.QuestionSourceText,
+		}
+		require.NoError(t, h.DB.CreateQuestion(ctx, q))
+		w := postDraft(q.ID)
+		require.Equal(t, http.StatusCreated, w.Code, "iteration %d: %s", i, w.Body.String())
+	}
+
+	q3 := &models.Question{
+		ID:             uuid.New(),
+		ArtifactID:     artifact.ID,
+		SessionID:      sess.ID,
+		QuestionText:   "Third question?",
+		QuestionSource: models.QuestionSourceText,
+	}
+	require.NoError(t, h.DB.CreateQuestion(ctx, q3))
+	w3 := postDraft(q3.ID)
+	require.Equal(t, http.StatusTooManyRequests, w3.Code, w3.Body.String())
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(w3.Body).Decode(&resp))
+	assert.Equal(t, "draft_rate_limited", resp["error_code"])
 }

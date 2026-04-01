@@ -67,6 +67,38 @@ func (h *Handlers) CreateOrchestrationDraftAnswer(w http.ResponseWriter, r *http
 		return
 	}
 
+	if !sessionHasIndexableContent(ctx, h.DB, sessionID) {
+		log.Printf("orchestration_draft denied reason=no_indexable_content session_id=%s user_id=%s", sessionID, user.ID)
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":      "Add a transcript or materials with text before generating draft answers.",
+			"error_code": "no_indexable_content",
+		})
+		return
+	}
+
+	if !h.OrchestrationDraftGuard.allowRate(user.ID, sessionID) {
+		log.Printf("orchestration_draft denied reason=rate_limit session_id=%s user_id=%s", sessionID, user.ID)
+		writeJSON(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error":               "Draft generation rate limit exceeded. Try again in a minute.",
+			"error_code":          "draft_rate_limited",
+			"retry_after_seconds": 60,
+		})
+		return
+	}
+
+	releaseConc, okConc := h.OrchestrationDraftGuard.acquireConcurrency(sessionID)
+	if !okConc {
+		log.Printf("orchestration_draft denied reason=concurrency session_id=%s user_id=%s", sessionID, user.ID)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":      "Another draft generation is in progress for this session. Try again shortly.",
+			"error_code": "draft_generation_busy",
+		})
+		return
+	}
+	defer releaseConc()
+
+	log.Printf("orchestration_draft attempt session_id=%s user_id=%s question_id=%s", sessionID, user.ID, questionID)
+
 	answer, genErr := h.generateOrchestrationDraftAnswer(ctx, session, sessionID, questionID)
 	if genErr != nil {
 		switch {

@@ -659,7 +659,14 @@ export function CreatorMode({
       })
       if (!res.ok) {
         const text = await res.text()
-        setOrchestrationFeedback({ type: 'error', message: `Failed to generate draft: ${text || res.status}` })
+        let detail = text || String(res.status)
+        try {
+          const j = text ? JSON.parse(text) : null
+          if (j && typeof j.error === 'string') detail = j.error
+        } catch {
+          /* keep raw text */
+        }
+        setOrchestrationFeedback({ type: 'error', message: `Failed to generate draft: ${detail}` })
         return
       }
       setOrchestrationFeedback({ type: 'success', message: 'Draft answer generated.' })
