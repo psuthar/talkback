@@ -43,6 +43,24 @@ function isDecisionReadinessInputsComplete(rec) {
   return rec?.recommendation_type === 'decision_readiness' && readiness === 'inputs_complete'
 }
 
+export function getOrchestrationEmptyStateMessage(currentSession, questions) {
+  const qCount = Array.isArray(questions) ? questions.length : 0
+  const mats = Array.isArray(currentSession?.materials) ? currentSession.materials.length : 0
+  const links = Array.isArray(currentSession?.links) ? currentSession.links.length : 0
+  const vids = Array.isArray(currentSession?.video_sources) ? currentSession.video_sources.length : 0
+  if (qCount === 0 && mats === 0 && links === 0 && vids === 0) {
+    return 'Add transcript or materials, then collect participant questions to get AI suggested next actions.'
+  }
+  return 'No recommendations right now.'
+}
+
+export function getOrchestrationLoadFeedback(status, data) {
+  if (status === 404) {
+    return { type: 'info', message: 'Suggestions will appear after this session has initial content.' }
+  }
+  return { type: 'error', message: data?.error || data?.message || `Failed to load recommendations (${status})` }
+}
+
 function relativeTime(isoString) {
   if (!isoString) return ''
   const d = new Date(isoString)
@@ -554,7 +572,8 @@ export function CreatorMode({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setOrchestrationFeedback({ type: 'error', message: data?.error || data?.message || `Failed to load recommendations (${res.status})` })
+        setOrchestrationRecommendations([])
+        setOrchestrationFeedback(getOrchestrationLoadFeedback(res.status, data))
         return
       }
       setOrchestrationRecommendations(Array.isArray(data?.recommendations) ? data.recommendations : [])
@@ -2102,7 +2121,7 @@ export function CreatorMode({
                 )}
                 {orchestrationRecommendations.length === 0 ? (
                   <div data-testid="orchestration-empty" style={{ fontSize: '12px', color: '#666' }}>
-                    No recommendations right now.
+                    {getOrchestrationEmptyStateMessage(currentSession, questions)}
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
