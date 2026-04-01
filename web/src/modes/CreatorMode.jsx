@@ -229,6 +229,9 @@ export function CreatorMode({
   const [recordOutcomeRecId, setRecordOutcomeRecId] = useState(null)
   const [recordOutcomeText, setRecordOutcomeText] = useState('')
   const [recordOutcomeError, setRecordOutcomeError] = useState('')
+  const [auditOpen, setAuditOpen] = useState(false)
+  const [auditEntries, setAuditEntries] = useState([])
+  const [auditLoading, setAuditLoading] = useState(false)
   const orchestrationAutoDebounceRef = useRef(null)
   // When answering a question, expand that card so the answer form is visible
   useEffect(() => {
@@ -566,6 +569,25 @@ export function CreatorMode({
       }
     }
   }, [apiBaseUrl])
+
+  const loadOrchestrationAudit = useCallback(async (sessionId, { force = false } = {}) => {
+    if (!sessionId) return
+    if (!force && auditEntries.length > 0) return
+    setAuditLoading(true)
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/orchestration/recommendations/audit?limit=20`, {
+        credentials: 'include'
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setAuditEntries(Array.isArray(data?.status_audit) ? data.status_audit : [])
+      }
+    } catch (_) {
+      // silently fail — audit is non-critical
+    } finally {
+      setAuditLoading(false)
+    }
+  }, [apiBaseUrl, auditEntries.length])
 
   const updateRecommendationStatus = useCallback(async (sessionId, recommendationId, status) => {
     if (!sessionId || !recommendationId || !status) return
@@ -2184,6 +2206,41 @@ export function CreatorMode({
                     })}
                   </div>
                 )}
+                {/* SCRUM-22: Audit trail — collapsed by default, lazy-loaded on first open */}
+                <div style={{ marginTop: '10px', borderTop: '1px solid #e3e3e3', paddingTop: '8px' }}>
+                  <button
+                    data-testid="orchestration-audit-toggle"
+                    type="button"
+                    onClick={() => {
+                      const next = !auditOpen
+                      setAuditOpen(next)
+                      if (next) loadOrchestrationAudit(currentSession?.session?.id)
+                    }}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: auditOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>›</span>
+                    Activity
+                  </button>
+                  {auditOpen && (
+                    <div data-testid="orchestration-audit-list" style={{ marginTop: '6px' }}>
+                      {auditLoading ? (
+                        <div style={{ fontSize: '12px', color: '#999' }}>Loading…</div>
+                      ) : auditEntries.length === 0 ? (
+                        <div data-testid="orchestration-audit-empty" style={{ fontSize: '12px', color: '#999' }}>No activity yet.</div>
+                      ) : (
+                        auditEntries.map((entry, i) => (
+                          <div key={i} data-testid={`orchestration-audit-entry-${i}`} style={{ fontSize: '12px', color: '#555', padding: '4px 0', borderBottom: i < auditEntries.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
+                            <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>{String(entry.recommendation_type || '').replaceAll('_', ' ')}</span>
+                            {' · '}
+                            <span>{entry.from_status || '—'} → {entry.to_status}</span>
+                            {entry.changed_by && <span style={{ color: '#888' }}> by {entry.changed_by}</span>}
+                            {entry.changed_at && <span style={{ color: '#aaa' }}> · {new Date(entry.changed_at).toLocaleString()}</span>}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
               {questions.length > 0 && (
                 <div style={{ padding: '4px 12px', fontSize: '12px', color: '#666', borderBottom: '1px solid #e0e0e0' }}>
