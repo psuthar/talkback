@@ -222,8 +222,9 @@ jobs:
           TALKBACK_ADMIN_EMAIL: "ci-admin@smoke.test"
           TALKBACK_ADMIN_PASSWORD: "SmokePass123!"
         run: |
-          # JSON for e2e_to_readiness.py; HTML report + test-results/ for debugging (see artifacts/e2e-playwright).
-          npx playwright test --reporter=json --reporter=html > ../playwright-results.json || true
+          # Must output strict JSON for e2e_to_readiness.py (single reporter to stdout).
+          # HTML report still exists via playwright config (reporter: 'html') and is staged as artifact.
+          npx playwright test --reporter=json > ../playwright-results.json || true
 
       - name: Convert Playwright results to readiness schema
         continue-on-error: true
