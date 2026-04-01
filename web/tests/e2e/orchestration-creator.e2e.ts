@@ -279,8 +279,8 @@ test('orchestration panel: generate draft calls POST draft-answers with question
   await expect.poll(() => generateCalled, { timeout: 10_000 }).toBe(true)
   expect((generatePayload as Record<string, unknown>).question_id).toBe(MOCK_QUESTION_ID)
 
-  // Success feedback shown.
-  await expect(page.getByTestId('orchestration-feedback')).toContainText('Draft answer generated', { timeout: 5_000 })
+  // Feedback can be the draft success message or the subsequent sync-refresh message.
+  await expect(page.getByTestId('orchestration-feedback')).toContainText(/Draft answer generated|Recommendations refreshed\./, { timeout: 5_000 })
 
   // Teardown
   await loginAsAdmin(request)
