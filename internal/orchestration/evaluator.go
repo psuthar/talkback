@@ -1,8 +1,10 @@
-// Package orchestration implements creator-facing session orchestration (SCRUM-7/9/10/11):
+// Package orchestration implements creator-facing session orchestration:
 // evaluating session state and producing typed recommendations (human-in-the-loop; no autonomous actions).
 // Unanswered/overdue question handling: see OverdueUnansweredAfter and buildUnansweredQuestionRecommendation.
-// Missing participant input (SCRUM-11): engagement_level not_viewed vs viewed_not_responded from material_views / question_views.
-// Creator dismiss/complete: use database.UpdateOrchestrationRecommendationStatus (HTTP wiring in a later story).
+// Missing participant input uses engagement from material_views / question_views (not_viewed vs viewed_not_responded).
+// Persisted recommendations are exposed over HTTP for creators (list, sync, status updates with audit); see
+// internal/handlers/session_orchestration.go and database.UpdateOrchestrationRecommendationStatusWithAudit.
+// EvaluateSession returns in-memory recommendations; SyncSessionRecommendations replaces persisted rows for a session.
 package orchestration
 
 import (
@@ -18,7 +20,7 @@ import (
 
 const maxQuestionsScan = 500
 
-// OverdueUnansweredAfter is how long a root question may remain without an answer before it is flagged overdue (SCRUM-10 MVP).
+// OverdueUnansweredAfter is how long a root question may remain without an answer before it is flagged overdue.
 // Exposed so callers/tests can adjust; future: env or session policy.
 var OverdueUnansweredAfter = 48 * time.Hour
 
@@ -57,7 +59,7 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 	var out []*models.OrchestrationRecommendation
 	now := e.now()
 
-	// 1) Root questions without an answer → unanswered_question (SCRUM-10: overdue + reason/context + dedupe_key; one rec per question)
+	// 1) Root questions without an answer → unanswered_question (overdue + reason/context + dedupe_key; one rec per question)
 	for _, q := range questions {
 		if q.ParentQuestionID != nil {
 			continue
@@ -90,7 +92,7 @@ func (e *Evaluator) EvaluateSession(ctx context.Context, sessionID uuid.UUID) ([
 		}
 	}
 
-	// 3) Invited participants without a stance when primary decision is set → missing_participant_input (SCRUM-11: engagement + context)
+	// 3) Invited participants without a stance when primary decision is set → missing_participant_input (engagement + context)
 	pd := ""
 	if session.PrimaryDecision != nil {
 		pd = strings.TrimSpace(*session.PrimaryDecision)

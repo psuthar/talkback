@@ -6,7 +6,7 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-// DraftAnswerModel is stored on answers.model for AI drafts pending creator approval (SCRUM-12).
+// DraftAnswerModel is stored on answers.model for AI drafts pending creator approval.
 const DraftAnswerModel = "orchestration-draft"
 
 // IsOrchestrationDraftAnswer reports whether the answer row is an orchestration-generated draft
