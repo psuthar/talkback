@@ -1,0 +1,15 @@
+---
+description: Use GitHub MCP for github.com operations; use local git CLI for local repo work
+alwaysApply: true
+---
+
+# GitHub vs local Git
+
+- **GitHub.com (any remote operation):** You **MUST** use the **GitHub MCP** server tools—for example creating/updating PRs and issues, comments, listing or merging PRs, repository search, file contents on GitHub, and any other action exposed by that MCP. **Do not** use the **`gh` CLI**, `curl`, or other clients to call GitHub.com when MCP provides an equivalent (including PR and issue workflows).
+- **Local repository:** Use **local `git` commands** for working-tree and local history operations—for example `git status`, `git add`, `git commit`, `git branch`, `git checkout`, `git merge`, `git rebase`, `git stash`, `git log`, `git push`, and inspecting diffs. These stay on the machine and do not use MCP.
+
+When both apply (e.g. after local commits, open a PR), use **git** to prepare commits, **push** the branch, then use **GitHub MCP** to create or update the PR on GitHub.
+
+**Exception (local credential helper only):** `gh auth login` and `gh auth setup-git` are allowed **only** to configure Git’s credential helper so **`git push`** to GitHub works non-interactively. That is not a substitute for MCP on API tasks—do not use `gh pr create`, `gh issue`, etc.
+
+**`git push` and HTTPS:** If push fails in the agent with `could not read Username for 'https://github.com'`, complete the one-time **`gh auth login`** + **`gh auth setup-git`** flow (see `CLAUDE.md` §7 **Git authentication for `git push`**), or use SSH. MCP does not replace push.

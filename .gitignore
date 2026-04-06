@@ -40,7 +40,7 @@ go.work
 .mcp.json
 .cursor/mcp.json
 
-# GitHub CLI: local PR description for `gh pr create/edit --body-file` (CLAUDE.md §7)
+# Local draft PR body (CLAUDE.md §7); prefer GitHub MCP for PR creation—do not commit by accident
 pr-body.md
 
 # IDE
@@ -48,6 +48,7 @@ pr-body.md
 .vscode/*
 !.vscode/launch.json
 !.vscode/tasks.json
+!.vscode/settings.json
 *.swp
 *.swo
 *~

@@ -149,6 +149,26 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 - Push branch to GitHub
 - Create PR targeting `main`
 
+### Git authentication for `git push` (HTTPS / Cursor)
+
+Step 4 requires **`git push`**. With an `https://github.com/...` remote, push can fail in the **Cursor agent** (or any non-interactive subprocess) with:
+
+`fatal: could not read Username for 'https://github.com': Device not configured`
+
+Read-only checks like `git ls-remote origin HEAD` may still succeed; **push needs write credentials** and Git cannot prompt without a TTY.
+
+**One-time setup on each machine (recommended):**
+
+1. Install [GitHub CLI](https://cli.github.com/): `brew install gh` (macOS).
+2. `gh auth login` — choose **HTTPS** and finish browser or token login.
+3. `gh auth setup-git` — wires Git to use `gh auth git-credential` for `github.com`, so credentials are supplied **without** an interactive prompt (required for agent push).
+
+**PATH:** If `gh` is missing in Cursor, Homebrew is often not on `PATH` for GUI apps. This repo includes `.vscode/settings.json` prepending `/opt/homebrew/bin` for the **integrated terminal** on macOS. If the **agent** still cannot find `gh`, either add the same `PATH` in **Cursor → Settings → search “env”** (user settings JSON), or **launch Cursor from a terminal** (`cursor .` in the repo) so it inherits your shell `PATH`.
+
+**Alternative:** Use an SSH remote (`git@github.com:<owner>/<repo>.git`) with a key loaded in `ssh-agent` and `github.com` in `known_hosts`.
+
+**If agent push still fails:** Run `git push -u origin feat/<ticket>` in **Cursor’s integrated terminal** after the one-time setup above. That still completes the workflow; create/update the PR on GitHub using **GitHub MCP** (not `gh`) as below.
+
 **PR description format (match SCRUM-15 / PR-quality comments):** Use clear Markdown with these sections:
 
 1. **Plan (executed)** — numbered list of what you did in order.
@@ -159,12 +179,9 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 Also cover risks, follow-ups, and Jira reference where they fit (e.g. under Summary or a short **Risks / follow-up** subsection).
 
-**GitHub CLI and Markdown (avoid broken PR bodies):** On Windows, PowerShell treats **backtick** as an escape character. Passing `gh pr create --body "..."` inline often **mangles** backticks, code fences, and paths (stray `\` characters, broken words). **Do not** use long inline `--body` for formatted descriptions.
+**Creating/updating PRs on GitHub.com:** Use **GitHub MCP** only (read the server’s tool schema, then call the appropriate create/update PR tools). Do **not** use `gh pr create`, `gh pr edit`, or `curl` for GitHub when MCP can do the job.
 
-- **Preferred:** write the description to a file (e.g. `pr-body.md` in the repo root or a temp path), then run:
-  - `gh pr create --base main --head feat/TICKET-N --title "..." --body-file pr-body.md`
-  - or after opening the PR: `gh pr edit N --body-file pr-body.md`
-- Use fenced code blocks in the file for multi-line commands; use normal Markdown **bold** and lists like SCRUM-15.
+**PR body and Markdown:** Draft the full body in a scratch file or string so formatting stays correct (fenced code blocks, paths, **bold**). Pass that body through the MCP PR tool’s parameters—avoid cramming unescaped markdown through a shell where **backticks** or escapes can break (e.g. PowerShell).
 
 Remove or `.gitignore` local `pr-body.md` if you do not want it committed; or commit it only when the team wants a permanent record.
 
