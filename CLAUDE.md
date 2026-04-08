@@ -66,6 +66,7 @@ When working in this repository, Claude must:
 - **API:** `go run ./cmd/api` (default port 8080; `PORT` override).
 - **Web:** `cd web && npm install && npm run dev` (e.g. http://localhost:3000).
 - **Tests:** `go test ./...` (no frontend test runner in `web/package.json`).
+- **TalkBack MCP (agents):** `go run ./cmd/talkback-mcp` — stdio MCP server; see `docs/mcp-server.md` for Cursor / Claude Code config.
 - **Manual API checks:** `requests.http`; `make auth-check` / `scripts/auth_check.sh`.
 
 ---
@@ -135,6 +136,8 @@ When implementation and the PR are ready (before or immediately after transition
 5. **Follow-up:** optional bullets (tech debt, future tickets, monitoring).
 
 If Jira MCP or API is available, use it to post this comment; otherwise note in completion output that the user should paste it. Do not rely on GitHub–Jira dev links alone to replace this narrative.
+
+**MCP (@xuandev/atlassian-mcp):** To add the comment with **`jira_add_comment`**, pass the text as **`body`** (required). Using **`comment`** instead returns `INVALID_INPUT`. See `.cursor/rules/atlassian-mcp-jira.mdc`.
 
 ### Jira Updates
 - Beyond the completion comment above, add mid-flight notes when useful (blockers, scope clarifications).
