@@ -30,10 +30,10 @@ type ConcentrationInsight struct {
 	Detail     string  `json:"detail"`
 }
 
-// HotspotInsight is a path area that appears frequently in recent git history and overlaps this diff.
+// HotspotInsight is a path area that appears in several distinct recent commits and overlaps this diff.
 type HotspotInsight struct {
 	Prefix      string `json:"prefix"`
-	RecentCount int    `json:"recent_hits"` // times seen in sampled commits
+	RecentCount int    `json:"recent_hits"` // distinct commits in sampled log touching this prefix (not LOC churn)
 	Detail      string `json:"detail"`
 }
 

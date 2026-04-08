@@ -300,7 +300,12 @@ _PHRASE_POLISH_BY_KEY: dict[str, str] = {
         "Ensure test coverage is present or clearly linked for changed code"
     ),
     _action_key("Targeted regression for high-churn area touched by diff"): (
-        "Run targeted regression for high-churn areas"
+        "Run targeted regression for path prefixes with sustained recent commit activity"
+    ),
+    _action_key(
+        "Targeted regression for path prefixes with several recent commits overlapping this diff"
+    ): (
+        "Run targeted regression for path prefixes with sustained recent commit activity"
     ),
     _action_key("Pr description with scoped, evidence-backed review plan"): (
         "Ensure PR includes a clear, scoped review plan"
@@ -332,6 +337,9 @@ def bucket_action_priority(action: str) -> str:
     }
     medium_keys = {
         _action_key("Run targeted regression for high-churn areas"),
+        _action_key(
+            "Run targeted regression for path prefixes with sustained recent commit activity"
+        ),
         _action_key("Ensure test coverage is present or clearly linked for changed code"),
     }
     supporting_keys = {

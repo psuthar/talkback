@@ -240,7 +240,7 @@ class TestMarkdownSemantics(unittest.TestCase):
     def test_required_actions_grouped_by_priority(self):
         actions = STANDARD_ACTIONS + [
             MERGED_WORKFLOW_CONFIG_ACTION,
-            "Run targeted regression for high-churn areas",
+            "Run targeted regression for path prefixes with sustained recent commit activity",
         ]
         md = format_required_actions_grouped_markdown(actions)
         self.assertIn("### High priority", md)
@@ -363,7 +363,13 @@ class TestActionNormalization(unittest.TestCase):
         )
         self.assertEqual(
             normalize_action("test: targeted regression for high-churn area touched by diff"),
-            "Run targeted regression for high-churn areas",
+            "Run targeted regression for path prefixes with sustained recent commit activity",
+        )
+        self.assertEqual(
+            normalize_action(
+                "test: targeted regression for path prefixes with several recent commits overlapping this diff"
+            ),
+            "Run targeted regression for path prefixes with sustained recent commit activity",
         )
 
     def test_no_internal_prefixes_in_actions(self):

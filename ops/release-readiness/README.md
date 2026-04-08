@@ -7,7 +7,7 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
 2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
 3. **Outputs** — `artifacts/release-readiness/report.json`, `report.md`, and a **machine summary** at `artifacts/release-readiness.json` (`outcome`, `score`, `warnings`, `blockers`) for CI gates and PR summaries.
-4. **PR risk (v2.6)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` under the output directory, plus a stable machine summary at **`artifacts/pr-risk.json`** (score, band, `merge_recommendation` as `PASS`/`WARN`/`BLOCK`, `required_validations`, `top_risk_factors`). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
+4. **PR risk (v2.8)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` under the output directory, plus a stable machine summary at **`artifacts/pr-risk.json`** (score, band, `merge_recommendation` as `PASS`/`WARN`/`BLOCK`, `required_validations`, `top_risk_factors`). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
 5. **Unified PR gate** — `scripts/pr_gate.py` combines PR Risk + Release Readiness into **`pr-gate-summary.json`** / **`pr-gate-summary.md`**. **`scripts/pr_gate_check_payload.py`** turns that JSON into **`artifacts/pr-gate-check.json`** for the GitHub Check **TalkBack PR Gate** (no duplicated combining rules in YAML).
 
 CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
@@ -48,7 +48,7 @@ python scripts/release_readiness.py \
   --smoke-results smoke_results.json \
   --output-dir artifacts/release-readiness
 
-# Optional but recommended: PR risk v2.6 (git diff signals; no Python)
+# Optional but recommended: PR risk v2.8 (git diff signals; no Python)
 # Must run BEFORE release_readiness.py if you want PR Risk to influence the outcome.
 go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
 ```
@@ -76,7 +76,7 @@ The recommended initial policy is **`block_only`**: warnings are visible in the 
 
 GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2.6) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**.
+1. Runs `go run ./cmd/prrisk` (PR risk v2.8) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**.
 2. Runs `go test ./...` and writes `smoke_results.json`.
 3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
 4. Builds the React frontend (`npm run build`).
@@ -192,6 +192,8 @@ The evidence summary (`pass_count`, `missing_count`, `unknown_count`, `fail_coun
 **Graceful degradation:** if `pr_risk.json` is absent, unreadable, or has a parse error, the PR Risk block is silently skipped and readiness continues with evidence-only scoring.
 
 **Ordering requirement:** `go run ./cmd/prrisk` must complete before `python scripts/release_readiness.py`. The CI workflow already ensures this ordering.
+
+**Hotspot overlap (v2.8+):** The contextual factor labeled **Diff overlaps a path prefix touched in multiple recent commits** is based on **how many distinct commits** (in the last 50 sampled) touched each two-segment path prefix—not on raw diff LOC or file-line counts in the log. That keeps `top_risk_factors` aligned with “sustained activity in an area” instead of mislabeling one bulky commit as “high churn.”
 
 ## Suppressing the risky-config warning via commit messages
 

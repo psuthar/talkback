@@ -1,6 +1,9 @@
 package riskcontext
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // TestHotspotsGitErrorSkipped verifies AnalyzeHotspots returns nil and no error
 // when GitError is set (git log unavailable).
@@ -61,5 +64,45 @@ func TestHotspotsNoOverlapWhenDiffEmpty(t *testing.T) {
 	// With no diff files, diffPref is empty, so no hotspot can overlap.
 	if len(hotspots) != 0 {
 		t.Errorf("expected no hotspot overlap with empty diff, got %d", len(hotspots))
+	}
+}
+
+func TestPrefixCommitsFromNameOnlyLog_oneCommitManyFilesCountsOnce(t *testing.T) {
+	h := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	log := h + "\n" +
+		"internal/foo/a.go\n" +
+		"internal/foo/b.go\n" +
+		"internal/foo/c.go\n" +
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n" +
+		"internal/foo/d.go\n"
+	got := prefixCommitsFromNameOnlyLog(log)
+	want := map[string]int{"internal/foo": 2}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v want %#v", got, want)
+	}
+}
+
+func TestPrefixCommitsFromNameOnlyLog_sixFilesOneCommitNotSixCommits(t *testing.T) {
+	h := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var b string
+	b += h + "\n"
+	for i := 0; i < 6; i++ {
+		b += "internal/foo/x.go\n" // same path repeated still one prefix in commit
+	}
+	got := prefixCommitsFromNameOnlyLog(b)
+	if got["internal/foo"] != 1 {
+		t.Fatalf("expected 1 commit for internal/foo, got %#v", got)
+	}
+}
+
+func TestIsGitObjectID(t *testing.T) {
+	if !isGitObjectID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Fatal("expected valid 40-char hex")
+	}
+	if !isGitObjectID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Fatal("expected valid 64-char hex")
+	}
+	if isGitObjectID("not-a-hash") || isGitObjectID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Fatal("expected invalid")
 	}
 }

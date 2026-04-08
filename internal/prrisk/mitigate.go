@@ -69,7 +69,7 @@ var mitigationMap = map[string][]string{
 		"Consider follow-up PRs if the scatter is accidental.",
 	},
 	"context_hotspot_overlap": {
-		"Run focused regression on the hot area; recent churn increases regression risk.",
+		"Run focused regression on the overlapping prefix; several recent commits touched it, so regressions are likelier.",
 		"Scan related modules for unintended behavior changes.",
 	},
 	"context_intent_mismatch": {

@@ -23,7 +23,7 @@ class TestBuildSemanticRecord(unittest.TestCase):
             generator_outcome="success",
             pr_risk_path=Path("artifacts/pr-risk.json"),
             pr_risk_raw={
-                "report_version": "v2.6",
+                "report_version": "v2.8",
                 "score": 10.0,
                 "band": "low",
                 "merge_recommendation": "pass",  # normalized from generator JSON

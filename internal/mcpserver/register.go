@@ -1,4 +1,3 @@
-// Package mcpserver registers TalkBack MCP tools on an [mcp.Server] (stdio transport).
 package mcpserver
 
 import (
@@ -21,11 +20,11 @@ type RegisterConfig struct {
 // Register adds tools (health_check; get_session_metadata when DB is configured). Log lines go to stderr in main.
 func Register(server *mcp.Server, cfg RegisterConfig) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "health_check",
+		Name:        ToolHealthCheck,
 		Description: "Returns connectivity and readiness for the TalkBack MCP server (no session or TalkBack business data).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
-		tool := "health_check"
+		tool := ToolHealthCheck
 		defer func() {
 			log.Printf("mcp tool=%s duration_ms=%d", tool, time.Since(start).Milliseconds())
 		}()

@@ -179,11 +179,11 @@ func WriteMarkdown(path string, r Result) error {
 		if len(ci.Hotspots) > 0 {
 			sb.WriteString("\n### Hotspots (recent git activity)\n\n")
 			for _, h := range ci.Hotspots {
-				sb.WriteString(fmt.Sprintf("- **`%s`** — %d recent path hits — %s\n", h.Prefix, h.RecentCount, h.Detail))
+				sb.WriteString(fmt.Sprintf("- **`%s`** — %d distinct commits (sampled) — %s\n", h.Prefix, h.RecentCount, h.Detail))
 			}
 		} else {
 			sb.WriteString("\n### Hotspots (recent git activity)\n\n")
-			sb.WriteString("_No overlapping high-churn prefixes detected (or git history unavailable)._\n")
+			sb.WriteString("_No overlapping hotspot prefixes detected (or git history unavailable)._\n")
 		}
 
 		sb.WriteString("\n### PR intent vs diff\n\n")

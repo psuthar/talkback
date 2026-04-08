@@ -67,7 +67,7 @@ func ComputeRoutingHints(s Signals, factors []RiskFactor, insights *riskcontext.
 		}
 		if len(insights.Hotspots) > 0 {
 			p := insights.Hotspots[0].Prefix
-			add("Extra reviewer attention on `" + p + "` (recent high-churn overlap with this diff).")
+			add("Extra reviewer attention on `" + p + "` (several recent commits touched this area).")
 		}
 		if insights.Intent.Mismatch && len(insights.Intent.DomainsExpected) > 0 {
 			add("Confirm scope with author: PR text implies domains " + joinCommaSorted(insights.Intent.DomainsExpected) + " but diff may differ.")

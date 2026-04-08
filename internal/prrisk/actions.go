@@ -248,7 +248,7 @@ func ComputeRequiredActions(s Signals, factors []RiskFactor, reducers []RiskRedu
 			p := insights.Hotspots[0].Prefix
 			add(RequiredAction{
 				ID:      "context_hotspot_regression_focus",
-				Title:   "Extra regression focus on high-churn area",
+				Title:   "Extra regression focus on active path (recent commits)",
 				FixType: "process",
 				Checklist: []string{
 					fmt.Sprintf("Prefix `%s` is active in recent history; run targeted smoke for behavior touching this area.", p),

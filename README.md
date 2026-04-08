@@ -48,7 +48,7 @@ This moves CI/CD from:
   - explicit override reasoning
   - remediation guidance
 
-**PR Risk Report (v2.7)** — a complementary, **git-diff-only** risk pass (runs in the same CI workflow before the Python evaluator):
+**PR Risk Report (v2.8)** — a complementary, **git-diff-only** risk pass (runs in the same CI workflow before the Python evaluator):
 
 - Deterministic scoring from changed paths and churn (no LLM in the decision path)
 - **Category breakdown:** code changes, workflow/deployment, and test confidence
