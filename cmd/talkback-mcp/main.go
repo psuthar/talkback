@@ -25,6 +25,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
+	if !auth.RequireClientKey {
+		log.Printf("warning: TALKBACK_MCP_REQUIRE_CLIENT_KEY=false — tool calls do not require a client API key (local IDE mode)")
+	}
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "talkback-mcp",

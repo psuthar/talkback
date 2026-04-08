@@ -29,10 +29,17 @@ func ActingUserID(ctx context.Context) (uuid.UUID, bool) {
 type Auth struct {
 	acceptedKeys []string
 	actingUserID uuid.UUID
+	// RequireClientKey controls whether each tools/call must include a key matching acceptedKeys.
+	// When false (set via TALKBACK_MCP_REQUIRE_CLIENT_KEY=false), only the server env is configured;
+	// use for Cursor/Claude Code hosts that cannot attach _meta on tool calls. Default is true.
+	RequireClientKey bool
 }
 
 // LoadAuthFromEnv loads TALKBACK_MCP_API_KEY (required, non-empty) and optional
 // TALKBACK_MCP_ACTING_USER_ID (UUID). Multiple keys may be comma-separated for rotation.
+//
+// TALKBACK_MCP_REQUIRE_CLIENT_KEY: when unset or true, clients must send a matching key per tools/call.
+// Set to false so only the server process env is required (weaker; typical for local IDE MCP).
 func LoadAuthFromEnv() (Auth, error) {
 	raw := strings.TrimSpace(os.Getenv("TALKBACK_MCP_API_KEY"))
 	if raw == "" {
@@ -50,7 +57,24 @@ func LoadAuthFromEnv() (Auth, error) {
 		}
 		uid = u
 	}
-	return Auth{acceptedKeys: keys, actingUserID: uid}, nil
+	requireClientKey := envBoolDefaultTrue(os.Getenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY"))
+	return Auth{
+		acceptedKeys:   keys,
+		actingUserID:   uid,
+		RequireClientKey: requireClientKey,
+	}, nil
+}
+
+func envBoolDefaultTrue(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func splitCommaKeys(s string) []string {
@@ -156,10 +180,12 @@ func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
 			if !ok {
 				return nil, fmt.Errorf("tools/call: unexpected params type %T", req.GetParams())
 			}
-			key := ExtractClientAPIKey(p.Meta, req.GetExtra())
-			if !a.ValidKey(key) {
-				log.Printf("mcp auth failed tool=%s (missing or invalid API key)", p.Name)
-				return nil, fmt.Errorf("unauthorized: invalid or missing API key")
+			if a.RequireClientKey {
+				key := ExtractClientAPIKey(p.Meta, req.GetExtra())
+				if !a.ValidKey(key) {
+					log.Printf("mcp auth failed tool=%s (missing or invalid API key)", p.Name)
+					return nil, fmt.Errorf("unauthorized: invalid or missing API key")
+				}
 			}
 			if a.actingUserID != uuid.Nil {
 				ctx = context.WithValue(ctx, actingUserCtxKey{}, a.actingUserID)
