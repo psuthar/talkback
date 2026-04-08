@@ -8,10 +8,14 @@ func TestPolishRequiredValidationLine_TestProximityVsHotspot(t *testing.T) {
 	if gotProx != wantProx {
 		t.Fatalf("proximity line: got %q want %q", gotProx, wantProx)
 	}
-	gotHot := polishRequiredValidationLine("test: targeted regression for high-churn area touched by diff")
-	wantHot := "Run targeted regression for high-churn areas touched by this diff"
-	if gotHot != wantHot {
-		t.Fatalf("hotspot line: got %q want %q", gotHot, wantHot)
+	wantHot := "Run targeted regression for path prefixes with sustained recent commit activity"
+	for _, raw := range []string{
+		"test: targeted regression for high-churn area touched by diff",
+		"test: targeted regression for path prefixes with several recent commits overlapping this diff",
+	} {
+		if got := polishRequiredValidationLine(raw); got != wantHot {
+			t.Fatalf("hotspot line %q: got %q want %q", raw, got, wantHot)
+		}
 	}
 }
 

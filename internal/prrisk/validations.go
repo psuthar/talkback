@@ -30,7 +30,7 @@ func validationForAction(id string) (string, bool) {
 	case "context_improve_test_proximity":
 		return "test: tests co-located or explicitly linked for changed code", true
 	case "context_hotspot_regression_focus":
-		return "test: targeted regression for high-churn area touched by diff", true
+		return "test: targeted regression for path prefixes with several recent commits overlapping this diff", true
 	default:
 		return "", false
 	}

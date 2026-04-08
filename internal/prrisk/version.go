@@ -5,7 +5,7 @@ import "fmt"
 // Version and VersionMinor identify the PR risk report schema (emitted in JSON, markdown, PR comments).
 const (
 	Version      = 2
-	VersionMinor = 7
+	VersionMinor = 8
 )
 
 // ReportVersionString returns the canonical label, e.g. "v2.6".

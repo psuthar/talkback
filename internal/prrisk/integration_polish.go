@@ -43,6 +43,7 @@ var validationCommentPolish = map[string]string{
 	"test: materials upload + processing smoke for pipeline changes":   "Run materials upload and processing smoke for pipeline changes",
 	"test: tests or recorded evidence for sensitive paths":             "Add tests or recorded evidence for sensitive paths",
 	"test: tests co-located or explicitly linked for changed code":     "Ensure test coverage is present or clearly linked for changed code",
-	"test: targeted regression for high-churn area touched by diff":    "Run targeted regression for high-churn areas touched by this diff",
+	"test: targeted regression for high-churn area touched by diff": "Run targeted regression for path prefixes with sustained recent commit activity",
+	"test: targeted regression for path prefixes with several recent commits overlapping this diff": "Run targeted regression for path prefixes with sustained recent commit activity",
 	"db: migrations validated with rollback/reversal plan documented": "Validate migrations with rollback/reversal plan documented",
 }

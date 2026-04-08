@@ -13,7 +13,7 @@ func TestWriteSemanticPRRiskJSON(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "artifacts", "pr-risk.json")
 	r := Result{
-		ReportVersion: "v2.6",
+		ReportVersion: ReportVersionString(),
 		GeneratedAt:   time.Unix(0, 0).UTC(),
 		RiskScore:     28,
 		RiskBand:      "medium",

@@ -56,7 +56,7 @@ func Analyze(in Input, w Weights) (ContextInsights, []FactorContribution) {
 	if len(hotspots) > 0 && w.HotspotPoints > 0 {
 		factors = append(factors, FactorContribution{
 			ID:     "context_hotspot_overlap",
-			Label:  "Diff touches a high-churn area in recent git history",
+			Label:  "Diff overlaps a path prefix touched in multiple recent commits",
 			Points: w.HotspotPoints,
 			Detail: hotspots[0].Detail,
 		})
