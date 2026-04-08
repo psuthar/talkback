@@ -1,6 +1,6 @@
 # TalkBack MCP server (`talkback-mcp`)
 
-Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agents (Cursor, Claude Code, etc.). **Stdout** carries the MCP JSON-RPC stream; **stderr** is used for operational logs (tool name and duration).
+Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agents (Cursor, Claude Code, Claude Desktop). **Stdout** carries the MCP JSON-RPC stream; **stderr** is used for operational logs (tool name and duration).
 
 ## Build
 
@@ -8,13 +8,106 @@ Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agent
 go build -o talkback-mcp ./cmd/talkback-mcp
 ```
 
+## Authentication
+
+The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
+| `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
+| `TALKBACK_MCP_ACTING_USER_ID` | No | Optional UUID for future session ACL alignment. |
+
+### Strict mode (`TALKBACK_MCP_REQUIRE_CLIENT_KEY` unset or true)
+
+Pass the key on every **`tools/call`** via `_meta` (or HTTP headers when the transport fills `RequestExtra`):
+
+```json
+{
+  "name": "health_check",
+  "arguments": {},
+  "_meta": {
+    "talkback": { "apiKey": "same-secret-as-TALKBACK_MCP_API_KEY" }
+  }
+}
+```
+
+Alternatives: `_meta.talkbackApiKey`, `_meta.authorization` as `Bearer <token>`, or `Authorization` / `X-API-Key` headers on HTTP-based transports.
+
+### IDE mode (`TALKBACK_MCP_REQUIRE_CLIENT_KEY=false`)
+
+Many IDE hosts do not attach `_meta` on tool calls. Set **`TALKBACK_MCP_REQUIRE_CLIENT_KEY=false`** in the MCP server `env` block (see [One-shot setup](#one-shot-setup-cursor--claude-code)). The process still loads `TALKBACK_MCP_API_KEY` so only your configured subprocess can run; treat this as **local-trust** (weaker than per-call keys).
+
+Invalid keys in strict mode produce an **unauthorized** error for `tools/call` (no secrets in logs).
+
 ## Run (local)
 
 ```bash
+export TALKBACK_MCP_API_KEY=dev-shared-secret
+export TALKBACK_MCP_REQUIRE_CLIENT_KEY=false
 ./talkback-mcp
 # optional:
 ./talkback-mcp -version=1.0.0
 ```
+
+## One-shot setup (Cursor + Claude Code)
+
+From the **repository root**:
+
+```bash
+./scripts/setup-mcp-config.sh
+```
+
+This writes **both** (gitignored, not committed):
+
+- **`.cursor/mcp.json`** — Cursor (project or picked up when you open this repo)
+- **`.mcp.json`** — Claude Code **project**-scoped MCP
+
+It sets `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` and generates a random API key unless you preset **`TALKBACK_MCP_API_KEY`**.
+
+Then **fully quit and reopen** Cursor and/or Claude Code so MCP reloads.
+
+Committed reference (edit paths if you copy manually): [`docs/mcp-config.example.json`](mcp-config.example.json).
+
+## Cursor
+
+**Option A — script:** run `./scripts/setup-mcp-config.sh` (see above).
+
+**Option B — manual:** merge this shape into **`~/.cursor/mcp.json`** (global) or **`.cursor/mcp.json`** (project). Same JSON as Claude Code’s `mcpServers` block:
+
+```json
+{
+  "mcpServers": {
+    "talkback": {
+      "command": "go",
+      "args": ["run", "/absolute/path/to/talkback/cmd/talkback-mcp", "-version=dev"],
+      "env": {
+        "TALKBACK_MCP_API_KEY": "your-shared-secret",
+        "TALKBACK_MCP_REQUIRE_CLIENT_KEY": "false"
+      }
+    }
+  }
+}
+```
+
+Use a **built binary** by setting `"command"` to the absolute path of `talkback-mcp` and `"args": ["-version=dev"]`, or keep the `go run` form above so you do not need `cwd`.
+
+## Claude Code
+
+**Option A — script:** `./scripts/setup-mcp-config.sh` creates **`.mcp.json`** at the repo root (project scope). Approve the server when prompted (`claude mcp reset-project-choices` if you need to re-approve).
+
+**Option B — user scope:** add the same `talkback` entry under `mcpServers` in **`~/.claude.json`** (see [Claude Code MCP docs](https://code.claude.com/docs/en/mcp)).
+
+**Secrets in git:** prefer `${TALKBACK_MCP_API_KEY}` style expansion in committed templates if your Claude Code version supports it, or keep `.mcp.json` gitignored and generate it with the script.
+
+## Claude Desktop
+
+Merge the same `mcpServers.talkback` object into:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Restart Claude Desktop after saving.
 
 ## Tools (SCRUM-32+)
 
@@ -22,31 +115,6 @@ go build -o talkback-mcp ./cmd/talkback-mcp
 |------|-------------|
 | `health_check` | Returns JSON `status`, `service`, `version` — connectivity only; no TalkBack session data. |
 
-## Cursor
-
-Add to your MCP config (e.g. **Cursor Settings → MCP** or `~/.cursor/mcp.json`), adjusting the binary path:
-
-```json
-"talkback": {
-  "command": "/absolute/path/to/talkback/talkback-mcp",
-  "args": ["-version=dev"]
-}
-```
-
-For development without installing a binary:
-
-```json
-"talkback": {
-  "command": "go",
-  "args": ["run", "./cmd/talkback-mcp", "-version=dev"],
-  "cwd": "/absolute/path/to/talkback"
-}
-```
-
-## Claude Code
-
-Use the same `command` / `args` pattern in your Claude Code MCP configuration, pointing at this repo and `cmd/talkback-mcp`.
-
 ## Hosted / containers
 
-Run the same binary as the container entrypoint with stdio attached (no HTTP in this story). Ensure nothing else writes to stdout.
+Run the same binary as the container entrypoint with stdio attached. Set `TALKBACK_MCP_API_KEY` and usually **`TALKBACK_MCP_REQUIRE_CLIENT_KEY=true`**. Ensure nothing else writes to stdout.

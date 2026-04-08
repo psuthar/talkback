@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "talkback": {
+      "command": "go",
+      "args": [
+        "run",
+        "/absolute/path/to/talkback/cmd/talkback-mcp",
+        "-version=dev"
+      ],
+      "env": {
+        "TALKBACK_MCP_API_KEY": "change-me-local-dev",
+        "TALKBACK_MCP_REQUIRE_CLIENT_KEY": "false"
+      }
+    }
+  }
+}
