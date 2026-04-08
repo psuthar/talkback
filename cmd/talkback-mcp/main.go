@@ -43,12 +43,11 @@ func main() {
 		log.Printf("warning: DATABASE_URL not set — get_session_metadata tool will not be registered")
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "talkback-mcp",
+	server := mcpserver.NewTalkbackMCPServer(mcpserver.TalkbackServerConfig{
 		Version: version,
-	}, nil)
-	server.AddReceivingMiddleware(auth.RequireToolAuthMiddleware())
-	mcpserver.Register(server, mcpserver.RegisterConfig{Version: version, DB: db})
+		DB:      db,
+		Auth:    auth,
+	})
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server: %v", err)
