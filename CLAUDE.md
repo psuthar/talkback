@@ -137,6 +137,8 @@ When implementation and the PR are ready (before or immediately after transition
 
 If Jira MCP or API is available, use it to post this comment; otherwise note in completion output that the user should paste it. Do not rely on GitHub–Jira dev links alone to replace this narrative.
 
+**MCP (@xuandev/atlassian-mcp):** To add the comment with **`jira_add_comment`**, pass the text as **`body`** (required). Using **`comment`** instead returns `INVALID_INPUT`. See `.cursor/rules/atlassian-mcp-jira.mdc`.
+
 ### Jira Updates
 - Beyond the completion comment above, add mid-flight notes when useful (blockers, scope clarifications).
 - Do not silently expand scope.

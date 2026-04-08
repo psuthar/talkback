@@ -1,0 +1,19 @@
+---
+description: Use Atlassian/Jira MCP for Jira Cloud; avoid direct REST/curl except rare escape hatches
+alwaysApply: true
+---
+
+# Jira vs Atlassian MCP
+
+- **Jira Cloud (issues, epics, JQL, transitions, comments, links):** You **MUST** use the **Atlassian/Jira MCP** server tools (e.g. `user-atlassian` in Cursor) when they can perform the operation—create/update issues, search, transitions, batch operations, and any other action exposed by that MCP.
+- **Do not** use direct Jira REST calls via `curl`, one-off Python/`urllib`, or custom scripts **when an equivalent MCP tool exists**.
+
+**Parent / Epic linking (team-managed):** For `jira_update_issue`, the **@xuandev/atlassian-mcp** server sets hierarchy only via top-level **`parentKey`** (e.g. `"SCRUM-28"`). It does **not** apply a generic `fields.parent` object—passing only `fields` may report success without updating the parent. Use **`jira_search_issues`** with `parent is EMPTY` or `parent = KEY` to verify.
+
+**Issue comments:** `jira_add_comment` requires **`body`** (plain text). Do **not** use `comment`—that key is not in the tool schema and Jira returns `INVALID_INPUT`. (Transition comments on `jira_transition_issue` use **`comment`**, which is a different tool.)
+
+**If an MCP call returns success but Jira state looks wrong:** Re-read the tool’s expected parameters (e.g. `parentKey` vs `fields`), then re-invoke or verify with `jira_get_issue` / `jira_search_issues` before any raw REST fallback.
+
+**Escape hatch (rare):** Use direct Jira REST **only** when the user explicitly asks for it, or when MCP is unavailable/broken for that operation—and **note in the response** that raw REST was used and why.
+
+**Credentials:** Do not embed API tokens in repo files; use the user’s MCP configuration (e.g. `~/.cursor/mcp.json` env for the Atlassian server).
