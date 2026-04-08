@@ -8,14 +8,22 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/psuthar/talkback/internal/database"
 )
 
-// Register adds tools for this milestone (e.g. health_check). Log lines go to the default logger (use stderr in main).
-func Register(server *mcp.Server, version string) {
+// RegisterConfig controls which tools are mounted and shared version metadata.
+type RegisterConfig struct {
+	Version string
+	// DB when non-nil enables get_session_metadata (requires DATABASE_URL at process start).
+	DB *database.DB
+}
+
+// Register adds tools (health_check; get_session_metadata when DB is configured). Log lines go to stderr in main.
+func Register(server *mcp.Server, cfg RegisterConfig) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "health_check",
 		Description: "Returns connectivity and readiness for the TalkBack MCP server (no session or TalkBack business data).",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
 		tool := "health_check"
 		defer func() {
@@ -25,7 +33,7 @@ func Register(server *mcp.Server, version string) {
 		body := map[string]string{
 			"status":  "ok",
 			"service": "talkback-mcp",
-			"version": version,
+			"version": cfg.Version,
 		}
 		raw, err := json.Marshal(body)
 		if err != nil {
@@ -37,4 +45,7 @@ func Register(server *mcp.Server, version string) {
 			},
 		}, nil, nil
 	})
+	if cfg.DB != nil {
+		registerGetSessionMetadata(server, cfg.DB)
+	}
 }

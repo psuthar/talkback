@@ -16,7 +16,8 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 |----------|----------|---------|
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
-| `TALKBACK_MCP_ACTING_USER_ID` | No | Optional UUID for future session ACL alignment. |
+| `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
+| `DATABASE_URL` | No | When set, the server registers **`get_session_metadata`** (Postgres). When unset, only `health_check` is available. |
 
 ### Strict mode (`TALKBACK_MCP_REQUIRE_CLIENT_KEY` unset or true)
 
@@ -114,6 +115,7 @@ Restart Claude Desktop after saving.
 | Tool | Description |
 |------|-------------|
 | `health_check` | Returns JSON `status`, `service`, `version` — connectivity only; no TalkBack session data. |
+| `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). |
 
 ## Hosted / containers
 
