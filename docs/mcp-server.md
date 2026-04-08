@@ -2,6 +2,8 @@
 
 Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agents (Cursor, Claude Code, Claude Desktop). **Stdout** carries the MCP JSON-RPC stream; **stderr** is used for operational logs (tool name and duration).
 
+**Protocol wiring:** The binary uses `internal/mcpserver.NewTalkbackMCPServer`, which constructs the official Go SDK server, attaches receiving middleware so **only** `tools/call` is API-key gated (`initialize` / `tools/list` stay open), registers tools, then runs [`mcp.StdioTransport`](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#StdioTransport) (newline-delimited JSON-RPC).
+
 ## Build
 
 ```bash
