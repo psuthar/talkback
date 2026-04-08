@@ -21,10 +21,16 @@ func main() {
 	flag.StringVar(&version, "version", version, "server version string exposed in health_check")
 	flag.Parse()
 
+	auth, err := mcpserver.LoadAuthFromEnv()
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "talkback-mcp",
 		Version: version,
 	}, nil)
+	server.AddReceivingMiddleware(auth.RequireToolAuthMiddleware())
 	mcpserver.Register(server, version)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

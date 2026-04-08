@@ -66,7 +66,7 @@ When working in this repository, Claude must:
 - **API:** `go run ./cmd/api` (default port 8080; `PORT` override).
 - **Web:** `cd web && npm install && npm run dev` (e.g. http://localhost:3000).
 - **Tests:** `go test ./...` (no frontend test runner in `web/package.json`).
-- **TalkBack MCP (agents):** `go run ./cmd/talkback-mcp` — stdio MCP server; see `docs/mcp-server.md` for Cursor / Claude Code config.
+- **TalkBack MCP (agents):** `TALKBACK_MCP_API_KEY=<secret> go run ./cmd/talkback-mcp` — stdio MCP server; see `docs/mcp-server.md` for Cursor / Claude Code config and tool-call auth.
 - **Manual API checks:** `requests.http`; `make auth-check` / `scripts/auth_check.sh`.
 
 ---

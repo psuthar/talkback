@@ -8,9 +8,37 @@ Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agent
 go build -o talkback-mcp ./cmd/talkback-mcp
 ```
 
+## Authentication (SCRUM-33)
+
+Every **`tools/call`** request must present an API key that matches one of the secrets in **`TALKBACK_MCP_API_KEY`** on the server (comma-separated for rotation). Other MCP methods (e.g. `initialize`, `tools/list`) are not gated by this key.
+
+**Server environment**
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server accepts. |
+| `TALKBACK_MCP_ACTING_USER_ID` | No | Optional UUID of the TalkBack user (or bot) to attach to the MCP session context for future ACL; same spirit as REST session rules. |
+
+**Client → server:** pass the key in `tools/call` params metadata (preferred for stdio):
+
+```json
+{
+  "name": "health_check",
+  "arguments": {},
+  "_meta": {
+    "talkback": { "apiKey": "same-secret-as-TALKBACK_MCP_API_KEY" }
+  }
+}
+```
+
+Alternatives: `_meta.talkbackApiKey`, `_meta.authorization` as `Bearer <token>`, or HTTP `Authorization: Bearer` / `X-API-Key` when using a transport that populates [RequestExtra](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#RequestExtra) headers.
+
+Invalid or missing keys produce an **unauthorized** error for `tools/call` (nothing sensitive is logged).
+
 ## Run (local)
 
 ```bash
+export TALKBACK_MCP_API_KEY=dev-shared-secret
 ./talkback-mcp
 # optional:
 ./talkback-mcp -version=1.0.0
@@ -29,9 +57,14 @@ Add to your MCP config (e.g. **Cursor Settings → MCP** or `~/.cursor/mcp.json`
 ```json
 "talkback": {
   "command": "/absolute/path/to/talkback/talkback-mcp",
-  "args": ["-version=dev"]
+  "args": ["-version=dev"],
+  "env": {
+    "TALKBACK_MCP_API_KEY": "your-shared-secret"
+  }
 }
 ```
+
+The MCP host must still send `_meta.talkback.apiKey` on each **tool call** (matching `TALKBACK_MCP_API_KEY`) unless your client injects it automatically.
 
 For development without installing a binary:
 
@@ -39,7 +72,10 @@ For development without installing a binary:
 "talkback": {
   "command": "go",
   "args": ["run", "./cmd/talkback-mcp", "-version=dev"],
-  "cwd": "/absolute/path/to/talkback"
+  "cwd": "/absolute/path/to/talkback",
+  "env": {
+    "TALKBACK_MCP_API_KEY": "your-shared-secret"
+  }
 }
 ```
 
