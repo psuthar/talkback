@@ -1,4 +1,4 @@
-// ask_session_question: session-scoped RAG Q&A for MCP agents (SCRUM-44, SCRUM-49).
+// ask_session and ask_session_question: session-scoped RAG Q&A for MCP agents (SCRUM-44, SCRUM-49, SCRUM-50).
 // Mirrors POST /api/sessions/:id/ask: same rag.EnsureSessionIndex/RetrieveTopK, optional R2 storage for PDF indexing,
 // utils.GenerateAnswer, citation.NormalizeCitations, and limits — thin MCP transport only.
 // Uses the same ACL as get_session_metadata / search_session.
@@ -52,13 +52,19 @@ type askSessionQuestionOutput struct {
 	AnswerSaved   string                  `json:"answer_saved_at,omitempty"`
 }
 
-func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store storage.Interface) {
+func registerAskSessionQuestionTools(server *mcp.Server, db *database.DB, store storage.Interface) {
+	const desc = "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, and answer_status (answered | not_covered | error) using the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask."
+	registerAskSessionQuestionTool(server, db, store, ToolAskSession, desc)
+	registerAskSessionQuestionTool(server, db, store, ToolAskSessionQuestion, "Same behavior as "+ToolAskSession+" (backward-compatible tool name). "+desc)
+}
+
+func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store storage.Interface, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        ToolAskSessionQuestion,
-		Description: "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, and answer_status (answered | not_covered | error) using the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask.",
+		Name:        toolName,
+		Description: description,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in askSessionQuestionInput) (*mcp.CallToolResult, askSessionQuestionOutput, error) {
 		start := time.Now()
-		tool := ToolAskSessionQuestion
+		tool := toolName
 		var logSessionID string
 		defer func() {
 			extras := map[string]string{}
@@ -124,7 +130,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 
 		embedder := &rag.OpenAIEmbedder{}
 		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
-			log.Printf("ask_session_question EnsureSessionIndex: %v", err)
+			log.Printf("%s EnsureSessionIndex: %v", tool, err)
 		}
 
 		videoSources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
@@ -136,23 +142,23 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 
 		questionEmbedding, err := embedder.Embed(ctx, []string{qtext})
 		if err != nil || len(questionEmbedding) == 0 {
-			log.Printf("ask_session_question Embed: %v", err)
+			log.Printf("%s Embed: %v", tool, err)
 		}
 		var sessionChunks []models.SessionChunk
 		if len(questionEmbedding) > 0 {
 			sessionChunks, err = rag.RetrieveTopK(ctx, db, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)
 			if err != nil {
-				log.Printf("ask_session_question RetrieveTopK: %v", err)
+				log.Printf("%s RetrieveTopK: %v", tool, err)
 			}
 			if len(sessionChunks) == 0 && mcpSessionHasIndexableContent(ctx, db, sessionID) {
 				_ = db.DeleteChunkEmbeddingsBySessionID(ctx, sessionID)
 				_ = db.DeleteSessionChunksBySessionID(ctx, sessionID)
 				if reindexErr := rag.IndexSession(ctx, db, embedder, sessionID, store); reindexErr != nil {
-					log.Printf("ask_session_question reindex after 0 chunks: %v", reindexErr)
+					log.Printf("%s reindex after 0 chunks: %v", tool, reindexErr)
 				} else {
 					sessionChunks, err = rag.RetrieveTopK(ctx, db, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)
 					if err != nil {
-						log.Printf("ask_session_question RetrieveTopK after reindex: %v", err)
+						log.Printf("%s RetrieveTopK after reindex: %v", tool, err)
 					}
 				}
 			}
@@ -160,7 +166,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 
 		count, err := db.CountQuestionsBySessionID(ctx, sessionID)
 		if err != nil {
-			log.Printf("ask_session_question CountQuestionsBySessionID: %v", err)
+			log.Printf("%s CountQuestionsBySessionID: %v", tool, err)
 			return nil, askSessionQuestionOutput{}, mcpToolErr(500, "failed to check question limit")
 		}
 		if count >= auth.Config.MaxQuestionsPerSession {
@@ -184,7 +190,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 			QuestionSource:   models.QuestionSourceText,
 		}
 		if err := db.CreateQuestion(ctx, question); err != nil {
-			log.Printf("ask_session_question CreateQuestion: %v", err)
+			log.Printf("%s CreateQuestion: %v", tool, err)
 			return nil, askSessionQuestionOutput{}, mcpToolErr(500, "failed to create question")
 		}
 
@@ -213,7 +219,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 			qaResponse.AnswerText = emptyChunkMessage
 		}
 		if err != nil {
-			log.Printf("ask_session_question GenerateAnswer: %v", err)
+			log.Printf("%s GenerateAnswer: %v", tool, err)
 			qaResponse = &utils.QAResponse{
 				AnswerStatus: "error",
 				AnswerText:   fmt.Sprintf("Failed to generate answer: %v", err),
@@ -242,11 +248,11 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store stora
 
 		answer, err := utils.ConvertQAResponseToAnswer(question.ID, qaResponse, embedder.ModelName())
 		if err != nil {
-			log.Printf("ask_session_question ConvertQAResponseToAnswer: %v", err)
+			log.Printf("%s ConvertQAResponseToAnswer: %v", tool, err)
 			return nil, askSessionQuestionOutput{}, mcpToolErr(500, "failed to process answer")
 		}
 		if err := db.CreateAnswer(ctx, answer); err != nil {
-			log.Printf("ask_session_question CreateAnswer: %v", err)
+			log.Printf("%s CreateAnswer: %v", tool, err)
 			return nil, askSessionQuestionOutput{}, mcpToolErr(500, "failed to save answer")
 		}
 
