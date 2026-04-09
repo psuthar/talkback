@@ -146,7 +146,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   - confirmation that **In Review** transition was applied
   - PR URL
   - confirmation that a **structured Jira completion comment** was posted (see **Jira completion comment** below)
-  - **FULL_AUTO only:** `mergeable_state` value observed (PASS = `clean`; BLOCK = `blocked`/`dirty`; unresolved = timed-out); if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
+  - **FULL_AUTO only:** `mergeable_state` value observed (PASS = `clean`; BLOCK = terminal `blocked`/`dirty` after polling; unresolved = timed-out polling); if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
 - If a transition is missed:
   - immediately correct status sequence in Jira
   - add a Jira comment noting correction and linking the implementation branch/PR
@@ -215,10 +215,10 @@ After the PR is created, use a single 40-minute polling budget for all non-termi
    | `null` | GitHub still computing — poll every 30s. |
    | `unknown` / `unstable` / `behind` | Not yet final — poll every 30s. |
    | `clean` | All required checks passed → proceed to step 2. |
-   | `blocked` | A required check failed — stop. Same end state as standard mode. Report the value. |
+   | `blocked` | **Do not stop on the first read.** GitHub often returns `blocked` while required checks are still running or not yet reported. **Poll every 30s** (same 40-minute budget as other non-terminal states). If it later becomes `clean`, merge. If it **remains `blocked`** after polling stabilizes (or the budget expires with no transition to `clean`), treat as terminal BLOCK — same end state as standard mode. Report the final value. |
    | `dirty` | Merge conflict — stop. Same end state as standard mode. Report the value. |
 
-   If `mergeable_state` has not reached `clean`, `blocked`, or `dirty` after **40 minutes** of polling (i.e. still stuck in `null`, `unknown`, `unstable`, or `behind`), end FULL_AUTO — same end state as standard mode.
+   If `mergeable_state` has not reached a terminal outcome after **40 minutes** of polling — i.e. still stuck in `null`, `unknown`, `unstable`, `behind`, or **`blocked` that never resolves to `clean`** — end FULL_AUTO — same end state as standard mode.
 
 2. **On `mergeable_state: clean`:** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
    - **Remote branch:** GitHub auto-deletes it if "Automatically delete head branches" is enabled in repo settings. If not, delete it manually in the GitHub UI — there is no confirmed MCP tool for branch deletion.
@@ -276,7 +276,7 @@ Return (mirror the Jira completion comment where applicable):
 - confirmation that the structured Jira completion comment was posted (or paste the comment body if posting failed)
 - summary of changes
 - follow-up actions
-- **FULL_AUTO only:** PR gate outcome mapped to `mergeable_state` (PASS = `clean`; BLOCK = `blocked` or `dirty`; unresolved = timed-out polling); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if BLOCK or unresolved — `mergeable_state` value observed, no further actions taken
+- **FULL_AUTO only:** PR gate outcome mapped to `mergeable_state` (PASS = `clean`; BLOCK = terminal `blocked`/`dirty` after polling; unresolved = timed-out polling — **poll when initial read is `blocked`**); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if BLOCK or unresolved — final `mergeable_state` value observed, no further actions taken
 
 ---
 
