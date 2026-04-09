@@ -1,6 +1,6 @@
 // ask_session_question: session-scoped RAG Q&A for MCP agents (SCRUM-44).
 // Mirrors POST /api/sessions/:id/ask guardrails (utils.GenerateAnswer, citation normalization, limits)
-// without going through HTTP; uses the same ACL as get_session_metadata / search_session_content.
+// without going through HTTP; uses the same ACL as get_session_metadata / search_session.
 package mcpserver
 
 import (

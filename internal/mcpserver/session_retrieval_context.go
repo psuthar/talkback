@@ -1,5 +1,5 @@
 // get_session_retrieval_context: raw ranked chunks + scores for agent-side reasoning (SCRUM-45).
-// Same vector retrieval stack as search_session_content; different payload (chunk ids, full text window, metadata). No LLM.
+// Same vector retrieval stack as search_session / search_session_content; different payload (chunk ids, full text window, metadata). No LLM.
 package mcpserver
 
 import (
@@ -55,7 +55,7 @@ type getSessionRetrievalContextOutput struct {
 func registerGetSessionRetrievalContext(server *mcp.Server, db *database.DB) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolGetSessionRetrievalContext,
-		Description: "Returns raw retrieval context for a session: ranked chunks with cosine similarity scores and chunk metadata (chunk_id, content_hash, anchors). Uses the same embedding + RetrieveTopKWithScores stack as search_session_content; output shape is optimized for agent-side reasoning. No LLM answer generation. Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY for the query embedding.",
+		Description: "Returns raw retrieval context for a session: ranked chunks with cosine similarity scores and chunk metadata (chunk_id, content_hash, anchors). Uses the same embedding + RetrieveTopKWithScores stack as search_session / search_session_content; output shape is optimized for agent-side reasoning. No LLM answer generation. Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY for the query embedding.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getSessionRetrievalContextInput) (*mcp.CallToolResult, getSessionRetrievalContextOutput, error) {
 		start := time.Now()
 		tool := ToolGetSessionRetrievalContext

@@ -49,7 +49,7 @@ func mcpLoadSessionWithReadAccess(ctx context.Context, db *database.DB, sessionI
 	return session, user, nil
 }
 
-// mcpRunVectorRetrieval runs EnsureSessionIndex, embeds the query, and returns ranked chunks with scores (same stack as search_session_content).
+// mcpRunVectorRetrieval runs EnsureSessionIndex, embeds the query, and returns ranked chunks with scores (same stack as search_session / search_session_content).
 func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.UUID, query string, topK int) ([]rag.RetrievedChunk, string, *uuid.UUID, string, error) {
 	if topK <= 0 {
 		topK = maxSearchTopKDefault
