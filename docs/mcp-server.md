@@ -52,14 +52,14 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
-| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session_content`**, **`get_session_retrieval_context`**, **`get_session_source_chunks`**, and **`ask_session_question`** (Postgres). When unset, only `health_check` is available. |
+| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session`**, **`search_session_content`** (same behavior as `search_session`), **`get_session_retrieval_context`**, **`get_session_source_chunks`**, and **`ask_session_question`** (Postgres). When unset, only `health_check` is available. |
 
 **Local dev presets**
 
 | Goal | Set these (minimum) |
 |------|---------------------|
 | `health_check` only | `TALKBACK_MCP_API_KEY` (non-empty), `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` for typical Cursor/Claude Code |
-| `get_session_metadata` / `search_session_content` / `get_session_retrieval_context` / `get_session_source_chunks` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session_content`**, **`get_session_retrieval_context`**, **`get_session_source_chunks`** (when indexing), and **`ask_session_question`** need **`OPENAI_API_KEY`** (embeddings; Q&A also uses the LLM) — same embedding stack as web session Q&A. |
+| `get_session_metadata` / `search_session` / `search_session_content` / `get_session_retrieval_context` / `get_session_source_chunks` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session`** (or **`search_session_content`**), **`get_session_retrieval_context`**, **`get_session_source_chunks`** (when indexing), and **`ask_session_question`** need **`OPENAI_API_KEY`** (embeddings; Q&A also uses the LLM) — same embedding stack as web session Q&A. |
 
 ### API key middleware
 
@@ -180,8 +180,9 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 |------|-------------|
 | `health_check` | Returns JSON object: `status` (`ok`; `degraded` reserved), `service` (always `talkback-mcp`), `version` (process version, default `dev`). No secrets or session data. Implemented in `internal/mcpserver/health.go`. |
 | `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). Implemented in `internal/mcpserver/session_metadata.go` (SCRUM-39). |
-| `search_session_content` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: ranked chunks with **deterministic** cosine similarity (and primary-transcript boost per [`internal/rag`](../internal/rag)), **snippet**, **source_type**, **source_id**, **anchor**, **start_ms** / **end_ms** when present in anchors. No LLM ranking or summarization (SCRUM-43). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`** for query embedding. Same session ACL as `get_session_metadata`. |
-| `get_session_retrieval_context` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: **`retrieval_context`** with **metadata** (embedding model, primary video id, score-boost flag) and **chunks** ranked by score with **chunk_id**, **chunk_idx**, **text** (truncated window), **content_hash**, **anchor**, timestamps. Same [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as `search_session_content`; **different payload** for agent-side reasoning. **No LLM synthesis** (SCRUM-45). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. |
+| `search_session` | **Preferred** name for deterministic session search (SCRUM-48). Same inputs/outputs as `search_session_content` below — use either tool; behavior is identical. Implemented in `internal/mcpserver/session_search.go`. |
+| `search_session_content` | **Legacy alias** for `search_session`. Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: ranked chunks with **deterministic** cosine similarity (and primary-transcript boost per [`internal/rag`](../internal/rag)), **snippet**, **source_type**, **source_id**, **anchor**, **start_ms** / **end_ms** when present in anchors. No LLM ranking or summarization (SCRUM-43). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`** for query embedding. Same session ACL as `get_session_metadata`. |
+| `get_session_retrieval_context` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: **`retrieval_context`** with **metadata** (embedding model, primary video id, score-boost flag) and **chunks** ranked by score with **chunk_id**, **chunk_idx**, **text** (truncated window), **content_hash**, **anchor**, timestamps. Same [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as `search_session` / `search_session_content`; **different payload** for agent-side reasoning. **No LLM synthesis** (SCRUM-45). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. |
 | `get_session_source_chunks` | Input: `session_id`, **`source_type`** (`transcript` \| `material` \| `link`), optional **`source_id`** (UUID), optional **`limit`** (default 500, max 2000). Calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) then lists rows from **`session_chunks`** (same index as [`rag.RetrieveTopK`](../internal/rag/retrieval.go)). **No query embedding for ranking** — read by source. **`OPENAI_API_KEY`** needed when the index must be built. (SCRUM-46). |
 | `ask_session_question` | Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
 
@@ -189,13 +190,25 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 
 When **`DATABASE_URL`** is set at process start, the server opens Postgres through [`internal/database`](../internal/database) and registers **`get_session_metadata`**. The acting user is the TalkBack user UUID from **`TALKBACK_MCP_ACTING_USER_ID`** (wired into the request context after API-key middleware on `tools/call`). Access is allowed for **global admins** or users who pass **`UserCanAccessSession`** for that session — same rules as the web app. The tool does **not** return transcript or material bodies.
 
-### Session search (SCRUM-43)
+### Session search (SCRUM-43, SCRUM-48)
 
-**`search_session_content`** uses [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) after embedding the query with the same embedder as web Q&A. If the session has no indexed chunks yet, [`rag.EnsureSessionIndex`](../internal/rag/index.go) runs (storage may be nil; R2-backed PDFs rely on extracted text when available). Results are ordered by score only — deterministic, no LLM.
+**`search_session`** and **`search_session_content`** are the same handler: [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) after embedding the query with the same embedder as web Q&A. If the session has no indexed chunks yet, [`rag.EnsureSessionIndex`](../internal/rag/index.go) runs (storage may be nil; R2-backed PDFs rely on extracted text when available). Results are ordered by score only — deterministic, no LLM.
+
+**Example** (`tools/call` arguments — use `search_session` or `search_session_content` interchangeably):
+
+```json
+{
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "query": "quarterly revenue",
+  "top_k": 10
+}
+```
+
+**Example result shape** (abridged): `{ "session_id": "...", "query": "...", "results": [ { "rank": 1, "similarity": 0.82, "snippet": "...", "source_type": "transcript", "source_id": "...", "anchor": { }, "start_ms": 12000, "end_ms": 15000 } ] }`.
 
 ### Deterministic ranking and top-k (SCRUM-47)
 
-Session-scoped **vector** tools (**`search_session_content`**, **`get_session_retrieval_context`**) and HTTP/MCP **ask** paths share the same retrieval core: [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) (or [`rag.RetrieveTopK`](../internal/rag/retrieval.go), which delegates to it). This section is the **integrator-facing contract**; the Go implementation is authoritative for edge cases called out below.
+Session-scoped **vector** tools (**`search_session`** / **`search_session_content`**, **`get_session_retrieval_context`**) and HTTP/MCP **ask** paths share the same retrieval core: [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) (or [`rag.RetrieveTopK`](../internal/rag/retrieval.go), which delegates to it). This section is the **integrator-facing contract**; the Go implementation is authoritative for edge cases called out below.
 
 | Topic | Behavior |
 |--------|----------|
@@ -205,7 +218,7 @@ Session-scoped **vector** tools (**`search_session_content`**, **`get_session_re
 | **Similarity** | **Cosine similarity** (see `cosineSimilarity` in [`retrieval.go`](../internal/rag/retrieval.go)): dot product divided by the product of L2 norms; mathematically in **`[-1, 1]`**; zero vectors yield **0**. Typical embedding pairs are often positive, but clients must not assume scores are non-negative. |
 | **Primary transcript boost** | When the session has a **primary video**, chunks with `source_type=transcript` and `source_id` equal to that video’s UUID get the raw cosine score multiplied by [`rag.PrimaryVideoScoreBoost`](../internal/rag/retrieval.go) (**`1.2`**). Other chunks use the unmodified cosine. If there is no primary video, **no** boost is applied. |
 | **Ranking order** | Sort **descending** by adjusted score; return the **first k** after sort. |
-| **`k` / top-k** | Package default [`rag.DefaultTopK`](../internal/rag/retrieval.go) is **10** when callers pass `k <= 0`. MCP **`search_session_content`** and **`get_session_retrieval_context`** accept optional **`top_k`**: default **10**, maximum **50** ([`session_retrieval_shared.go`](../internal/mcpserver/session_retrieval_shared.go)). If fewer than `k` chunks exist, fewer are returned. |
+| **`k` / top-k** | Package default [`rag.DefaultTopK`](../internal/rag/retrieval.go) is **10** when callers pass `k <= 0`. MCP **`search_session`**, **`search_session_content`**, and **`get_session_retrieval_context`** accept optional **`top_k`**: default **10**, maximum **50** ([`session_retrieval_shared.go`](../internal/mcpserver/session_retrieval_shared.go)). If fewer than `k` chunks exist, fewer are returned. |
 | **Dimension mismatch** | Chunks whose stored embedding length **≠** query embedding length are **skipped** (silent), e.g. stale rows if the embedding model ever changed without a full reindex. |
 | **Empty index** | No chunks or no embeddings → **empty** result list (not an error). |
 
@@ -221,7 +234,7 @@ Session-scoped **vector** tools (**`search_session_content`**, **`get_session_re
 
 ### Raw retrieval context (SCRUM-45)
 
-**`get_session_retrieval_context`** uses the same embedding + [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as **`search_session_content`** (shared wiring in the MCP server). The response wraps ranked chunks under **`retrieval_context`** with chunk identifiers and hashes for downstream agents — no answer generation.
+**`get_session_retrieval_context`** uses the same embedding + [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as **`search_session`** / **`search_session_content`** (shared wiring in the MCP server). The response wraps ranked chunks under **`retrieval_context`** with chunk identifiers and hashes for downstream agents — no answer generation.
 
 ### Source-scoped chunk listing (SCRUM-46)
 

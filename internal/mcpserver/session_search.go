@@ -1,4 +1,4 @@
-// search_session_content: deterministic session-scoped chunk retrieval (SCRUM-43).
+// search_session and search_session_content: deterministic session-scoped chunk retrieval (SCRUM-43, SCRUM-48).
 package mcpserver
 
 import (
@@ -34,13 +34,19 @@ type searchSessionContentOutput struct {
 	Results   []searchSessionHit `json:"results"`
 }
 
-func registerSearchSessionContent(server *mcp.Server, db *database.DB) {
+func registerSearchSessionTools(server *mcp.Server, db *database.DB) {
+	const desc = "Deterministic search over indexed session content: embeds the query and returns top-k chunks by cosine similarity (same ranking as web Q&A, no LLM). Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; enforces session read access. Output includes snippet, source_type (transcript/material/link), source_id, anchor, and transcript start_ms/end_ms when present."
+	registerSearchSessionTool(server, db, ToolSearchSession, desc)
+	registerSearchSessionTool(server, db, ToolSearchSessionContent, "Same behavior as "+ToolSearchSession+" (backward-compatible tool name). "+desc)
+}
+
+func registerSearchSessionTool(server *mcp.Server, db *database.DB, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        ToolSearchSessionContent,
-		Description: "Deterministic search over indexed session content: embeds the query and returns top-k chunks by cosine similarity (same ranking as web Q&A, no LLM). Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; enforces session read access. Output includes snippet, source_type (transcript/material/link), source_id, anchor, and transcript start_ms/end_ms when present.",
+		Name:        toolName,
+		Description: description,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in searchSessionContentInput) (*mcp.CallToolResult, searchSessionContentOutput, error) {
 		start := time.Now()
-		tool := ToolSearchSessionContent
+		tool := toolName
 		var logSessionID string
 		defer func() {
 			extras := map[string]string{}

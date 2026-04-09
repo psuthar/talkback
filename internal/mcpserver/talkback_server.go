@@ -36,7 +36,7 @@ func NewTalkbackMCPServer(cfg TalkbackServerConfig) *mcp.Server {
 	}
 	opts := &mcp.ServerOptions{
 		Instructions: "TalkBack MCP: tools include health_check; with DATABASE_URL, get_session_metadata, " +
-			"search_session_content, get_session_retrieval_context, get_session_source_chunks, and ask_session_question are registered. Configure TALKBACK_MCP_API_KEY; set TALKBACK_MCP_ACTING_USER_ID for session tools; OPENAI_API_KEY is required for embeddings (search, raw retrieval, index build) and RAG Q&A.",
+			"search_session (same as search_session_content), get_session_retrieval_context, get_session_source_chunks, and ask_session_question are registered. Configure TALKBACK_MCP_API_KEY; set TALKBACK_MCP_ACTING_USER_ID for session tools; OPENAI_API_KEY is required for embeddings (search, raw retrieval, index build) and RAG Q&A.",
 	}
 	s := mcp.NewServer(impl, opts)
 	s.AddReceivingMiddleware(cfg.Auth.RequireToolAuthMiddleware())

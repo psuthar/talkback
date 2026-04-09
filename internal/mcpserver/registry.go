@@ -4,6 +4,7 @@ package mcpserver
 const (
 	ToolHealthCheck                = "health_check"
 	ToolGetSessionMetadata         = "get_session_metadata"
+	ToolSearchSession              = "search_session"
 	ToolSearchSessionContent       = "search_session_content"
 	ToolGetSessionRetrievalContext = "get_session_retrieval_context"
 	ToolGetSessionSourceChunks     = "get_session_source_chunks"
@@ -15,7 +16,7 @@ const (
 func ToolNames(cfg RegisterConfig) []string {
 	names := []string{ToolHealthCheck}
 	if cfg.DB != nil {
-		names = append(names, ToolGetSessionMetadata, ToolSearchSessionContent, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSessionQuestion)
+		names = append(names, ToolGetSessionMetadata, ToolSearchSession, ToolSearchSessionContent, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSessionQuestion)
 	}
 	return names
 }
