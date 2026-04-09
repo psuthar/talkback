@@ -185,6 +185,61 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 
 When **`DATABASE_URL`** is set at process start, the server opens Postgres through [`internal/database`](../internal/database) and registers **`get_session_metadata`**. The acting user is the TalkBack user UUID from **`TALKBACK_MCP_ACTING_USER_ID`** (wired into the request context after API-key middleware on `tools/call`). Access is allowed for **global admins** or users who pass **`UserCanAccessSession`** for that session — same rules as the web app. The tool does **not** return transcript or material bodies.
 
-## Hosted / containers
+## Hosted deployment (containers & ops) — SCRUM-42
 
-Run the same binary as the container entrypoint with stdio attached. Set `TALKBACK_MCP_API_KEY` and usually **`TALKBACK_MCP_REQUIRE_CLIENT_KEY=true`**. Ensure nothing else writes to stdout.
+This section describes a **single trusted deployment** (one environment, one MCP process or small replica count). Multi-tenant SaaS MCP is out of scope.
+
+### Process model
+
+- **Binary:** `talkback-mcp` from [`cmd/talkback-mcp`](../cmd/talkback-mcp). Same build as local dev; no separate “enterprise” binary.
+- **Stdio:** MCP JSON-RPC is on **stdin/stdout**; operational logs go to **stderr** (see [Structured logging](#structured-logging-scrum-40)). Nothing else may write to stdout.
+- **Supervisor:** In containers or VMs, run the binary under a process manager (systemd, Kubernetes, etc.) that matches your **stdio bridge** (see below). If stdin closes and the runtime exits, the orchestrator should **restart** the container.
+
+### Container image
+
+The repo includes a **minimal image** (MCP only, not the full TalkBack API stack):
+
+```bash
+docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
+```
+
+- **Layout:** single static binary at `/usr/local/bin/talkback-mcp`, non-root user `65532`, CA certificates for Postgres TLS.
+- **Main app image:** The root [`Dockerfile`](../Dockerfile) builds the HTTP API (`cmd/api`); it does **not** include `talkback-mcp`. Use `deploy/Dockerfile.mcp` when you only need the MCP server.
+
+### Environment (hosted)
+
+| Variable | Typical hosted value | Notes |
+|----------|----------------------|--------|
+| `TALKBACK_MCP_API_KEY` | **Required** | Inject via secrets manager / K8s Secret / parameter store — **never commit** real values. |
+| `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | **`true`** | Clients must send a matching key on each `tools/call` (see **Strict mode** under [Authentication](#authentication)). |
+| `DATABASE_URL` | If using `get_session_metadata` | Same Postgres as TalkBack when that tool is required; omit to register only `health_check`. |
+| `TALKBACK_MCP_ACTING_USER_ID` | If using `get_session_metadata` | TalkBack `users.id` UUID; inject alongside DB URL. |
+
+### Secrets injection
+
+- **Kubernetes:** mount with `envFrom.secretRef` or the [External Secrets Operator](https://external-secrets.io/) / cloud-specific sync to Secrets. Example manifest (placeholders only): [`deploy/k8s/mcp-hosted.example.yaml`](../deploy/k8s/mcp-hosted.example.yaml).
+- **AWS / GCP / Azure:** resolve secrets at deploy time into env or files; do not bake credentials into images.
+- **Rotation:** `TALKBACK_MCP_API_KEY` supports comma-separated keys; roll by adding the new key before retiring the old one.
+
+### Health and observability
+
+| Signal | Use |
+|--------|-----|
+| **Process** | Exit code non-zero on fatal config (`TALKBACK_MCP_API_KEY` missing, invalid `TALKBACK_MCP_ACTING_USER_ID`, DB connect failure at startup when `DATABASE_URL` is set). Restart policies catch crashes. |
+| **Stderr** | Structured lines (`event=tool_complete`, `event=auth_failed`, …) for auth and tool outcomes — see [Structured logging](#structured-logging-scrum-40). |
+| **`health_check` tool** | Requires a **client** that speaks MCP over stdio (or a bridge). There is **no HTTP health port** on the binary today. |
+
+### Failure modes (observable behavior)
+
+| Condition | What happens |
+|-----------|----------------|
+| Missing / empty `TALKBACK_MCP_API_KEY` | Process **exits** at startup (`LoadAuthFromEnv`). |
+| Invalid `TALKBACK_MCP_ACTING_USER_ID` | Process **exits** at startup. |
+| `DATABASE_URL` set but DB unreachable at startup | Process **exits** during `database.New()` in [`cmd/talkback-mcp`](../cmd/talkback-mcp). |
+| Wrong client key in strict mode | `tools/call` returns unauthorized; stderr logs `event=auth_failed` (no secrets). |
+| DB up at start but fails later | `get_session_metadata` may return errors to the client; check stderr and app DB health. |
+
+### Kubernetes and Docker references
+
+- **Example manifest (Secret + ConfigMap + Deployment):** [`deploy/k8s/mcp-hosted.example.yaml`](../deploy/k8s/mcp-hosted.example.yaml) — edit image name, resources, and secret wiring before apply.
+- **Docker Compose:** The main stack is [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) (Postgres + API). There is no default `talkback-mcp` service there; run the MCP image beside your stack when you have a stdio bridge, or use the image in CI/smoke with `docker run -i` and a test client.

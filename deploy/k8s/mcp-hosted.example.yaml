@@ -1,0 +1,71 @@
+# Example Kubernetes resources for talkback-mcp (SCRUM-42). Placeholders only — do not commit real secrets.
+# Apply after editing: kubectl apply -f mcp-hosted.example.yaml
+#
+# Stdio MCP: the server speaks JSON-RPC on stdin/stdout. In Kubernetes, something must attach
+# to that stdio (sidecar bridge, exec session, or a supervisor). A bare Deployment with no
+# attached stdin may see the process exit when stdin closes — validate in your cluster.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: talkback-mcp
+  labels:
+    app.kubernetes.io/name: talkback-mcp
+type: Opaque
+stringData:
+  # Required. Comma-separated rotation keys supported.
+  TALKBACK_MCP_API_KEY: "REPLACE_WITH_SECRET_FROM_VAULT_OR_SEALED_SECRET"
+  # Optional: add TALKBACK_MCP_ACTING_USER_ID here (users.id UUID) when using get_session_metadata.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: talkback-mcp-config
+  labels:
+    app.kubernetes.io/name: talkback-mcp
+data:
+  # Hosted deployments should use TALKBACK_MCP_REQUIRE_CLIENT_KEY=true and pass keys per tools/call.
+  TALKBACK_MCP_REQUIRE_CLIENT_KEY: "true"
+  # Optional: set if you register get_session_metadata (same Postgres as TalkBack app).
+  # Prefer a Secret if the URL contains a password — use stringData in a separate Secret instead.
+  DATABASE_URL: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: talkback-mcp
+  labels:
+    app.kubernetes.io/name: talkback-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: talkback-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: talkback-mcp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: talkback-mcp
+          image: talkback-mcp:latest
+          imagePullPolicy: IfNotPresent
+          args: ["-version=1.0.0"]
+          envFrom:
+            - secretRef:
+                name: talkback-mcp
+            - configMapRef:
+                name: talkback-mcp-config
+          # No HTTP port — health is process + stderr logs; MCP health_check is via JSON-RPC on stdio.
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
