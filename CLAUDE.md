@@ -132,7 +132,10 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   4) Push branch and create PR
   5) Transition ticket to **In Review**
   6) Post Jira completion comment
-  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`. **After the first poll, if `mergeable_state` is not present in the response at all, stop immediately — do not wait, do not merge.** Report the MCP limitation to the user, leave the PR open, and end FULL_AUTO. If the field is present but `null`, GitHub is still computing — keep polling. If it remains `null` after 40 min, stop and report to the user.
+  7) Call `get_pull_request` once via GitHub MCP and inspect the response for `mergeable_state`.
+     - **If `mergeable_state` is absent from the response: FULL_AUTO IS NOT AVAILABLE in this environment. There is no fallback. Do not wait. Do not infer CI status. Do not attempt merge by any other means. End FULL_AUTO immediately — the outcome is identical to standard mode: PR open, Jira In Review, user handles merge.** Report this limitation clearly.
+     - If present but `null`: GitHub is still computing — poll every 30s (up to 40 min). If still `null` after 40 min, end FULL_AUTO as above.
+     - If present and resolves: proceed to step 8.
   8) **If `mergeable_state: clean`** (PR Gate = PASS): squash merge via `merge_pull_request` MCP tool, then proceed to steps 9–11
   8) **If `mergeable_state` is any value other than `clean`** (blocked, dirty, unstable, unknown, or never resolved): stop here — same end state as standard mode. Report the value observed.
   9) Confirm remote branch deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled; otherwise delete via GitHub MCP)
@@ -209,11 +212,11 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created:
 
-1. **Poll `get_pull_request`** every 30s (up to 40 min) via GitHub MCP, inspecting `mergeable_state`. Use this field — not `get_pull_request_status` (which uses the legacy status API and does not see GitHub Actions check runs). Since `TalkBack PR Gate` is a required check on `main`, its outcomes map cleanly:
-   - **Field absent from response after first poll** → stop immediately; do not wait, do not merge; report the MCP limitation to the user and leave the PR open
-   - `null` → still computing → keep polling; if still `null` after 40 min, stop and report
+1. **Call `get_pull_request`** once via GitHub MCP and inspect the response for `mergeable_state`. Use this field — not `get_pull_request_status` (which uses the legacy status API and does not see GitHub Actions check runs).
+   - **Field absent** → **FULL_AUTO IS NOT AVAILABLE**. No timed waits. No CI inference. No merge attempt. End FULL_AUTO now — PR stays open, Jira stays In Review. This is a hard stop with no workaround.
+   - `null` → still computing → poll every 30s; if still `null` after 40 min → end FULL_AUTO as above
    - `clean` → all required checks passed (PR Gate = PASS) → proceed to merge
-   - `blocked` → a required check failed or returned neutral (PR Gate = BLOCK or WARN) → stop
+   - `blocked` → a required check failed or is action_required (PR Gate = BLOCK or WARN) → stop; same end state as standard mode
    - `unknown` / `unstable` / `behind` / `dirty` → still resolving or conflict → keep polling (or stop on `dirty`)
 
 2. **On `mergeable_state: clean`:** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
