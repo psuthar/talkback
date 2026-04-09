@@ -1,4 +1,4 @@
-// get_session_retrieval_context: raw ranked chunks + scores for agent-side reasoning (SCRUM-45).
+// get_session_raw_chunks and get_session_retrieval_context: raw ranked chunks + scores for agent-side reasoning (SCRUM-45, SCRUM-52).
 // Same vector retrieval stack as search_session / search_session_content; different payload (chunk ids, full text window, metadata). No LLM.
 package mcpserver
 
@@ -53,13 +53,19 @@ type getSessionRetrievalContextOutput struct {
 	RetrievalContext retrievalContextPayload `json:"retrieval_context"`
 }
 
-func registerGetSessionRetrievalContext(server *mcp.Server, db *database.DB, store storage.Interface) {
+func registerGetSessionRetrievalContextTools(server *mcp.Server, db *database.DB, store storage.Interface) {
+	const desc = "Raw session retrieval (chunks only): ranked chunks with cosine similarity scores and metadata (chunk_id, chunk_idx, content_hash, anchors, created_at). Uses the same embedding + RetrieveTopKWithScores stack as search_session / search_session_content; output is for agent-side reasoning and citations — no LLM answer generation. Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY for the query embedding."
+	registerGetSessionRetrievalContextTool(server, db, store, ToolGetSessionRawChunks, desc)
+	registerGetSessionRetrievalContextTool(server, db, store, ToolGetSessionRetrievalContext, "Same behavior as "+ToolGetSessionRawChunks+" (SCRUM-45 name). "+desc)
+}
+
+func registerGetSessionRetrievalContextTool(server *mcp.Server, db *database.DB, store storage.Interface, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        ToolGetSessionRetrievalContext,
-		Description: "Returns raw retrieval context for a session: ranked chunks with cosine similarity scores and chunk metadata (chunk_id, content_hash, anchors). Uses the same embedding + RetrieveTopKWithScores stack as search_session / search_session_content; output shape is optimized for agent-side reasoning. No LLM answer generation. Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY for the query embedding.",
+		Name:        toolName,
+		Description: description,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getSessionRetrievalContextInput) (*mcp.CallToolResult, getSessionRetrievalContextOutput, error) {
 		start := time.Now()
-		tool := ToolGetSessionRetrievalContext
+		tool := toolName
 		var logSessionID string
 		defer func() {
 			extras := map[string]string{}
