@@ -71,7 +71,37 @@ When working in this repository, Claude must:
 
 ---
 
-## 7. Jira Ticket Execution Workflow
+## 7. MCP Servers
+
+Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Cursor) and `.mcp.json` (Claude Code) wire these up; run `./scripts/setup-mcp-config.sh` to regenerate both files.
+
+### `talkback` — TalkBack internal tools
+- **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
+- **Tools:** `health_check`; `get_session_metadata` (when `DATABASE_URL` is set)
+- **Env vars:**
+  - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
+  - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
+  - `DATABASE_URL` — Postgres connection string; enables session DB tools (`.cursor/mcp.json` only)
+  - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools (`.cursor/mcp.json` only)
+
+### `github` — GitHub operations
+- **Package:** `@modelcontextprotocol/server-github` (via `npx -y`)
+- **Tools:** PR creation/review, issue management, file ops, code search, etc.
+- **Env vars:**
+  - `GITHUB_PERSONAL_ACCESS_TOKEN` — PAT with repo + PR scopes
+
+### `atlassian` — Jira & Confluence
+- **Package:** `@xuandev/atlassian-mcp` (via `npx -y`)
+- **Tools:** `jira_*` and `confluence_*` — issue lifecycle, sprints, boards, pages
+- **Env vars:**
+  - `ATLASSIAN_DOMAIN` — e.g. `suthar-team.atlassian.net`
+  - `ATLASSIAN_EMAIL` — Atlassian account email
+  - `ATLASSIAN_API_TOKEN` — Atlassian API token
+- **Note:** `jira_add_comment` requires `body` param (not `comment`); see `.cursor/rules/atlassian-mcp-jira.mdc`.
+
+---
+
+## 8. Jira Ticket Execution Workflow
 
 When the user requests implementation of a Jira ticket, two invocation modes are supported:
 
@@ -100,13 +130,12 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   2) Create and checkout `feat/<ticket-number>` branch
   3) Implement + validate (commits on the feature branch only)
   4) Push branch and create PR
-  5) Enable auto-merge (squash) on the PR via GitHub MCP
-  6) Transition ticket to **In Review**
-  7) Post Jira completion comment (note that auto-merge is armed)
-  8) Poll GitHub every 60s (up to 40 min) for PR merge status
-  9) **If TalkBack PR Gate = PASS and all required checks pass:** proceed to steps 10–12
-  9) **If TalkBack PR Gate = WARN or BLOCK, or any required check fails:** stop here — same end state as standard mode
-  10) Confirm remote branch deleted (auto-deleted by GitHub or delete via GitHub MCP)
+  5) Transition ticket to **In Review**
+  6) Post Jira completion comment
+  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`
+  8) **If `mergeable_state: clean`** (PR Gate = PASS): squash merge via `merge_pull_request` MCP tool, then proceed to steps 9–11
+  8) **If `mergeable_state: blocked`** (PR Gate = WARN or BLOCK): stop here — same end state as standard mode
+  9) Confirm remote branch deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled; otherwise delete via GitHub MCP)
   11) Local cleanup: `git checkout main` → `git fetch --prune origin` → `git pull --ff-only origin main` → `git branch -D feat/<ticket-number>`
   12) Transition ticket to **Done**
 
@@ -179,11 +208,12 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created:
 
-1. **Enable auto-merge (squash)** on the PR via GitHub MCP. GitHub will squash-merge automatically once all required checks pass. The `TalkBack PR Gate` check maps PASS→`success`, WARN→`neutral`, BLOCK→`failure`; GitHub auto-merge requires `success`, so WARN naturally does not trigger a merge.
+1. **Poll `get_pull_request`** every 30s (up to 40 min) via GitHub MCP, inspecting `mergeable_state`. Use this field — not `get_pull_request_status` (which uses the legacy status API and does not see GitHub Actions check runs). Since `TalkBack PR Gate` is a required check on `main`, its outcomes map cleanly:
+   - `clean` → all required checks passed (PR Gate = PASS) → proceed to merge
+   - `blocked` → a required check failed or returned neutral (PR Gate = BLOCK or WARN) → stop
+   - `unknown` / `unstable` / `behind` / `dirty` → still resolving or conflict → keep polling (or stop on `dirty`)
 
-2. **Poll for merge completion** every 60s (up to 40 min) using GitHub MCP (`get_pull_request`, check `merged_at`).
-
-3. **On PASS (PR merged):**
+2. **On `mergeable_state: clean`:** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
    - Confirm remote branch is deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled in repo settings; otherwise delete via GitHub MCP)
    - Run local cleanup:
      ```
@@ -194,7 +224,7 @@ After the PR is created:
      ```
    - Transition Jira ticket to **Done**
 
-4. **On WARN or BLOCK (PR not merged):** Stop. PR stays open, Jira stays **In Review**. Report the gate outcome to the user and take no further action.
+3. **On WARN (`neutral`) or BLOCK (`failure`):** Stop. PR stays open, Jira stays **In Review**. Report the gate outcome to the user and take no further action.
 
 ### Git authentication for `git push` (HTTPS / Cursor)
 
@@ -245,7 +275,7 @@ Return (mirror the Jira completion comment where applicable):
 
 ---
 
-## 8. Planning Mode Behavior
+## 9. Planning Mode Behavior
 
 If the user explicitly requests planning (e.g. "Plan SCRUM-13"):
 
