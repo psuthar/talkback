@@ -185,7 +185,7 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 | `get_session_retrieval_context` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: **`retrieval_context`** with **metadata** (embedding model, primary video id, score-boost flag) and **chunks** ranked by score with **chunk_id**, **chunk_idx**, **text** (truncated window), **content_hash**, **anchor**, timestamps. Same [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as `search_session` / `search_session_content`; **different payload** for agent-side reasoning. **No LLM synthesis** (SCRUM-45). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. |
 | `get_session_source_chunks` | Input: `session_id`, **`source_type`** (`transcript` \| `material` \| `link`), optional **`source_id`** (UUID), optional **`limit`** (default 500, max 2000). Calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) then lists rows from **`session_chunks`** (same index as [`rag.RetrieveTopK`](../internal/rag/retrieval.go)). **No query embedding for ranking** — read by source. **`OPENAI_API_KEY`** needed when the index must be built. (SCRUM-46). |
 | `ask_session` | **Preferred** name for guarded session Q&A (SCRUM-50). Same inputs/outputs as `ask_session_question` — use either tool; behavior is identical. Implemented in `internal/mcpserver/session_ask_question.go`. |
-| `ask_session_question` | **Legacy alias** for `ask_session`. Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
+| `ask_session_question` | **Legacy alias** for `ask_session`. Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **automation_recommended** (SCRUM-51), **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
 
 ### Session metadata / DB (SCRUM-39)
 
@@ -244,6 +244,18 @@ Session-scoped **vector** tools (**`search_session`** / **`search_session_conten
 ### Session RAG Q&A (SCRUM-44, SCRUM-50)
 
 **`ask_session`** and **`ask_session_question`** are the same handler: retrieval ([`rag.RetrieveTopK`](../internal/rag/retrieval.go)), then [`utils.GenerateAnswer`](../internal/utils/qa.go) with the same prompts, confidence threshold, and “not covered” behavior as the web app. It creates **question** and **answer** rows (like the HTTP ask endpoint) so the session history stays consistent. Duplicate questions in the same thread return **`cached_repeat: true`** without calling the LLM again.
+
+### Confidence and automation hints (SCRUM-51)
+
+Integrators should treat MCP **`ask_session`** / **`ask_session_question`** responses as **advisory** for downstream automation. The server exposes the same **`confidence`** (0–1) and **`answer_status`** strings as persisted answers. It also sets **`automation_recommended`**: **`true`** only when **`answer_status`** is **`answered`** *and* **`confidence` ≥ 0.55**, matching the guardrail in [`internal/utils/qa.go`](../internal/utils/qa.go) that forces **`not_covered`** and **clears citations** when confidence is below that threshold or the model marks the question as not covered.
+
+| Situation | Typical outcome | Safe to automate? |
+|-----------|-----------------|-------------------|
+| **`answer_status: answered`** and **`confidence` ≥ 0.55** | Grounded answer; citations present when the model supplied them and normalization succeeded | **`automation_recommended: true`** — still subject to your org’s policy; never invent sources. |
+| **`answer_status: not_covered`** or **`confidence` &lt; 0.55** | May include an explanatory **`answer_text`**; citations are **cleared** by QA rules when the guardrail applies | **`automation_recommended: false`** — **human review** or a non-automated path. |
+| **`answer_status: error`** | LLM or pipeline failure message | **`automation_recommended: false`**. |
+
+**No invented sources:** If evidence is thin, the shared QA path clears or downgrades citations per existing rules; MCP does not add citations that were not grounded in retrieval.
 
 ### MCP vs HTTP RAG parity (SCRUM-49)
 
