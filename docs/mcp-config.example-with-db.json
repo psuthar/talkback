@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "talkback": {
+      "command": "go",
+      "args": [
+        "run",
+        "/absolute/path/to/talkback/cmd/talkback-mcp",
+        "-version=dev"
+      ],
+      "env": {
+        "TALKBACK_MCP_API_KEY": "change-me-local-dev",
+        "TALKBACK_MCP_REQUIRE_CLIENT_KEY": "false",
+        "DATABASE_URL": "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable",
+        "TALKBACK_MCP_ACTING_USER_ID": "11111111-1111-1111-1111-111111111111"
+      }
+    }
+  }
+}

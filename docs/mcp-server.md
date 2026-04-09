@@ -4,6 +4,39 @@ Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agent
 
 **Protocol wiring:** The binary uses `internal/mcpserver.NewTalkbackMCPServer`, which constructs the official Go SDK server, attaches receiving middleware so **only** `tools/call` is API-key gated (`initialize` / `tools/list` stay open), registers tools, then runs [`mcp.StdioTransport`](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#StdioTransport) (newline-delimited JSON-RPC).
 
+## Quick start from a clone (Cursor + Claude Code)
+
+Goal: run `talkback-mcp` from a **local clone** with minimal friction—`health_check` first; optional Postgres-backed `get_session_metadata` when you need it.
+
+1. **Install Go** using a toolchain that matches the **`go` version** in the repo root [`go.mod`](../go.mod) (the project tracks a current Go release).
+2. **Build** (from the repository root):
+
+   ```bash
+   go build -o talkback-mcp ./cmd/talkback-mcp
+   ```
+
+   Or use `go run ./cmd/talkback-mcp` via the generated config (below); no separate build step is required.
+3. **Generate IDE config** (writes **gitignored** `.cursor/mcp.json` and `.mcp.json`):
+
+   ```bash
+   ./scripts/setup-mcp-config.sh
+   ```
+
+   The script uses **`go run`** with an **absolute** path to `cmd/talkback-mcp`, so the MCP subprocess does not depend on shell `cwd`. It sets `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` and a random `TALKBACK_MCP_API_KEY` unless you preset **`TALKBACK_MCP_API_KEY`** in the environment before running the script.
+4. **Optional — session metadata tool:** If you already have a TalkBack database (e.g. local Docker Postgres from the main app), export **`DATABASE_URL`** and **`TALKBACK_MCP_ACTING_USER_ID`** (a TalkBack `users.id` UUID) in your shell and **run the setup script again**—those variables are copied into the MCP `env` block. Otherwise omit them; only `health_check` is registered when `DATABASE_URL` is unset at process start.
+5. **Restart** Cursor and/or Claude Code fully so MCP reloads (config is not hot-reloaded).
+
+**PATH and platforms**
+
+- **macOS + GUI IDEs:** If `go` is installed via Homebrew (`/opt/homebrew/bin/go`) but the IDE cannot find `go`, ensure that directory is on `PATH` for GUI-launched apps (e.g. Cursor/VS Code `terminal.integrated.env.osx` or launch Cursor from a terminal). The repo includes `.vscode/settings.json` that prepends `/opt/homebrew/bin` for the **integrated terminal** only.
+- **Linux:** Install Go from your distro or [go.dev](https://go.dev/dl/); confirm `go version` in the environment that starts the IDE.
+- **Windows:** Prefer **WSL** or **Git Bash** with Go installed; use **forward slashes or escaped backslashes** in JSON `args` paths if you hand-edit configs.
+
+**Committed examples (placeholders only, no real secrets)**
+
+- Minimal: [`mcp-config.example.json`](mcp-config.example.json)
+- With optional DB + acting user (placeholders): [`mcp-config.example-with-db.json`](mcp-config.example-with-db.json)
+
 ## Build
 
 ```bash
@@ -19,7 +52,14 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
-| `DATABASE_URL` | No | When set, the server registers **`get_session_metadata`** (Postgres). When unset, only `health_check` is available. |
+| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`** (Postgres). When unset, only `health_check` is available. |
+
+**Local dev presets**
+
+| Goal | Set these (minimum) |
+|------|---------------------|
+| `health_check` only | `TALKBACK_MCP_API_KEY` (non-empty), `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` for typical Cursor/Claude Code |
+| `get_session_metadata` too | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB) |
 
 ### API key middleware
 
@@ -72,9 +112,11 @@ This writes **both** (gitignored, not committed):
 
 It sets `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` and generates a random API key unless you preset **`TALKBACK_MCP_API_KEY`**.
 
+If **`DATABASE_URL`** and/or **`TALKBACK_MCP_ACTING_USER_ID`** are set in the shell when you run the script, they are copied into the generated `env` object so `get_session_metadata` can run against your local DB.
+
 Then **fully quit and reopen** Cursor and/or Claude Code so MCP reloads.
 
-Committed reference (edit paths if you copy manually): [`docs/mcp-config.example.json`](mcp-config.example.json).
+Committed references (edit paths if you copy manually): [`docs/mcp-config.example.json`](mcp-config.example.json), [`docs/mcp-config.example-with-db.json`](mcp-config.example-with-db.json).
 
 ## Cursor
 
@@ -141,7 +183,7 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 
 ### Session metadata / DB (SCRUM-39)
 
-When **`DATABASE_URL`** is set at process start, the server opens Postgres through [`internal/database`](../../internal/database) and registers **`get_session_metadata`**. The acting user is the TalkBack user UUID from **`TALKBACK_MCP_ACTING_USER_ID`** (wired into the request context after API-key middleware on `tools/call`). Access is allowed for **global admins** or users who pass **`UserCanAccessSession`** for that session — same rules as the web app. The tool does **not** return transcript or material bodies.
+When **`DATABASE_URL`** is set at process start, the server opens Postgres through [`internal/database`](../internal/database) and registers **`get_session_metadata`**. The acting user is the TalkBack user UUID from **`TALKBACK_MCP_ACTING_USER_ID`** (wired into the request context after API-key middleware on `tools/call`). Access is allowed for **global admins** or users who pass **`UserCanAccessSession`** for that session — same rules as the web app. The tool does **not** return transcript or material bodies.
 
 ## Hosted / containers
 
