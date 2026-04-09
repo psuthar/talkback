@@ -1,3 +1,5 @@
+// get_session_metadata tool: read-only session row + owner enrichment; requires DATABASE_URL.
+// See package doc (doc.go) for SCRUM-39 wiring and ACL.
 package mcpserver
 
 import (

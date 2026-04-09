@@ -121,7 +121,11 @@ Restart Claude Desktop after saving.
 | Tool | Description |
 |------|-------------|
 | `health_check` | Returns JSON object: `status` (`ok`; `degraded` reserved), `service` (always `talkback-mcp`), `version` (process version, default `dev`). No secrets or session data. Implemented in `internal/mcpserver/health.go`. |
-| `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). |
+| `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). Implemented in `internal/mcpserver/session_metadata.go` (SCRUM-39). |
+
+### Session metadata / DB (SCRUM-39)
+
+When **`DATABASE_URL`** is set at process start, the server opens Postgres through [`internal/database`](../../internal/database) and registers **`get_session_metadata`**. The acting user is the TalkBack user UUID from **`TALKBACK_MCP_ACTING_USER_ID`** (wired into the request context after API-key middleware on `tools/call`). Access is allowed for **global admins** or users who pass **`UserCanAccessSession`** for that session — same rules as the web app. The tool does **not** return transcript or material bodies.
 
 ## Hosted / containers
 
