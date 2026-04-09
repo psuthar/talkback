@@ -52,14 +52,14 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
-| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session`**, **`search_session_content`** (same behavior as `search_session`), **`get_session_retrieval_context`**, **`get_session_source_chunks`**, and **`ask_session_question`** (Postgres). When unset, only `health_check` is available. |
+| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session`**, **`search_session_content`** (same behavior as `search_session`), **`get_session_retrieval_context`**, **`get_session_source_chunks`**, **`ask_session`**, and **`ask_session_question`** (same behavior as `ask_session`) (Postgres). When unset, only `health_check` is available. |
 
 **Local dev presets**
 
 | Goal | Set these (minimum) |
 |------|---------------------|
 | `health_check` only | `TALKBACK_MCP_API_KEY` (non-empty), `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` for typical Cursor/Claude Code |
-| `get_session_metadata` / `search_session` / `search_session_content` / `get_session_retrieval_context` / `get_session_source_chunks` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session`** (or **`search_session_content`**), **`get_session_retrieval_context`**, **`get_session_source_chunks`** (when indexing), and **`ask_session_question`** need **`OPENAI_API_KEY`** (embeddings; Q&A also uses the LLM) — same embedding stack as web session Q&A. |
+| `get_session_metadata` / `search_session` / `search_session_content` / `get_session_retrieval_context` / `get_session_source_chunks` / `ask_session` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session`** (or **`search_session_content`**), **`get_session_retrieval_context`**, **`get_session_source_chunks`** (when indexing), and **`ask_session`** (or **`ask_session_question`**) need **`OPENAI_API_KEY`** (embeddings; Q&A also uses the LLM) — same embedding stack as web session Q&A. |
 
 ### API key middleware
 
@@ -184,7 +184,8 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 | `search_session_content` | **Legacy alias** for `search_session`. Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: ranked chunks with **deterministic** cosine similarity (and primary-transcript boost per [`internal/rag`](../internal/rag)), **snippet**, **source_type**, **source_id**, **anchor**, **start_ms** / **end_ms** when present in anchors. No LLM ranking or summarization (SCRUM-43). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`** for query embedding. Same session ACL as `get_session_metadata`. |
 | `get_session_retrieval_context` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: **`retrieval_context`** with **metadata** (embedding model, primary video id, score-boost flag) and **chunks** ranked by score with **chunk_id**, **chunk_idx**, **text** (truncated window), **content_hash**, **anchor**, timestamps. Same [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as `search_session` / `search_session_content`; **different payload** for agent-side reasoning. **No LLM synthesis** (SCRUM-45). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. |
 | `get_session_source_chunks` | Input: `session_id`, **`source_type`** (`transcript` \| `material` \| `link`), optional **`source_id`** (UUID), optional **`limit`** (default 500, max 2000). Calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) then lists rows from **`session_chunks`** (same index as [`rag.RetrieveTopK`](../internal/rag/retrieval.go)). **No query embedding for ranking** — read by source. **`OPENAI_API_KEY`** needed when the index must be built. (SCRUM-46). |
-| `ask_session_question` | Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
+| `ask_session` | **Preferred** name for guarded session Q&A (SCRUM-50). Same inputs/outputs as `ask_session_question` — use either tool; behavior is identical. Implemented in `internal/mcpserver/session_ask_question.go`. |
+| `ask_session_question` | **Legacy alias** for `ask_session`. Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
 
 ### Session metadata / DB (SCRUM-39)
 
@@ -240,13 +241,13 @@ Session-scoped **vector** tools (**`search_session`** / **`search_session_conten
 
 **`get_session_source_chunks`** ensures the session index exists, then reads **`session_chunks`** via [`Database.ListSessionChunksBySessionIDAndSource`](../internal/database/session_chunks.go) (filtered by `source_type` and optional `source_id`). This is the same persisted chunk set used by [`rag.RetrieveTopK`](../internal/rag/retrieval.go) after embedding.
 
-### Session RAG Q&A (SCRUM-44)
+### Session RAG Q&A (SCRUM-44, SCRUM-50)
 
-**`ask_session_question`** runs retrieval ([`rag.RetrieveTopK`](../internal/rag/retrieval.go)), then [`utils.GenerateAnswer`](../internal/utils/qa.go) with the same prompts, confidence threshold, and “not covered” behavior as the web app. It creates **question** and **answer** rows (like the HTTP ask endpoint) so the session history stays consistent. Duplicate questions in the same thread return **`cached_repeat: true`** without calling the LLM again.
+**`ask_session`** and **`ask_session_question`** are the same handler: retrieval ([`rag.RetrieveTopK`](../internal/rag/retrieval.go)), then [`utils.GenerateAnswer`](../internal/utils/qa.go) with the same prompts, confidence threshold, and “not covered” behavior as the web app. It creates **question** and **answer** rows (like the HTTP ask endpoint) so the session history stays consistent. Duplicate questions in the same thread return **`cached_repeat: true`** without calling the LLM again.
 
 ### MCP vs HTTP RAG parity (SCRUM-49)
 
-**Goal:** Avoid drift between **`POST /api/sessions/:id/ask`** ([`internal/handlers/session_ask.go`](../internal/handlers/session_ask.go)) and **`ask_session_question`**, and the same for any tool that calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) / [`rag.IndexSession`](../internal/rag/index.go).
+**Goal:** Avoid drift between **`POST /api/sessions/:id/ask`** ([`internal/handlers/session_ask.go`](../internal/handlers/session_ask.go)) and **`ask_session`** / **`ask_session_question`**, and the same for any tool that calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) / [`rag.IndexSession`](../internal/rag/index.go).
 
 | Concern | Shared building blocks |
 |--------|-------------------------|
@@ -257,7 +258,7 @@ Session-scoped **vector** tools (**`search_session`** / **`search_session_conten
 
 **Object storage:** HTTP passes the API’s R2 (or nil) client into indexing. **`talkback-mcp`** now does the same: when **`STORAGE_DRIVER=r2`** and R2 env vars match [`cmd/api`](../cmd/api/main.go) ([`internal/storage/r2`](../internal/storage/r2)), the MCP process builds the session index **including R2-backed PDF page chunking**. If R2 is not configured, behavior matches the previous MCP default (index uses DB `extracted_text` paths only — same as API without storage).
 
-**Regression watchlist:** If you change retrieval, indexing, embedding model, or QA behavior, update **both** [`session_ask.go`](../internal/handlers/session_ask.go) and [`session_ask_question.go`](../internal/mcpserver/session_ask_question.go) (or extract a shared helper). Search/raw/source-chunk tools use the same `Storage` wiring via [`RegisterConfig.Storage`](../internal/mcpserver/register.go).
+**Regression watchlist:** If you change retrieval, indexing, embedding model, or QA behavior, update **both** [`session_ask.go`](../internal/handlers/session_ask.go) and [`session_ask_question.go`](../internal/mcpserver/session_ask_question.go) (shared implementation for **`ask_session`** and **`ask_session_question`**) or extract a shared helper. Search/raw/source-chunk tools use the same `Storage` wiring via [`RegisterConfig.Storage`](../internal/mcpserver/register.go).
 
 ## Hosted deployment (containers & ops) — SCRUM-42
 

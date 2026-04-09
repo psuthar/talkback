@@ -28,6 +28,6 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		// SCRUM-46: list indexed chunks by transcript/material/link source (EnsureSessionIndex + session_chunks).
 		registerGetSessionSourceChunks(server, cfg.DB, cfg.Storage)
 		// SCRUM-44: session-scoped RAG Q&A (internal/utils QA + persistence).
-		registerAskSessionQuestion(server, cfg.DB, cfg.Storage)
+		registerAskSessionQuestionTools(server, cfg.DB, cfg.Storage)
 	}
 }
