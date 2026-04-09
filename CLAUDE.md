@@ -90,7 +90,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 - **Tools:** PR creation/review, issue management, file ops, code search, etc.
 - **Env vars:**
   - `GITHUB_PERSONAL_ACCESS_TOKEN` — classic PAT with `repo` scope (Docker must be running)
-- **Note:** Uses `github/github-mcp-server` (Go, official GitHub). The previously used `@modelcontextprotocol/server-github` (TypeScript, archived) dropped `mergeable_state` from `get_pull_request` responses — this server returns it correctly, enabling FULL_AUTO merge gate verification. If the MCP payload still omits `mergeable_state` in your environment, treat it as "field absent" per §8 Post-PR automation — FULL_AUTO cannot run.
+- **Note:** Uses `github/github-mcp-server` (Go, official GitHub). The tool is **`pull_request_read` with `method: get`** — this is what agents must call for FULL_AUTO. The previously used `@modelcontextprotocol/server-github` (TypeScript, archived) exposed `get_pull_request` and dropped `mergeable_state` from responses; the current server returns it correctly. If the MCP payload still omits `mergeable_state`, treat it as "field absent" per §8 Post-PR automation — FULL_AUTO cannot run.
 
 ### `atlassian` — Jira & Confluence
 - **Package:** `@xuandev/atlassian-mcp` (via `npx -y`)
@@ -108,7 +108,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 When the user requests implementation of a Jira ticket, two invocation modes are supported:
 
 - **`implement SCRUM-XX`** — **Standard mode (default).** Run the workflow below through PR creation and Jira **In Review**. Stop there. No auto-merge, no branch cleanup, no Jira Done transition.
-- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then follow **FULL_AUTO: Post-PR automation** below: if `mergeable_state` is absent from the `get_pull_request` response, end FULL_AUTO immediately (hard stop, no polling); if present, poll until resolved, squash-merge on `clean` only — then delete the remote branch, clean up local git state, and transition Jira to **Done**. Any non-`clean` terminal value is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
+- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then follow **FULL_AUTO: Post-PR automation** below: call `pull_request_read (method: get)` via GitHub MCP; if `mergeable_state` is absent from the response, end FULL_AUTO immediately (hard stop, no polling); if present, poll until resolved, squash-merge on `clean` only — then delete the remote branch, clean up local git state, and transition Jira to **Done**. Any non-`clean` terminal value is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
 
 ### Jira Status Management
 - Before any code edits, test execution, or **implementation commits**, move the Jira ticket to:
@@ -206,7 +206,7 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` is the sole authoritative signal for FULL_AUTO** — do not consult check-run conclusions or combined status separately.
 
-1. **Call `get_pull_request`** via GitHub MCP and inspect `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
+1. **Call `pull_request_read` (method: `get`)** via GitHub MCP and inspect `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
 
    | `mergeable_state` value | Action |
    |---|---|
