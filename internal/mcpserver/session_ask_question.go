@@ -23,6 +23,10 @@ import (
 	"github.com/psuthar/talkback/internal/utils"
 )
 
+// mcpQAAutomationMinConfidence must stay aligned with the not-covered guardrail in
+// internal/utils/qa.go (confidence < this forces not_covered and clears citations).
+const mcpQAAutomationMinConfidence = 0.55
+
 type askSessionQuestionInput struct {
 	SessionID string `json:"session_id" jsonschema:"UUID of the TalkBack session"`
 	Question  string `json:"question" jsonschema:"Question to answer from session content only"`
@@ -39,21 +43,22 @@ type askSessionCitationOut struct {
 }
 
 type askSessionQuestionOutput struct {
-	SessionID     string                  `json:"session_id"`
-	QuestionID    string                  `json:"question_id"`
-	AnswerID      string                  `json:"answer_id"`
-	AnswerText    string                  `json:"answer_text"`
-	AnswerStatus  string                  `json:"answer_status"`
-	Confidence    float64                 `json:"confidence"`
-	Citations     []askSessionCitationOut `json:"citations"`
-	LLMModel      string                  `json:"llm_model,omitempty"`
-	CachedRepeat  bool                    `json:"cached_repeat,omitempty"`
-	QuestionSaved string                  `json:"question_saved_at,omitempty"`
-	AnswerSaved   string                  `json:"answer_saved_at,omitempty"`
+	SessionID              string                  `json:"session_id"`
+	QuestionID             string                  `json:"question_id"`
+	AnswerID               string                  `json:"answer_id"`
+	AnswerText             string                  `json:"answer_text"`
+	AnswerStatus           string                  `json:"answer_status"`
+	Confidence             float64                 `json:"confidence"`
+	AutomationRecommended  bool                    `json:"automation_recommended"`
+	Citations              []askSessionCitationOut `json:"citations"`
+	LLMModel               string                  `json:"llm_model,omitempty"`
+	CachedRepeat           bool                    `json:"cached_repeat,omitempty"`
+	QuestionSaved          string                  `json:"question_saved_at,omitempty"`
+	AnswerSaved            string                  `json:"answer_saved_at,omitempty"`
 }
 
 func registerAskSessionQuestionTools(server *mcp.Server, db *database.DB, store storage.Interface) {
-	const desc = "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, and answer_status (answered | not_covered | error) using the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask."
+	const desc = "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, answer_status (answered | not_covered | error), and automation_recommended (true when answer_status is answered and confidence meets the same ≥0.55 guardrail as HTTP SessionAsk; see docs/mcp-server.md). Uses the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask."
 	registerAskSessionQuestionTool(server, db, store, ToolAskSession, desc)
 	registerAskSessionQuestionTool(server, db, store, ToolAskSessionQuestion, "Same behavior as "+ToolAskSession+" (backward-compatible tool name). "+desc)
 }
@@ -292,17 +297,21 @@ func mcpBuildAskOutput(sessionID uuid.UUID, q *models.Question, a *models.Answer
 		modelStr = *a.Model
 	}
 
+	automationRecommended := a.AnswerStatus == models.AnswerStatusAnswered &&
+		float64(a.Confidence) >= mcpQAAutomationMinConfidence
+
 	return askSessionQuestionOutput{
-		SessionID:     sessionID.String(),
-		QuestionID:    q.ID.String(),
-		AnswerID:      a.ID.String(),
-		AnswerText:    a.AnswerText,
-		AnswerStatus:  string(a.AnswerStatus),
-		Confidence:    float64(a.Confidence),
-		Citations:     cites,
-		LLMModel:      modelStr,
-		QuestionSaved: q.CreatedAt.UTC().Format(time.RFC3339),
-		AnswerSaved:   a.CreatedAt.UTC().Format(time.RFC3339),
+		SessionID:             sessionID.String(),
+		QuestionID:            q.ID.String(),
+		AnswerID:              a.ID.String(),
+		AnswerText:            a.AnswerText,
+		AnswerStatus:          string(a.AnswerStatus),
+		Confidence:            float64(a.Confidence),
+		AutomationRecommended: automationRecommended,
+		Citations:             cites,
+		LLMModel:              modelStr,
+		QuestionSaved:         q.CreatedAt.UTC().Format(time.RFC3339),
+		AnswerSaved:           a.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
