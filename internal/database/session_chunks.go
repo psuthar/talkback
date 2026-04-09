@@ -66,6 +66,53 @@ func (db *DB) ListSessionChunksBySessionID(ctx context.Context, sessionID uuid.U
 	return out, rows.Err()
 }
 
+// ListSessionChunksBySessionIDAndSource returns indexed chunks for a session filtered by source_type and optionally source_id.
+// Results are ordered by chunk_idx. Limit caps response size (default 500, max 2000).
+func (db *DB) ListSessionChunksBySessionIDAndSource(ctx context.Context, sessionID uuid.UUID, sourceType string, sourceID *uuid.UUID, limit int) ([]*models.SessionChunk, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 2000 {
+		limit = 2000
+	}
+	var (
+		query string
+		args  []any
+	)
+	if sourceID != nil {
+		query = `SELECT id, session_id, source_type, source_id, chunk_idx, text, anchor_json, content_hash, created_at, updated_at
+			FROM session_chunks WHERE session_id = $1 AND source_type = $2 AND source_id = $3
+			ORDER BY chunk_idx LIMIT $4`
+		args = []any{sessionID, sourceType, *sourceID, limit}
+	} else {
+		query = `SELECT id, session_id, source_type, source_id, chunk_idx, text, anchor_json, content_hash, created_at, updated_at
+			FROM session_chunks WHERE session_id = $1 AND source_type = $2
+			ORDER BY chunk_idx LIMIT $3`
+		args = []any{sessionID, sourceType, limit}
+	}
+	rows, err := db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list session chunks by source: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.SessionChunk
+	for rows.Next() {
+		var c models.SessionChunk
+		var anchorJSON []byte
+		var sid *uuid.UUID
+		err := rows.Scan(&c.ID, &c.SessionID, &c.SourceType, &sid, &c.ChunkIdx, &c.Text, &anchorJSON, &c.ContentHash, &c.CreatedAt, &c.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		c.SourceID = sid
+		if len(anchorJSON) > 0 {
+			_ = json.Unmarshal(anchorJSON, &c.AnchorJSON)
+		}
+		out = append(out, &c)
+	}
+	return out, rows.Err()
+}
+
 // InsertChunkEmbedding inserts an embedding for a chunk (embedding stored as JSONB array of floats)
 func (db *DB) InsertChunkEmbedding(ctx context.Context, chunkID, sessionID uuid.UUID, model string, embedding []float32) error {
 	// pgx encodes []float32 as JSONB when passed as json.Marshal result

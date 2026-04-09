@@ -77,13 +77,13 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 
 ### `talkback` — TalkBack internal tools
 - **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
-- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `search_session_content`, `get_session_retrieval_context`, `ask_session_question` (session tools need DB; search, raw retrieval, and ask also need `OPENAI_API_KEY` — see env vars)
+- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `search_session_content`, `get_session_retrieval_context`, `get_session_source_chunks`, `ask_session_question` (session tools need DB; search, raw retrieval, ask, and source-chunk listing when indexing need `OPENAI_API_KEY` — see env vars)
 - **Env vars** (all are process-level env vars; `./scripts/setup-mcp-config.sh` copies shell values into `.cursor/mcp.json` when you run it):
   - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
   - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
   - `DATABASE_URL` — Postgres connection string; enables session DB tools
   - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools
-  - `OPENAI_API_KEY` — required for `search_session_content` and `get_session_retrieval_context` (embeddings only) and `ask_session_question` (embeddings + LLM answer generation)
+  - `OPENAI_API_KEY` — required for `search_session_content` and `get_session_retrieval_context` (embeddings only), `get_session_source_chunks` when the session index must be built (`EnsureSessionIndex`), and `ask_session_question` (embeddings + LLM answer generation)
 
 ### `github` — GitHub operations
 - **Command:** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server`
