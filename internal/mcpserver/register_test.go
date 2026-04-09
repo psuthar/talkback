@@ -15,7 +15,7 @@ func TestToolNames(t *testing.T) {
 		t.Fatalf("DB nil: got %v", got)
 	}
 	var stubDB database.DB
-	if got := ToolNames(RegisterConfig{DB: &stubDB}); !slices.Equal(got, []string{ToolHealthCheck, ToolGetSessionMetadata}) {
+	if got := ToolNames(RegisterConfig{DB: &stubDB}); !slices.Equal(got, []string{ToolHealthCheck, ToolGetSessionMetadata, ToolSearchSessionContent}) {
 		t.Fatalf("DB set: got %v", got)
 	}
 }

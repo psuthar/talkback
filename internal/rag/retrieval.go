@@ -19,9 +19,15 @@ const DefaultTopK = 10
 // PrimaryVideoScoreBoost multiplies similarity for chunks from the primary video transcript so Q&A prefers them.
 const PrimaryVideoScoreBoost = 1.2
 
-// RetrieveTopK retrieves top-k chunks for a session by embedding similarity (cosine).
+// RetrievedChunk is a ranked chunk with its deterministic cosine similarity score (after boost when applicable).
+type RetrievedChunk struct {
+	Chunk models.SessionChunk
+	Score float64
+}
+
+// RetrieveTopKWithScores returns top-k chunks for a session by embedding similarity (cosine).
 // If primaryVideoID is non-nil, chunks from that video's transcript (source_type=transcript, source_id=primaryVideoID) get a score boost so they are preferred over materials.
-func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]models.SessionChunk, error) {
+func RetrieveTopKWithScores(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]RetrievedChunk, error) {
 	if k <= 0 {
 		k = DefaultTopK
 	}
@@ -57,20 +63,37 @@ func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, que
 	if k > len(scoredList) {
 		k = len(scoredList)
 	}
-	out := make([]models.SessionChunk, k)
+	out := make([]RetrievedChunk, k)
 	for i := 0; i < k; i++ {
-		out[i] = scoredList[i].chunk
+		out[i] = RetrievedChunk{Chunk: scoredList[i].chunk, Score: scoredList[i].score}
 	}
 	if os.Getenv("ASK_TRACE") == "1" {
 		var sourceCounts []string
 		byType := make(map[string]int)
 		for _, sc := range out {
-			byType[sc.SourceType]++
+			byType[sc.Chunk.SourceType]++
 		}
 		for t, n := range byType {
 			sourceCounts = append(sourceCounts, fmt.Sprintf("%s=%d", t, n))
 		}
 		log.Printf("[ASK_TRACE] RetrieveTopK: returning %d chunks (%s)", len(out), strings.Join(sourceCounts, ", "))
+	}
+	return out, nil
+}
+
+// RetrieveTopK retrieves top-k chunks for a session by embedding similarity (cosine).
+// If primaryVideoID is non-nil, chunks from that video's transcript (source_type=transcript, source_id=primaryVideoID) get a score boost so they are preferred over materials.
+func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]models.SessionChunk, error) {
+	scored, err := RetrieveTopKWithScores(ctx, db, sessionID, questionEmbedding, k, primaryVideoID)
+	if err != nil {
+		return nil, err
+	}
+	if len(scored) == 0 {
+		return nil, nil
+	}
+	out := make([]models.SessionChunk, len(scored))
+	for i := range scored {
+		out[i] = scored[i].Chunk
 	}
 	return out, nil
 }
