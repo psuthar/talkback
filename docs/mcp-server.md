@@ -193,7 +193,7 @@ This section describes a **single trusted deployment** (one environment, one MCP
 
 - **Binary:** `talkback-mcp` from [`cmd/talkback-mcp`](../cmd/talkback-mcp). Same build as local dev; no separate “enterprise” binary.
 - **Stdio:** MCP JSON-RPC is on **stdin/stdout**; operational logs go to **stderr** (see [Structured logging](#structured-logging-scrum-40)). Nothing else may write to stdout.
-- **Supervisor:** In containers or VMs, run the binary under a process manager (systemd, Kubernetes, etc.) that matches your **stdio bridge** (see below). If stdin closes and the runtime exits, the orchestrator should **restart** the container.
+- **Supervisor / probes:** Stdio MCP still closes when **stdin** closes (e.g. a bare Pod with no attached client). For **Kubernetes**, set **`TALKBACK_MCP_HEALTH_ADDR`** (e.g. `:8080`) so the process also serves **GET `/healthz`** and **GET `/ready`** for liveness/readiness without a stdio bridge (SCRUM-69). You can still add a bridge later for remote MCP clients over stdio.
 
 ### Container image
 
@@ -214,6 +214,7 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | **`true`** | Clients must send a matching key on each `tools/call` (see **Strict mode** under [Authentication](#authentication)). |
 | `DATABASE_URL` | If using `get_session_metadata` | Same Postgres as TalkBack when that tool is required; omit to register only `health_check`. |
 | `TALKBACK_MCP_ACTING_USER_ID` | If using `get_session_metadata` | TalkBack `users.id` UUID; inject alongside DB URL. |
+| `TALKBACK_MCP_HEALTH_ADDR` | e.g. `:8080` | When set, starts an **HTTP** listener (in addition to stdio MCP) with **GET `/healthz`** (liveness) and **GET `/ready`** (readiness; pings Postgres when `DATABASE_URL` is in use). Omit for IDE-only local use. |
 
 ### Secrets injection
 
@@ -227,7 +228,8 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 |--------|-----|
 | **Process** | Exit code non-zero on fatal config (`TALKBACK_MCP_API_KEY` missing, invalid `TALKBACK_MCP_ACTING_USER_ID`, DB connect failure at startup when `DATABASE_URL` is set). Restart policies catch crashes. |
 | **Stderr** | Structured lines (`event=tool_complete`, `event=auth_failed`, …) for auth and tool outcomes — see [Structured logging](#structured-logging-scrum-40). |
-| **`health_check` tool** | Requires a **client** that speaks MCP over stdio (or a bridge). There is **no HTTP health port** on the binary today. |
+| **HTTP `/healthz` and `/ready`** | When **`TALKBACK_MCP_HEALTH_ADDR`** is set, **GET `/healthz`** returns JSON matching the `health_check` tool shape (`status`, `service`, `version`). **GET `/ready`** returns `200` when Postgres is not required, or when the pool can **ping** the DB (otherwise `503`). **Unauthenticated** — intended for in-cluster probes; protect with NetworkPolicy or similar if needed. |
+| **`health_check` MCP tool** | Still requires a **client** that speaks MCP JSON-RPC over **stdio** (IDE, bridge, or test harness). |
 
 ### Failure modes (observable behavior)
 
@@ -238,8 +240,10 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 | `DATABASE_URL` set but DB unreachable at startup | Process **exits** during `database.New()` in [`cmd/talkback-mcp`](../cmd/talkback-mcp). |
 | Wrong client key in strict mode | `tools/call` returns unauthorized; stderr logs `event=auth_failed` (no secrets). |
 | DB up at start but fails later | `get_session_metadata` may return errors to the client; check stderr and app DB health. |
+| **`TALKBACK_MCP_HEALTH_ADDR` set but listen fails** (bad address or port in use) | Process **exits** from the health HTTP goroutine (`log.Fatalf`). |
+| **`/ready` with DB** | Returns **503** if Postgres ping fails within ~2s (readiness probe should fail). |
 
 ### Kubernetes and Docker references
 
-- **Example manifest (Secret + ConfigMap + Deployment):** [`deploy/k8s/mcp-hosted.example.yaml`](../deploy/k8s/mcp-hosted.example.yaml) — edit image name, resources, and secret wiring before apply.
+- **Example manifest (Secret + ConfigMap + Deployment):** [`deploy/k8s/mcp-hosted.example.yaml`](../deploy/k8s/mcp-hosted.example.yaml) — edit image name, resources, and secret wiring before apply. Sets **`TALKBACK_MCP_HEALTH_ADDR=:8080`** and HTTP **liveness/readiness** probes on `/healthz` and `/ready`.
 - **Docker Compose:** The main stack is [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) (Postgres + API). There is no default `talkback-mcp` service there; run the MCP image beside your stack when you have a stdio bridge, or use the image in CI/smoke with `docker run -i` and a test client.

@@ -6,7 +6,10 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
@@ -48,6 +51,22 @@ func main() {
 		DB:      db,
 		Auth:    auth,
 	})
+
+	if addr := strings.TrimSpace(os.Getenv("TALKBACK_MCP_HEALTH_ADDR")); addr != "" {
+		mux := http.NewServeMux()
+		mcpserver.RegisterHealthHTTPRoutes(mux, version, db)
+		hs := &http.Server{
+			Addr:              addr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		go func() {
+			log.Printf("health http listening on %s (GET /healthz, GET /ready)", addr)
+			if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("health http: %v", err)
+			}
+		}()
+	}
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server: %v", err)

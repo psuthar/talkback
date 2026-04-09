@@ -24,7 +24,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # Enforcement policy: block_only (default) or warn_and_block (stricter).
   # Change to warn_and_block to block merges on WARN outcomes as well.
-  READINESS_ENFORCEMENT_MODE: warn_and_block
+  READINESS_ENFORCEMENT_MODE: block_only
 
 jobs:
   release-readiness:
