@@ -5,18 +5,10 @@ import (
 	"context"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
-	"github.com/psuthar/talkback/internal/rag"
-)
-
-const (
-	maxSearchSnippetRunes = 2000
-	maxSearchTopKDefault  = 10
-	maxSearchTopKCap      = 50
 )
 
 type searchSessionContentInput struct {
@@ -75,64 +67,18 @@ func registerSearchSessionContent(server *mcp.Server, db *database.DB) {
 		}
 
 		k := in.TopK
-		if k <= 0 {
-			k = maxSearchTopKDefault
-		}
-		if k > maxSearchTopKCap {
-			k = maxSearchTopKCap
-		}
-
-		user, err := db.GetUserByID(ctx, actingID)
-		if err != nil {
-			return nil, searchSessionContentOutput{}, err
-		}
-		if user == nil {
-			return nil, searchSessionContentOutput{}, mcpToolErr(403, "acting user not found in database")
-		}
-
-		session, err := db.GetSession(ctx, sessionID)
-		if err != nil || session == nil {
-			if err != nil && strings.Contains(err.Error(), "not found") {
-				return nil, searchSessionContentOutput{}, mcpToolErr(404, "session not found")
-			}
-			if err != nil {
-				return nil, searchSessionContentOutput{}, err
-			}
-			return nil, searchSessionContentOutput{}, mcpToolErr(404, "session not found")
-		}
-
-		if allowed, err := userMayReadSessionMCP(ctx, db, session, user); err != nil {
-			return nil, searchSessionContentOutput{}, err
-		} else if !allowed {
-			return nil, searchSessionContentOutput{}, mcpToolErr(403, "you do not have access to this session")
-		}
-
-		embedder := &rag.OpenAIEmbedder{}
-		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, nil); err != nil {
-			return nil, searchSessionContentOutput{}, mcpToolErr(503, "index unavailable: "+err.Error())
-		}
-
-		embeddings, err := embedder.Embed(ctx, []string{query})
-		if err != nil {
-			return nil, searchSessionContentOutput{}, mcpToolErr(503, "embedding failed: "+err.Error())
-		}
-		if len(embeddings) == 0 || len(embeddings[0]) == 0 {
-			return nil, searchSessionContentOutput{}, mcpToolErr(503, "embedding unavailable (empty vector)")
-		}
-
-		primaryVID, err := primaryVideoIDForRetrieval(ctx, db, sessionID)
-		if err != nil {
+		if _, _, err := mcpLoadSessionWithReadAccess(ctx, db, sessionID, actingID); err != nil {
 			return nil, searchSessionContentOutput{}, err
 		}
 
-		scored, err := rag.RetrieveTopKWithScores(ctx, db, sessionID, embeddings[0], k, primaryVID)
+		scored, queryOut, _, _, err := mcpRunVectorRetrieval(ctx, db, sessionID, query, k)
 		if err != nil {
-			return nil, searchSessionContentOutput{}, mcpToolErr(500, "retrieval failed: "+err.Error())
+			return nil, searchSessionContentOutput{}, err
 		}
 
 		out := searchSessionContentOutput{
 			SessionID: sessionID.String(),
-			Query:     query,
+			Query:     queryOut,
 			Results:   make([]searchSessionHit, 0, len(scored)),
 		}
 		for i, row := range scored {
@@ -156,31 +102,4 @@ func registerSearchSessionContent(server *mcp.Server, db *database.DB) {
 
 		return nil, out, nil
 	})
-}
-
-func truncateSearchSnippet(s string) string {
-	if utf8.RuneCountInString(s) <= maxSearchSnippetRunes {
-		return s
-	}
-	r := []rune(s)
-	return string(r[:maxSearchSnippetRunes]) + "…"
-}
-
-func anchorMs(m map[string]interface{}, key string) *int64 {
-	v, ok := m[key]
-	if !ok || v == nil {
-		return nil
-	}
-	switch n := v.(type) {
-	case float64:
-		x := int64(n)
-		return &x
-	case int:
-		x := int64(n)
-		return &x
-	case int64:
-		return &n
-	default:
-		return nil
-	}
 }
