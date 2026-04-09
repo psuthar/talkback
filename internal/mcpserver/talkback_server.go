@@ -35,8 +35,8 @@ func NewTalkbackMCPServer(cfg TalkbackServerConfig) *mcp.Server {
 		Version: ver,
 	}
 	opts := &mcp.ServerOptions{
-		Instructions: "TalkBack MCP: tools include health_check; with DATABASE_URL, get_session_metadata " +
-			"is registered. Configure TALKBACK_MCP_API_KEY; set TALKBACK_MCP_ACTING_USER_ID for session tools.",
+		Instructions: "TalkBack MCP: tools include health_check; with DATABASE_URL, get_session_metadata and " +
+			"search_session_content are registered. Configure TALKBACK_MCP_API_KEY; set TALKBACK_MCP_ACTING_USER_ID for session tools.",
 	}
 	s := mcp.NewServer(impl, opts)
 	s.AddReceivingMiddleware(cfg.Auth.RequireToolAuthMiddleware())

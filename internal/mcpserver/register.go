@@ -12,11 +12,13 @@ type RegisterConfig struct {
 	DB *database.DB
 }
 
-// Register adds tools (health_check; get_session_metadata when DB is configured). Log lines go to stderr in main.
+// Register adds tools (health_check; get_session_metadata and search_session_content when DB is configured). Log lines go to stderr in main.
 func Register(server *mcp.Server, cfg RegisterConfig) {
 	registerHealthCheck(server, cfg)
 	if cfg.DB != nil {
 		// SCRUM-39: session read path via internal/database; same ACL as HTTP.
 		registerGetSessionMetadata(server, cfg.DB)
+		// SCRUM-43: deterministic session chunk search (internal/rag retrieval).
+		registerSearchSessionContent(server, cfg.DB)
 	}
 }
