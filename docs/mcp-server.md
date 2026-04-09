@@ -1,6 +1,6 @@
 # TalkBack MCP server (`talkback-mcp`)
 
-Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agents (Cursor, Claude Code, Claude Desktop). **Stdout** carries the MCP JSON-RPC stream; **stderr** is used for operational logs (tool name and duration).
+Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agents (Cursor, Claude Code, Claude Desktop). **Stdout** carries the MCP JSON-RPC stream; **stderr** is used for operational logs (structured lines; see [Structured logging](#structured-logging-scrum-40) below).
 
 **Protocol wiring:** The binary uses `internal/mcpserver.NewTalkbackMCPServer`, which constructs the official Go SDK server, attaches receiving middleware so **only** `tools/call` is API-key gated (`initialize` / `tools/list` stay open), registers tools, then runs [`mcp.StdioTransport`](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#StdioTransport) (newline-delimited JSON-RPC).
 
@@ -23,7 +23,7 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 
 ### API key middleware
 
-Implementation: `internal/mcpserver/middleware.go` — `Auth.RequireToolAuthMiddleware`. Only the JSON-RPC method **`tools/call`** is gated. **`initialize`**, **`tools/list`**, **`ping`**, and other non-tool methods pass through without a client key so the MCP handshake and tool discovery work. Keys are compared in constant time (per equal-length candidate); auth failures log the **tool name** only, never key material.
+Implementation: `internal/mcpserver/middleware.go` — `Auth.RequireToolAuthMiddleware`. Only the JSON-RPC method **`tools/call`** is gated. **`initialize`**, **`tools/list`**, **`ping`**, and other non-tool methods pass through without a client key so the MCP handshake and tool discovery work. Keys are compared in constant time (per equal-length candidate); auth failures emit a structured stderr line (`event=auth_failed`, sanitized tool name, `reason=missing_or_invalid_key`) and **never** log key material or `_meta`.
 
 ### Strict mode (`TALKBACK_MCP_REQUIRE_CLIENT_KEY` unset or true)
 
@@ -115,6 +115,22 @@ Merge the same `mcpServers.talkback` object into:
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 Restart Claude Desktop after saving.
+
+## Structured logging (SCRUM-40)
+
+The server writes **single-line** messages to stderr via Go’s standard `log` package. Each line starts with `mcp` and uses space-separated `key=value` fields for grep-friendly parsing:
+
+| Field | Meaning |
+|-------|--------|
+| `event` | `tool_complete` after a tool handler returns, or `auth_failed` when strict API-key validation fails on `tools/call`. |
+| `tool` | Sanitized tool name (`a-z`, `0-9`, `_` only; max 64 chars); invalid names appear as `unknown_tool`. |
+| `duration_ms` | Wall time for the tool handler (always present; `0` for `auth_failed`). |
+| `session_id` | Present on `get_session_metadata` **only** after the input UUID parses successfully (canonical string). Invalid `session_id` arguments are **not** echoed. |
+| `reason` | On `auth_failed`, fixed `missing_or_invalid_key`. |
+
+**Not logged:** API keys, bearer tokens, full `_meta`, request bodies, or arbitrary client-supplied fields (only the allowlisted keys above are emitted).
+
+Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAuthFailed`).
 
 ## Tools (SCRUM-32+)
 
