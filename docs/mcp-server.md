@@ -244,6 +244,21 @@ Session-scoped **vector** tools (**`search_session`** / **`search_session_conten
 
 **`ask_session_question`** runs retrieval ([`rag.RetrieveTopK`](../internal/rag/retrieval.go)), then [`utils.GenerateAnswer`](../internal/utils/qa.go) with the same prompts, confidence threshold, and “not covered” behavior as the web app. It creates **question** and **answer** rows (like the HTTP ask endpoint) so the session history stays consistent. Duplicate questions in the same thread return **`cached_repeat: true`** without calling the LLM again.
 
+### MCP vs HTTP RAG parity (SCRUM-49)
+
+**Goal:** Avoid drift between **`POST /api/sessions/:id/ask`** ([`internal/handlers/session_ask.go`](../internal/handlers/session_ask.go)) and **`ask_session_question`**, and the same for any tool that calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) / [`rag.IndexSession`](../internal/rag/index.go).
+
+| Concern | Shared building blocks |
+|--------|-------------------------|
+| Index + embed | [`rag.EnsureSessionIndex`](../internal/rag/index.go), [`rag.IndexSession`](../internal/rag/index.go), [`rag.OpenAIEmbedder`](../internal/rag/embedder.go) |
+| Retrieval | [`rag.RetrieveTopK`](../internal/rag/retrieval.go) (cosine + primary-transcript boost) |
+| Answer + guardrails | [`utils.GenerateAnswer`](../internal/utils/qa.go), [`utils.ConvertQAResponseToAnswer`](../internal/utils/qa.go) |
+| Citations | [`citation.NormalizeCitations`](../internal/citation/normalize.go) |
+
+**Object storage:** HTTP passes the API’s R2 (or nil) client into indexing. **`talkback-mcp`** now does the same: when **`STORAGE_DRIVER=r2`** and R2 env vars match [`cmd/api`](../cmd/api/main.go) ([`internal/storage/r2`](../internal/storage/r2)), the MCP process builds the session index **including R2-backed PDF page chunking**. If R2 is not configured, behavior matches the previous MCP default (index uses DB `extracted_text` paths only — same as API without storage).
+
+**Regression watchlist:** If you change retrieval, indexing, embedding model, or QA behavior, update **both** [`session_ask.go`](../internal/handlers/session_ask.go) and [`session_ask_question.go`](../internal/mcpserver/session_ask_question.go) (or extract a shared helper). Search/raw/source-chunk tools use the same `Storage` wiring via [`RegisterConfig.Storage`](../internal/mcpserver/register.go).
+
 ## Hosted deployment (containers & ops) — SCRUM-42
 
 This section describes a **single trusted deployment** (one environment, one MCP process or small replica count). Multi-tenant SaaS MCP is out of scope.
@@ -274,6 +289,7 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 | `DATABASE_URL` | If using `get_session_metadata` | Same Postgres as TalkBack when that tool is required; omit to register only `health_check`. |
 | `TALKBACK_MCP_ACTING_USER_ID` | If using `get_session_metadata` | TalkBack `users.id` UUID; inject alongside DB URL. |
 | `TALKBACK_MCP_HEALTH_ADDR` | e.g. `:8080` | When set, starts an **HTTP** listener (in addition to stdio MCP) with **GET `/healthz`** (liveness) and **GET `/ready`** (readiness; pings Postgres when `DATABASE_URL` is in use). Omit for IDE-only local use. |
+| `STORAGE_DRIVER` + R2 env | Optional | **`STORAGE_DRIVER=r2`** with the same R2 settings as [`cmd/api`](../cmd/api/main.go) so MCP **`EnsureSessionIndex`** can fetch PDFs from object storage — RAG parity with HTTP (SCRUM-49). |
 
 ### Secrets injection
 

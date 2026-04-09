@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 var allowedSessionSourceTypes = map[string]struct{}{
@@ -48,7 +49,7 @@ type getSessionSourceChunksOutput struct {
 	Truncated      bool             `json:"truncated,omitempty"`
 }
 
-func registerGetSessionSourceChunks(server *mcp.Server, db *database.DB) {
+func registerGetSessionSourceChunks(server *mcp.Server, db *database.DB, store storage.Interface) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolGetSessionSourceChunks,
 		Description: "Lists indexed chunks for a transcript, material, or link source within a session (reads session_chunks — the same RAG index used by RetrieveTopK). Calls EnsureSessionIndex first so the index exists. Optional source_id narrows to one video/material/link; omit it to list all chunks of that source_type in the session. No LLM. Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; OPENAI_API_KEY is required when the index must be built.",
@@ -106,7 +107,7 @@ func registerGetSessionSourceChunks(server *mcp.Server, db *database.DB) {
 		}
 
 		embedder := &rag.OpenAIEmbedder{}
-		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, nil); err != nil {
+		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
 			return nil, getSessionSourceChunksOutput{}, mcpToolErr(503, "index unavailable: "+err.Error())
 		}
 

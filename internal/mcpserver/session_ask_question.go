@@ -1,6 +1,7 @@
-// ask_session_question: session-scoped RAG Q&A for MCP agents (SCRUM-44).
-// Mirrors POST /api/sessions/:id/ask guardrails (utils.GenerateAnswer, citation normalization, limits)
-// without going through HTTP; uses the same ACL as get_session_metadata / search_session.
+// ask_session_question: session-scoped RAG Q&A for MCP agents (SCRUM-44, SCRUM-49).
+// Mirrors POST /api/sessions/:id/ask: same rag.EnsureSessionIndex/RetrieveTopK, optional R2 storage for PDF indexing,
+// utils.GenerateAnswer, citation.NormalizeCitations, and limits — thin MCP transport only.
+// Uses the same ACL as get_session_metadata / search_session.
 package mcpserver
 
 import (
@@ -18,6 +19,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
 
@@ -50,7 +52,7 @@ type askSessionQuestionOutput struct {
 	AnswerSaved   string                  `json:"answer_saved_at,omitempty"`
 }
 
-func registerAskSessionQuestion(server *mcp.Server, db *database.DB) {
+func registerAskSessionQuestion(server *mcp.Server, db *database.DB, store storage.Interface) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolAskSessionQuestion,
 		Description: "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, and answer_status (answered | not_covered | error) using the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask.",
@@ -121,7 +123,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB) {
 		}
 
 		embedder := &rag.OpenAIEmbedder{}
-		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, nil); err != nil {
+		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
 			log.Printf("ask_session_question EnsureSessionIndex: %v", err)
 		}
 
@@ -145,7 +147,7 @@ func registerAskSessionQuestion(server *mcp.Server, db *database.DB) {
 			if len(sessionChunks) == 0 && mcpSessionHasIndexableContent(ctx, db, sessionID) {
 				_ = db.DeleteChunkEmbeddingsBySessionID(ctx, sessionID)
 				_ = db.DeleteSessionChunksBySessionID(ctx, sessionID)
-				if reindexErr := rag.IndexSession(ctx, db, embedder, sessionID, nil); reindexErr != nil {
+				if reindexErr := rag.IndexSession(ctx, db, embedder, sessionID, store); reindexErr != nil {
 					log.Printf("ask_session_question reindex after 0 chunks: %v", reindexErr)
 				} else {
 					sessionChunks, err = rag.RetrieveTopK(ctx, db, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)

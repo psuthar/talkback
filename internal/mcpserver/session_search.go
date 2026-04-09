@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 type searchSessionContentInput struct {
@@ -34,13 +35,13 @@ type searchSessionContentOutput struct {
 	Results   []searchSessionHit `json:"results"`
 }
 
-func registerSearchSessionTools(server *mcp.Server, db *database.DB) {
+func registerSearchSessionTools(server *mcp.Server, db *database.DB, store storage.Interface) {
 	const desc = "Deterministic search over indexed session content: embeds the query and returns top-k chunks by cosine similarity (same ranking as web Q&A, no LLM). Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; enforces session read access. Output includes snippet, source_type (transcript/material/link), source_id, anchor, and transcript start_ms/end_ms when present."
-	registerSearchSessionTool(server, db, ToolSearchSession, desc)
-	registerSearchSessionTool(server, db, ToolSearchSessionContent, "Same behavior as "+ToolSearchSession+" (backward-compatible tool name). "+desc)
+	registerSearchSessionTool(server, db, store, ToolSearchSession, desc)
+	registerSearchSessionTool(server, db, store, ToolSearchSessionContent, "Same behavior as "+ToolSearchSession+" (backward-compatible tool name). "+desc)
 }
 
-func registerSearchSessionTool(server *mcp.Server, db *database.DB, toolName string, description string) {
+func registerSearchSessionTool(server *mcp.Server, db *database.DB, store storage.Interface, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        toolName,
 		Description: description,
@@ -77,7 +78,7 @@ func registerSearchSessionTool(server *mcp.Server, db *database.DB, toolName str
 			return nil, searchSessionContentOutput{}, err
 		}
 
-		scored, queryOut, _, _, err := mcpRunVectorRetrieval(ctx, db, sessionID, query, k)
+		scored, queryOut, _, _, err := mcpRunVectorRetrieval(ctx, db, sessionID, query, k, store)
 		if err != nil {
 			return nil, searchSessionContentOutput{}, err
 		}
