@@ -22,6 +22,8 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		registerSearchSessionContent(server, cfg.DB)
 		// SCRUM-45: raw ranked chunks + scores (no LLM synthesis).
 		registerGetSessionRetrievalContext(server, cfg.DB)
+		// SCRUM-46: list indexed chunks by transcript/material/link source (EnsureSessionIndex + session_chunks).
+		registerGetSessionSourceChunks(server, cfg.DB)
 		// SCRUM-44: session-scoped RAG Q&A (internal/utils QA + persistence).
 		registerAskSessionQuestion(server, cfg.DB)
 	}

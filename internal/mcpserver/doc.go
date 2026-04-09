@@ -1,7 +1,7 @@
 // Package mcpserver wires the TalkBack MCP JSON-RPC server (see cmd/talkback-mcp).
 //
-// Session DB tools (SCRUM-39, SCRUM-43, SCRUM-45, SCRUM-44): when DATABASE_URL is set, [Register] mounts get_session_metadata,
-// search_session_content, get_session_retrieval_context, and ask_session_question, which use [github.com/psuthar/talkback/internal/database] and the same access
+// Session DB tools (SCRUM-39, SCRUM-43, SCRUM-45, SCRUM-46, SCRUM-44): when DATABASE_URL is set, [Register] mounts get_session_metadata,
+// search_session_content, get_session_retrieval_context, get_session_source_chunks, and ask_session_question, which use [github.com/psuthar/talkback/internal/database] and the same access
 // checks as HTTP (global admin or UserCanAccessSession). The acting user is TALKBACK_MCP_ACTING_USER_ID.
 //
 // Protocol stack (Model Context Protocol over newline-delimited JSON-RPC on stdio):
@@ -10,7 +10,7 @@
 //     instructions, then installs receiving middleware (middleware.go, [Auth.RequireToolAuthMiddleware]) so only
 //     tools/call is API-key gated; initialize, tools/list, and other non-tool methods are unchanged.
 //   - [Register] attaches tool handlers (health_check in health.go; optional DB-backed
-//     get_session_metadata, search_session_content, get_session_retrieval_context, and ask_session_question when DATABASE_URL is configured — SCRUM-39, SCRUM-43, SCRUM-45, SCRUM-44).
+//     get_session_metadata, search_session_content, get_session_retrieval_context, get_session_source_chunks, and ask_session_question when DATABASE_URL is configured — SCRUM-39, SCRUM-43, SCRUM-45, SCRUM-46, SCRUM-44).
 //   - The binary calls [github.com/modelcontextprotocol/go-sdk/mcp.Server.Run] with
 //     [github.com/modelcontextprotocol/go-sdk/mcp.StdioTransport] (stdout = wire protocol, stderr = logs).
 //
