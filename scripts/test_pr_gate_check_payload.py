@@ -22,7 +22,7 @@ class TestConclusionMapping(unittest.TestCase):
     def test_warn(self):
         d = self._sample("WARN")
         out = p.build_payload_from_dict(d)
-        self.assertEqual(out["check_conclusion"], "neutral")
+        self.assertEqual(out["check_conclusion"], "action_required")
         self.assertFalse(out["workflow_should_fail"])
         self.assertEqual(out["final_gate_status"], "WARN")
 
