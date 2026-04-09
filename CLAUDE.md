@@ -73,21 +73,43 @@ When working in this repository, Claude must:
 
 ## 7. Jira Ticket Execution Workflow
 
-When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12"), follow this workflow:
+When the user requests implementation of a Jira ticket, two invocation modes are supported:
+
+- **`implement SCRUM-XX`** — **Standard mode (default).** Run the workflow below through PR creation and Jira **In Review**. Stop there. No auto-merge, no branch cleanup, no Jira Done transition.
+- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then additionally: enable auto-merge (squash) on the PR, poll for merge completion, and on a **PASS** outcome only — delete the remote branch, clean up local git state, and transition Jira to **Done**. A **WARN** or **BLOCK** outcome is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
 
 ### Jira Status Management
 - Before any code edits, test execution, or **implementation commits**, move the Jira ticket to:
   In Progress
 - When all implementation, validation, and PR creation are complete, move the Jira ticket to:
   In Review
+- **FULL_AUTO only — on merge (PASS):** move the Jira ticket to:
+  Done
 
 ### Jira Status Enforcement (MANDATORY)
-- Required implementation sequence:
+
+**Standard mode sequence:**
   1) Transition ticket to **In Progress**
   2) **Create the feature branch from `main`** (`feat/<ticket-number>`) and do all implementation work on that branch—**before** writing product code or committing implementation changes, check out the branch so passing tests map cleanly to a PR from that branch.
   3) Implement + validate (commits on the feature branch only)
   4) Push branch and create PR
   5) Transition ticket to **In Review**
+
+**FULL_AUTO mode sequence (extends standard):**
+  1) Transition ticket to **In Progress**
+  2) Create and checkout `feat/<ticket-number>` branch
+  3) Implement + validate (commits on the feature branch only)
+  4) Push branch and create PR
+  5) Enable auto-merge (squash) on the PR via GitHub MCP
+  6) Transition ticket to **In Review**
+  7) Post Jira completion comment (note that auto-merge is armed)
+  8) Poll GitHub every 60s (up to 40 min) for PR merge status
+  9) **If TalkBack PR Gate = PASS and all required checks pass:** proceed to steps 10–12
+  9) **If TalkBack PR Gate = WARN or BLOCK, or any required check fails:** stop here — same end state as standard mode
+  10) Confirm remote branch deleted (auto-deleted by GitHub or delete via GitHub MCP)
+  11) Local cleanup: `git checkout main` → `git fetch --prune origin` → `git pull --ff-only origin main` → `git branch -D feat/<ticket-number>`
+  12) Transition ticket to **Done**
+
 - Hard-stop rules:
   - Do not modify product code, run implementation tests, or open/finalize a PR until step (1) is complete.
   - Do not put implementation work directly on `main`; create `feat/<ticket>` first, then commit there.
@@ -97,6 +119,7 @@ When the user requests implementation of a Jira ticket (e.g. "Implement SCRUM-12
   - confirmation that **In Review** transition was applied
   - PR URL
   - confirmation that a **structured Jira completion comment** was posted (see **Jira completion comment** below)
+  - **FULL_AUTO only:** TalkBack PR Gate outcome; if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
 - If a transition is missed:
   - immediately correct status sequence in Jira
   - add a Jira comment noting correction and linking the implementation branch/PR
@@ -152,6 +175,27 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 - Push branch to GitHub
 - Create PR targeting `main`
 
+### FULL_AUTO: Post-PR automation (FULL_AUTO mode only)
+
+After the PR is created:
+
+1. **Enable auto-merge (squash)** on the PR via GitHub MCP. GitHub will squash-merge automatically once all required checks pass. The `TalkBack PR Gate` check maps PASS→`success`, WARN→`neutral`, BLOCK→`failure`; GitHub auto-merge requires `success`, so WARN naturally does not trigger a merge.
+
+2. **Poll for merge completion** every 60s (up to 40 min) using GitHub MCP (`get_pull_request`, check `merged_at`).
+
+3. **On PASS (PR merged):**
+   - Confirm remote branch is deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled in repo settings; otherwise delete via GitHub MCP)
+   - Run local cleanup:
+     ```
+     git checkout main
+     git fetch --prune origin
+     git pull --ff-only origin main
+     git branch -D feat/<ticket-number>
+     ```
+   - Transition Jira ticket to **Done**
+
+4. **On WARN or BLOCK (PR not merged):** Stop. PR stays open, Jira stays **In Review**. Report the gate outcome to the user and take no further action.
+
 ### Git authentication for `git push` (HTTPS / Cursor)
 
 Step 4 requires **`git push`**. With an `https://github.com/...` remote, push can fail in the **Cursor agent** (or any non-interactive subprocess) with:
@@ -197,6 +241,7 @@ Return (mirror the Jira completion comment where applicable):
 - confirmation that the structured Jira completion comment was posted (or paste the comment body if posting failed)
 - summary of changes
 - follow-up actions
+- **FULL_AUTO only:** TalkBack PR Gate outcome (PASS / WARN / BLOCK); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if WARN/BLOCK — gate outcome and reason, no further actions taken
 
 ---
 
