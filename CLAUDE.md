@@ -132,7 +132,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   4) Push branch and create PR
   5) Transition ticket to **In Review**
   6) Post Jira completion comment
-  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`. If the field is absent or `null`, GitHub is still computing — **keep polling, do not merge**. If it never resolves after 40 min, stop and report to the user.
+  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`. **After the first poll, if `mergeable_state` is not present in the response at all, stop immediately — do not wait, do not merge.** Report the MCP limitation to the user, leave the PR open, and end FULL_AUTO. If the field is present but `null`, GitHub is still computing — keep polling. If it remains `null` after 40 min, stop and report to the user.
   8) **If `mergeable_state: clean`** (PR Gate = PASS): squash merge via `merge_pull_request` MCP tool, then proceed to steps 9–11
   8) **If `mergeable_state` is any value other than `clean`** (blocked, dirty, unstable, unknown, or never resolved): stop here — same end state as standard mode. Report the value observed.
   9) Confirm remote branch deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled; otherwise delete via GitHub MCP)
@@ -210,6 +210,8 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 After the PR is created:
 
 1. **Poll `get_pull_request`** every 30s (up to 40 min) via GitHub MCP, inspecting `mergeable_state`. Use this field — not `get_pull_request_status` (which uses the legacy status API and does not see GitHub Actions check runs). Since `TalkBack PR Gate` is a required check on `main`, its outcomes map cleanly:
+   - **Field absent from response after first poll** → stop immediately; do not wait, do not merge; report the MCP limitation to the user and leave the PR open
+   - `null` → still computing → keep polling; if still `null` after 40 min, stop and report
    - `clean` → all required checks passed (PR Gate = PASS) → proceed to merge
    - `blocked` → a required check failed or returned neutral (PR Gate = BLOCK or WARN) → stop
    - `unknown` / `unstable` / `behind` / `dirty` → still resolving or conflict → keep polling (or stop on `dirty`)
