@@ -21,6 +21,10 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
 | `DATABASE_URL` | No | When set, the server registers **`get_session_metadata`** (Postgres). When unset, only `health_check` is available. |
 
+### API key middleware
+
+Implementation: `internal/mcpserver/middleware.go` — `Auth.RequireToolAuthMiddleware`. Only the JSON-RPC method **`tools/call`** is gated. **`initialize`**, **`tools/list`**, **`ping`**, and other non-tool methods pass through without a client key so the MCP handshake and tool discovery work. Keys are compared in constant time (per equal-length candidate); auth failures log the **tool name** only, never key material.
+
 ### Strict mode (`TALKBACK_MCP_REQUIRE_CLIENT_KEY` unset or true)
 
 Pass the key on every **`tools/call`** via `_meta` (or HTTP headers when the transport fills `RequestExtra`):
