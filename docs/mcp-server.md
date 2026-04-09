@@ -116,7 +116,7 @@ Restart Claude Desktop after saving.
 
 | Tool | Description |
 |------|-------------|
-| `health_check` | Returns JSON `status`, `service`, `version` — connectivity only; no TalkBack session data. |
+| `health_check` | Returns JSON object: `status` (`ok`; `degraded` reserved), `service` (always `talkback-mcp`), `version` (process version, default `dev`). No secrets or session data. Implemented in `internal/mcpserver/health.go`. |
 | `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). |
 
 ## Hosted / containers

@@ -5,21 +5,32 @@ import (
 	"testing"
 )
 
-func TestHealthCheckJSONShape(t *testing.T) {
-	m := map[string]string{
-		"status":  "ok",
-		"service": "talkback-mcp",
-		"version": "test-1",
+func TestHealthCheckResponse_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+	in := HealthCheckResponse{
+		Status:  "ok",
+		Service: TalkbackMCPName,
+		Version: "1.0.0",
 	}
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out map[string]string
+	var out HealthCheckResponse
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out["status"] != "ok" || out["service"] != "talkback-mcp" || out["version"] != "test-1" {
+	if out.Status != "ok" || out.Service != TalkbackMCPName || out.Version != "1.0.0" {
 		t.Fatalf("unexpected: %+v", out)
+	}
+}
+
+func TestHealthCheckVersion(t *testing.T) {
+	t.Parallel()
+	if got := healthCheckVersion(RegisterConfig{Version: "x"}); got != "x" {
+		t.Fatalf("got %q", got)
+	}
+	if got := healthCheckVersion(RegisterConfig{}); got != "dev" {
+		t.Fatalf("empty version: got %q want dev", got)
 	}
 }
