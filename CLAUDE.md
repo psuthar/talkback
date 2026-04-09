@@ -132,9 +132,9 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   4) Push branch and create PR
   5) Transition ticket to **In Review**
   6) Post Jira completion comment
-  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`
+  7) Poll `get_pull_request` via GitHub MCP every 30s (up to 40 min), checking `mergeable_state`. If the field is absent or `null`, GitHub is still computing — **keep polling, do not merge**. If it never resolves after 40 min, stop and report to the user.
   8) **If `mergeable_state: clean`** (PR Gate = PASS): squash merge via `merge_pull_request` MCP tool, then proceed to steps 9–11
-  8) **If `mergeable_state: blocked`** (PR Gate = WARN or BLOCK): stop here — same end state as standard mode
+  8) **If `mergeable_state` is any value other than `clean`** (blocked, dirty, unstable, unknown, or never resolved): stop here — same end state as standard mode. Report the value observed.
   9) Confirm remote branch deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled; otherwise delete via GitHub MCP)
   11) Local cleanup: `git checkout main` → `git fetch --prune origin` → `git pull --ff-only origin main` → `git branch -D feat/<ticket-number>`
   12) Transition ticket to **Done**
@@ -177,6 +177,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   - backend tests (`go test ./...`)
   - any affected integration or E2E flows
 - Do not proceed if validation fails
+- **`go test ./...` partial failures:** If DB-backed packages fail solely due to a missing `DATABASE_URL`/`TEST_DATABASE_URL` and **none of those packages were touched** by the ticket, that is an acceptable known skip — document the exact failing packages and reason explicitly in the Jira completion comment. If any package **touched by the ticket** fails for any reason, that is a hard blocker.
 
 ### Jira completion comment (MANDATORY)
 When implementation and the PR are ready (before or immediately after transitioning to **In Review**), add a **regular issue comment** on the Jira ticket—not only transition text—so the Comments tab has a durable record. Use this structure (same spirit as SCRUM-15):
