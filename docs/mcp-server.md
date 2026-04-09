@@ -199,10 +199,10 @@ Session-scoped **vector** tools (**`search_session_content`**, **`get_session_re
 
 | Topic | Behavior |
 |--------|----------|
-| **Corpus** | All rows from **`session_chunks`** for the session that have a stored embedding (see [`Database.ListChunksWithEmbeddingsBySessionID`](../internal/database)). No cross-session data. |
+| **Corpus** | All rows from **`session_chunks`** for the session that have a stored embedding (see [`ListChunksWithEmbeddingsBySessionID`](../internal/database/session_chunks.go)). No cross-session data. |
 | **Query embedding** | Same model as indexing: [`rag.OpenAIEmbedder`](../internal/rag/embedder.go) → **`text-embedding-ada-002`**, **1536** dimensions. MCP search/raw tools use this embedder in [`mcpRunVectorRetrieval`](../internal/mcpserver/session_retrieval_shared.go) after [`rag.EnsureSessionIndex`](../internal/rag/index.go). |
 | **Stored embeddings** | Written during indexing with the embedder’s `ModelName()` per chunk; retrieval loads vectors from the DB. |
-| **Similarity** | **Cosine similarity** in **`[0, 1]`** (see `cosineSimilarity` in [`retrieval.go`](../internal/rag/retrieval.go)): dot product of L2-normalized direction vectors. Zero vectors yield **0**. |
+| **Similarity** | **Cosine similarity** (see `cosineSimilarity` in [`retrieval.go`](../internal/rag/retrieval.go)): dot product divided by the product of L2 norms; mathematically in **`[-1, 1]`**; zero vectors yield **0**. Typical embedding pairs are often positive, but clients must not assume scores are non-negative. |
 | **Primary transcript boost** | When the session has a **primary video**, chunks with `source_type=transcript` and `source_id` equal to that video’s UUID get the raw cosine score multiplied by [`rag.PrimaryVideoScoreBoost`](../internal/rag/retrieval.go) (**`1.2`**). Other chunks use the unmodified cosine. If there is no primary video, **no** boost is applied. |
 | **Ranking order** | Sort **descending** by adjusted score; return the **first k** after sort. |
 | **`k` / top-k** | Package default [`rag.DefaultTopK`](../internal/rag/retrieval.go) is **10** when callers pass `k <= 0`. MCP **`search_session_content`** and **`get_session_retrieval_context`** accept optional **`top_k`**: default **10**, maximum **50** ([`session_retrieval_shared.go`](../internal/mcpserver/session_retrieval_shared.go)). If fewer than `k` chunks exist, fewer are returned. |
