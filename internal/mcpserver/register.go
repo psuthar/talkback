@@ -8,11 +8,11 @@ import (
 // RegisterConfig controls which tools are mounted and shared version metadata.
 type RegisterConfig struct {
 	Version string
-	// DB when non-nil enables get_session_metadata (requires DATABASE_URL at process start).
+	// DB when non-nil enables get_session_metadata, search_session_content, and ask_session_question (requires DATABASE_URL at process start).
 	DB *database.DB
 }
 
-// Register adds tools (health_check; get_session_metadata and search_session_content when DB is configured). Log lines go to stderr in main.
+// Register adds tools (health_check; DB-backed session tools when DB is configured). Log lines go to stderr in main.
 func Register(server *mcp.Server, cfg RegisterConfig) {
 	registerHealthCheck(server, cfg)
 	if cfg.DB != nil {
@@ -20,5 +20,7 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		registerGetSessionMetadata(server, cfg.DB)
 		// SCRUM-43: deterministic session chunk search (internal/rag retrieval).
 		registerSearchSessionContent(server, cfg.DB)
+		// SCRUM-44: session-scoped RAG Q&A (internal/utils QA + persistence).
+		registerAskSessionQuestion(server, cfg.DB)
 	}
 }

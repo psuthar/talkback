@@ -52,14 +52,14 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
-| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`** and **`search_session_content`** (Postgres). When unset, only `health_check` is available. |
+| `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session_content`**, and **`ask_session_question`** (Postgres). When unset, only `health_check` is available. |
 
 **Local dev presets**
 
 | Goal | Set these (minimum) |
 |------|---------------------|
 | `health_check` only | `TALKBACK_MCP_API_KEY` (non-empty), `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` for typical Cursor/Claude Code |
-| `get_session_metadata` / `search_session_content` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session_content`** also needs **`OPENAI_API_KEY`** (or your deployment’s embedding configuration) to embed the query — same as web session Q&A. |
+| `get_session_metadata` / `search_session_content` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session_content`** and **`ask_session_question`** need **`OPENAI_API_KEY`** (embeddings + LLM for Q&A) — same stack as web session Q&A. |
 
 ### API key middleware
 
@@ -181,6 +181,7 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 | `health_check` | Returns JSON object: `status` (`ok`; `degraded` reserved), `service` (always `talkback-mcp`), `version` (process version, default `dev`). No secrets or session data. Implemented in `internal/mcpserver/health.go`. |
 | `get_session_metadata` | Input: `session_id` (UUID). Output: `title`, `created_at`, `owner` (`created_by`, optional `display_name`). Requires `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID`. Errors mirror HTTP semantics in JSON (`http_status` 400/403/404). Implemented in `internal/mcpserver/session_metadata.go` (SCRUM-39). |
 | `search_session_content` | Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: ranked chunks with **deterministic** cosine similarity (and primary-transcript boost per [`internal/rag`](../internal/rag)), **snippet**, **source_type**, **source_id**, **anchor**, **start_ms** / **end_ms** when present in anchors. No LLM ranking or summarization (SCRUM-43). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`** for query embedding. Same session ACL as `get_session_metadata`. |
+| `ask_session_question` | Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
 
 ### Session metadata / DB (SCRUM-39)
 
@@ -189,6 +190,10 @@ When **`DATABASE_URL`** is set at process start, the server opens Postgres throu
 ### Session search (SCRUM-43)
 
 **`search_session_content`** uses [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) after embedding the query with the same embedder as web Q&A. If the session has no indexed chunks yet, [`rag.EnsureSessionIndex`](../internal/rag/index.go) runs (storage may be nil; R2-backed PDFs rely on extracted text when available). Results are ordered by score only — deterministic, no LLM.
+
+### Session RAG Q&A (SCRUM-44)
+
+**`ask_session_question`** runs retrieval ([`rag.RetrieveTopK`](../internal/rag/retrieval.go)), then [`utils.GenerateAnswer`](../internal/utils/qa.go) with the same prompts, confidence threshold, and “not covered” behavior as the web app. It creates **question** and **answer** rows (like the HTTP ask endpoint) so the session history stays consistent. Duplicate questions in the same thread return **`cached_repeat: true`** without calling the LLM again.
 
 ## Hosted deployment (containers & ops) — SCRUM-42
 

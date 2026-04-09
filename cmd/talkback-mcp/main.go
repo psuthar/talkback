@@ -41,9 +41,9 @@ func main() {
 		}
 		db = d
 		defer db.Close()
-		log.Printf("database: connected (get_session_metadata enabled)")
+		log.Printf("database: connected (session tools enabled)")
 	} else {
-		log.Printf("warning: DATABASE_URL not set — get_session_metadata tool will not be registered")
+		log.Printf("warning: DATABASE_URL not set — session DB tools will not be registered")
 	}
 
 	server := mcpserver.NewTalkbackMCPServer(mcpserver.TalkbackServerConfig{
