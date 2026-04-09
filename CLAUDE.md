@@ -77,7 +77,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 
 ### `talkback` — TalkBack internal tools
 - **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
-- **Tools:** `health_check`; `get_session_metadata` (when `DATABASE_URL` is set)
+- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `search_session_content`, `ask_session_question` (embeddings + LLM need `OPENAI_API_KEY`)
 - **Env vars:**
   - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
   - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
