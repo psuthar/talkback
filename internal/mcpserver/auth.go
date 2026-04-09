@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -59,8 +58,8 @@ func LoadAuthFromEnv() (Auth, error) {
 	}
 	requireClientKey := envBoolDefaultTrue(os.Getenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY"))
 	return Auth{
-		acceptedKeys:   keys,
-		actingUserID:   uid,
+		acceptedKeys:     keys,
+		actingUserID:     uid,
 		RequireClientKey: requireClientKey,
 	}, nil
 }
@@ -167,30 +166,4 @@ func constantTimeEqual(a, b string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-// RequireToolAuthMiddleware enforces API keys on tools/call only (initialize, list_tools, etc. stay open).
-func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
-	return func(next mcp.MethodHandler) mcp.MethodHandler {
-		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			if method != "tools/call" {
-				return next(ctx, method, req)
-			}
-			p, ok := req.GetParams().(*mcp.CallToolParamsRaw)
-			if !ok {
-				return nil, fmt.Errorf("tools/call: unexpected params type %T", req.GetParams())
-			}
-			if a.RequireClientKey {
-				key := ExtractClientAPIKey(p.Meta, req.GetExtra())
-				if !a.ValidKey(key) {
-					log.Printf("mcp auth failed tool=%s (missing or invalid API key)", p.Name)
-					return nil, fmt.Errorf("unauthorized: invalid or missing API key")
-				}
-			}
-			if a.actingUserID != uuid.Nil {
-				ctx = context.WithValue(ctx, actingUserCtxKey{}, a.actingUserID)
-			}
-			return next(ctx, method, req)
-		}
-	}
 }
