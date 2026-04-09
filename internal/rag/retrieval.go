@@ -1,3 +1,7 @@
+// Package rag implements session-scoped chunk indexing and retrieval.
+//
+// Integrator-facing specification for ranking, top-k, and primary-transcript boost:
+// docs/mcp-server.md — section "Deterministic ranking and top-k (SCRUM-47)".
 package rag
 
 import (
@@ -27,6 +31,7 @@ type RetrievedChunk struct {
 
 // RetrieveTopKWithScores returns top-k chunks for a session by embedding similarity (cosine).
 // If primaryVideoID is non-nil, chunks from that video's transcript (source_type=transcript, source_id=primaryVideoID) get a score boost so they are preferred over materials.
+// See docs/mcp-server.md (SCRUM-47) for defaults, MCP top_k caps, tie behavior, and skipped rows when embedding lengths differ.
 func RetrieveTopKWithScores(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]RetrievedChunk, error) {
 	if k <= 0 {
 		k = DefaultTopK

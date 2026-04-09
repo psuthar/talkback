@@ -193,6 +193,32 @@ When **`DATABASE_URL`** is set at process start, the server opens Postgres throu
 
 **`search_session_content`** uses [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) after embedding the query with the same embedder as web Q&A. If the session has no indexed chunks yet, [`rag.EnsureSessionIndex`](../internal/rag/index.go) runs (storage may be nil; R2-backed PDFs rely on extracted text when available). Results are ordered by score only — deterministic, no LLM.
 
+### Deterministic ranking and top-k (SCRUM-47)
+
+Session-scoped **vector** tools (**`search_session_content`**, **`get_session_retrieval_context`**) and HTTP/MCP **ask** paths share the same retrieval core: [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) (or [`rag.RetrieveTopK`](../internal/rag/retrieval.go), which delegates to it). This section is the **integrator-facing contract**; the Go implementation is authoritative for edge cases called out below.
+
+| Topic | Behavior |
+|--------|----------|
+| **Corpus** | All rows from **`session_chunks`** for the session that have a stored embedding (see [`ListChunksWithEmbeddingsBySessionID`](../internal/database/session_chunks.go)). No cross-session data. |
+| **Query embedding** | Same model as indexing: [`rag.OpenAIEmbedder`](../internal/rag/embedder.go) → **`text-embedding-ada-002`**, **1536** dimensions. MCP search/raw tools use this embedder in [`mcpRunVectorRetrieval`](../internal/mcpserver/session_retrieval_shared.go) after [`rag.EnsureSessionIndex`](../internal/rag/index.go). |
+| **Stored embeddings** | Written during indexing with the embedder’s `ModelName()` per chunk; retrieval loads vectors from the DB. |
+| **Similarity** | **Cosine similarity** (see `cosineSimilarity` in [`retrieval.go`](../internal/rag/retrieval.go)): dot product divided by the product of L2 norms; mathematically in **`[-1, 1]`**; zero vectors yield **0**. Typical embedding pairs are often positive, but clients must not assume scores are non-negative. |
+| **Primary transcript boost** | When the session has a **primary video**, chunks with `source_type=transcript` and `source_id` equal to that video’s UUID get the raw cosine score multiplied by [`rag.PrimaryVideoScoreBoost`](../internal/rag/retrieval.go) (**`1.2`**). Other chunks use the unmodified cosine. If there is no primary video, **no** boost is applied. |
+| **Ranking order** | Sort **descending** by adjusted score; return the **first k** after sort. |
+| **`k` / top-k** | Package default [`rag.DefaultTopK`](../internal/rag/retrieval.go) is **10** when callers pass `k <= 0`. MCP **`search_session_content`** and **`get_session_retrieval_context`** accept optional **`top_k`**: default **10**, maximum **50** ([`session_retrieval_shared.go`](../internal/mcpserver/session_retrieval_shared.go)). If fewer than `k` chunks exist, fewer are returned. |
+| **Dimension mismatch** | Chunks whose stored embedding length **≠** query embedding length are **skipped** (silent), e.g. stale rows if the embedding model ever changed without a full reindex. |
+| **Empty index** | No chunks or no embeddings → **empty** result list (not an error). |
+
+**Stable contract (for MCP clients and audits)**
+
+- Session boundary, cosine + optional primary-transcript boost, descending score order, and top-k truncation are **intentional product behavior**.
+- Exact **floating-point** scores may vary with library/hardware in principle; clients should treat scores as **ordinal** (rank), not as stable decimals across releases unless tested.
+
+**Implementation details (may change without a semver promise on JSON fields)**
+
+- **Ties:** When two chunks have **equal** adjusted scores, order is **not** guaranteed stable across processes or Go versions (`sort.Slice` is not stable). Rare in practice; rely on rank bands, not tie order.
+- **Reindexing** replaces embeddings for the session; chunk **row identity** and ordering in the DB are not part of the public MCP contract.
+
 ### Raw retrieval context (SCRUM-45)
 
 **`get_session_retrieval_context`** uses the same embedding + [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as **`search_session_content`** (shared wiring in the MCP server). The response wraps ranked chunks under **`retrieval_context`** with chunk identifiers and hashes for downstream agents — no answer generation.
