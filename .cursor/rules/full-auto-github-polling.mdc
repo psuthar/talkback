@@ -1,0 +1,26 @@
+---
+description: FULL_AUTO PR gate polling via GitHub MCP (no early exit; no gh CLI)
+alwaysApply: true
+---
+
+# FULL_AUTO: GitHub merge gate polling
+
+When running **Jira ticket workflow** in **FULL_AUTO** mode (per `CLAUDE.md` §8), after creating the PR you **must** resolve the merge gate using **GitHub MCP only** — **do not** use `gh` or other CLIs for PR status or merge.
+
+## Polling (mandatory)
+
+1. Use **`pull_request_read`** with `method: get` (same server as `create_pull_request` / `merge_pull_request`) to read **`mergeable_state`**.
+2. **Poll every 30 seconds** for up to **40 minutes** until you have a **clear terminal signal**:
+   - If **`mergeable_state` is `null`**: GitHub is still computing — **keep polling** (sleep 30s between MCP calls).
+   - If **`mergeable_state` is `blocked`**, **`unstable`**, **`unknown`**, or **`behind`**: **do not** treat the first read as final — **keep polling** until it becomes **`clean`**, **`dirty`** (merge conflicts), or you hit the **40 minute** cap.
+   - If **`mergeable_state` is `clean`**: proceed with **`merge_pull_request`** (squash) per `CLAUDE.md`.
+   - If **`mergeable_state` is `dirty`**: stop — conflicts need resolution (same end state as a failed gate).
+3. **Never** stop after a single 30s wait unless the PR is already **`merged`** or you have **`clean`** / definitive **`dirty`**.
+
+## If `mergeable_state` is absent from the response
+
+Per `CLAUDE.md`, FULL_AUTO merge automation is **not available** — do not poll; end FULL_AUTO and report.
+
+## Merge and cleanup
+
+On **`clean`**: **`merge_pull_request`** only (no `gh pr merge`). Then remote branch check, local `git` cleanup, Jira **Done** as documented in `CLAUDE.md`.
