@@ -84,6 +84,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
   - `DATABASE_URL` — Postgres connection string; enables session DB tools
   - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools
   - `OPENAI_API_KEY` — required for `search_session` / `search_session_content` and `get_session_retrieval_context` (embeddings only), `get_session_source_chunks` when the session index must be built (`EnsureSessionIndex`), and `ask_session_question` (embeddings + LLM answer generation)
+  - **`STORAGE_DRIVER=r2`** plus the same R2 env vars as `cmd/api` — optional; enables MCP RAG indexing parity with HTTP for R2-stored PDFs (`EnsureSessionIndex` / `IndexSession`; SCRUM-49)
 
 ### `github` — GitHub operations
 - **Command:** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server`

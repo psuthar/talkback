@@ -14,6 +14,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/mcpserver"
+	"github.com/psuthar/talkback/internal/storage"
+	"github.com/psuthar/talkback/internal/storage/r2"
 )
 
 func main() {
@@ -46,9 +48,22 @@ func main() {
 		log.Printf("warning: DATABASE_URL not set — session DB tools will not be registered")
 	}
 
+	// Optional object storage — same R2 wiring as cmd/api so MCP RAG indexing matches HTTP SessionAsk (R2-backed PDFs).
+	var store storage.Interface
+	if os.Getenv("STORAGE_DRIVER") == "r2" {
+		cfg := r2.LoadConfig()
+		if client, err := r2.New(cfg); err != nil {
+			log.Printf("R2 storage disabled for MCP: %v (session index may differ from API for R2-only PDFs)", err)
+		} else {
+			store = client
+			log.Printf("R2 storage enabled for MCP (bucket=%s)", cfg.Bucket)
+		}
+	}
+
 	server := mcpserver.NewTalkbackMCPServer(mcpserver.TalkbackServerConfig{
 		Version: version,
 		DB:      db,
+		Storage: store,
 		Auth:    auth,
 	})
 

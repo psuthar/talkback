@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 type getSessionRetrievalContextInput struct {
@@ -52,7 +53,7 @@ type getSessionRetrievalContextOutput struct {
 	RetrievalContext retrievalContextPayload `json:"retrieval_context"`
 }
 
-func registerGetSessionRetrievalContext(server *mcp.Server, db *database.DB) {
+func registerGetSessionRetrievalContext(server *mcp.Server, db *database.DB, store storage.Interface) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        ToolGetSessionRetrievalContext,
 		Description: "Returns raw retrieval context for a session: ranked chunks with cosine similarity scores and chunk metadata (chunk_id, content_hash, anchors). Uses the same embedding + RetrieveTopKWithScores stack as search_session / search_session_content; output shape is optimized for agent-side reasoning. No LLM answer generation. Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY for the query embedding.",
@@ -89,7 +90,7 @@ func registerGetSessionRetrievalContext(server *mcp.Server, db *database.DB) {
 			return nil, getSessionRetrievalContextOutput{}, err
 		}
 
-		scored, queryOut, primaryVID, embedModel, err := mcpRunVectorRetrieval(ctx, db, sessionID, query, k)
+		scored, queryOut, primaryVID, embedModel, err := mcpRunVectorRetrieval(ctx, db, sessionID, query, k, store)
 		if err != nil {
 			return nil, getSessionRetrievalContextOutput{}, err
 		}

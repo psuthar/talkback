@@ -11,6 +11,7 @@ import (
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 const (
@@ -50,7 +51,8 @@ func mcpLoadSessionWithReadAccess(ctx context.Context, db *database.DB, sessionI
 }
 
 // mcpRunVectorRetrieval runs EnsureSessionIndex, embeds the query, and returns ranked chunks with scores (same stack as search_session / search_session_content).
-func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.UUID, query string, topK int) ([]rag.RetrievedChunk, string, *uuid.UUID, string, error) {
+// store is passed through to EnsureSessionIndex (optional R2 PDF chunking — parity with HTTP SessionAsk).
+func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.UUID, query string, topK int, store storage.Interface) ([]rag.RetrievedChunk, string, *uuid.UUID, string, error) {
 	if topK <= 0 {
 		topK = maxSearchTopKDefault
 	}
@@ -60,7 +62,7 @@ func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.
 
 	q := strings.TrimSpace(query)
 	embedder := &rag.OpenAIEmbedder{}
-	if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, nil); err != nil {
+	if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
 		return nil, "", nil, "", mcpToolErr(503, "index unavailable: "+err.Error())
 	}
 

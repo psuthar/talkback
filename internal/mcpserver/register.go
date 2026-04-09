@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // RegisterConfig controls which tools are mounted and shared version metadata.
@@ -10,6 +11,8 @@ type RegisterConfig struct {
 	Version string
 	// DB when non-nil enables session tools (requires DATABASE_URL at process start).
 	DB *database.DB
+	// Storage optional; passed to RAG index/search/ask paths (nil = same as historical MCP: DB-only index, R2 PDFs may skip page chunking).
+	Storage storage.Interface
 }
 
 // Register adds tools (health_check; DB-backed session tools when DB is configured). Log lines go to stderr in main.
@@ -19,12 +22,12 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		// SCRUM-39: session read path via internal/database; same ACL as HTTP.
 		registerGetSessionMetadata(server, cfg.DB)
 		// SCRUM-43 / SCRUM-48: deterministic session chunk search (internal/rag retrieval); search_session + legacy alias search_session_content.
-		registerSearchSessionTools(server, cfg.DB)
+		registerSearchSessionTools(server, cfg.DB, cfg.Storage)
 		// SCRUM-45: raw ranked chunks + scores (no LLM synthesis).
-		registerGetSessionRetrievalContext(server, cfg.DB)
+		registerGetSessionRetrievalContext(server, cfg.DB, cfg.Storage)
 		// SCRUM-46: list indexed chunks by transcript/material/link source (EnsureSessionIndex + session_chunks).
-		registerGetSessionSourceChunks(server, cfg.DB)
+		registerGetSessionSourceChunks(server, cfg.DB, cfg.Storage)
 		// SCRUM-44: session-scoped RAG Q&A (internal/utils QA + persistence).
-		registerAskSessionQuestion(server, cfg.DB)
+		registerAskSessionQuestion(server, cfg.DB, cfg.Storage)
 	}
 }

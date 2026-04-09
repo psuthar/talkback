@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/storage"
 )
 
 // TalkbackMCPName is the MCP implementation name advertised in initialize.
@@ -19,6 +20,8 @@ const TalkbackMCPName = "talkback-mcp"
 type TalkbackServerConfig struct {
 	Version string
 	DB      *database.DB
+	// Storage optional; when non-nil (e.g. R2), session index build matches HTTP — PDF materials are fetched for chunking (same as SessionAsk).
+	Storage storage.Interface
 	Auth    Auth
 }
 
@@ -40,6 +43,6 @@ func NewTalkbackMCPServer(cfg TalkbackServerConfig) *mcp.Server {
 	}
 	s := mcp.NewServer(impl, opts)
 	s.AddReceivingMiddleware(cfg.Auth.RequireToolAuthMiddleware())
-	Register(s, RegisterConfig{Version: ver, DB: cfg.DB})
+	Register(s, RegisterConfig{Version: ver, DB: cfg.DB, Storage: cfg.Storage})
 	return s
 }
