@@ -1,9 +1,8 @@
-# Example Kubernetes resources for talkback-mcp (SCRUM-42). Placeholders only — do not commit real secrets.
+# Example Kubernetes resources for talkback-mcp (SCRUM-42, SCRUM-69). Placeholders only — do not commit real secrets.
 # Apply after editing: kubectl apply -f mcp-hosted.example.yaml
 #
-# Stdio MCP: the server speaks JSON-RPC on stdin/stdout. In Kubernetes, something must attach
-# to that stdio (sidecar bridge, exec session, or a supervisor). A bare Deployment with no
-# attached stdin may see the process exit when stdin closes — validate in your cluster.
+# Stdio MCP (JSON-RPC on stdin/stdout) remains the wire protocol for MCP clients. For probes and
+# orchestration without a stdio bridge, set TALKBACK_MCP_HEALTH_ADDR so GET /healthz and /ready respond.
 ---
 apiVersion: v1
 kind: Secret
@@ -29,6 +28,8 @@ data:
   # Optional: set if you register get_session_metadata (same Postgres as TalkBack app).
   # Prefer a Secret if the URL contains a password — use stringData in a separate Secret instead.
   DATABASE_URL: ""
+  # HTTP probes (liveness/readiness) — listen on all interfaces inside the pod.
+  TALKBACK_MCP_HEALTH_ADDR: ":8080"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -61,7 +62,24 @@ spec:
                 name: talkback-mcp
             - configMapRef:
                 name: talkback-mcp-config
-          # No HTTP port — health is process + stderr logs; MCP health_check is via JSON-RPC on stdio.
+          ports:
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
           resources:
             requests:
               cpu: "50m"

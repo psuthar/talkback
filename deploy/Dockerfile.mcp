@@ -14,4 +14,6 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/talkback-mcp /usr/local/bin/talkback-mcp
 RUN adduser -D -H -u 65532 mcp
 USER 65532:65532
+# Optional HTTP probes when TALKBACK_MCP_HEALTH_ADDR is set (e.g. :8080 for Kubernetes).
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/talkback-mcp"]

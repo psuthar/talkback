@@ -16,4 +16,7 @@
 //
 // Structured stderr logging (SCRUM-40): mcp_log.go and docs/mcp-server.md — tool completion and auth failures
 // use parseable key=value lines; API keys, bearer tokens, and full _meta are never logged.
+//
+// Optional HTTP health (SCRUM-69): when TALKBACK_MCP_HEALTH_ADDR is set, cmd/talkback-mcp registers
+// GET /healthz and /ready via [RegisterHealthHTTPRoutes] for Kubernetes probes (stdio MCP unchanged).
 package mcpserver
