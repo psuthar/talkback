@@ -23,8 +23,8 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		registerGetSessionMetadata(server, cfg.DB)
 		// SCRUM-43 / SCRUM-48: deterministic session chunk search (internal/rag retrieval); search_session + legacy alias search_session_content.
 		registerSearchSessionTools(server, cfg.DB, cfg.Storage)
-		// SCRUM-45: raw ranked chunks + scores (no LLM synthesis).
-		registerGetSessionRetrievalContext(server, cfg.DB, cfg.Storage)
+		// SCRUM-45 / SCRUM-52: raw ranked chunks + scores (no LLM synthesis); get_session_raw_chunks + legacy get_session_retrieval_context.
+		registerGetSessionRetrievalContextTools(server, cfg.DB, cfg.Storage)
 		// SCRUM-46: list indexed chunks by transcript/material/link source (EnsureSessionIndex + session_chunks).
 		registerGetSessionSourceChunks(server, cfg.DB, cfg.Storage)
 		// SCRUM-44: session-scoped RAG Q&A (internal/utils QA + persistence).

@@ -6,6 +6,7 @@ const (
 	ToolGetSessionMetadata         = "get_session_metadata"
 	ToolSearchSession              = "search_session"
 	ToolSearchSessionContent       = "search_session_content"
+	ToolGetSessionRawChunks        = "get_session_raw_chunks"
 	ToolGetSessionRetrievalContext = "get_session_retrieval_context"
 	ToolGetSessionSourceChunks     = "get_session_source_chunks"
 	ToolAskSession                 = "ask_session"
@@ -17,7 +18,7 @@ const (
 func ToolNames(cfg RegisterConfig) []string {
 	names := []string{ToolHealthCheck}
 	if cfg.DB != nil {
-		names = append(names, ToolGetSessionMetadata, ToolSearchSession, ToolSearchSessionContent, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSession, ToolAskSessionQuestion)
+		names = append(names, ToolGetSessionMetadata, ToolSearchSession, ToolSearchSessionContent, ToolGetSessionRawChunks, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSession, ToolAskSessionQuestion)
 	}
 	return names
 }
