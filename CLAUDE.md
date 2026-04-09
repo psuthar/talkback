@@ -85,10 +85,11 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
   - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools (`.cursor/mcp.json` only)
 
 ### `github` — GitHub operations
-- **Package:** `@modelcontextprotocol/server-github` (via `npx -y`)
+- **Command:** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server`
 - **Tools:** PR creation/review, issue management, file ops, code search, etc.
 - **Env vars:**
-  - `GITHUB_PERSONAL_ACCESS_TOKEN` — PAT with repo + PR scopes
+  - `GITHUB_PERSONAL_ACCESS_TOKEN` — classic PAT with `repo` scope (Docker must be running)
+- **Note:** Uses `github/github-mcp-server` (Go, official GitHub). The previously used `@modelcontextprotocol/server-github` (TypeScript, archived) dropped `mergeable_state` from `get_pull_request` responses — this server returns it correctly, enabling FULL_AUTO merge gate verification.
 
 ### `atlassian` — Jira & Confluence
 - **Package:** `@xuandev/atlassian-mcp` (via `npx -y`)
@@ -132,7 +133,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   4) Push branch and create PR
   5) Transition ticket to **In Review**
   6) Post Jira completion comment
-  7) Call `get_pull_request` once via GitHub MCP and inspect the response for `mergeable_state`.
+  7) Call `pull_request_read` once via GitHub MCP and inspect the response for `mergeable_state`.
      - **If `mergeable_state` is absent from the response: FULL_AUTO IS NOT AVAILABLE in this environment. There is no fallback. Do not wait. Do not infer CI status. Do not attempt merge by any other means. End FULL_AUTO immediately — the outcome is identical to standard mode: PR open, Jira In Review, user handles merge.** Report this limitation clearly.
      - If present but `null`: GitHub is still computing — poll every 30s (up to 40 min). If still `null` after 40 min, end FULL_AUTO as above.
      - If present and resolves: proceed to step 8.
@@ -212,7 +213,7 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created:
 
-1. **Call `get_pull_request`** once via GitHub MCP and inspect the response for `mergeable_state`. Use this field — not `get_pull_request_status` (which uses the legacy status API and does not see GitHub Actions check runs).
+1. **Call `pull_request_read`** once via GitHub MCP and inspect the response for `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
    - **Field absent** → **FULL_AUTO IS NOT AVAILABLE**. No timed waits. No CI inference. No merge attempt. End FULL_AUTO now — PR stays open, Jira stays In Review. This is a hard stop with no workaround.
    - `null` → still computing → poll every 30s; if still `null` after 40 min → end FULL_AUTO as above
    - `clean` → all required checks passed (PR Gate = PASS) → proceed to merge
