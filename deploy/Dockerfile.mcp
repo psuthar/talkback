@@ -1,0 +1,17 @@
+# Minimal image for talkback-mcp (stdio MCP server). Build from repository root:
+#   docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
+#
+# Not used by the main TalkBack API image (see /Dockerfile).
+FROM golang:1.25-alpine AS builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/talkback-mcp -trimpath -ldflags="-s -w" ./cmd/talkback-mcp
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /out/talkback-mcp /usr/local/bin/talkback-mcp
+RUN adduser -D -H -u 65532 mcp
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/talkback-mcp"]
