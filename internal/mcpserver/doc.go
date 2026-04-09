@@ -13,4 +13,7 @@
 //     get_session_metadata in session_metadata.go when DATABASE_URL is configured — SCRUM-39).
 //   - The binary calls [github.com/modelcontextprotocol/go-sdk/mcp.Server.Run] with
 //     [github.com/modelcontextprotocol/go-sdk/mcp.StdioTransport] (stdout = wire protocol, stderr = logs).
+//
+// Structured stderr logging (SCRUM-40): mcp_log.go and docs/mcp-server.md — tool completion and auth failures
+// use parseable key=value lines; API keys, bearer tokens, and full _meta are never logged.
 package mcpserver

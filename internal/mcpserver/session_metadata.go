@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
@@ -50,8 +49,13 @@ func registerGetSessionMetadata(server *mcp.Server, db *database.DB) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getSessionMetadataInput) (*mcp.CallToolResult, getSessionMetadataOutput, error) {
 		start := time.Now()
 		tool := ToolGetSessionMetadata
+		var logSessionID string
 		defer func() {
-			log.Printf("mcp tool=%s duration_ms=%d", tool, time.Since(start).Milliseconds())
+			extras := map[string]string{}
+			if logSessionID != "" {
+				extras["session_id"] = logSessionID
+			}
+			logMCPToolComplete(tool, time.Since(start), extras)
 		}()
 
 		actingID, ok := ActingUserID(ctx)
@@ -63,6 +67,7 @@ func registerGetSessionMetadata(server *mcp.Server, db *database.DB) {
 		if err != nil {
 			return nil, getSessionMetadataOutput{}, mcpToolErr(400, "invalid session_id: must be a UUID")
 		}
+		logSessionID = sessionID.String()
 
 		user, err := db.GetUserByID(ctx, actingID)
 		if err != nil {

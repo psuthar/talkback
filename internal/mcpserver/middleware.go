@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,7 +15,8 @@ import (
 //
 // When [Auth.RequireClientKey] is true (default), the client key must match one of the keys loaded from
 // TALKBACK_MCP_API_KEY (comma-separated rotation). Keys are compared in constant time per candidate of
-// equal length; failed checks log tool name only, never the key. Extraction: [ExtractClientAPIKey] from
+// equal length; failed checks emit a structured stderr line (event=auth_failed, tool name, reason) and never
+// log the key or _meta. Extraction: [ExtractClientAPIKey] from
 // _meta and HTTP extras when present.
 //
 // When RequireClientKey is false ("IDE mode", TALKBACK_MCP_REQUIRE_CLIENT_KEY=false), the process still
@@ -35,7 +35,7 @@ func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
 			if a.RequireClientKey {
 				key := ExtractClientAPIKey(p.Meta, req.GetExtra())
 				if !a.ValidKey(key) {
-					log.Printf("mcp auth failed tool=%s (missing or invalid API key)", p.Name)
+					logMCPAuthFailed(p.Name)
 					return nil, fmt.Errorf("unauthorized: invalid or missing API key")
 				}
 			}

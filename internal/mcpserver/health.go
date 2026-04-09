@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,7 +36,7 @@ func registerHealthCheck(server *mcp.Server, cfg RegisterConfig) {
 		start := time.Now()
 		tool := ToolHealthCheck
 		defer func() {
-			log.Printf("mcp tool=%s duration_ms=%d", tool, time.Since(start).Milliseconds())
+			logMCPToolComplete(tool, time.Since(start), nil)
 		}()
 
 		raw, err := json.Marshal(HealthCheckResponse{
