@@ -16,6 +16,7 @@ type RegisterConfig struct {
 func Register(server *mcp.Server, cfg RegisterConfig) {
 	registerHealthCheck(server, cfg)
 	if cfg.DB != nil {
+		// SCRUM-39: session read path via internal/database; same ACL as HTTP.
 		registerGetSessionMetadata(server, cfg.DB)
 	}
 }
