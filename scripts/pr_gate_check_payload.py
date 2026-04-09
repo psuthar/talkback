@@ -3,9 +3,12 @@
 Build GitHub Checks API payload from pr-gate-summary.json (single source of truth).
 
 Maps final_gate.status:
-  PASS -> check conclusion success,  workflow_should_fail False
-  WARN -> check conclusion neutral,  workflow_should_fail False
+  PASS  -> check conclusion success,         workflow_should_fail False
+  WARN  -> check conclusion action_required, workflow_should_fail False
   BLOCK / error -> check conclusion failure, workflow_should_fail True
+
+action_required blocks mergeable_state (prevents auto-merge) while keeping the
+workflow green — semantically "human review needed", not "build broken".
 
 Writes artifacts/pr-gate-check.json for actions/github-script.
 """
@@ -34,7 +37,7 @@ def conclusion_for_status(status: str) -> str:
     if status == "PASS":
         return "success"
     if status == "WARN":
-        return "neutral"
+        return "action_required"
     return "failure"
 
 
