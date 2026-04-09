@@ -77,19 +77,20 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 
 ### `talkback` — TalkBack internal tools
 - **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
-- **Tools:** `health_check`; `get_session_metadata` (when `DATABASE_URL` is set)
-- **Env vars:**
+- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `search_session_content`, `ask_session_question` (session tools need DB; search + ask also need `OPENAI_API_KEY` — see env vars)
+- **Env vars** (all are process-level env vars; `./scripts/setup-mcp-config.sh` copies shell values into `.cursor/mcp.json` when you run it):
   - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
   - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
-  - `DATABASE_URL` — Postgres connection string; enables session DB tools (`.cursor/mcp.json` only)
-  - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools (`.cursor/mcp.json` only)
+  - `DATABASE_URL` — Postgres connection string; enables session DB tools
+  - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools
+  - `OPENAI_API_KEY` — required for `search_session_content` (embeddings) and `ask_session_question` (embeddings + LLM answer generation)
 
 ### `github` — GitHub operations
 - **Command:** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server`
 - **Tools:** PR creation/review, issue management, file ops, code search, etc.
 - **Env vars:**
   - `GITHUB_PERSONAL_ACCESS_TOKEN` — classic PAT with `repo` scope (Docker must be running)
-- **Note:** Uses `github/github-mcp-server` (Go, official GitHub). The previously used `@modelcontextprotocol/server-github` (TypeScript, archived) dropped `mergeable_state` from `get_pull_request` responses — this server returns it correctly, enabling FULL_AUTO merge gate verification.
+- **Note:** Uses `github/github-mcp-server` (Go, official GitHub). The previously used `@modelcontextprotocol/server-github` (TypeScript, archived) dropped `mergeable_state` from `get_pull_request` responses — this server returns it correctly, enabling FULL_AUTO merge gate verification. If the MCP payload still omits `mergeable_state` in your environment, treat it as "field absent" per §8 Post-PR automation — FULL_AUTO cannot run.
 
 ### `atlassian` — Jira & Confluence
 - **Package:** `@xuandev/atlassian-mcp` (via `npx -y`)
@@ -107,7 +108,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 When the user requests implementation of a Jira ticket, two invocation modes are supported:
 
 - **`implement SCRUM-XX`** — **Standard mode (default).** Run the workflow below through PR creation and Jira **In Review**. Stop there. No auto-merge, no branch cleanup, no Jira Done transition.
-- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then additionally: enable auto-merge (squash) on the PR, poll for merge completion, and on a **PASS** outcome only — delete the remote branch, clean up local git state, and transition Jira to **Done**. A **WARN** or **BLOCK** outcome is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
+- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then follow **FULL_AUTO: Post-PR automation** below: if `mergeable_state` is absent from the `get_pull_request` response, end FULL_AUTO immediately (hard stop, no polling); if present, poll until resolved, squash-merge on `clean` only — then delete the remote branch, clean up local git state, and transition Jira to **Done**. Any non-`clean` terminal value is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
 
 ### Jira Status Management
 - Before any code edits, test execution, or **implementation commits**, move the Jira ticket to:
@@ -133,15 +134,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   4) Push branch and create PR
   5) Transition ticket to **In Review**
   6) Post Jira completion comment
-  7) Call `pull_request_read` once via GitHub MCP and inspect the response for `mergeable_state`.
-     - **If `mergeable_state` is absent from the response: FULL_AUTO IS NOT AVAILABLE in this environment. There is no fallback. Do not wait. Do not infer CI status. Do not attempt merge by any other means. End FULL_AUTO immediately — the outcome is identical to standard mode: PR open, Jira In Review, user handles merge.** Report this limitation clearly.
-     - If present but `null`: GitHub is still computing — poll every 30s (up to 40 min). If still `null` after 40 min, end FULL_AUTO as above.
-     - If present and resolves: proceed to step 8.
-  8) **If `mergeable_state: clean`** (PR Gate = PASS): squash merge via `merge_pull_request` MCP tool, then proceed to steps 9–11
-  8) **If `mergeable_state` is any value other than `clean`** (blocked, dirty, unstable, unknown, or never resolved): stop here — same end state as standard mode. Report the value observed.
-  9) Confirm remote branch deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled; otherwise delete via GitHub MCP)
-  11) Local cleanup: `git checkout main` → `git fetch --prune origin` → `git pull --ff-only origin main` → `git branch -D feat/<ticket-number>`
-  12) Transition ticket to **Done**
+  7) Follow **FULL_AUTO: Post-PR automation** (below) — if `mergeable_state` is present, poll until resolved, merge on `clean`, clean up branch, transition to Done. If absent, end FULL_AUTO immediately (no polling).
 
 - Hard-stop rules:
   - Do not modify product code, run implementation tests, or open/finalize a PR until step (1) is complete.
@@ -152,7 +145,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   - confirmation that **In Review** transition was applied
   - PR URL
   - confirmation that a **structured Jira completion comment** was posted (see **Jira completion comment** below)
-  - **FULL_AUTO only:** TalkBack PR Gate outcome; if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
+  - **FULL_AUTO only:** `mergeable_state` value observed (PASS = `clean`; BLOCK = `blocked`/`dirty`; unresolved = timed-out); if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
 - If a transition is missed:
   - immediately correct status sequence in Jira
   - add a Jira comment noting correction and linking the implementation branch/PR
@@ -211,27 +204,31 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 ### FULL_AUTO: Post-PR automation (FULL_AUTO mode only)
 
-After the PR is created:
+After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` is the sole authoritative signal for FULL_AUTO** — do not consult check-run conclusions or combined status separately.
 
-1. **Call `pull_request_read`** once via GitHub MCP and inspect the response for `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
-   - **Field absent** → **FULL_AUTO IS NOT AVAILABLE**. No timed waits. No CI inference. No merge attempt. End FULL_AUTO now — PR stays open, Jira stays In Review. This is a hard stop with no workaround.
-   - `null` → still computing → poll every 30s; if still `null` after 40 min → end FULL_AUTO as above
-   - `clean` → all required checks passed (PR Gate = PASS) → proceed to merge
-   - `blocked` → a required check failed or is action_required (PR Gate = BLOCK or WARN) → stop; same end state as standard mode
-   - `unknown` / `unstable` / `behind` / `dirty` → still resolving or conflict → keep polling (or stop on `dirty`)
+1. **Call `get_pull_request`** via GitHub MCP and inspect `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
+
+   | `mergeable_state` value | Action |
+   |---|---|
+   | **field absent** | **FULL_AUTO IS NOT AVAILABLE** — hard stop. No wait, no CI inference, no merge. PR stays open, Jira stays In Review. Report this limitation clearly. |
+   | `null` | GitHub still computing — poll every 30s. |
+   | `unknown` / `unstable` / `behind` | Not yet final — poll every 30s. |
+   | `clean` | All required checks passed → proceed to step 2. |
+   | `blocked` | A required check failed — stop. Same end state as standard mode. Report the value. |
+   | `dirty` | Merge conflict — stop. Same end state as standard mode. Report the value. |
+
+   If `mergeable_state` has not reached `clean`, `blocked`, or `dirty` after **40 minutes** of polling (i.e. still stuck in `null`, `unknown`, `unstable`, or `behind`), end FULL_AUTO — same end state as standard mode.
 
 2. **On `mergeable_state: clean`:** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
-   - Confirm remote branch is deleted (GitHub auto-deletes if "Automatically delete head branches" is enabled in repo settings; otherwise delete via GitHub MCP)
-   - Run local cleanup:
+   - **Remote branch:** GitHub auto-deletes it if "Automatically delete head branches" is enabled in repo settings. If not, delete it manually in the GitHub UI — there is no confirmed MCP tool for branch deletion.
+   - **Local cleanup:**
      ```
      git checkout main
      git fetch --prune origin
      git pull --ff-only origin main
      git branch -D feat/<ticket-number>
      ```
-   - Transition Jira ticket to **Done**
-
-3. **On WARN (`neutral`) or BLOCK (`failure`):** Stop. PR stays open, Jira stays **In Review**. Report the gate outcome to the user and take no further action.
+   - **Transition Jira ticket to Done.**
 
 ### Git authentication for `git push` (HTTPS / Cursor)
 
@@ -251,7 +248,7 @@ Read-only checks like `git ls-remote origin HEAD` may still succeed; **push need
 
 **Alternative:** Use an SSH remote (`git@github.com:<owner>/<repo>.git`) with a key loaded in `ssh-agent` and `github.com` in `known_hosts`.
 
-**If agent push still fails:** Run `git push -u origin feat/<ticket>` in **Cursor’s integrated terminal** after the one-time setup above. That still completes the workflow; create/update the PR on GitHub using **GitHub MCP** (not `gh`) as below.
+**If agent push still fails:** Run `git push -u origin feat/<ticket>` in **Cursor’s integrated terminal** after the one-time setup above. That still completes the workflow; create the PR via **GitHub MCP** `create_pull_request` (not `gh`) as below — post-create edits via the GitHub UI if needed.
 
 **PR description format (match SCRUM-15 / PR-quality comments):** Use clear Markdown with these sections:
 
@@ -263,7 +260,7 @@ Read-only checks like `git ls-remote origin HEAD` may still succeed; **push need
 
 Also cover risks, follow-ups, and Jira reference where they fit (e.g. under Summary or a short **Risks / follow-up** subsection).
 
-**Creating/updating PRs on GitHub.com:** Use **GitHub MCP** only (read the server’s tool schema, then call the appropriate create/update PR tools). Do **not** use `gh pr create`, `gh pr edit`, or `curl` for GitHub when MCP can do the job.
+**Creating PRs on GitHub.com:** Use `create_pull_request` via GitHub MCP. Put the full PR body in the create call — post-create edits may require the GitHub UI if no update tool is available in the active MCP session. Do **not** use `gh pr create`, `gh pr edit`, or `curl` when MCP can do the job.
 
 **PR body and Markdown:** Draft the full body in a scratch file or string so formatting stays correct (fenced code blocks, paths, **bold**). Pass that body through the MCP PR tool’s parameters—avoid cramming unescaped markdown through a shell where **backticks** or escapes can break (e.g. PowerShell).
 
@@ -278,7 +275,7 @@ Return (mirror the Jira completion comment where applicable):
 - confirmation that the structured Jira completion comment was posted (or paste the comment body if posting failed)
 - summary of changes
 - follow-up actions
-- **FULL_AUTO only:** TalkBack PR Gate outcome (PASS / WARN / BLOCK); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if WARN/BLOCK — gate outcome and reason, no further actions taken
+- **FULL_AUTO only:** PR gate outcome mapped to `mergeable_state` (PASS = `clean`; BLOCK = `blocked` or `dirty`; unresolved = timed-out polling); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if BLOCK or unresolved — `mergeable_state` value observed, no further actions taken
 
 ---
 
