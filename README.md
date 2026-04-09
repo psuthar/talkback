@@ -228,6 +228,12 @@ go run ./cmd/api
 
 ---
 
+### MCP server (agents — Cursor / Claude Code)
+
+To run the **`talkback-mcp`** stdio server from this repo (Model Context Protocol for AI agents), see **[`docs/mcp-server.md`](docs/mcp-server.md)** — build steps, env vars, `./scripts/setup-mcp-config.sh`, and example JSON configs (placeholders only).
+
+---
+
 ## Web UI
 
 ```bash
