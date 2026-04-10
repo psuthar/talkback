@@ -31,8 +31,9 @@ const (
 	maxActionItemOwner        = 200
 )
 
-// ExtractActionItemsFromContext performs a single on-read LLM call over retrieved chunks.
-// v1: no persistence. When chunks is empty, returns empty items and low_signal without calling the API.
+// ExtractActionItemsFromContext performs a single on-read LLM call over retrieved chunks (SCRUM-59).
+// JSON shape after sanitize matches docs/mcp-session-action-items-schema.md (SCRUM-58). v1: no persistence.
+// When chunks is empty, returns empty items and low_signal without calling the API.
 func ExtractActionItemsFromContext(ctx context.Context, chunks []Chunk, sessionTitle string, sessionCtx SessionContext) (*ActionItemsExtraction, error) {
 	if len(chunks) == 0 {
 		return &ActionItemsExtraction{ActionItems: []ActionItemRow{}, LowSignal: true}, nil
