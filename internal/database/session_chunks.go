@@ -178,6 +178,52 @@ func (db *DB) ListChunksWithEmbeddingsBySessionID(ctx context.Context, sessionID
 	return out, rows.Err()
 }
 
+// ListChunksWithEmbeddingsBySessionIDs returns chunks with embeddings for any of the given sessions (SCRUM-63 cross-session search).
+func (db *DB) ListChunksWithEmbeddingsBySessionIDs(ctx context.Context, sessionIDs []uuid.UUID) ([]ChunkWithEmbedding, error) {
+	if len(sessionIDs) == 0 {
+		return nil, nil
+	}
+	query := `
+		SELECT c.id, c.session_id, c.source_type, c.source_id, c.chunk_idx, c.text, c.anchor_json, c.content_hash, c.created_at, c.updated_at,
+		       e.embedding
+		FROM session_chunks c
+		JOIN session_chunk_embeddings e ON e.chunk_id = c.id
+		WHERE c.session_id = ANY($1::uuid[])
+		ORDER BY c.session_id, c.source_type, c.chunk_idx
+	`
+	rows, err := db.Pool.Query(ctx, query, sessionIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list chunks with embeddings by sessions: %w", err)
+	}
+	defer rows.Close()
+	var out []ChunkWithEmbedding
+	for rows.Next() {
+		var c models.SessionChunk
+		var anchorJSON, embJSON []byte
+		var sourceID *uuid.UUID
+		err := rows.Scan(&c.ID, &c.SessionID, &c.SourceType, &sourceID, &c.ChunkIdx, &c.Text, &anchorJSON, &c.ContentHash, &c.CreatedAt, &c.UpdatedAt, &embJSON)
+		if err != nil {
+			return nil, err
+		}
+		c.SourceID = sourceID
+		if len(anchorJSON) > 0 {
+			_ = json.Unmarshal(anchorJSON, &c.AnchorJSON)
+		}
+		var emb []float32
+		if len(embJSON) > 0 {
+			var f64 []float64
+			if json.Unmarshal(embJSON, &f64) == nil {
+				emb = make([]float32, len(f64))
+				for i, v := range f64 {
+					emb[i] = float32(v)
+				}
+			}
+		}
+		out = append(out, ChunkWithEmbedding{Chunk: c, Embedding: emb})
+	}
+	return out, rows.Err()
+}
+
 // CountChunksBySessionID returns the number of chunks for a session
 func (db *DB) CountChunksBySessionID(ctx context.Context, sessionID uuid.UUID) (int, error) {
 	var n int
