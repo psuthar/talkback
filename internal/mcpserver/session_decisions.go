@@ -1,5 +1,6 @@
 // get_session_decisions and get_decisions tools (SCRUM-55, SCRUM-60): same handler — persisted premise, primary_decision, decision_outcome, and decision_stances only — no LLM extraction.
 // JSON contract (field names, types, versioning): docs/mcp-session-decisions-schema.md and docs/schemas/mcp-session-decisions-v1.schema.json (SCRUM-57).
+// Empty/partial success vs errors: docs/mcp-structured-intelligence-fallbacks.md (SCRUM-62).
 package mcpserver
 
 import (

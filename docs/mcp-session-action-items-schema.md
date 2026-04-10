@@ -72,4 +72,4 @@ Each element is one **ephemeral** action item (not stored in Postgres v1).
 ## Relationship to other contracts
 
 - **Decisions (persisted):** `docs/mcp-session-decisions-schema.md` — different tool and lifecycle; do not mix fields.
-- **Fallbacks (empty / partial / errors):** SCRUM-62 documents shared semantics across structured decision and action-item tools.
+- **Fallbacks (empty / partial / errors):** [`docs/mcp-structured-intelligence-fallbacks.md`](mcp-structured-intelligence-fallbacks.md) (SCRUM-62) — shared semantics with decision tools.

@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -22,6 +23,20 @@ func TestMcpSessionDecisionsSchemaFileIsValidJSON(t *testing.T) {
 	}
 	if m["$schema"] == nil {
 		t.Fatal("expected $schema in JSON Schema file")
+	}
+}
+
+// TestMcpStructuredIntelligenceFallbacksDocCommitted keeps SCRUM-62 fallbacks doc in-repo for agent contracts.
+func TestMcpStructuredIntelligenceFallbacksDocCommitted(t *testing.T) {
+	t.Parallel()
+	root := repoRootForTests(t)
+	path := filepath.Join(root, "docs", "mcp-structured-intelligence-fallbacks.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if !bytes.Contains(b, []byte("SCRUM-62")) || !bytes.Contains(b, []byte("low_signal")) {
+		t.Fatal("fallbacks doc missing expected markers")
 	}
 }
 
