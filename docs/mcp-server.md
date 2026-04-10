@@ -186,7 +186,7 @@ Implementation: `internal/mcpserver/mcp_log.go` (`logMCPToolComplete`, `logMCPAu
 | `get_session_retrieval_context` | **Legacy alias** for `get_session_raw_chunks`. Input: `session_id`, `query`, optional `top_k` (default 10, max 50). Output: **`retrieval_context`** with **metadata** (embedding model, primary video id, score-boost flag) and **chunks** ranked by score with **chunk_id**, **chunk_idx**, **text** (truncated window), **content_hash**, **anchor**, timestamps. Same [`rag.RetrieveTopKWithScores`](../internal/rag/retrieval.go) stack as `search_session` / `search_session_content`; **different payload** for agent-side reasoning. **No LLM synthesis** (SCRUM-45). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Chunk row **UUIDs** may change if chunks are rebuilt during re-index; treat **`content_hash`** as the stable content fingerprint when deduplicating. |
 | `get_session_source_chunks` | Input: `session_id`, **`source_type`** (`transcript` \| `material` \| `link`), optional **`source_id`** (UUID), optional **`limit`** (default 500, max 2000). Calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) then lists rows from **`session_chunks`** (same index as [`rag.RetrieveTopK`](../internal/rag/retrieval.go)). **No query embedding for ranking** — read by source. **`OPENAI_API_KEY`** needed when the index must be built. (SCRUM-46). |
 | `ask_session` | **Preferred** name for guarded session Q&A (SCRUM-50). Same inputs/outputs as `ask_session_question` — use either tool; behavior is identical. Implemented in `internal/mcpserver/session_ask_question.go`. |
-| `ask_session_question` | **Legacy alias** for `ask_session`. Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **automation_recommended** (SCRUM-51), **citations** (normalized labels/excerpts), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
+| `ask_session_question` | **Legacy alias** for `ask_session`. Input: `session_id`, `question`. Output: **answer_text**, **answer_status** (`answered` \| `not_covered` \| `error`), **confidence**, **automation_recommended** (SCRUM-51), **citations** (see [Citations](#citations-scrum-53) — same fields and **navigation** resolution as HTTP SessionAsk), **question_id** / **answer_id** after persistence. Uses the same RAG pipeline and [`internal/utils`](../internal/utils/qa.go) guardrails as `POST /api/sessions/:id/ask` (SCRUM-44). Requires `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and **`OPENAI_API_KEY`**. Enforces per-session question limits; returns **429** when the limit is reached. |
 
 ### Session metadata / DB (SCRUM-39)
 
@@ -258,6 +258,66 @@ Integrators should treat MCP **`ask_session`** / **`ask_session_question`** resp
 
 **No invented sources:** If evidence is thin, the shared QA path clears or downgrades citations per existing rules; MCP does not add citations that were not grounded in retrieval.
 
+### Citations (SCRUM-53)
+
+**`ask_session`** / **`ask_session_question`** return **structured citations** aligned with **`POST /api/sessions/:id/ask`**: each item uses the same pipeline ([`citation.NormalizeCitations`](../internal/citation/normalize.go) on the LLM output, then persistence on the answer). Field names match the HTTP **`SessionAskCitation`** shape where applicable:
+
+| Field | Meaning |
+|-------|--------|
+| **`citation_id`** | Stable within the answer: **`C1`**, **`C2`**, … (assigned in order during normalization). |
+| **`chunk_id`** | Session chunk UUID string (indexed row in **`session_chunks`**). |
+| **`source_type`** | **`transcript`** \| **`material`** \| **`link`**. |
+| **`source_id`** | Video UUID, material UUID, or link UUID as string. |
+| **`label`** | Human-readable label (e.g. transcript time range, document title + page/block). |
+| **`excerpt`** | Short excerpt (~200 chars) for preview. |
+| **`anchor`** | Map with **`type`** (`time_range` \| `page` \| `block` \| `section` \| `link` \| `none`) and type-specific fields: **`start_ms`** / **`end_ms`** (transcript), **`page`** / **`block`** (materials), **`section`**, **`url`** (link chunks when present). |
+| **`navigation`** | Resolved target for deep-linking — same [`citation.ResolveCitationTarget`](../internal/citation/resolver.go) as HTTP: **`type`** (`video` \| `pdf` \| `doc` \| `text` \| `url`), optional **`seek_ms`**, **`page`**, **`block`**, **`url`**, **`fragment`**. |
+
+**Ordering:** Citations appear in **array order** matching the persisted answer (after normalization). That order is **`C1` first, then `C2`, …** — not re-sorted by retrieval score.
+
+**Search / raw tools:** **`search_session`**, **`get_session_raw_chunks`**, and related tools return **chunk-level** **`anchor`** JSON from the index (no synthesized citations). They do **not** emit `citation_id` / `navigation` objects; use **`ask_session`** when you need the full citation contract.
+
+**Examples (abridged JSON)**
+
+*Transcript (time range):*
+
+```json
+{
+  "citation_id": "C1",
+  "chunk_id": "uuid-of-chunk",
+  "source_type": "transcript",
+  "source_id": "uuid-of-video",
+  "label": "Transcript 1:12–4:38",
+  "excerpt": "…",
+  "anchor": { "type": "time_range", "start_ms": 72000, "end_ms": 278000 },
+  "navigation": { "type": "video", "seek_ms": 72000 }
+}
+```
+
+*Material (PDF page):*
+
+```json
+{
+  "citation_id": "C2",
+  "source_type": "material",
+  "source_id": "uuid-of-material",
+  "anchor": { "type": "page", "page": 4 },
+  "navigation": { "type": "pdf", "page": 4 }
+}
+```
+
+*Link (URL):*
+
+```json
+{
+  "citation_id": "C3",
+  "source_type": "link",
+  "source_id": "uuid-of-session-link",
+  "anchor": { "type": "link", "url": "https://example.com/doc" },
+  "navigation": { "type": "url", "url": "https://example.com/doc" }
+}
+```
+
 ### MCP vs HTTP RAG parity (SCRUM-49)
 
 **Goal:** Avoid drift between **`POST /api/sessions/:id/ask`** ([`internal/handlers/session_ask.go`](../internal/handlers/session_ask.go)) and **`ask_session`** / **`ask_session_question`**, and the same for any tool that calls [`rag.EnsureSessionIndex`](../internal/rag/index.go) / [`rag.IndexSession`](../internal/rag/index.go).
@@ -267,7 +327,7 @@ Integrators should treat MCP **`ask_session`** / **`ask_session_question`** resp
 | Index + embed | [`rag.EnsureSessionIndex`](../internal/rag/index.go), [`rag.IndexSession`](../internal/rag/index.go), [`rag.OpenAIEmbedder`](../internal/rag/embedder.go) |
 | Retrieval | [`rag.RetrieveTopK`](../internal/rag/retrieval.go) (cosine + primary-transcript boost) |
 | Answer + guardrails | [`utils.GenerateAnswer`](../internal/utils/qa.go), [`utils.ConvertQAResponseToAnswer`](../internal/utils/qa.go) |
-| Citations | [`citation.NormalizeCitations`](../internal/citation/normalize.go) |
+| Citations | [`citation.NormalizeCitations`](../internal/citation/normalize.go); MCP ask responses also attach [`citation.ResolveCitationTarget`](../internal/citation/resolver.go) as **`navigation`** (SCRUM-53) |
 
 **Object storage:** HTTP passes the API’s R2 (or nil) client into indexing. **`talkback-mcp`** now does the same: when **`STORAGE_DRIVER=r2`** and R2 env vars match [`cmd/api`](../cmd/api/main.go) ([`internal/storage/r2`](../internal/storage/r2)), the MCP process builds the session index **including R2-backed PDF page chunking**. If R2 is not configured, behavior matches the previous MCP default (index uses DB `extracted_text` paths only — same as API without storage).
 

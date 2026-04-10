@@ -1,12 +1,31 @@
 package mcpserver
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 )
+
+func TestMcpCitationAnchorToMap_includesURL(t *testing.T) {
+	ms := int64(1000)
+	a := &models.CitationAnchor{
+		Type:    "time_range",
+		StartMs: &ms,
+		EndMs:   &ms,
+	}
+	m := mcpCitationAnchorToMap(a)
+	if m["type"] != "time_range" {
+		t.Fatalf("type: %v", m["type"])
+	}
+	linkA := &models.CitationAnchor{Type: "link", URL: "https://example.com/a"}
+	m2 := mcpCitationAnchorToMap(linkA)
+	if m2["url"] != "https://example.com/a" {
+		t.Fatalf("expected url in anchor map, got %v", m2)
+	}
+}
 
 func TestMcpBuildAskOutput_AutomationRecommended(t *testing.T) {
 	sid := uuid.MustParse("00000000-0000-4000-8000-000000000001")
@@ -17,8 +36,8 @@ func TestMcpBuildAskOutput_AutomationRecommended(t *testing.T) {
 	}
 	baseA := func() *models.Answer {
 		return &models.Answer{
-			ID:        uuid.MustParse("20000000-0000-4000-8000-000000000001"),
-			CreatedAt: ts,
+			ID:         uuid.MustParse("20000000-0000-4000-8000-000000000001"),
+			CreatedAt:  ts,
 			AnswerText: "ok",
 		}
 	}
@@ -41,7 +60,7 @@ func TestMcpBuildAskOutput_AutomationRecommended(t *testing.T) {
 			a := baseA()
 			a.AnswerStatus = tt.status
 			a.Confidence = tt.conf
-			out := mcpBuildAskOutput(sid, q, a)
+			out := mcpBuildAskOutput(context.Background(), nil, sid, q, a)
 			if out.AutomationRecommended != tt.wantAuto {
 				t.Fatalf("AutomationRecommended=%v want %v (status=%s conf=%v)",
 					out.AutomationRecommended, tt.wantAuto, tt.status, tt.conf)
