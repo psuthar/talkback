@@ -31,6 +31,12 @@ type sessionOwnerOutput struct {
 	DisplayName *string `json:"display_name,omitempty"`
 }
 
+// Stable MCP tool error_code values (SCRUM-71 / SCRUM-54).
+const (
+	mcpErrCodeActingUserNotConfigured = "acting_user_not_configured"
+	mcpErrCodeSessionAccessDenied     = "session_access_denied"
+)
+
 func mcpToolErr(httpStatus int, message string) error {
 	return mcpToolErrCode("", httpStatus, message)
 }
@@ -69,7 +75,7 @@ func registerGetSessionMetadata(server *mcp.Server, db *database.DB) {
 
 		actingID, ok := ActingUserID(ctx)
 		if !ok {
-			return nil, getSessionMetadataOutput{}, mcpToolErr(403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
+			return nil, getSessionMetadataOutput{}, mcpToolErrCode(mcpErrCodeActingUserNotConfigured, 403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
 		}
 
 		sessionID, err := uuid.Parse(strings.TrimSpace(in.SessionID))
@@ -100,7 +106,7 @@ func registerGetSessionMetadata(server *mcp.Server, db *database.DB) {
 		if allowed, err := userMayReadSessionMCP(ctx, db, session, user); err != nil {
 			return nil, getSessionMetadataOutput{}, err
 		} else if !allowed {
-			return nil, getSessionMetadataOutput{}, mcpToolErr(403, "you do not have access to this session")
+			return nil, getSessionMetadataOutput{}, mcpToolErrCode(mcpErrCodeSessionAccessDenied, 403, "you do not have access to this session")
 		}
 
 		out := getSessionMetadataOutput{

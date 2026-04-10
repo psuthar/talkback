@@ -45,7 +45,7 @@ func mcpLoadSessionWithReadAccess(ctx context.Context, db *database.DB, sessionI
 	if allowed, err := userMayReadSessionMCP(ctx, db, session, user); err != nil {
 		return nil, nil, err
 	} else if !allowed {
-		return nil, nil, mcpToolErr(403, "you do not have access to this session")
+		return nil, nil, mcpToolErrCode(mcpErrCodeSessionAccessDenied, 403, "you do not have access to this session")
 	}
 	return session, user, nil
 }

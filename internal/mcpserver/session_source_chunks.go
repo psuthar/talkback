@@ -67,7 +67,7 @@ func registerGetSessionSourceChunks(server *mcp.Server, db *database.DB, store s
 
 		actingID, ok := ActingUserID(ctx)
 		if !ok {
-			return nil, getSessionSourceChunksOutput{}, mcpToolErr(403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
+			return nil, getSessionSourceChunksOutput{}, mcpToolErrCode(mcpErrCodeActingUserNotConfigured, 403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
 		}
 
 		sessionID, err := uuid.Parse(strings.TrimSpace(in.SessionID))

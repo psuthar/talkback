@@ -47,6 +47,9 @@ func main() {
 	} else {
 		log.Printf("warning: DATABASE_URL not set — session DB tools will not be registered")
 	}
+	if db != nil && strings.TrimSpace(os.Getenv("TALKBACK_MCP_ACTING_USER_ID")) == "" {
+		log.Printf("warning: DATABASE_URL is set but TALKBACK_MCP_ACTING_USER_ID is unset — session tools will return 403 with error_code=acting_user_not_configured; set a TalkBack users.id UUID")
+	}
 
 	// Optional object storage — same R2 wiring as cmd/api so MCP RAG indexing matches HTTP SessionAsk (R2-backed PDFs).
 	var store storage.Interface
