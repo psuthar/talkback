@@ -4,6 +4,8 @@ Stdio [Model Context Protocol](https://modelcontextprotocol.io) server for agent
 
 **Protocol wiring:** The binary uses `internal/mcpserver.NewTalkbackMCPServer`, which constructs the official Go SDK server, attaches receiving middleware so **only** `tools/call` is API-key gated (`initialize` / `tools/list` stay open), registers tools, then runs [`mcp.StdioTransport`](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp#StdioTransport) (newline-delimited JSON-RPC).
 
+**Phase 4 — cross-session tools (`search_all_sessions`, `get_decisions_by_topic`, …):** scope, reuse of `session_chunks` vs `sessions` fields, caps, and failure modes are documented in **[`cross-session-intelligence.md`](cross-session-intelligence.md)** (SCRUM-65). Identity for scoped queries is **SCRUM-70** (`TALKBACK_MCP_ACTING_USER_ID` / optional per-key map).
+
 ## Quick start from a clone (Cursor + Claude Code)
 
 Goal: run `talkback-mcp` from a **local clone** with minimal friction—`health_check` first; optional Postgres-backed `get_session_metadata` when you need it.

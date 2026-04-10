@@ -10,7 +10,7 @@ import (
 )
 
 // MaxMCPAccessibleSessions caps how many session IDs are considered for MCP cross-session tools (SCRUM-63).
-// Prevents unbounded work for global admins and large tenants.
+// Prevents unbounded work for global admins and large tenants. Scope rules: docs/cross-session-intelligence.md (SCRUM-65).
 const MaxMCPAccessibleSessions = 5000
 
 // ListAccessibleSessionIDsForUser returns session IDs the user may read (same rules as MCP/HTTP:
