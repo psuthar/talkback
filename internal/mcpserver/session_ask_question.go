@@ -82,7 +82,7 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 
 		actingID, ok := ActingUserID(ctx)
 		if !ok {
-			return nil, askSessionQuestionOutput{}, mcpToolErr(403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
+			return nil, askSessionQuestionOutput{}, mcpToolErrCode(mcpErrCodeActingUserNotConfigured, 403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
 		}
 
 		sessionID, err := uuid.Parse(strings.TrimSpace(in.SessionID))
@@ -118,7 +118,7 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 		if allowed, err := userMayReadSessionMCP(ctx, db, session, user); err != nil {
 			return nil, askSessionQuestionOutput{}, err
 		} else if !allowed {
-			return nil, askSessionQuestionOutput{}, mcpToolErr(403, "you do not have access to this session")
+			return nil, askSessionQuestionOutput{}, mcpToolErrCode(mcpErrCodeSessionAccessDenied, 403, "you do not have access to this session")
 		}
 
 		artifacts, err := db.GetArtifactsBySessionID(ctx, sessionID)

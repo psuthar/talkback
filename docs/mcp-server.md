@@ -51,7 +51,7 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 |----------|----------|---------|
 | `TALKBACK_MCP_API_KEY` | Yes | One or more comma-separated shared secrets the server knows (rotation). |
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
-| `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
+| `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. **Required** whenever **`DATABASE_URL`** is set: session tools use this identity for ACL (same rules as the web app). If it is **unset** while **`DATABASE_URL`** is set, tools return **403** with **`error_code`** `acting_user_not_configured` (not a generic “no access” failure). The server also logs a **stderr warning** at startup in that configuration. |
 | `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session`**, **`search_session_content`** (same behavior as `search_session`), **`get_session_raw_chunks`**, **`get_session_retrieval_context`** (same behavior as `get_session_raw_chunks`), **`get_session_source_chunks`**, **`ask_session`**, and **`ask_session_question`** (same behavior as `ask_session`) (Postgres). When unset, only `health_check` is available. |
 | `TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE` | No | **SCRUM-54:** Max **query-embedding** calls per TalkBack session per sliding minute (in-process only). Applies to **`search_session`**, **`get_session_raw_chunks`**, and **`ask_session`** query embeddings — **not** to bulk index builds inside `EnsureSessionIndex`. Default **`0`** = unlimited (backward compatible). Set e.g. **`60`** or **`120`** to cap misbehaving agents. |
 
@@ -79,6 +79,8 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `embedding_empty_result` | 503 | No vector returned. |
 | `index_unavailable` / `index_timeout` | 503 | **`EnsureSessionIndex`** failed or timed out. |
 | `retrieval_failed` | 500 | DB / vector retrieval error after a successful embedding. |
+| `acting_user_not_configured` | 403 | **`TALKBACK_MCP_ACTING_USER_ID`** unset or invalid at runtime; distinct from real ACL denial. |
+| `session_access_denied` | 403 | Acting user is valid but may not read this session (no membership / not creator / not admin). |
 
 **Logging:** Rate limits and embedding failures log **`mcp event=embedding_rate_limit`** or **`mcp event=embedding_error`** / **`mcp event=index_error`** on stderr with **`error_code`** and **`session_id`** (canonical UUID) where applicable — **no** query text or API key material.
 

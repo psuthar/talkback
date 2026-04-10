@@ -59,7 +59,7 @@ func registerSearchSessionTool(server *mcp.Server, db *database.DB, store storag
 
 		actingID, ok := ActingUserID(ctx)
 		if !ok {
-			return nil, searchSessionContentOutput{}, mcpToolErr(403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
+			return nil, searchSessionContentOutput{}, mcpToolErrCode(mcpErrCodeActingUserNotConfigured, 403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
 		}
 
 		sessionID, err := uuid.Parse(strings.TrimSpace(in.SessionID))

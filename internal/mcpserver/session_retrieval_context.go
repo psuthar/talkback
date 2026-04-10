@@ -77,7 +77,7 @@ func registerGetSessionRetrievalContextTool(server *mcp.Server, db *database.DB,
 
 		actingID, ok := ActingUserID(ctx)
 		if !ok {
-			return nil, getSessionRetrievalContextOutput{}, mcpToolErr(403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
+			return nil, getSessionRetrievalContextOutput{}, mcpToolErrCode(mcpErrCodeActingUserNotConfigured, 403, "acting user not configured; set TALKBACK_MCP_ACTING_USER_ID to a TalkBack user UUID")
 		}
 
 		sessionID, err := uuid.Parse(strings.TrimSpace(in.SessionID))
