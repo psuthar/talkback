@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Execute all child tickets of a Jira Epic sequentially using the `implement SCRUM-XX FULL_AUTO`
-workflow. Stop immediately if any ticket's merge gate does not reach `clean` within the polling
+Execute all child tickets of a Jira Epic sequentially. **Every** ticket uses **`implement SCRUM-XX FULL_AUTO`** (see **FULL_AUTO mandatory** below)—not plain `implement SCRUM-XX`. That includes **mergeable_state** polling, squash merge when gates pass, and post-merge steps per **CLAUDE.md §8**, overlaid with epic **Final Gate** rules here.
+
+Stop immediately if any ticket's merge gate does not reach `clean` within the polling
 budget, **or if the unified PR gate Final Gate is not `PASS`**, or if the gate cannot be read.
 Require explicit human instruction to resume.
 
@@ -18,6 +19,15 @@ continue epic SCRUM-XX
 
 - `run epic SCRUM-XX` — start a fresh run (errors if a non-complete state file already exists)
 - `continue epic SCRUM-XX` — resume from a halted run
+
+### FULL_AUTO mandatory (every `implement`)
+
+While **`run epic`** / **`continue epic`** is active, **each** child ticket MUST be executed with **`FULL_AUTO` in the command and in behavior**:
+
+- Use the invocation **`implement <TICKET-KEY> FULL_AUTO`** (e.g. `implement SCRUM-72 FULL_AUTO`).
+- **Do not** run **`implement <TICKET-KEY>`** without **`FULL_AUTO`** during an epic—no “standard mode” stop at “PR opened.” Polling **`mergeable_state`**, merge when **`clean`** + **Final Gate PASS**, Jira **Done**, and local cleanup follow **CLAUDE.md §8** FULL_AUTO, plus **Merge gate + Final Gate** below.
+
+The only exception is if the **user explicitly** cancels epic mode or directs a one-off non–FULL_AUTO run; default for epic is always **FULL_AUTO**.
 
 ---
 
@@ -93,7 +103,9 @@ Before **`git checkout -b feat/<next-ticket>`** or any other **new implementatio
 1. The **previous** ticket’s PR must be **merged** to `main` (not merely open or “In Review”).
 2. The **previous** Jira issue must be **closed out** — transitioned to **Done** (or your project’s equivalent terminal state).
 
-Until both are true, the only allowed “next action” is to **wait** on the open PR (CI, review, merge) and Jira. Do not start the next ticket’s implementation in parallel unless the user **explicitly** opts into overlap; default is **strict sequencing**.
+Until both are true, do not start the **next** ticket’s branch or implementation. For the **current** ticket, **`implement … FULL_AUTO`** is responsible for **polling `mergeable_state`**, waiting on checks, and merging when epic gates pass—not stopping at “PR opened.” If FULL_AUTO **HALT**s or the user must intervene, **wait** until the prior ticket is merged and **Done** before the next **`feat/<ticket>`**.
+
+Do not start the next ticket’s implementation in parallel unless the user **explicitly** opts into overlap; default is **strict sequencing**.
 
 ---
 
@@ -134,7 +146,9 @@ If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable
 
 ## Relation to standalone FULL_AUTO
 
-When the user invokes **`implement SCRUM-XX FULL_AUTO` outside an epic**, CLAUDE.md §8 applies as written. When **`run epic` / `continue epic`** is active, the agent **overlays** the **Final Gate `PASS`** requirement above — epic and standalone FULL_AUTO are **not** identical.
+**Outside an epic**, the user may invoke **`implement SCRUM-XX`** (standard) or **`implement SCRUM-XX FULL_AUTO`**; CLAUDE.md §8 applies.
+
+**Inside an epic**, every ticket is **`implement SCRUM-XX FULL_AUTO`** (mandatory; see **FULL_AUTO mandatory**). The agent **overlays** the **Final Gate `PASS`** requirement and other epic rules here — epic FULL_AUTO is **stricter** than standalone FULL_AUTO, not weaker.
 
 ---
 
@@ -201,6 +215,7 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 ## Constraints
 
+- **FULL_AUTO every ticket:** During epic execution, always use **`implement SCRUM-XX FULL_AUTO`** per child ticket (see **FULL_AUTO mandatory**). Do not substitute standard **`implement SCRUM-XX`**.
 - **In Progress first:** Transition the Jira ticket to **In Progress** before product code edits or implementation commits (see **In Progress before code**).
 - **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 2) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
