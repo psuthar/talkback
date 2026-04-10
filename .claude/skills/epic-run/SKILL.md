@@ -41,19 +41,7 @@ continue epic SCRUM-XX
 
 **Sequential ticket:**
 
-1. **Test analysis (before implementation).** Read the Jira ticket description. Determine whether the ticket touches product code (Go packages, frontend, DB queries, MCP handlers, migrations, etc.) or is strictly documentation/config with no executable behavior.
-   - **If product code is touched:** identify the test gap before writing any implementation code:
-     - What new behavior needs a test? (new function, new API, new DB query, new MCP tool)
-     - What existing tests need updating? (changed signatures, changed behavior)
-     - What critical paths are security- or correctness-sensitive? (ACL checks, session scoping, data boundaries — always test these even if the surrounding code already has tests)
-     - What test type is appropriate? Unit test, DB integration test (real Postgres via `internal/test/testdb`), handler test (`setupTestHandlersParallel`), MCP tool behavioral test — use whichever the repo uses for similar code.
-   - Record the test plan as a brief list: "will add X covering Y, Z". This is the acceptance bar — implementation is not done until these tests exist and pass.
-   - **If strictly docs/config:** no test analysis needed; proceed to step 2.
-
-2. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**). The implementation must include the tests identified in step 1. Before the PR is created:
-   - Confirm the identified tests were written and included in the commit.
-   - Run the affected test packages locally (e.g. `go test ./internal/mcpserver/...` for MCP changes) and verify they pass. If tests fail → fix before pushing.
-   - Do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
+1. **Test analysis + implementation** — Follow the **Testing** section of CLAUDE.md §8 in full: perform the pre-implementation test analysis, write the identified tests in the same PR, and run affected packages locally before pushing. This applies to every product-code ticket; docs/config-only tickets are exempt. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**): do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
 
 3. Observe terminal outcome:
    - `PASS` — PR merged, `mergeable_state` was `clean`, and **`final_gate.status`** was **`PASS`** at merge time → record in state file, continue to next item.
@@ -61,8 +49,8 @@ continue epic SCRUM-XX
 
 **Parallel batch (two or more tickets all marked `parallel-ok`):**
 
-1. For each ticket in the batch: apply the **test analysis** (step 1 above) before implementation begins.
-2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**), including the tests identified per ticket.
+1. For each ticket in the batch: follow the **Testing** section of CLAUDE.md §8 (test analysis, write tests, run locally) before implementation — same rule as sequential tickets.
+2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**).
 3. Wait for all to terminate.
 4. If all PASS (merged with **`final_gate.status: PASS`**) → record all in state file, continue.
 5. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.

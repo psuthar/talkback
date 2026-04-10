@@ -168,9 +168,21 @@ When the user requests implementation of a Jira ticket, two invocation modes are
 - Do not introduce unrelated refactors
 
 ### Testing
-- Add or update automated tests for all new or changed behavior
-- Ensure meaningful coverage
-- Do not skip tests
+
+**Before writing any implementation code**, perform a test analysis:
+
+1. Determine whether the ticket touches product code (Go packages, DB queries, MCP handlers, migrations, frontend, etc.) or is strictly documentation/config with no executable behavior. If strictly docs/config, skip to implementation.
+2. For product-code tickets, identify the test gap:
+   - What new behavior needs a test? (new function, new API, new DB query, new MCP tool)
+   - What existing tests need updating? (changed signatures, changed behavior)
+   - What paths are security- or correctness-sensitive? (ACL checks, session scoping, data boundaries — always test these even if surrounding code already has tests)
+   - What test type fits? Unit test, DB integration test (real Postgres via `internal/test/testdb`), handler test (`setupTestHandlersParallel`), MCP behavioral test — match what the repo uses for similar code.
+3. Record the test plan as a brief list before implementation. This is the acceptance bar: the ticket is not done until those tests are written, locally passing, and included in the PR.
+
+**After implementation:**
+- Add or update the tests identified above in the same commit/PR as the implementation.
+- Run the affected packages locally before pushing (e.g. `go test ./internal/mcpserver/...` for MCP changes). Fix failures before pushing — CI is not a substitute for running tests locally first.
+- Do not skip tests; do not defer them to a follow-up ticket.
 
 ### Validation
 - Run relevant validation before completion:
