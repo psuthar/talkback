@@ -3,9 +3,9 @@
 ## Purpose
 
 Execute all child tickets of a Jira Epic sequentially using the `implement SCRUM-XX FULL_AUTO`
-workflow. Stop immediately if any ticket's CI gate does not reach `clean` within the polling
-budget, or if the release readiness check produces WARN or BLOCK. Require explicit human
-instruction to resume.
+workflow. Stop immediately if any ticket's merge gate does not reach `clean` within the polling
+budget, **or if the unified PR gate Final Gate is not `PASS`**, or if the gate cannot be read.
+Require explicit human instruction to resume.
 
 ---
 
@@ -41,17 +41,19 @@ continue epic SCRUM-XX
 
 **Sequential ticket:**
 
-1. Run `implement SCRUM-XX FULL_AUTO` for the ticket.
-2. Observe FULL_AUTO terminal outcome:
-   - `PASS` (`mergeable_state: clean`, merged) → record in state file, continue to next item.
+1. When the ticket changes **product code** (Go, frontend, etc.), add or update **automated tests** in the same change set: cover new behavior, regressions, and critical branches per existing repo patterns (`go test`, package tests, etc.). **Documentation-only** tickets are exempt. Do not merge implementation without meaningful test coverage where the codebase normally tests similar code.
+2. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**): do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
+3. Observe terminal outcome:
+   - `PASS` — PR merged, `mergeable_state` was `clean`, and **`final_gate.status`** was **`PASS`** at merge time → record in state file, continue to next item.
    - Any other outcome → **HALT** (see **Halt behavior**).
 
 **Parallel batch (two or more tickets all marked `parallel-ok`):**
 
-1. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch.
-2. Wait for all to terminate.
-3. If all PASS → record all in state file, continue.
-4. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.
+1. Same **tests-with-code** rule as sequential tickets (each batch item).
+2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**).
+3. Wait for all to terminate.
+4. If all PASS (merged with **`final_gate.status: PASS`**) → record all in state file, continue.
+5. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.
 
 ### Finish
 
@@ -75,37 +77,44 @@ The agent never infers parallelism. If the ticket doesn't say it, it's sequentia
 
 ---
 
-## CI gate
+## Merge gate + Final Gate (epic is stricter than default FULL_AUTO)
 
-The CI gate is `mergeable_state` from `pull_request_read (method: get)` via GitHub MCP —
-exactly as defined in CLAUDE.md §8 FULL_AUTO. No additional review or smoke gate is added
-here; FULL_AUTO already polls through `blocked` and merges on `clean`.
+Default **FULL_AUTO** (CLAUDE.md §8) may merge when **`mergeable_state: clean`**. **Epic runs must not:** merge until **both** are true:
 
-**IDE anti-loop warnings:** While waiting on CI, the agent will repeat **30s sleep + PR read**
-dozens of times. That is **correct** behavior. **Do not** abort the epic or merge gate early
-because Cursor (or similar) warns about “looping” — keep polling until terminal outcome or the
-40-minute budget (see `.cursor/rules/full-auto-github-polling.mdc`).
+1. **Merge gate:** `mergeable_state` from `pull_request_read (method: get)` is **`clean`** (same polling rules and 40-minute budget as `.cursor/rules/full-auto-github-polling.mdc`).
+2. **Final Gate:** `final_gate.status` from the TalkBack unified gate is exactly **`PASS`**.
 
-A FULL_AUTO outcome of anything other than `PASS` (clean merge) is treated as a halt
-condition for the epic run.
+If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable** after a reasonable wait aligned with the merge-gate budget → **HALT** without merging. Treat “cannot determine Final Gate” as a halt (same as non-`PASS`).
+
+**IDE anti-loop warnings:** While waiting on CI and gate artifacts, the agent will repeat **30s sleep** + PR read / artifact fetch many times. That is **correct** behavior — do not abort early because the host flags “looping.”
 
 ---
 
-## Release readiness
+## Final Gate (how to read it)
 
-After every successful merge (`PASS`), the agent checks whether the CI run that gated the
-merge produced a release-readiness WARN or BLOCK (see `ops/release-readiness/decision-flow.md`).
+**Source of truth:** `pr-gate-summary.json` written by `scripts/pr_gate.py` in the **`release-readiness`** GitHub Actions workflow (unified PR Risk + Release Readiness). Read the field **`final_gate.status`**.
 
-The release-readiness result is available in `ops/bundles/` after the GitHub Actions
-`release-readiness` workflow completes. Read `ops/bundles/report.json` from the
-`main` branch (or the workflow artifact) after each merge.
+**How to obtain it for the open PR (in order of preference):**
 
-| Release readiness outcome | Action |
+1. **Workflow artifact** — Download **`pr-gate-summary.json`** from the **`release-readiness`** workflow run associated with the PR head commit or branch (GitHub MCP or API: run listing + artifact download).
+2. **TalkBack PR Gate check** — If artifacts are awkward, use **`pull_request_read` `get_check_runs`** on the PR head and find the check named **`TalkBack PR Gate`**: conclusion **`success`** corresponds to Final Gate **PASS**; **`action_required`** or **`failure`** means Final Gate is **not** PASS (treat as halt for epic; do not merge).
+
+**Semantics:**
+
+| `final_gate.status` (or equivalent check) | Epic action |
 |---|---|
-| `PASS` | Continue to next ticket |
-| `WARN` | **HALT** — post status, require human to continue |
-| `BLOCK` | **HALT** — post status, require human to continue |
-| File not found / unreadable | Treat as `WARN` — HALT and note the missing report |
+| **`PASS`** | Eligible to merge **if** `mergeable_state` is also **`clean`**. |
+| **`WARN`** | **HALT** — do not merge. |
+| **`BLOCK`** | **HALT** — do not merge. |
+| Missing / parse error / timeout | **HALT** — do not merge. |
+
+**Note:** Final Gate already combines PR Risk and Release Readiness (`scripts/pr_gate.py`). There is **no** separate epic step to re-read `ops/bundles/report.json` after merge if Final Gate was **PASS** before merge.
+
+---
+
+## Relation to standalone FULL_AUTO
+
+When the user invokes **`implement SCRUM-XX FULL_AUTO` outside an epic**, CLAUDE.md §8 applies as written. When **`run epic` / `continue epic`** is active, the agent **overlays** the **Final Gate `PASS`** requirement above — epic and standalone FULL_AUTO are **not** identical.
 
 ---
 
@@ -117,7 +126,7 @@ On any halt condition:
    `halted_at`, `halt_reason`, `awaiting_human: true`).
 2. Post a Jira comment on the **epic** with:
    - Tickets completed so far (key, PR URL, merge SHA)
-   - Halted ticket + reason (FULL_AUTO outcome or release-readiness result)
+   - Halted ticket + reason (merge gate / **`final_gate.status` not `PASS`** / timeout / parse error)
    - Remaining tickets not yet started
    - Instruction: "Resume with `continue epic SCRUM-XX` once the blocker is resolved."
 3. **Stop completely.** Do not proceed to the next ticket, do not poll, do not self-resume.
@@ -154,14 +163,14 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
       "status": "done",
       "pr": 72,
       "merged_sha": "abc123",
-      "release_readiness": "PASS"
+      "final_gate": "PASS"
     },
     {
       "key": "SCRUM-46",
       "status": "halted",
       "pr": 79,
       "merged_sha": null,
-      "halt_reason": "blocked_budget_expired"
+      "halt_reason": "final_gate_warn"
     }
   ],
   "next_pending": ["SCRUM-47", "SCRUM-48"]
@@ -172,9 +181,10 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 ## Constraints
 
+- **Tests with code:** Any implementation work must include **corresponding tests** (new or updated) unless the ticket is strictly docs/config with no executable behavior. Validate with the same commands the project uses for CI (e.g. `go test ./...` for touched packages).
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
   unresolvable dependency), HALT and report.
-- Never merge without FULL_AUTO's `mergeable_state: clean` confirmation.
+- Never merge without **`mergeable_state: clean`** and **`final_gate.status: PASS`** (epic); do not use default FULL_AUTO merge rules alone during an epic run.
 - Never self-resume after a halt, even if the reason appears transient.
 - Parallel batches must all complete before the next sequential ticket starts.
 - Do not modify already-Done tickets (idempotent on restart).
