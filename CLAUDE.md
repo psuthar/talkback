@@ -301,6 +301,35 @@ Wait for confirmation before proceeding to implementation.
 
 ---
 
+## 10. Epic Execution Agent
+
+Use the **`epic-run` skill** to execute all child tickets of a Jira Epic sequentially via FULL_AUTO.
+
+```
+run epic SCRUM-XX        # start a fresh run
+continue epic SCRUM-XX   # resume after a human-resolved halt
+```
+
+Full algorithm, state file format, and halt/resume rules are in `.claude/skills/epic-run/SKILL.md`.
+
+### Parallel marker convention
+
+By default all tickets in an epic run sequentially. A ticket opts into parallel execution by:
+- carrying the Jira label `parallel-ok`, **or**
+- including the line `Parallel: yes` anywhere in its Jira description
+
+Consecutive parallel-ok tickets are batched and run concurrently. The batch must fully resolve before the next ticket starts. Do not infer parallelism — if the ticket doesn't say it, it's sequential.
+
+### Halt and resume
+
+The agent halts (and never self-resumes) when:
+- FULL_AUTO does not reach `mergeable_state: clean` within its polling budget
+- Release readiness (`ops/release-readiness/decision-flow.md`) produces WARN or BLOCK after a merge
+
+On halt, the agent posts a Jira comment on the epic with completed tickets, the halted ticket and reason, and remaining work. The user must explicitly invoke `continue epic SCRUM-XX` to resume.
+
+---
+
 ## Subagent routing
 
 Route tasks to specialized TalkBack subagents as follows:

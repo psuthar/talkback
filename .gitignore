@@ -2,6 +2,9 @@
 .claude/worktrees/
 .claude/settings.local.json
 
+# Epic-run agent state files (transient; may contain API tokens in PR URLs)
+.epic-run/
+
 # Environment variables
 .env
 web/.env.e2e
