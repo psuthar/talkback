@@ -21,6 +21,8 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 	if cfg.DB != nil {
 		// SCRUM-39: session read path via internal/database; same ACL as HTTP.
 		registerGetSessionMetadata(server, cfg.DB)
+		// SCRUM-55: persisted structured decisions (premise, primary_decision, decision_outcome, decision_stances).
+		registerGetSessionDecisions(server, cfg.DB)
 		// SCRUM-43 / SCRUM-48: deterministic session chunk search (internal/rag retrieval); search_session + legacy alias search_session_content.
 		registerSearchSessionTools(server, cfg.DB, cfg.Storage)
 		// SCRUM-45 / SCRUM-52: raw ranked chunks + scores (no LLM synthesis); get_session_raw_chunks + legacy get_session_retrieval_context.
