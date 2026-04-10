@@ -1,6 +1,6 @@
 # Phase 4 — Cross-session intelligence (MCP)
 
-This document records the **MVP design** for cross-session MCP tools under epic **SCRUM-31** (implementation: SCRUM-63, SCRUM-64, SCRUM-70, and this task **SCRUM-65**). It answers: what is indexed, where it lives, how access is enforced, and what limits apply.
+This document records the **MVP design** for cross-session MCP tools under epic **SCRUM-31** (implementation: SCRUM-63, SCRUM-64, SCRUM-65, SCRUM-67, SCRUM-70). It answers: what is indexed, where it lives, how access is enforced, what **topic** means for decision retrieval, and what limits apply.
 
 ## Tenant and user scope (non-negotiable)
 
@@ -27,6 +27,25 @@ All cross-session queries **restrict to this ID list first** (or equivalent `WHE
 ### Decision fields by topic — `get_decisions_by_topic`
 
 **Storage:** Reuses **`sessions`** rows: **`premise`**, **`primary_decision`**, **`decision_outcome`**. Matching is **case-insensitive substring** (`position(lower(topic) in lower(field))`) — see [`internal/database/decisions_by_topic.go`](../internal/database/decisions_by_topic.go). **No** new index table for MVP; optional future work includes `pg_trgm` or a dedicated search service if needed.
+
+**MCP tool (SCRUM-68):** Implemented as **`get_decisions_by_topic`** in [`internal/mcpserver/decisions_by_topic.go`](../internal/mcpserver/decisions_by_topic.go) (shipped with **SCRUM-64**). Responses are **one row per matching session** (grouped by session id), with session metadata and decision fields — not full stance rows; use **`get_session_decisions`** per session for detail.
+
+## Topic matching for `get_decisions_by_topic` (SCRUM-67)
+
+This section locks the **MVP semantics** so agents and tests can rely on stable behavior (alternative: embedding similarity over decision text was **not** chosen for Phase 4 MVP — avoids extra `OPENAI` dependency on this tool and keeps behavior aligned with explicit keyword-style queries).
+
+| Decision | MVP choice |
+|----------|------------|
+| Mechanism | **Keyword / substring**, not embedding similarity. |
+| Case | **Case-insensitive** via `lower(topic)` and `lower(column)` in SQL. |
+| Locale / Unicode | **Postgres** default collation for `lower(text)`; no custom normalization (no diacritic folding). |
+| Fields searched | **`premise`**, **`primary_decision`**, **`decision_outcome`** only (nullable columns skipped when NULL). |
+| Multi-token phrases | The entire **`topic`** string must appear as a **contiguous substring** in at least one of the three fields (not token OR across words). |
+| Empty topic | **Rejected** at MCP handler: **400** (`topic is required`). |
+| No matches | HTTP **200**-equivalent success payload: **`results`: []** and optional **`note`** explaining no hits. |
+| Ranking | **`ORDER BY sessions.updated_at DESC`** among matches (most recently updated sessions first). |
+
+**Future (out of MVP):** optional **embedding** match over concatenated decision text, **pg_trgm** / **ILIKE** `%` patterns with escaping, or hybrid rank — would be separate tickets.
 
 ## Limits and operational behavior
 
