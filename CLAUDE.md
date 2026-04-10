@@ -78,7 +78,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 ### `talkback` — TalkBack internal tools
 - **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
 - **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `get_session_decisions` / `get_decisions` (same handler — SCRUM-60), `get_session_action_items` / `get_action_items` (same handler — SCRUM-61), `search_session` (same handler as `search_session_content`), `get_session_raw_chunks` (same handler as `get_session_retrieval_context`), `get_session_source_chunks`, `ask_session` (same handler as `ask_session_question`) (session tools need DB; search, raw retrieval, action items, ask, and source-chunk listing when indexing need `OPENAI_API_KEY` — see env vars)
-- **Env vars** (all are process-level env vars; `./scripts/setup-mcp-config.sh` copies shell values into `.cursor/mcp.json` when you run it):
+- **Env vars** (all are process-level env vars; `./scripts/setup-mcp-config.sh` copies `DATABASE_URL`, `TALKBACK_MCP_ACTING_USER_ID`, and `TALKBACK_MCP_KEY_USER_MAP_JSON` into `.cursor/mcp.json` when set in the shell you run it from):
   - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
   - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
   - `DATABASE_URL` — Postgres connection string; enables session DB tools

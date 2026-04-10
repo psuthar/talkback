@@ -23,7 +23,7 @@ Goal: run `talkback-mcp` from a **local clone** with minimal friction—`health_
    ```
 
    The script uses **`go run`** with an **absolute** path to `cmd/talkback-mcp`, so the MCP subprocess does not depend on shell `cwd`. It sets `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` and a random `TALKBACK_MCP_API_KEY` unless you preset **`TALKBACK_MCP_API_KEY`** in the environment before running the script.
-4. **Optional — session metadata tool:** If you already have a TalkBack database (e.g. local Docker Postgres from the main app), export **`DATABASE_URL`** and **`TALKBACK_MCP_ACTING_USER_ID`** (a TalkBack `users.id` UUID) in your shell and **run the setup script again**—those variables are copied into the MCP `env` block. Otherwise omit them; only `health_check` is registered when `DATABASE_URL` is unset at process start.
+4. **Optional — session metadata tool:** If you already have a TalkBack database (e.g. local Docker Postgres from the main app), export **`DATABASE_URL`** and **`TALKBACK_MCP_ACTING_USER_ID`** (a TalkBack `users.id` UUID) in your shell and **run the setup script again**—those variables are copied into the MCP `env` block. For **per-API-key user binding** (SCRUM-70), export **`TALKBACK_MCP_KEY_USER_MAP_JSON`** as well; the setup script copies it into `env` when set. Otherwise omit them; only `health_check` is registered when `DATABASE_URL` is unset at process start.
 5. **Restart** Cursor and/or Claude Code fully so MCP reloads (config is not hot-reloaded).
 
 **PATH and platforms**
