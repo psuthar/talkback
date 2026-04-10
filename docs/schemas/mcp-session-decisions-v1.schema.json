@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/psuthar/talkback/blob/main/docs/schemas/mcp-session-decisions-v1.schema.json",
+  "title": "TalkBack MCP get_session_decisions tool result (v1)",
+  "description": "Structured output of tools/call for tool name get_session_decisions. v1 maps 1:1 to persisted Postgres session and decision_stances rows; no LLM-inferred fields. See docs/mcp-session-decisions-schema.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_id", "decision_stances"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Contract version. Bump when adding required fields or breaking semantics."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "TalkBack session UUID (canonical string form)."
+    },
+    "premise": {
+      "type": "string",
+      "description": "sessions.premise when set; omitted when NULL in DB."
+    },
+    "primary_decision": {
+      "type": "string",
+      "description": "sessions.primary_decision when set; omitted when NULL in DB."
+    },
+    "decision_outcome": {
+      "type": "string",
+      "description": "sessions.decision_outcome when set; omitted when NULL in DB."
+    },
+    "decision_stances": {
+      "type": "array",
+      "description": "All rows from decision_stances for this session, joined with submitter email (newest-first in DB; JSON array order is implementation-defined—do not rely on sort).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "session_id",
+          "user_id",
+          "stance",
+          "user_email",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "decision_stances.id"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "users.id of the participant who submitted the stance"
+          },
+          "stance": {
+            "type": "string",
+            "enum": ["agree", "disagree", "conditional", "abstain", "need_more_info"],
+            "description": "Normalized stance code (see internal/models ValidStances)."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Optional free text; omitted when NULL."
+          },
+          "user_email": {
+            "type": "string",
+            "description": "Submitter email from users join (same exposure as HTTP GET /api/sessions/{id}/stances)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC3339 (UTC in tool output)."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC3339 (UTC in tool output)."
+          }
+        }
+      }
+    }
+  }
+}

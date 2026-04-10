@@ -66,7 +66,7 @@ When working in this repository, Claude must:
 - **API:** `go run ./cmd/api` (default port 8080; `PORT` override).
 - **Web:** `cd web && npm install && npm run dev` (e.g. http://localhost:3000).
 - **Tests:** `go test ./...` (no frontend test runner in `web/package.json`).
-- **TalkBack MCP (agents):** `./scripts/setup-mcp-config.sh` (Cursor + Claude Code local MCP config) or `TALKBACK_MCP_API_KEY=<secret> go run ./cmd/talkback-mcp` — see `docs/mcp-server.md`.
+- **TalkBack MCP (agents):** `./scripts/setup-mcp-config.sh` (Cursor + Claude Code local MCP config) or `TALKBACK_MCP_API_KEY=<secret> go run ./cmd/talkback-mcp` — see `docs/mcp-server.md`. **`get_session_decisions` JSON contract (SCRUM-57):** `docs/mcp-session-decisions-schema.md`, `docs/schemas/mcp-session-decisions-v1.schema.json`.
 - **Manual API checks:** `requests.http`; `make auth-check` / `scripts/auth_check.sh`.
 
 ---

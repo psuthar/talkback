@@ -1,4 +1,5 @@
 // get_session_decisions tool (SCRUM-55): persisted premise, primary_decision, decision_outcome, and decision_stances only — no LLM extraction.
+// JSON contract (field names, types, versioning): docs/mcp-session-decisions-schema.md and docs/schemas/mcp-session-decisions-v1.schema.json (SCRUM-57).
 package mcpserver
 
 import (
