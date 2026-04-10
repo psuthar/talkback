@@ -41,19 +41,21 @@ continue epic SCRUM-XX
 
 **Sequential ticket:**
 
-1. **Test analysis + implementation** — Follow the **Testing** section of CLAUDE.md §8 in full: perform the pre-implementation test analysis, write the identified tests in the same PR, and run affected packages locally before pushing. This applies to every product-code ticket; docs/config-only tickets are exempt. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**): do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
+1. **Jira — In Progress** — Transition this ticket to **In Progress** before any code changes (see **In Progress before code** above). Then create/checkout **`feat/<ticket-key>`** from **`main`** so implementation commits land only on that branch.
+2. **Test analysis + implementation** — Follow the **Testing** section of CLAUDE.md §8 in full: perform the pre-implementation test analysis, write the identified tests in the same PR, and run affected packages locally before pushing. This applies to every product-code ticket; docs/config-only tickets are exempt. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**): do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
 
 3. Observe terminal outcome:
-   - `PASS` — PR merged, `mergeable_state` was `clean`, and **`final_gate.status`** was **`PASS`** at merge time → record in state file, continue to next item.
+   - `PASS` — PR merged, `mergeable_state` was `clean`, and **`final_gate.status`** was **`PASS`** at merge time → record in state file, transition the Jira ticket to **Done**, then **only after** **Sequential close-out** is satisfied → continue to the next item (new branch for the next ticket).
    - Any other outcome → **HALT** (see **Halt behavior**).
 
 **Parallel batch (two or more tickets all marked `parallel-ok`):**
 
-1. For each ticket in the batch: follow the **Testing** section of CLAUDE.md §8 (test analysis, write tests, run locally) before implementation — same rule as sequential tickets.
-2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**).
-3. Wait for all to terminate.
-4. If all PASS (merged with **`final_gate.status: PASS`**) → record all in state file, continue.
-5. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.
+1. For each ticket in the batch: transition to **In Progress** and use a dedicated **`feat/<ticket-key>`** branch **before** code changes (**In Progress before code**).
+2. For each ticket in the batch: follow the **Testing** section of CLAUDE.md §8 (test analysis, write tests, run locally) before implementation — same rule as sequential tickets.
+3. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**).
+4. Wait for all to terminate.
+5. If all PASS (merged with **`final_gate.status: PASS`**) → record all in state file, continue.
+6. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.
 
 ### Finish
 
@@ -74,6 +76,24 @@ line `Parallel: yes` anywhere in its description. When two or more *consecutive*
 all marked `parallel-ok`, they form a parallel batch and run concurrently.
 
 The agent never infers parallelism. If the ticket doesn't say it, it's sequential.
+
+### In Progress before code (mandatory)
+
+Transition the active child ticket to **In Progress** in Jira **before** any implementation work on that ticket:
+
+- **Not allowed before In Progress:** edits to product code, new or changed tests written for this ticket, implementation commits, or running implementation tests to validate the ticket’s behavior.
+- **Allowed before In Progress:** read-only analysis (search, read files, plan).
+
+Use the Jira MCP (`jira_get_transitions`, `jira_transition_issue`) or equivalent. Same rule as **CLAUDE.md §8** (“hard-stop”: no product code or implementation commits until **In Progress** is applied).
+
+### Sequential close-out (mandatory)
+
+Before **`git checkout -b feat/<next-ticket>`** or any other **new implementation branch** for the next child ticket:
+
+1. The **previous** ticket’s PR must be **merged** to `main` (not merely open or “In Review”).
+2. The **previous** Jira issue must be **closed out** — transitioned to **Done** (or your project’s equivalent terminal state).
+
+Until both are true, the only allowed “next action” is to **wait** on the open PR (CI, review, merge) and Jira. Do not start the next ticket’s implementation in parallel unless the user **explicitly** opts into overlap; default is **strict sequencing**.
 
 ---
 
@@ -181,10 +201,12 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 ## Constraints
 
-- **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 1) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
+- **In Progress first:** Transition the Jira ticket to **In Progress** before product code edits or implementation commits (see **In Progress before code**).
+- **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 2) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
   unresolvable dependency), HALT and report.
 - Never merge without **`mergeable_state: clean`** and **`final_gate.status: PASS`** (epic); do not use default FULL_AUTO merge rules alone during an epic run.
 - Never self-resume after a halt, even if the reason appears transient.
 - Parallel batches must all complete before the next sequential ticket starts.
+- **No new implementation branch for ticket N+1** until ticket N’s PR is **merged** and ticket N is **Done** in Jira (see **Sequential close-out** above).
 - Do not modify already-Done tickets (idempotent on restart).
