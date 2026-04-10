@@ -136,3 +136,91 @@ func TestListSessionChunksBySessionIDAndSource(t *testing.T) {
 	require.Len(t, trans, 1)
 	require.Equal(t, "trans", trans[0].Text)
 }
+
+func TestListChunksWithEmbeddingsBySessionIDs_emptySessionList(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	out, err := db.ListChunksWithEmbeddingsBySessionIDs(ctx, nil)
+	require.NoError(t, err)
+	require.Nil(t, out)
+
+	out, err = db.ListChunksWithEmbeddingsBySessionIDs(ctx, []uuid.UUID{})
+	require.NoError(t, err)
+	require.Nil(t, out)
+}
+
+func TestListChunksWithEmbeddingsBySessionIDs_excludesChunksWithoutEmbedding(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	session := createTestSession(t, db, "Embed filter")
+	ins := SessionChunkInsert{
+		SessionID:   session.ID,
+		SourceType:  "material",
+		SourceID:    nil,
+		ChunkIdx:    0,
+		Text:        "no emb yet",
+		AnchorJSON:  nil,
+		ContentHash: "hash-noemb-" + uuid.New().String(),
+	}
+	chunkID, err := db.UpsertSessionChunk(ctx, ins)
+	require.NoError(t, err)
+
+	out, err := db.ListChunksWithEmbeddingsBySessionIDs(ctx, []uuid.UUID{session.ID})
+	require.NoError(t, err)
+	require.Len(t, out, 0)
+
+	require.NoError(t, db.InsertChunkEmbedding(ctx, chunkID, session.ID, "unit-test", []float32{1, 0, 0}))
+	out, err = db.ListChunksWithEmbeddingsBySessionIDs(ctx, []uuid.UUID{session.ID})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, chunkID, out[0].Chunk.ID)
+	require.Len(t, out[0].Embedding, 3)
+}
+
+func TestListChunksWithEmbeddingsBySessionIDs_multipleSessions(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	s1 := createTestSession(t, db, "S1")
+	s2 := createTestSession(t, db, "S2")
+
+	mk := func(sid uuid.UUID, idx int, text, hashPrefix string) uuid.UUID {
+		ins := SessionChunkInsert{
+			SessionID:   sid,
+			SourceType:  "material",
+			SourceID:    nil,
+			ChunkIdx:    idx,
+			Text:        text,
+			AnchorJSON:  nil,
+			ContentHash: hashPrefix + uuid.New().String(),
+		}
+		id, err := db.UpsertSessionChunk(ctx, ins)
+		require.NoError(t, err)
+		require.NoError(t, db.InsertChunkEmbedding(ctx, id, sid, "unit-test", []float32{float32(idx), 1, 0}))
+		return id
+	}
+	id1 := mk(s1.ID, 0, "a", "h1-")
+	id2 := mk(s2.ID, 0, "b", "h2-")
+
+	out, err := db.ListChunksWithEmbeddingsBySessionIDs(ctx, []uuid.UUID{s1.ID, s2.ID})
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	ids := map[uuid.UUID]struct{}{out[0].Chunk.ID: {}, out[1].Chunk.ID: {}}
+	_, ok1 := ids[id1]
+	_, ok2 := ids[id2]
+	require.True(t, ok1)
+	require.True(t, ok2)
+
+	out, err = db.ListChunksWithEmbeddingsBySessionIDs(ctx, []uuid.UUID{s1.ID})
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	require.Equal(t, id1, out[0].Chunk.ID)
+}

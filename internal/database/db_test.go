@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
-	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/migrations"
+	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/test"
 	"github.com/stretchr/testify/require"
 )
@@ -99,14 +99,46 @@ func runTestMigrations(databaseURL string) error {
 func createTestSession(t *testing.T, db *DB, title string) *models.Session {
 	t.Helper()
 	ctx := context.Background()
-	
+
 	session := &models.Session{
 		ID:     uuid.New(),
 		Title:  title,
 		Status: models.SessionStatusOpen,
 	}
-	
+
 	err := db.CreateSession(ctx, session)
 	require.NoError(t, err)
 	return session
+}
+
+// createTestUser inserts a user with the given email and global role (for cross-session / membership tests).
+func createTestUser(t *testing.T, db *DB, email string, role models.GlobalRole) *models.User {
+	t.Helper()
+	ctx := context.Background()
+	u := &models.User{
+		ID:          uuid.New(),
+		Email:       email,
+		DisplayName: "Test User",
+		Status:      models.UserStatusActive,
+		GlobalRole:  role,
+	}
+	err := db.CreateUser(ctx, u)
+	require.NoError(t, err)
+	return u
+}
+
+// createSessionWithCreator creates a session whose created_by matches creatorEmail (MCP access rules).
+func createSessionWithCreator(t *testing.T, db *DB, title, creatorEmail string) *models.Session {
+	t.Helper()
+	ctx := context.Background()
+	cb := creatorEmail
+	s := &models.Session{
+		ID:        uuid.New(),
+		Title:     title,
+		CreatedBy: &cb,
+		Status:    models.SessionStatusOpen,
+	}
+	err := db.CreateSession(ctx, s)
+	require.NoError(t, err)
+	return s
 }
