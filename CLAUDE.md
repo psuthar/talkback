@@ -77,14 +77,14 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 
 ### `talkback` — TalkBack internal tools
 - **Command:** `go run /Users/psuthar/code/talkback/cmd/talkback-mcp -version=dev`
-- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `get_session_decisions` (persisted decision fields + stances), `search_session` (same handler as `search_session_content`), `get_session_raw_chunks` (same handler as `get_session_retrieval_context`), `get_session_source_chunks`, `ask_session` (same handler as `ask_session_question`) (session tools need DB; search, raw retrieval, ask, and source-chunk listing when indexing need `OPENAI_API_KEY` — see env vars)
+- **Tools:** `health_check`; with `DATABASE_URL`: `get_session_metadata`, `get_session_decisions` (persisted decision fields + stances), `get_session_action_items` (ephemeral LLM action items on read), `search_session` (same handler as `search_session_content`), `get_session_raw_chunks` (same handler as `get_session_retrieval_context`), `get_session_source_chunks`, `ask_session` (same handler as `ask_session_question`) (session tools need DB; search, raw retrieval, action items, ask, and source-chunk listing when indexing need `OPENAI_API_KEY` — see env vars)
 - **Env vars** (all are process-level env vars; `./scripts/setup-mcp-config.sh` copies shell values into `.cursor/mcp.json` when you run it):
   - `TALKBACK_MCP_API_KEY` — shared secret for the MCP server
   - `TALKBACK_MCP_REQUIRE_CLIENT_KEY` — set `false` in dev
   - `DATABASE_URL` — Postgres connection string; enables session DB tools
   - `TALKBACK_MCP_ACTING_USER_ID` — acting user UUID for session tools
   - `TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE` — optional per-session query-embedding cap (default unlimited); see `docs/mcp-server.md` (SCRUM-54)
-  - `OPENAI_API_KEY` — required for `search_session` / `search_session_content` and `get_session_raw_chunks` / `get_session_retrieval_context` (embeddings only), `get_session_source_chunks` when the session index must be built (`EnsureSessionIndex`), and `ask_session` / `ask_session_question` (embeddings + LLM answer generation)
+  - `OPENAI_API_KEY` — required for `search_session` / `search_session_content` and `get_session_raw_chunks` / `get_session_retrieval_context` (embeddings only), `get_session_action_items` (embeddings + one LLM call per invocation), `get_session_source_chunks` when the session index must be built (`EnsureSessionIndex`), and `ask_session` / `ask_session_question` (embeddings + LLM answer generation)
   - **`STORAGE_DRIVER=r2`** plus the same R2 env vars as `cmd/api` — optional; enables MCP RAG indexing parity with HTTP for R2-stored PDFs (`EnsureSessionIndex` / `IndexSession`; SCRUM-49)
 
 ### `github` — GitHub operations
