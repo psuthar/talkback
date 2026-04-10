@@ -327,7 +327,9 @@ Consecutive parallel-ok tickets are batched and run concurrently. The batch must
 
 The agent halts (and never self-resumes) when:
 - FULL_AUTO does not reach `mergeable_state: clean` within its polling budget
-- Release readiness (`ops/release-readiness/decision-flow.md`) produces WARN or BLOCK after a merge
+- The unified PR gate **Final Gate** is not **`PASS`** (see `pr-gate-summary.json` field `final_gate.status`, or the **TalkBack PR Gate** check on the PR — epic runs must not merge on WARN/BLOCK or unknown gate state)
+
+Standalone **`implement SCRUM-XX FULL_AUTO`** (outside an epic) follows CLAUDE.md §8 only; **epic runs** add the Final Gate requirement above.
 
 On halt, the agent posts a Jira comment on the epic with completed tickets, the halted ticket and reason, and remaining work. The user must explicitly invoke `continue epic SCRUM-XX` to resume.
 
