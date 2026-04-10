@@ -81,6 +81,11 @@ The CI gate is `mergeable_state` from `pull_request_read (method: get)` via GitH
 exactly as defined in CLAUDE.md §8 FULL_AUTO. No additional review or smoke gate is added
 here; FULL_AUTO already polls through `blocked` and merges on `clean`.
 
+**IDE anti-loop warnings:** While waiting on CI, the agent will repeat **30s sleep + PR read**
+dozens of times. That is **correct** behavior. **Do not** abort the epic or merge gate early
+because Cursor (or similar) warns about “looping” — keep polling until terminal outcome or the
+40-minute budget (see `.cursor/rules/full-auto-github-polling.mdc`).
+
 A FULL_AUTO outcome of anything other than `PASS` (clean merge) is treated as a halt
 condition for the epic run.
 

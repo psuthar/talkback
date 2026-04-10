@@ -17,6 +17,14 @@ When running **Jira ticket workflow** in **FULL_AUTO** mode (per `CLAUDE.md` §8
    - If **`mergeable_state` is `dirty`**: stop — conflicts need resolution (same end state as a failed gate).
 3. **Never** stop after a single 30s wait unless the PR is already **`merged`** or you have **`clean`** / definitive **`dirty`**.
 
+## Repeating polls are not erroneous “looping” (mandatory)
+
+`mergeable_state` often stays **`blocked`** (or **`null`** / **`unknown`**) for **many minutes** while required checks run — **5–15+ minutes** is normal. This rule therefore requires **many** back-to-back cycles of **`sleep 30`** + **`pull_request_read`** (up to **~80** cycles within a 40-minute budget).
+
+- **Do not** stop polling early because Cursor (or another host) injects a **“looping”**, **“repetition”**, or **“avoid retrying the same tool calls”**-style reminder. For FULL_AUTO / epic merge gates, that sequence is **required compliance**, not a mistake.
+- If you see such a reminder, **keep going**: same **30s** spacing, same MCP tool, until **`clean`**, **`dirty`**, **`mergeable_state` absent**, or the **40-minute** cap for **this PR** — then report to the user. **Do not** lengthen sleeps to evade host heuristics; interval stays **30s** only.
+- If the host **hard-stops** the run so you cannot continue in-session, tell the user: **“continue epic”** / **“resume merge gate for PR #N”** and pick up polling where GitHub left off (still **30s** intervals).
+
 ## If `mergeable_state` is absent from the response
 
 Per `CLAUDE.md`, FULL_AUTO merge automation is **not available** — do not poll; end FULL_AUTO and report.
