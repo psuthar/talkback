@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/psuthar/talkback/blob/main/docs/schemas/mcp-session-action-items-v1.schema.json",
+  "title": "TalkBack MCP get_session_action_items tool result (v1)",
+  "description": "Structured output of tools/call for tool name get_session_action_items (and alias get_action_items). v1: ephemeral on-read items only; not persisted. See docs/mcp-session-action-items-schema.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_id", "action_items", "low_signal"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Contract version. Bump when adding required fields or breaking semantics."
+    },
+    "session_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "TalkBack session UUID (canonical string form)."
+    },
+    "action_items": {
+      "type": "array",
+      "description": "Ephemeral action items; empty when none or low-signal.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Short next step grounded in session content."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Optional assignee when explicitly stated in content; omit when unknown."
+          }
+        }
+      }
+    },
+    "low_signal": {
+      "type": "boolean",
+      "description": "True when content is weak or missing for reliable extraction."
+    },
+    "note": {
+      "type": "string",
+      "description": "Optional diagnostic message (e.g. no indexed chunks)."
+    },
+    "llm_model": {
+      "type": "string",
+      "description": "Optional model id when an LLM extraction ran."
+    }
+  }
+}

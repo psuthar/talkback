@@ -1,4 +1,5 @@
 // get_session_action_items: ephemeral on-read extraction of action items from session content (SCRUM-56).
+// JSON contract (SCRUM-58): docs/mcp-session-action-items-schema.md, docs/schemas/mcp-session-action-items-v1.schema.json
 // v1: no DB persistence; single embedding + single LLM call per invocation; optional owner only when grounded in context.
 package mcpserver
 
