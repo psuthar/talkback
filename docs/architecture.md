@@ -148,6 +148,10 @@ The pipeline is designed so that **Loom, Google Meet, Microsoft Teams** (and sim
 - **internal/email** — Resend sender for invite emails
 - **internal/utils** — Job processor, Whisper transcriber, Zoom client, Loom resolver
 
+## MCP Phase 4 — cross-session intelligence
+
+Agents using **`talkback-mcp`** can call cross-session tools (e.g. **`search_all_sessions`**, **`get_decisions_by_topic`**) that enforce the same **per-user session visibility** as the web app. The MVP **does not** introduce a separate search cluster: vector search reuses **`session_chunks`** embeddings; decision-topic search queries **`sessions`** decision fields. See **[`docs/cross-session-intelligence.md`](cross-session-intelligence.md)** (SCRUM-65).
+
 ## Product direction
 
 Sessions are evolving to support **premise** and **primary decision** (schema and UX). The long-term goal includes **decision intelligence**: structured decisions and outcomes derived from or attached to sessions. Naming should stay clear (e.g. decision topic vs decision outcome) as these concepts are added.
