@@ -23,8 +23,8 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 		registerGetSessionMetadata(server, cfg.DB)
 		// SCRUM-55 / SCRUM-60: persisted structured decisions; get_decisions is an alias of get_session_decisions.
 		registerGetSessionDecisionsTools(server, cfg.DB)
-		// SCRUM-56: ephemeral on-read action items (LLM over RAG chunks; not persisted).
-		registerGetSessionActionItems(server, cfg.DB, cfg.Storage)
+		// SCRUM-56 / SCRUM-61: ephemeral on-read action items; get_action_items is an alias of get_session_action_items.
+		registerGetSessionActionItemsTools(server, cfg.DB, cfg.Storage)
 		// SCRUM-43 / SCRUM-48: deterministic session chunk search (internal/rag retrieval); search_session + legacy alias search_session_content.
 		registerSearchSessionTools(server, cfg.DB, cfg.Storage)
 		// SCRUM-45 / SCRUM-52: raw ranked chunks + scores (no LLM synthesis); get_session_raw_chunks + legacy get_session_retrieval_context.
