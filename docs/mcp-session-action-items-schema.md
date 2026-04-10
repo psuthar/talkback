@@ -1,6 +1,6 @@
-# MCP contract: `get_session_action_items` (v1)
+# MCP contract: `get_session_action_items` / `get_action_items` (v1)
 
-**SCRUM-58 — source of truth** for the JSON shape returned by the MCP tool **`get_session_action_items`**. Alias tool name **`get_action_items`** (SCRUM-61) must return the same shape. Implementation: `internal/mcpserver/session_action_items.go`. On-read generation uses `internal/utils.ExtractActionItemsFromContext` (SCRUM-59).
+**SCRUM-58 — source of truth** for the JSON shape returned by the MCP tools **`get_session_action_items`** and **`get_action_items`** (same handler — SCRUM-61). Implementation: `internal/mcpserver/session_action_items.go`. On-read generation uses `internal/utils.ExtractActionItemsFromContext` (SCRUM-59).
 
 **v1 scope:** **Ephemeral / not persisted** — action items are generated per request; there is no `action_items` table. Output may include optional diagnostic fields (`note`, `llm_model`) for agent-safe interpretation.
 

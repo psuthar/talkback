@@ -1,4 +1,4 @@
-// get_session_action_items: ephemeral on-read extraction of action items from session content (SCRUM-56).
+// get_session_action_items and get_action_items (SCRUM-56, SCRUM-61): same handler — ephemeral on-read extraction of action items from session content.
 // JSON contract (SCRUM-58): docs/mcp-session-action-items-schema.md, docs/schemas/mcp-session-action-items-v1.schema.json
 // v1: no DB persistence; single embedding + single LLM call per invocation; optional owner only when grounded in context.
 package mcpserver
@@ -41,13 +41,19 @@ type getSessionActionItemsOutput struct {
 	LLMModel      string                 `json:"llm_model,omitempty"`
 }
 
-func registerGetSessionActionItems(server *mcp.Server, db *database.DB, store storage.Interface) {
+func registerGetSessionActionItemsTools(server *mcp.Server, db *database.DB, store storage.Interface) {
+	const desc = "Returns ephemeral action items for a session: descriptions and optional owner when explicitly grounded in session content. Generated on read from indexed transcript/materials (RAG) + one LLM call — not persisted (v1). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY. Same session ACL as get_session_metadata. Low-signal sessions return an empty list with low_signal=true."
+	registerGetSessionActionItemsTool(server, db, store, ToolGetSessionActionItems, desc)
+	registerGetSessionActionItemsTool(server, db, store, ToolGetActionItems, "Same behavior as "+ToolGetSessionActionItems+" (SCRUM-61). "+desc)
+}
+
+func registerGetSessionActionItemsTool(server *mcp.Server, db *database.DB, store storage.Interface, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        ToolGetSessionActionItems,
-		Description: "Returns ephemeral action items for a session: descriptions and optional owner when explicitly grounded in session content. Generated on read from indexed transcript/materials (RAG) + one LLM call — not persisted (v1). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY. Same session ACL as get_session_metadata. Low-signal sessions return an empty list with low_signal=true.",
+		Name:        toolName,
+		Description: description,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getSessionActionItemsInput) (*mcp.CallToolResult, getSessionActionItemsOutput, error) {
 		start := time.Now()
-		tool := ToolGetSessionActionItems
+		tool := toolName
 		var logSessionID string
 		defer func() {
 			extras := map[string]string{}
