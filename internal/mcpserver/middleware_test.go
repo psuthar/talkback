@@ -57,6 +57,59 @@ func TestRequireToolAuthMiddleware_acceptsSecondRotationKey(t *testing.T) {
 	require.True(t, called)
 }
 
+func TestRequireToolAuthMiddleware_perKeyActingUser(t *testing.T) {
+	t.Parallel()
+	uidA := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	uidB := uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	a := Auth{
+		acceptedKeys:     []string{"alpha", "beta"},
+		actingUserID:     uidB,
+		keyToUser:        map[string]uuid.UUID{"alpha": uidA},
+		RequireClientKey: true,
+	}
+	mw := a.RequireToolAuthMiddleware()
+
+	t.Run("alpha gets mapped user", func(t *testing.T) {
+		t.Parallel()
+		var sawCtx context.Context
+		next := func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			sawCtx = ctx
+			return nil, nil
+		}
+		handler := mw(next)
+		params := &mcp.CallToolParamsRaw{
+			Name: "health_check",
+			Meta: mcp.Meta{"talkback": map[string]any{"apiKey": "alpha"}},
+		}
+		req := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: params}
+		_, err := handler(context.Background(), "tools/call", req)
+		require.NoError(t, err)
+		got, ok := ActingUserID(sawCtx)
+		require.True(t, ok)
+		require.Equal(t, uidA, got)
+	})
+
+	t.Run("beta falls back to global acting user", func(t *testing.T) {
+		t.Parallel()
+		var sawCtx context.Context
+		next := func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			sawCtx = ctx
+			return nil, nil
+		}
+		handler := mw(next)
+		params := &mcp.CallToolParamsRaw{
+			Name: "health_check",
+			Meta: mcp.Meta{"talkback": map[string]any{"apiKey": "beta"}},
+		}
+		req := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{Params: params}
+		_, err := handler(context.Background(), "tools/call", req)
+		require.NoError(t, err)
+		got, ok := ActingUserID(sawCtx)
+		require.True(t, ok)
+		require.Equal(t, uidB, got)
+	})
+}
+
 func TestRequireToolAuthMiddleware_actingUserContext(t *testing.T) {
 	uid := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	a := Auth{acceptedKeys: []string{"good"}, actingUserID: uid, RequireClientKey: true}

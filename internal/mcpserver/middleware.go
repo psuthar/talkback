@@ -21,7 +21,8 @@ import (
 //
 // When RequireClientKey is false ("IDE mode", TALKBACK_MCP_REQUIRE_CLIENT_KEY=false), the process still
 // requires env config at startup but does not require per-call keys—documented weaker trust for hosts
-// that cannot attach MCP metadata.
+// that cannot attach MCP metadata. Per-key user maps (TALKBACK_MCP_KEY_USER_MAP_JSON) apply only in
+// strict mode; IDE mode injects the global TALKBACK_MCP_ACTING_USER_ID when set.
 func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -38,8 +39,10 @@ func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
 					logMCPAuthFailed(p.Name)
 					return nil, fmt.Errorf("unauthorized: invalid or missing API key")
 				}
-			}
-			if a.actingUserID != uuid.Nil {
+				if uid, ok := a.ActingUserForClientKey(key); ok {
+					ctx = context.WithValue(ctx, actingUserCtxKey{}, uid)
+				}
+			} else if a.actingUserID != uuid.Nil {
 				ctx = context.WithValue(ctx, actingUserCtxKey{}, a.actingUserID)
 			}
 			return next(ctx, method, req)
