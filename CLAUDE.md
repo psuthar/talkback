@@ -208,6 +208,8 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` is the sole authoritative signal for FULL_AUTO** — do not consult check-run conclusions or combined status separately.
 
+**Host “looping” / anti-repetition reminders (e.g. Cursor):** Merge-gate polling **must** repeat **`sleep 30`** + **`pull_request_read`** many times in a row while CI runs; **`blocked`** for **5+ minutes** is common. That repetition is **mandatory**, not an error. **Do not** stop early solely because the environment flags “looping” — continue until **`clean`**, **`dirty`**, field absent, or the **40-minute** budget expires. If the session cannot continue, tell the user to invoke **continue epic** / resume merge polling for that PR. See `.cursor/rules/full-auto-github-polling.mdc`.
+
 1. **Call `pull_request_read` (method: `get`)** via GitHub MCP and inspect `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
 
    | `mergeable_state` value | Action |
