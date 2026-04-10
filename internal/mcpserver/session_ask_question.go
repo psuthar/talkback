@@ -33,32 +33,33 @@ type askSessionQuestionInput struct {
 }
 
 type askSessionCitationOut struct {
-	CitationID string                 `json:"citation_id"`
-	ChunkID    string                 `json:"chunk_id"`
-	SourceType string                 `json:"source_type"`
-	SourceID   string                 `json:"source_id"`
-	Label      string                 `json:"label"`
-	Excerpt    string                 `json:"excerpt"`
-	Anchor     map[string]interface{} `json:"anchor,omitempty"`
+	CitationID string                   `json:"citation_id"`
+	ChunkID    string                   `json:"chunk_id"`
+	SourceType string                   `json:"source_type"`
+	SourceID   string                   `json:"source_id"`
+	Label      string                   `json:"label"`
+	Excerpt    string                   `json:"excerpt"`
+	Anchor     map[string]interface{}   `json:"anchor,omitempty"`
+	Navigation *citation.CitationTarget `json:"navigation,omitempty"` // same resolver as POST /api/sessions/:id/ask (SCRUM-53)
 }
 
 type askSessionQuestionOutput struct {
-	SessionID              string                  `json:"session_id"`
-	QuestionID             string                  `json:"question_id"`
-	AnswerID               string                  `json:"answer_id"`
-	AnswerText             string                  `json:"answer_text"`
-	AnswerStatus           string                  `json:"answer_status"`
-	Confidence             float64                 `json:"confidence"`
-	AutomationRecommended  bool                    `json:"automation_recommended"`
-	Citations              []askSessionCitationOut `json:"citations"`
-	LLMModel               string                  `json:"llm_model,omitempty"`
-	CachedRepeat           bool                    `json:"cached_repeat,omitempty"`
-	QuestionSaved          string                  `json:"question_saved_at,omitempty"`
-	AnswerSaved            string                  `json:"answer_saved_at,omitempty"`
+	SessionID             string                  `json:"session_id"`
+	QuestionID            string                  `json:"question_id"`
+	AnswerID              string                  `json:"answer_id"`
+	AnswerText            string                  `json:"answer_text"`
+	AnswerStatus          string                  `json:"answer_status"`
+	Confidence            float64                 `json:"confidence"`
+	AutomationRecommended bool                    `json:"automation_recommended"`
+	Citations             []askSessionCitationOut `json:"citations"`
+	LLMModel              string                  `json:"llm_model,omitempty"`
+	CachedRepeat          bool                    `json:"cached_repeat,omitempty"`
+	QuestionSaved         string                  `json:"question_saved_at,omitempty"`
+	AnswerSaved           string                  `json:"answer_saved_at,omitempty"`
 }
 
 func registerAskSessionQuestionTools(server *mcp.Server, db *database.DB, store storage.Interface) {
-	const desc = "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations, confidence, answer_status (answered | not_covered | error), and automation_recommended (true when answer_status is answered and confidence meets the same ≥0.55 guardrail as HTTP SessionAsk; see docs/mcp-server.md). Uses the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask."
+	const desc = "Ask a natural-language question about a single TalkBack session. Returns a grounded answer, citations (citation_id, label, excerpt, anchor, navigation — same normalization and navigation resolution as HTTP SessionAsk; see docs/mcp-server.md § Citations), confidence, answer_status (answered | not_covered | error), and automation_recommended. Uses the same RAG + guardrails as the web app (internal/utils QA). Requires DATABASE_URL, TALKBACK_MCP_ACTING_USER_ID, and OPENAI_API_KEY; enforces session read access and per-session question limits. Persists the Q&A like POST /api/sessions/:id/ask."
 	registerAskSessionQuestionTool(server, db, store, ToolAskSession, desc)
 	registerAskSessionQuestionTool(server, db, store, ToolAskSessionQuestion, "Same behavior as "+ToolAskSession+" (backward-compatible tool name). "+desc)
 }
@@ -128,7 +129,7 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 
 		existingQ, existingA, _ := db.FindExistingQuestionByText(ctx, sessionID, qtext, nil)
 		if existingQ != nil && existingA != nil {
-			out := mcpBuildAskOutput(sessionID, existingQ, existingA)
+			out := mcpBuildAskOutput(ctx, db, sessionID, existingQ, existingA)
 			out.CachedRepeat = true
 			return nil, out, nil
 		}
@@ -261,12 +262,21 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 			return nil, askSessionQuestionOutput{}, mcpToolErr(500, "failed to save answer")
 		}
 
-		out := mcpBuildAskOutput(sessionID, question, answer)
+		out := mcpBuildAskOutput(ctx, db, sessionID, question, answer)
 		return nil, out, nil
 	})
 }
 
-func mcpBuildAskOutput(sessionID uuid.UUID, q *models.Question, a *models.Answer) askSessionQuestionOutput {
+func mcpBuildAskOutput(ctx context.Context, db *database.DB, sessionID uuid.UUID, q *models.Question, a *models.Answer) askSessionQuestionOutput {
+	var videoSources []*models.VideoSource
+	var materials []*models.Material
+	var links []*models.SessionLink
+	if db != nil {
+		videoSources, _ = db.GetVideoSourcesBySessionID(ctx, sessionID)
+		materials, _ = db.GetActiveMaterialsBySessionID(ctx, sessionID)
+		links, _ = db.GetSessionLinksBySessionID(ctx, sessionID)
+	}
+
 	cites := make([]askSessionCitationOut, 0, len(a.Citations))
 	for _, c := range a.Citations {
 		cite := askSessionCitationOut{
@@ -289,6 +299,8 @@ func mcpBuildAskOutput(sessionID uuid.UUID, q *models.Question, a *models.Answer
 		if c.Anchor != nil {
 			cite.Anchor = mcpCitationAnchorToMap(c.Anchor)
 		}
+		nav := citation.ResolveCitationTarget(c, videoSources, materials, links, nil)
+		cite.Navigation = &nav
 		cites = append(cites, cite)
 	}
 
@@ -320,6 +332,9 @@ func mcpCitationAnchorToMap(a *models.CitationAnchor) map[string]interface{} {
 		return nil
 	}
 	m := map[string]interface{}{"type": a.Type}
+	if a.URL != "" {
+		m["url"] = a.URL
+	}
 	if a.StartMs != nil {
 		m["start_ms"] = *a.StartMs
 	}
