@@ -1,5 +1,5 @@
 // Per-session rate limits for query embedding calls (SCRUM-54).
-// Applies only to user-query embeddings in search / raw retrieval / ask — not to bulk index builds inside EnsureSessionIndex.
+// Applies only to user-query embeddings in search / search_all_sessions / raw retrieval / ask — not to bulk index builds inside EnsureSessionIndex.
 package mcpserver
 
 import (
