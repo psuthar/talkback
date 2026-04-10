@@ -101,4 +101,5 @@ Canonical file (Draft 2020-12):
 
 - **Implementation:** `internal/mcpserver/session_decisions.go`
 - **Product model:** `internal/models.Session`, `internal/models.DecisionStance`, `internal/database` session/stance accessors
+- **Fallbacks (empty / partial / errors vs success):** [`docs/mcp-structured-intelligence-fallbacks.md`](mcp-structured-intelligence-fallbacks.md) (SCRUM-62)
 - **MCP overview:** [`docs/mcp-server.md`](mcp-server.md)
