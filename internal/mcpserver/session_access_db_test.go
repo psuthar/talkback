@@ -15,8 +15,8 @@ func TestUserMayReadSessionMCP_DBParticipantAllows(t *testing.T) {
 	defer db.Close()
 	defer test.TruncateTables(t, db.Pool)
 
-	owner := test.MakeUser(t, db, "owner-mcp71a@example.com", models.GlobalRoleUser)
-	participant := test.MakeUser(t, db, "participant-mcp71a@example.com", models.GlobalRoleUser)
+	owner := test.MakeUser(t, db, "owner-mcp71a@example.com", models.GlobalRoleCreator)
+	participant := test.MakeUser(t, db, "participant-mcp71a@example.com", models.GlobalRoleParticipant)
 	sess := test.MakeSession(t, db, "ACL test session", owner.Email)
 	require.NoError(t, db.CreateSessionMembership(ctx, sess.ID, participant.ID, "participant", nil))
 
@@ -35,8 +35,8 @@ func TestUserMayReadSessionMCP_DBNonParticipantDenies(t *testing.T) {
 	defer db.Close()
 	defer test.TruncateTables(t, db.Pool)
 
-	owner := test.MakeUser(t, db, "owner-mcp71b@example.com", models.GlobalRoleUser)
-	stranger := test.MakeUser(t, db, "stranger-mcp71b@example.com", models.GlobalRoleUser)
+	owner := test.MakeUser(t, db, "owner-mcp71b@example.com", models.GlobalRoleCreator)
+	stranger := test.MakeUser(t, db, "stranger-mcp71b@example.com", models.GlobalRoleParticipant)
 	sess := test.MakeSession(t, db, "ACL deny test", owner.Email)
 
 	session, err := db.GetSession(ctx, sess.ID)
