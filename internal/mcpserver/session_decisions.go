@@ -1,4 +1,4 @@
-// get_session_decisions tool (SCRUM-55): persisted premise, primary_decision, decision_outcome, and decision_stances only — no LLM extraction.
+// get_session_decisions and get_decisions tools (SCRUM-55, SCRUM-60): same handler — persisted premise, primary_decision, decision_outcome, and decision_stances only — no LLM extraction.
 // JSON contract (field names, types, versioning): docs/mcp-session-decisions-schema.md and docs/schemas/mcp-session-decisions-v1.schema.json (SCRUM-57).
 package mcpserver
 
@@ -41,13 +41,19 @@ type sessionDecisionStanceItem struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
-func registerGetSessionDecisions(server *mcp.Server, db *database.DB) {
+func registerGetSessionDecisionsTools(server *mcp.Server, db *database.DB) {
+	const desc = "Returns persisted structured decision fields for a session: premise, primary_decision, decision_outcome, and decision_stances (participant stances with user_email). v1: database fields only — no LLM inference. Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; same access rules as get_session_metadata (404 if session missing, 403 if not allowed). Output includes schema_version for contract stability."
+	registerGetSessionDecisionsTool(server, db, ToolGetSessionDecisions, desc)
+	registerGetSessionDecisionsTool(server, db, ToolGetDecisions, "Same behavior as "+ToolGetSessionDecisions+" (SCRUM-60). "+desc)
+}
+
+func registerGetSessionDecisionsTool(server *mcp.Server, db *database.DB, toolName string, description string) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        ToolGetSessionDecisions,
-		Description: "Returns persisted structured decision fields for a session: premise, primary_decision, decision_outcome, and decision_stances (participant stances with user_email). v1: database fields only — no LLM inference. Requires DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID; same access rules as get_session_metadata (404 if session missing, 403 if not allowed). Output includes schema_version for contract stability.",
+		Name:        toolName,
+		Description: description,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getSessionDecisionsInput) (*mcp.CallToolResult, getSessionDecisionsOutput, error) {
 		start := time.Now()
-		tool := ToolGetSessionDecisions
+		tool := toolName
 		var logSessionID string
 		defer func() {
 			extras := map[string]string{}

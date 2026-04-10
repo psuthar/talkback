@@ -1,6 +1,6 @@
 # MCP contract: `get_session_decisions` (v1)
 
-**SCRUM-57 — source of truth** for the JSON shape returned by the MCP tool **`get_session_decisions`** (implementation: `internal/mcpserver/session_decisions.go`). Use this document and the machine-readable schema below for clients, tests, and future aliases (e.g. SCRUM-60).
+**SCRUM-57 — source of truth** for the JSON shape returned by the MCP tools **`get_session_decisions`** and **`get_decisions`** (same handler — SCRUM-60; implementation: `internal/mcpserver/session_decisions.go`). Use this document and the machine-readable schema below for clients and tests.
 
 **v1 scope:** **Persisted fields only** — `sessions` columns `premise`, `primary_decision`, `decision_outcome`, and rows in `decision_stances` (plus submitter email). No LLM extraction or inferred decision fields.
 
