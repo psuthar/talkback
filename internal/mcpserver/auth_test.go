@@ -79,3 +79,48 @@ func TestLoadAuthFromEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, id, got2.actingUserID)
 }
+
+func TestLoadAuthFromEnv_keyUserMapJSON(t *testing.T) {
+	alice := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	bob := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+	t.Setenv("TALKBACK_MCP_API_KEY", "k1,k2")
+	t.Setenv("TALKBACK_MCP_ACTING_USER_ID", "")
+	t.Setenv("TALKBACK_MCP_KEY_USER_MAP_JSON", `{"k1":"`+alice.String()+`"}`)
+	t.Setenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY", "true")
+
+	got, err := LoadAuthFromEnv()
+	require.NoError(t, err)
+	require.True(t, got.HasPerKeyActingUsers())
+	u, ok := got.ActingUserForClientKey("k1")
+	require.True(t, ok)
+	require.Equal(t, alice, u)
+	_, ok = got.ActingUserForClientKey("k2")
+	require.False(t, ok)
+
+	t.Setenv("TALKBACK_MCP_ACTING_USER_ID", bob.String())
+	got2, err := LoadAuthFromEnv()
+	require.NoError(t, err)
+	u, ok = got2.ActingUserForClientKey("k2")
+	require.True(t, ok)
+	require.Equal(t, bob, u)
+}
+
+func TestLoadAuthFromEnv_keyUserMapJSON_errors(t *testing.T) {
+	t.Setenv("TALKBACK_MCP_API_KEY", "only")
+	t.Setenv("TALKBACK_MCP_ACTING_USER_ID", "")
+	t.Setenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY", "true")
+
+	t.Setenv("TALKBACK_MCP_KEY_USER_MAP_JSON", `{not json`)
+	_, err := LoadAuthFromEnv()
+	require.Error(t, err)
+
+	t.Setenv("TALKBACK_MCP_KEY_USER_MAP_JSON", `{"other":"11111111-1111-1111-1111-111111111111"}`)
+	_, err = LoadAuthFromEnv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not listed")
+
+	t.Setenv("TALKBACK_MCP_KEY_USER_MAP_JSON", `{"only":"00000000-0000-0000-0000-000000000000"}`)
+	_, err = LoadAuthFromEnv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nil UUID")
+}

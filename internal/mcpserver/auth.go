@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -28,6 +29,10 @@ func ActingUserID(ctx context.Context) (uuid.UUID, bool) {
 type Auth struct {
 	acceptedKeys []string
 	actingUserID uuid.UUID
+	// keyToUser maps a client API key string (exact match to an entry in acceptedKeys) to a TalkBack
+	// users.id. Loaded from TALKBACK_MCP_KEY_USER_MAP_JSON (SCRUM-70). When nil or empty, only
+	// actingUserID is used for tools/call identity (Phase 1 behavior).
+	keyToUser map[string]uuid.UUID
 	// RequireClientKey controls whether each tools/call must include a key matching acceptedKeys.
 	// When false (set via TALKBACK_MCP_REQUIRE_CLIENT_KEY=false), only the server env is configured;
 	// use for Cursor/Claude Code hosts that cannot attach _meta on tool calls. Default is true.
@@ -36,6 +41,13 @@ type Auth struct {
 
 // LoadAuthFromEnv loads TALKBACK_MCP_API_KEY (required, non-empty) and optional
 // TALKBACK_MCP_ACTING_USER_ID (UUID). Multiple keys may be comma-separated for rotation.
+//
+// Optional TALKBACK_MCP_KEY_USER_MAP_JSON: JSON object mapping each API key string to a TalkBack user
+// UUID (e.g. {"sk-alice":"550e8400-...","sk-bob":"6ba7b810-..."}). Every object key must exactly
+// match one entry from TALKBACK_MCP_API_KEY (after comma-splitting and trim). Keys not listed in the
+// map still authenticate but fall back to TALKBACK_MCP_ACTING_USER_ID when that is set (backward
+// compatible). Per-key identity is applied only when RequireClientKey is true (strict mode); IDE
+// mode cannot distinguish callers, so the map is ignored and actingUserID alone applies.
 //
 // TALKBACK_MCP_REQUIRE_CLIENT_KEY: when unset or true, clients must send a matching key per tools/call.
 // Set to false so only the server process env is required (weaker; typical for local IDE MCP).
@@ -56,12 +68,75 @@ func LoadAuthFromEnv() (Auth, error) {
 		}
 		uid = u
 	}
+	keyToUser, err := loadKeyUserMapFromEnv(keys)
+	if err != nil {
+		return Auth{}, err
+	}
 	requireClientKey := envBoolDefaultTrue(os.Getenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY"))
 	return Auth{
 		acceptedKeys:     keys,
 		actingUserID:     uid,
+		keyToUser:        keyToUser,
 		RequireClientKey: requireClientKey,
 	}, nil
+}
+
+func loadKeyUserMapFromEnv(acceptedKeys []string) (map[string]uuid.UUID, error) {
+	raw := strings.TrimSpace(os.Getenv("TALKBACK_MCP_KEY_USER_MAP_JSON"))
+	if raw == "" {
+		return nil, nil
+	}
+	var rawMap map[string]string
+	if err := json.Unmarshal([]byte(raw), &rawMap); err != nil {
+		return nil, fmt.Errorf("TALKBACK_MCP_KEY_USER_MAP_JSON: %w", err)
+	}
+	if len(rawMap) == 0 {
+		return nil, nil
+	}
+	allowed := make(map[string]struct{}, len(acceptedKeys))
+	for _, k := range acceptedKeys {
+		allowed[k] = struct{}{}
+	}
+	out := make(map[string]uuid.UUID, len(rawMap))
+	for k, v := range rawMap {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" {
+			return nil, fmt.Errorf("TALKBACK_MCP_KEY_USER_MAP_JSON: empty key")
+		}
+		if _, ok := allowed[k]; !ok {
+			return nil, fmt.Errorf("TALKBACK_MCP_KEY_USER_MAP_JSON: key is not listed in TALKBACK_MCP_API_KEY")
+		}
+		u, err := uuid.Parse(v)
+		if err != nil {
+			return nil, fmt.Errorf("TALKBACK_MCP_KEY_USER_MAP_JSON: user id for key: %w", err)
+		}
+		if u == uuid.Nil {
+			return nil, fmt.Errorf("TALKBACK_MCP_KEY_USER_MAP_JSON: nil UUID not allowed")
+		}
+		out[k] = u
+	}
+	return out, nil
+}
+
+// HasPerKeyActingUsers reports whether TALKBACK_MCP_KEY_USER_MAP_JSON was loaded with at least one mapping.
+func (a Auth) HasPerKeyActingUsers() bool {
+	return len(a.keyToUser) > 0
+}
+
+// ActingUserForClientKey resolves the TalkBack user for a validated client API key (strict mode).
+// Precondition: clientKey matched ValidKey. Returns (uuid, true) when an acting user is configured
+// for this key or via global TALKBACK_MCP_ACTING_USER_ID fallback.
+func (a Auth) ActingUserForClientKey(clientKey string) (uuid.UUID, bool) {
+	if len(a.keyToUser) > 0 {
+		if u, ok := a.keyToUser[clientKey]; ok && u != uuid.Nil {
+			return u, true
+		}
+	}
+	if a.actingUserID != uuid.Nil {
+		return a.actingUserID, true
+	}
+	return uuid.UUID{}, false
 }
 
 func envBoolDefaultTrue(s string) bool {

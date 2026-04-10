@@ -47,8 +47,18 @@ func main() {
 	} else {
 		log.Printf("warning: DATABASE_URL not set — session DB tools will not be registered")
 	}
-	if db != nil && strings.TrimSpace(os.Getenv("TALKBACK_MCP_ACTING_USER_ID")) == "" {
-		log.Printf("warning: DATABASE_URL is set but TALKBACK_MCP_ACTING_USER_ID is unset — session tools will return 403 with error_code=acting_user_not_configured; set a TalkBack users.id UUID")
+	if db != nil {
+		hasGlobal := strings.TrimSpace(os.Getenv("TALKBACK_MCP_ACTING_USER_ID")) != ""
+		if auth.HasPerKeyActingUsers() {
+			if !auth.RequireClientKey {
+				log.Printf("warning: TALKBACK_MCP_KEY_USER_MAP_JSON is set but TALKBACK_MCP_REQUIRE_CLIENT_KEY=false — per-key user map is ignored; set TALKBACK_MCP_ACTING_USER_ID for session tools")
+			} else if !hasGlobal {
+				log.Printf("info: DATABASE_URL with TALKBACK_MCP_KEY_USER_MAP_JSON — listed API keys use per-key TalkBack users; other valid keys still need TALKBACK_MCP_ACTING_USER_ID or they get acting_user_not_configured on session tools")
+			}
+		}
+		if !hasGlobal && (!auth.HasPerKeyActingUsers() || !auth.RequireClientKey) {
+			log.Printf("warning: DATABASE_URL is set but TALKBACK_MCP_ACTING_USER_ID is unset — session tools will return 403 with error_code=acting_user_not_configured; set a TalkBack users.id UUID (or use TALKBACK_MCP_KEY_USER_MAP_JSON with TALKBACK_MCP_REQUIRE_CLIENT_KEY=true)")
+		}
 	}
 
 	// Optional object storage — same R2 wiring as cmd/api so MCP RAG indexing matches HTTP SessionAsk (R2-backed PDFs).
