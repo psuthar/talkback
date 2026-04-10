@@ -41,16 +41,28 @@ continue epic SCRUM-XX
 
 **Sequential ticket:**
 
-1. When the ticket changes **product code** (Go, frontend, etc.), add or update **automated tests** in the same change set: cover new behavior, regressions, and critical branches per existing repo patterns (`go test`, package tests, etc.). **Documentation-only** tickets are exempt. Do not merge implementation without meaningful test coverage where the codebase normally tests similar code.
-2. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**): do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
+1. **Test analysis (before implementation).** Read the Jira ticket description. Determine whether the ticket touches product code (Go packages, frontend, DB queries, MCP handlers, migrations, etc.) or is strictly documentation/config with no executable behavior.
+   - **If product code is touched:** identify the test gap before writing any implementation code:
+     - What new behavior needs a test? (new function, new API, new DB query, new MCP tool)
+     - What existing tests need updating? (changed signatures, changed behavior)
+     - What critical paths are security- or correctness-sensitive? (ACL checks, session scoping, data boundaries — always test these even if the surrounding code already has tests)
+     - What test type is appropriate? Unit test, DB integration test (real Postgres via `internal/test/testdb`), handler test (`setupTestHandlersParallel`), MCP tool behavioral test — use whichever the repo uses for similar code.
+   - Record the test plan as a brief list: "will add X covering Y, Z". This is the acceptance bar — implementation is not done until these tests exist and pass.
+   - **If strictly docs/config:** no test analysis needed; proceed to step 2.
+
+2. Run `implement SCRUM-XX FULL_AUTO` for the ticket **with epic constraints** (see **Merge gate + Final Gate**). The implementation must include the tests identified in step 1. Before the PR is created:
+   - Confirm the identified tests were written and included in the commit.
+   - Run the affected test packages locally (e.g. `go test ./internal/mcpserver/...` for MCP changes) and verify they pass. If tests fail → fix before pushing.
+   - Do **not** call `merge_pull_request` until **`mergeable_state: clean`** **and** **`final_gate.status` is `PASS`** (see **Final Gate**). If either fails or times out → **HALT**.
+
 3. Observe terminal outcome:
    - `PASS` — PR merged, `mergeable_state` was `clean`, and **`final_gate.status`** was **`PASS`** at merge time → record in state file, continue to next item.
    - Any other outcome → **HALT** (see **Halt behavior**).
 
 **Parallel batch (two or more tickets all marked `parallel-ok`):**
 
-1. Same **tests-with-code** rule as sequential tickets (each batch item).
-2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**).
+1. For each ticket in the batch: apply the **test analysis** (step 1 above) before implementation begins.
+2. Run `implement SCRUM-XX FULL_AUTO` concurrently for each ticket in the batch (**with epic constraints** per **Merge gate + Final Gate**), including the tests identified per ticket.
 3. Wait for all to terminate.
 4. If all PASS (merged with **`final_gate.status: PASS`**) → record all in state file, continue.
 5. If any HALT → **HALT** the entire epic run, recording which tickets passed and which halted.
@@ -181,7 +193,7 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 ## Constraints
 
-- **Tests with code:** Any implementation work must include **corresponding tests** (new or updated) unless the ticket is strictly docs/config with no executable behavior. Validate with the same commands the project uses for CI (e.g. `go test ./...` for touched packages).
+- **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 1) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
   unresolvable dependency), HALT and report.
 - Never merge without **`mergeable_state: clean`** and **`final_gate.status: PASS`** (epic); do not use default FULL_AUTO merge rules alone during an epic run.
