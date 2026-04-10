@@ -25,6 +25,10 @@ if db_url:
 acting = os.environ.get("TALKBACK_MCP_ACTING_USER_ID", "").strip()
 if acting:
     talkback_env["TALKBACK_MCP_ACTING_USER_ID"] = acting
+# Optional Phase 4 (SCRUM-70): per-client-key → TalkBack user UUID map; requires strict key mode in practice.
+key_user_map = os.environ.get("TALKBACK_MCP_KEY_USER_MAP_JSON", "").strip()
+if key_user_map:
+    talkback_env["TALKBACK_MCP_KEY_USER_MAP_JSON"] = key_user_map
 
 servers = {
     "talkback": {
@@ -63,8 +67,12 @@ if not github_pat:
     print("  Requires Docker and ghcr.io/github/github-mcp-server image (docker pull ghcr.io/github/github-mcp-server).")
     print()
 print("Next: fully quit and reopen Cursor / Claude Code so MCP reloads.")
-if not db_url and not acting:
+if not db_url and not acting and not key_user_map:
     print()
     print("Optional: export DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID, then re-run this script to")
     print("         include them in the MCP env (enables get_session_metadata). See docs/mcp-server.md.")
+elif key_user_map and not db_url:
+    print()
+    print("Note: TALKBACK_MCP_KEY_USER_MAP_JSON was copied into MCP env (SCRUM-70). For session tools you")
+    print("      still need DATABASE_URL; strict per-key mode typically sets TALKBACK_MCP_REQUIRE_CLIENT_KEY=true.")
 PY
