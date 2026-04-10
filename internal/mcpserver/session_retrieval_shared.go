@@ -63,15 +63,21 @@ func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.
 	q := strings.TrimSpace(query)
 	embedder := &rag.OpenAIEmbedder{}
 	if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
-		return nil, "", nil, "", mcpToolErr(503, "index unavailable: "+err.Error())
+		code, msg := mcpClassifyIndexError(err)
+		return nil, "", nil, "", mcpToolErrCode(code, 503, msg)
+	}
+
+	if err := mcpAcquireSessionEmbeddingQuota(sessionID); err != nil {
+		return nil, "", nil, "", err
 	}
 
 	embeddings, err := embedder.Embed(ctx, []string{q})
 	if err != nil {
-		return nil, "", nil, "", mcpToolErr(503, "embedding failed: "+err.Error())
+		code, st, msg := mcpClassifyEmbeddingError(err)
+		return nil, "", nil, "", mcpToolErrCode(code, st, msg)
 	}
 	if len(embeddings) == 0 || len(embeddings[0]) == 0 {
-		return nil, "", nil, "", mcpToolErr(503, "embedding unavailable (empty vector)")
+		return nil, "", nil, "", mcpToolErrCode("embedding_empty_result", 503, "Embedding provider returned no vector; check model and input.")
 	}
 
 	primaryVID, err := primaryVideoIDForRetrieval(ctx, db, sessionID)
@@ -81,7 +87,7 @@ func mcpRunVectorRetrieval(ctx context.Context, db *database.DB, sessionID uuid.
 
 	scored, err := rag.RetrieveTopKWithScores(ctx, db, sessionID, embeddings[0], topK, primaryVID)
 	if err != nil {
-		return nil, "", nil, "", mcpToolErr(500, "retrieval failed: "+err.Error())
+		return nil, "", nil, "", mcpToolErrCode("retrieval_failed", 500, "Vector retrieval failed.")
 	}
 	return scored, q, primaryVID, embedder.ModelName(), nil
 }

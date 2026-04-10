@@ -53,6 +53,7 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 | `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | No | Default **true** (strict): each `tools/call` must include a key matching `TALKBACK_MCP_API_KEY` (see below). Set to **`false`** so Cursor / Claude Code can use tools **without** per-call metadata (typical local dev). |
 | `TALKBACK_MCP_ACTING_USER_ID` | No | TalkBack **users.id** UUID for the acting user. Required for **`get_session_metadata`** (access control); otherwise that tool returns 403. |
 | `DATABASE_URL` | No | When set at process start, the server registers **`get_session_metadata`**, **`search_session`**, **`search_session_content`** (same behavior as `search_session`), **`get_session_raw_chunks`**, **`get_session_retrieval_context`** (same behavior as `get_session_raw_chunks`), **`get_session_source_chunks`**, **`ask_session`**, and **`ask_session_question`** (same behavior as `ask_session`) (Postgres). When unset, only `health_check` is available. |
+| `TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE` | No | **SCRUM-54:** Max **query-embedding** calls per TalkBack session per sliding minute (in-process only). Applies to **`search_session`**, **`get_session_raw_chunks`**, and **`ask_session`** query embeddings — **not** to bulk index builds inside `EnsureSessionIndex`. Default **`0`** = unlimited (backward compatible). Set e.g. **`60`** or **`120`** to cap misbehaving agents. |
 
 **Local dev presets**
 
@@ -60,6 +61,26 @@ The server always requires **`TALKBACK_MCP_API_KEY`** (non-empty) at startup.
 |------|---------------------|
 | `health_check` only | `TALKBACK_MCP_API_KEY` (non-empty), `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` for typical Cursor/Claude Code |
 | `get_session_metadata` / `search_session` / `search_session_content` / `get_session_raw_chunks` / `get_session_retrieval_context` / `get_session_source_chunks` / `ask_session` / `ask_session_question` | Above plus `DATABASE_URL` and `TALKBACK_MCP_ACTING_USER_ID` (must be a valid user UUID in your DB). **`search_session`** (or **`search_session_content`**), **`get_session_raw_chunks`** (or **`get_session_retrieval_context`**), **`get_session_source_chunks`** (when indexing), and **`ask_session`** (or **`ask_session_question`**) need **`OPENAI_API_KEY`** (embeddings; Q&A also uses the LLM) — same embedding stack as web session Q&A. |
+
+### Embedding rate limits and upstream errors (SCRUM-54)
+
+**Per-session query embedding cap:** When **`TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE`** is **&gt; 0**, each session UUID gets a sliding **one-minute** window. Exceeding the cap returns **`http_status` 429** and **`error_code`** `session_embedding_rate_limit`. Limits are enforced **in the MCP process only** (not shared across replicas).
+
+**Tool error JSON:** On failure, tools may return a JSON string with **`error`**, **`http_status`**, and optionally **`error_code`** (stable machine identifier). Examples:
+
+| `error_code` | Typical `http_status` | Meaning |
+|----------------|------------------------|---------|
+| `session_embedding_rate_limit` | 429 | Too many query embeddings for this session in one minute. |
+| `openai_not_configured` | 503 | **`OPENAI_API_KEY`** unset. |
+| `openai_auth_failed` | 503 | API key rejected by the embedding provider. |
+| `openai_rate_limited` | 429 | Provider rate limit (upstream). |
+| `openai_quota_exceeded` | 429 | Account quota / billing (upstream). |
+| `embedding_failed` | 503 | Other embedding failure (details logged server-side, not echoed). |
+| `embedding_empty_result` | 503 | No vector returned. |
+| `index_unavailable` / `index_timeout` | 503 | **`EnsureSessionIndex`** failed or timed out. |
+| `retrieval_failed` | 500 | DB / vector retrieval error after a successful embedding. |
+
+**Logging:** Rate limits and embedding failures log **`mcp event=embedding_rate_limit`** or **`mcp event=embedding_error`** / **`mcp event=index_error`** on stderr with **`error_code`** and **`session_id`** (canonical UUID) where applicable — **no** query text or API key material.
 
 ### API key middleware
 

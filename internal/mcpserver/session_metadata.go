@@ -32,10 +32,19 @@ type sessionOwnerOutput struct {
 }
 
 func mcpToolErr(httpStatus int, message string) error {
-	b, err := json.Marshal(map[string]any{
+	return mcpToolErrCode("", httpStatus, message)
+}
+
+// mcpToolErrCode returns a JSON-shaped error for MCP tool handlers. When code is non-empty, clients receive error_code (SCRUM-54).
+func mcpToolErrCode(code string, httpStatus int, message string) error {
+	m := map[string]any{
 		"error":       message,
 		"http_status": httpStatus,
-	})
+	}
+	if code != "" {
+		m["error_code"] = code
+	}
+	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
