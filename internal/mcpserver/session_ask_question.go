@@ -136,7 +136,9 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 
 		embedder := &rag.OpenAIEmbedder{}
 		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
+			code, msg := mcpClassifyIndexError(err)
 			log.Printf("%s EnsureSessionIndex: %v", tool, err)
+			return nil, askSessionQuestionOutput{}, mcpToolErrCode(code, 503, msg)
 		}
 
 		videoSources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
@@ -146,9 +148,17 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 			primaryVideoID = &primary.ID
 		}
 
+		if err := mcpAcquireSessionEmbeddingQuota(sessionID); err != nil {
+			return nil, askSessionQuestionOutput{}, err
+		}
 		questionEmbedding, err := embedder.Embed(ctx, []string{qtext})
-		if err != nil || len(questionEmbedding) == 0 {
-			log.Printf("%s Embed: %v", tool, err)
+		if err != nil {
+			code, st, msg := mcpClassifyEmbeddingError(err)
+			log.Printf("%s Embed: error_code=%s %v", tool, code, err)
+			return nil, askSessionQuestionOutput{}, mcpToolErrCode(code, st, msg)
+		}
+		if len(questionEmbedding) == 0 || len(questionEmbedding[0]) == 0 {
+			return nil, askSessionQuestionOutput{}, mcpToolErrCode("embedding_empty_result", 503, "Embedding provider returned no vector; check model and input.")
 		}
 		var sessionChunks []models.SessionChunk
 		if len(questionEmbedding) > 0 {

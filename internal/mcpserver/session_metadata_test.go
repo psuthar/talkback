@@ -30,6 +30,21 @@ func TestMCPToolErrJSON(t *testing.T) {
 			if m["error"] != tc.message {
 				t.Fatalf("error: %v", m["error"])
 			}
+			if _, has := m["error_code"]; has {
+				t.Fatal("mcpToolErr should not set error_code")
+			}
 		})
+	}
+}
+
+func TestMcpToolErrCodeJSON(t *testing.T) {
+	t.Parallel()
+	err := mcpToolErrCode("openai_rate_limited", 429, "slow down")
+	var m map[string]any
+	if e := json.Unmarshal([]byte(err.Error()), &m); e != nil {
+		t.Fatal(e)
+	}
+	if m["error_code"] != "openai_rate_limited" {
+		t.Fatalf("error_code: %v", m["error_code"])
 	}
 }

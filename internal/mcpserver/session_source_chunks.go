@@ -108,7 +108,8 @@ func registerGetSessionSourceChunks(server *mcp.Server, db *database.DB, store s
 
 		embedder := &rag.OpenAIEmbedder{}
 		if err := rag.EnsureSessionIndex(ctx, db, embedder, sessionID, store); err != nil {
-			return nil, getSessionSourceChunksOutput{}, mcpToolErr(503, "index unavailable: "+err.Error())
+			code, msg := mcpClassifyIndexError(err)
+			return nil, getSessionSourceChunksOutput{}, mcpToolErrCode(code, 503, msg)
 		}
 
 		rows, err := db.ListSessionChunksBySessionIDAndSource(ctx, sessionID, st, filterSourceID, limit)

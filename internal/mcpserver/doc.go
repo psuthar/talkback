@@ -11,7 +11,7 @@
 //     instructions, then installs receiving middleware (middleware.go, [Auth.RequireToolAuthMiddleware]) so only
 //     tools/call is API-key gated; initialize, tools/list, and other non-tool methods are unchanged.
 //   - [Register] attaches tool handlers (health_check in health.go; optional DB-backed
-//     get_session_metadata, search_session, search_session_content, get_session_raw_chunks, get_session_retrieval_context, get_session_source_chunks, ask_session, and ask_session_question when DATABASE_URL is configured — SCRUM-39, SCRUM-43, SCRUM-48, SCRUM-45, SCRUM-52, SCRUM-46, SCRUM-44, SCRUM-49, SCRUM-50).
+//     get_session_metadata, search_session, search_session_content, get_session_raw_chunks, get_session_retrieval_context, get_session_source_chunks, ask_session, and ask_session_question when DATABASE_URL is configured — SCRUM-39, SCRUM-43, SCRUM-48, SCRUM-45, SCRUM-52, SCRUM-46, SCRUM-44, SCRUM-49, SCRUM-50, SCRUM-54).
 //   - The binary calls [github.com/modelcontextprotocol/go-sdk/mcp.Server.Run] with
 //     [github.com/modelcontextprotocol/go-sdk/mcp.StdioTransport] (stdout = wire protocol, stderr = logs).
 //
