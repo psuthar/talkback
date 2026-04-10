@@ -1,7 +1,7 @@
 // Package mcpserver wires the TalkBack MCP JSON-RPC server (see cmd/talkback-mcp).
 //
-// Session DB tools (SCRUM-39, SCRUM-55, SCRUM-56, SCRUM-43, SCRUM-45, SCRUM-46, SCRUM-44, SCRUM-49): when DATABASE_URL is set, [Register] mounts get_session_metadata, get_session_decisions, get_decisions (alias), get_session_action_items, get_action_items (alias),
-// search_session, search_session_content (alias), get_session_raw_chunks, get_session_retrieval_context (alias), get_session_source_chunks, ask_session, ask_session_question (alias), which use [github.com/psuthar/talkback/internal/database] and the same access
+// Session DB tools (SCRUM-39, SCRUM-55, SCRUM-56, SCRUM-43, SCRUM-63, SCRUM-45, SCRUM-46, SCRUM-44, SCRUM-49): when DATABASE_URL is set, [Register] mounts get_session_metadata, get_session_decisions, get_decisions (alias), get_session_action_items, get_action_items (alias),
+// search_session, search_session_content (alias), search_all_sessions, get_session_raw_chunks, get_session_retrieval_context (alias), get_session_source_chunks, ask_session, ask_session_question (alias), which use [github.com/psuthar/talkback/internal/database] and the same access
 // checks as HTTP (global admin or UserCanAccessSession). The acting user is TALKBACK_MCP_ACTING_USER_ID.
 // Optional [RegisterConfig.Storage] (R2 when STORAGE_DRIVER=r2 in cmd/talkback-mcp) matches HTTP session indexing for object-backed PDFs.
 //

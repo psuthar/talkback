@@ -86,6 +86,38 @@ func RetrieveTopKWithScores(ctx context.Context, db *database.DB, sessionID uuid
 	return out, nil
 }
 
+// CrossSessionTopKByChunks ranks pre-loaded chunks from any session by cosine similarity (SCRUM-63).
+// v1 does not apply per-session primary-video score boost (global ranking only).
+func CrossSessionTopKByChunks(chunks []database.ChunkWithEmbedding, questionEmbedding []float32, k int) []RetrievedChunk {
+	if k <= 0 {
+		k = DefaultTopK
+	}
+	if len(questionEmbedding) == 0 || len(chunks) == 0 {
+		return nil
+	}
+	type scored struct {
+		chunk models.SessionChunk
+		score float64
+	}
+	var scoredList []scored
+	for _, ce := range chunks {
+		if len(ce.Embedding) != len(questionEmbedding) {
+			continue
+		}
+		sim := cosineSimilarity(questionEmbedding, ce.Embedding)
+		scoredList = append(scoredList, scored{chunk: ce.Chunk, score: sim})
+	}
+	sort.Slice(scoredList, func(i, j int) bool { return scoredList[i].score > scoredList[j].score })
+	if k > len(scoredList) {
+		k = len(scoredList)
+	}
+	out := make([]RetrievedChunk, k)
+	for i := 0; i < k; i++ {
+		out[i] = RetrievedChunk{Chunk: scoredList[i].chunk, Score: scoredList[i].score}
+	}
+	return out
+}
+
 // RetrieveTopK retrieves top-k chunks for a session by embedding similarity (cosine).
 // If primaryVideoID is non-nil, chunks from that video's transcript (source_type=transcript, source_id=primaryVideoID) get a score boost so they are preferred over materials.
 func RetrieveTopK(ctx context.Context, db *database.DB, sessionID uuid.UUID, questionEmbedding []float32, k int, primaryVideoID *uuid.UUID) ([]models.SessionChunk, error) {

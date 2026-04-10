@@ -15,6 +15,7 @@ const (
 	ToolGetSessionSourceChunks     = "get_session_source_chunks"
 	ToolAskSession                 = "ask_session"
 	ToolAskSessionQuestion         = "ask_session_question"
+	ToolSearchAllSessions          = "search_all_sessions"
 )
 
 // ToolNames returns the tool identifiers [Register] will add for cfg, in registration order.
@@ -22,7 +23,7 @@ const (
 func ToolNames(cfg RegisterConfig) []string {
 	names := []string{ToolHealthCheck}
 	if cfg.DB != nil {
-		names = append(names, ToolGetSessionMetadata, ToolGetSessionDecisions, ToolGetDecisions, ToolGetSessionActionItems, ToolGetActionItems, ToolSearchSession, ToolSearchSessionContent, ToolGetSessionRawChunks, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSession, ToolAskSessionQuestion)
+		names = append(names, ToolGetSessionMetadata, ToolGetSessionDecisions, ToolGetDecisions, ToolGetSessionActionItems, ToolGetActionItems, ToolSearchSession, ToolSearchSessionContent, ToolSearchAllSessions, ToolGetSessionRawChunks, ToolGetSessionRetrievalContext, ToolGetSessionSourceChunks, ToolAskSession, ToolAskSessionQuestion)
 	}
 	return names
 }
