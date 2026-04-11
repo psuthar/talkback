@@ -154,6 +154,8 @@ Default **FULL_AUTO** (CLAUDE.md §8) may merge when **`mergeable_state: clean`*
 
 If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable** after a reasonable wait aligned with the merge-gate budget → **HALT** without merging. Treat “cannot determine Final Gate” as a halt (same as non-`PASS`).
 
+**Pre-merge guard (mandatory — applies inside epics exactly as in CLAUDE.md §8):** Immediately before calling `merge_pull_request`, perform one final `pull_request_read (method: get)`. Merge **only if** that read returns **`mergeable_state: clean`**. If the final read is anything other than `clean` — including `blocked`, `null`, `unknown`, `unstable`, `behind`, or field absent — **do not merge**; continue polling or HALT per the table. A poll that showed `clean` minutes earlier is not sufficient — the immediate pre-merge read is required every time.
+
 **IDE anti-loop warnings:** While waiting on CI and gate artifacts, the agent will repeat **30s sleep** + PR read / artifact fetch many times. That is **correct** behavior — do not abort early because the host flags “looping.”
 
 ---
