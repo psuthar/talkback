@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # --- Configurable (env) ---
-TB_BASE_URL="${TB_BASE_URL:-http://localhost:8081}"
+TB_BASE_URL="${TB_BASE_URL:-http://localhost:8080}"
 TB_COOKIE_NAME="${TB_COOKIE_NAME:-tb_login}"
 TB_TEST_EMAIL="${TB_TEST_EMAIL:-paresh+local@test.com}"
 TB_TEST_PASSWORD="${TB_TEST_PASSWORD:-Test1234!}"

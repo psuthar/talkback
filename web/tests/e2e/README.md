@@ -5,21 +5,39 @@ Playwright end-to-end tests covering critical creator and participant flows.
 ## Prerequisites
 
 - Node.js 18+
-- A running TalkBack API (default: `http://localhost:8081`)
-- A running TalkBack frontend (default: `http://localhost:3000`)
-- An admin user bootstrapped in the database
+- Playwright browsers: **Chromium** and **Chromium headless shell** (required for `@playwright/test` 1.50+). After `npm install` in `web/`, run:
+  `npx playwright install chromium chromium-headless-shell`
+- **Or** use the one-shot script below (Docker + API on **8080** + Vite on **3000** + bootstrap admin); it runs that install before tests.
+
+Manual setup:
+
+- TalkBack API (default: `http://localhost:8080`, same as `go run ./cmd/api`)
+- Frontend dev server (`http://localhost:3000`)
+- Bootstrap admin matching teardown: set `TALKBACK_BOOTSTRAP_ADMIN_EMAIL` / `TALKBACK_BOOTSTRAP_ADMIN_PASSWORD` to the same values as `TALKBACK_ADMIN_EMAIL` / `TALKBACK_ADMIN_PASSWORD`
 
 ## Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `TALKBACK_API_BASE` | `http://localhost:8081` | Backend API base URL |
-| `TALKBACK_ADMIN_EMAIL` | `paresh@suthar.com` | Admin account email for teardown |
-| `TALKBACK_ADMIN_PASSWORD` | *(see fixtures.ts)* | Admin account password |
+| `TALKBACK_API_BASE` | `http://localhost:8080` | Backend API base URL (CI uses `8081` via this var) |
+| `TALKBACK_ADMIN_EMAIL` | `ci-admin@smoke.test` | Admin account for teardown (must match bootstrap admin) |
+| `TALKBACK_ADMIN_PASSWORD` | `SmokePass123!` | Admin password for teardown |
 
-Copy `.env.e2e.local` (or set the vars in your shell) before running.
+**Local Cursor / one place for credentials:** Create **`web/.env`** (copy from `web/.env.example`) with `TALKBACK_BOOTSTRAP_ADMIN_*` and matching `TALKBACK_ADMIN_EMAIL` / `TALKBACK_ADMIN_PASSWORD`. Playwright loads it via `dotenv` when you run from `web/`; **`./scripts/run-e2e-local.sh` also sources `web/.env`** before starting the API and tests so teardown and bootstrap stay aligned.
 
-## Running all E2E tests
+Copy `.env.e2e` / `.env.e2e.local` when using **`npm run test:e2e:render`** (Render targets), not for default local runs.
+
+## Running all E2E tests (recommended local)
+
+From `web/`:
+
+```bash
+npm run test:e2e:local
+```
+
+This starts Postgres via Docker, runs the API with bootstrap admin, starts Vite, then runs Playwright.
+
+## Running all E2E tests (stack already running)
 
 ```bash
 cd web

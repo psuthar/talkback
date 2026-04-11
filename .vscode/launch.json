@@ -16,7 +16,8 @@
             "args": [],
             "showLog": true,
             "trace": "log",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "debugAdapter": "legacy"
         },
         {
             "name": "Attach to Process",
@@ -24,7 +25,8 @@
             "request": "attach",
             "mode": "local",
             "processId": 0,
-            "showLog": true
+            "showLog": true,
+            "debugAdapter": "legacy"
         },
         {
             "name": "Debug Tests (Current Package)",
@@ -46,7 +48,8 @@
             ],
             "showLog": true,
             "trace": "log",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "debugAdapter": "legacy"
         },
         {
             "name": "Debug Tests (All)",
@@ -70,7 +73,8 @@
             ],
             "showLog": true,
             "trace": "log",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "debugAdapter": "legacy"
         },
         {
             "name": "Debug Current Test",
@@ -93,7 +97,8 @@
             ],
             "showLog": true,
             "trace": "log",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "debugAdapter": "legacy"
         }
     ],
     "inputs": [

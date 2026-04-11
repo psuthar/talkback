@@ -41,7 +41,8 @@ func zoomOAuthConfig() (clientID, clientSecret, baseURL, redirectURI string, err
 
 	redirectURI = strings.TrimSpace(os.Getenv("ZOOM_REDIRECT_URL"))
 	if redirectURI == "" && os.Getenv("ENV") != "production" {
-		redirectURI = "http://localhost:8081/auth/zoom/callback"
+		// Must match cmd/api listen address (PORT / BASE_URL) and Zoom app Redirect URL allow list.
+		redirectURI = baseURL + "/auth/zoom/callback"
 	}
 	if redirectURI != "" {
 		redirectURI, err = utils.RequireAbsoluteURL("ZOOM_REDIRECT_URL", redirectURI)

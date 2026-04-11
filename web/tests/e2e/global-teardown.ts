@@ -21,8 +21,8 @@
 import { request as playwrightRequest } from '@playwright/test'
 import { API_BASE } from './fixtures'
 
-const ADMIN_EMAIL = process.env.TALKBACK_ADMIN_EMAIL || 'paresh@suthar.com'
-const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'your-secure-password'
+const ADMIN_EMAIL = process.env.TALKBACK_ADMIN_EMAIL || 'ci-admin@smoke.test'
+const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'SmokePass123!'
 const SMOKE_PASSWORD = 'SmokePass123!'
 
 export default async function globalTeardown() {
@@ -33,7 +33,12 @@ export default async function globalTeardown() {
     data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
   })
   if (!loginRes.ok()) {
-    console.warn('[teardown] Admin login failed — skipping E2E cleanup')
+    const st = loginRes.status()
+    console.warn(
+      `[teardown] Admin login failed (HTTP ${st}) — skipping DB cleanup for @smoke.test users. ` +
+        `Set TALKBACK_ADMIN_EMAIL / TALKBACK_ADMIN_PASSWORD to match the API bootstrap admin ` +
+        `(TALKBACK_BOOTSTRAP_ADMIN_* when starting the API), or start a fresh API via npm run test:e2e:local without another server on :8080.`
+    )
     await ctx.dispose()
     return
   }

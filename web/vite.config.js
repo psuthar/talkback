@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// Same-origin dev: proxy to cmd/api — use root `.env` PORT=8080 (default).
+const apiTarget = 'http://localhost:8080'
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -12,49 +15,47 @@ export default defineConfig({
     port: 3000,
     open: true,
     proxy: {
-      // Same-origin local dev: route all backend API calls through Vite
-      // so cookies + credentials work without CORS configuration.
       '/api': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/artifacts': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/sessions': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/zoom': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/auth': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/admin': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/ws': {
-        target: 'http://localhost:8081',
+        target: apiTarget,
         ws: true,
-        changeOrigin: true
+        changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/healthz': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
+        target: apiTarget,
+        changeOrigin: true,
       },
       '/db': {
-        target: 'http://localhost:8081',
-        changeOrigin: true
-      }
-    }
-  }
+        target: apiTarget,
+        changeOrigin: true,
+      },
+    },
+  },
 })

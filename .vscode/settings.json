@@ -1,5 +1,8 @@
 {
   "terminal.integrated.env.osx": {
     "PATH": "/opt/homebrew/bin:/opt/homebrew/sbin:${env:PATH}"
+  },
+  "go.delveConfig": {
+    "apiVersion": 2
   }
 }

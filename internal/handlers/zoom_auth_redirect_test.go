@@ -94,6 +94,6 @@ func TestZoomAuthStart_RedirectURI(t *testing.T) {
 		assert.Equal(t, http.StatusFound, w.Code)
 		loc := w.Header().Get("Location")
 		require.NotEmpty(t, loc)
-		assert.True(t, strings.Contains(loc, "localhost%3A8081") || strings.Contains(loc, "localhost:8081"), "should use local fallback http://localhost:8081/auth/zoom/callback")
+		assert.True(t, strings.Contains(loc, "localhost%3A8080") || strings.Contains(loc, "localhost:8080"), "should use local fallback http://localhost:8080/auth/zoom/callback (from BASE_URL)")
 	})
 }

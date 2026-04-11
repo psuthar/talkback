@@ -1,7 +1,7 @@
 import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
 
-/** Backend API base URL. Default: localhost:8081. Set TALKBACK_API_BASE for Render or if API runs elsewhere. */
-export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8081'
+/** Backend API base URL. Default matches `go run ./cmd/api` (PORT=8080). CI may use 8081 via TALKBACK_API_BASE. */
+export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8080'
 
 /**
  * Parse Set-Cookie response header and inject cookies into the browser context.
@@ -126,8 +126,9 @@ export function uniqueEmail(prefix = 'e2e'): string {
  * Admin credentials for teardown operations.
  * Reads from env vars (set in .env or CI); falls back to local bootstrap defaults.
  */
-export const ADMIN_EMAIL = process.env.TALKBACK_ADMIN_EMAIL || 'paresh@suthar.com'
-export const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'your-secure-password'
+/** Match bootstrap admin (TALKBACK_BOOTSTRAP_ADMIN_*) and release-readiness CI defaults for teardown. */
+export const ADMIN_EMAIL = process.env.TALKBACK_ADMIN_EMAIL || 'ci-admin@smoke.test'
+export const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'SmokePass123!'
 
 /**
  * Delete a session via admin API. Requires a request context authenticated as admin.
