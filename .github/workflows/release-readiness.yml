@@ -144,7 +144,8 @@ jobs:
       - name: Serve frontend (background)
         working-directory: web
         run: |
-          npm run preview -- --port 3000 &
+          # nohup: keep preview alive after this step (next steps hit :3000; see actions/runner background-job notes).
+          nohup npm run preview -- --port 3000 > preview.log 2>&1 &
           for i in $(seq 1 15); do
             if curl -sf http://localhost:3000 > /dev/null 2>&1; then
               echo "Frontend ready after ${i}s"; exit 0
@@ -217,7 +218,8 @@ jobs:
 
       - name: Sanity check frontend
         run: |
-          curl -I --fail http://127.0.0.1:3000
+          # Use localhost (same as wait loop). curl http://127.0.0.1 can fail when preview listens on ::1 only.
+          curl -I --fail http://localhost:3000
 
       - name: Run Playwright E2E tests
         id: playwright
