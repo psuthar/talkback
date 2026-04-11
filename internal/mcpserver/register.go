@@ -21,6 +21,8 @@ func Register(server *mcp.Server, cfg RegisterConfig) {
 	if cfg.DB != nil {
 		// SCRUM-39: session read path via internal/database; same ACL as HTTP.
 		registerGetSessionMetadata(server, cfg.DB)
+		// SCRUM-77: list sessions for the acting user (parity with GET /api/sessions).
+		registerListSessions(server, cfg.DB)
 		// SCRUM-55 / SCRUM-60: persisted structured decisions; get_decisions is an alias of get_session_decisions.
 		registerGetSessionDecisionsTools(server, cfg.DB)
 		// SCRUM-64: decision fields matched by topic across accessible sessions.
