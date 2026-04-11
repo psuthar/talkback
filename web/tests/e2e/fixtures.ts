@@ -1,4 +1,5 @@
 import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
+import { request as playwrightApiRequest } from '@playwright/test'
 
 /** Backend API base URL. Default matches `go run ./cmd/api` (PORT=8080). CI may use 8081 via TALKBACK_API_BASE. */
 export const API_BASE = process.env.TALKBACK_API_BASE || 'http://localhost:8080'
@@ -165,6 +166,24 @@ export async function loginAsAdmin(request: APIRequestContext): Promise<boolean>
     data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
   })
   return res.ok()
+}
+
+/**
+ * Admin teardown using a fresh APIRequestContext. Use in test `finally` blocks when the test may hit
+ * its timeout — the injected `request` fixture can be disposed before `finally` runs, which throws
+ * "Target page, context or browser has been closed".
+ */
+export async function cleanupSessionAndUserAsAdmin(sessionId: string, userId: string): Promise<void> {
+  const ctx = await playwrightApiRequest.newContext()
+  try {
+    await loginAsAdmin(ctx)
+    await deleteSession(ctx, sessionId)
+    await deleteUserViaAdmin(ctx, userId)
+  } catch {
+    /* best-effort after timeout / worker teardown */
+  } finally {
+    await ctx.dispose()
+  }
 }
 
 /**

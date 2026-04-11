@@ -223,7 +223,8 @@ jobs:
 
       - name: Run Playwright E2E tests
         id: playwright
-        timeout-minutes: 10
+        # PPTX/material tests use 180s + poll; retries and full suite exceed 10m on CI.
+        timeout-minutes: 45
         continue-on-error: true
         working-directory: web
         env:

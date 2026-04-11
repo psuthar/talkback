@@ -34,9 +34,7 @@ import {
   API_BASE,
   createUserAndLoginWithId,
   createSession,
-  deleteSession,
-  deleteUserViaAdmin,
-  loginAsAdmin,
+  cleanupSessionAndUserAsAdmin,
   uniqueEmail,
 } from './fixtures'
 
@@ -223,9 +221,7 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
         expect(stillDisabled).toBe(true)
       }
     } finally {
-      await loginAsAdmin(request)
-      await deleteSession(request, session.id)
-      await deleteUserViaAdmin(request, userId)
+      await cleanupSessionAndUserAsAdmin(session.id, userId)
     }
   })
 
@@ -287,9 +283,7 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
         expect(stillDisabled).toBe(true)
       }
     } finally {
-      await loginAsAdmin(request)
-      await deleteSession(request, session.id)
-      await deleteUserViaAdmin(request, userId)
+      await cleanupSessionAndUserAsAdmin(session.id, userId)
     }
   })
 
@@ -351,9 +345,7 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
         expect(stillDisabled).toBe(true)
       }
     } finally {
-      await loginAsAdmin(request)
-      await deleteSession(request, session.id)
-      await deleteUserViaAdmin(request, userId)
+      await cleanupSessionAndUserAsAdmin(session.id, userId)
     }
   })
 })

@@ -20,6 +20,26 @@ import {
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
+/**
+ * Read ?api= / ?api_base= synchronously for initial state.
+ * When the SPA is served from preview (:3000) and the API is on another origin (:8081), the first
+ * GET /api/me must use the API origin or cookies from API login never apply (E2E injects cookies for API_BASE).
+ * Applying this only after authUser loaded was too late — see session deep-link effect below.
+ */
+function getApiBaseUrlFromLocation() {
+  try {
+    if (typeof window === 'undefined') return null
+    const nav = parseSessionNavigationFromLocation(window.location)
+    const fromQuery = nav.apiFromQuery || new URLSearchParams(window.location.search).get('api_base')
+    if (fromQuery) {
+      return new URL(fromQuery).origin
+    }
+  } catch (_) {
+    /* ignore invalid URL */
+  }
+  return null
+}
+
 // Named constants for the create-session source selector.
 // When a new provider (e.g. Teams) is added, extend this object and reference the constant
 // everywhere instead of duplicating string literals.
@@ -95,6 +115,8 @@ function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry,
 
 function App() {
   const [apiBaseUrl, setApiBaseUrl] = useState(() => {
+    const fromUrl = getApiBaseUrlFromLocation()
+    if (fromUrl) return fromUrl
     try {
       const stored = localStorage.getItem(API_BASE_URL_STORAGE_KEY) || localStorage.getItem('talkback.api_base_url')
       if (stored && stored.trim()) return stored.trim()
