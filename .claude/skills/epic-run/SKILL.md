@@ -54,6 +54,8 @@ When the user says **`continue epic SCRUM-XX`** (or **`continue epic run for SCR
 
 Do **not** stop after a single merged ticket if **more non-Done children** remain—unless the run **HALT**ed. One user message should **finish all remaining tickets** that can proceed under gates and sequential close-out (subject to session/time limits; if interrupted, user says **`continue epic`** again).
 
+**HALT is always epic-wide and strictly sequential.** When the run halts on ticket N (WARN/BLOCK/timeout), the entire epic stops at that point. `continue epic` resumes **at ticket N**—it does **not** skip ticket N to start ticket N+1. If gates are still WARN/BLOCK on resume, **HALT again immediately** before touching any subsequent ticket.
+
 ### FULL_AUTO mandatory (every `implement`)
 
 While **`run epic`** / **`continue epic`** is active, **each** child ticket MUST be executed with **`FULL_AUTO` in the command and in behavior**:
@@ -233,7 +235,8 @@ On **`continue epic`**, for each **non-Done** child, **first determine whether i
 4. For **each** child in order:
    - If **Done** in Jira → skip (idempotent).
    - If **not Done** but **PR is already merged** (including user **squash merge after WARN**) → run **User override: manual squash merge** close-out (**Jira Done**, branch cleanup, local **`main`**, state file)—**do not** merge again.
-   - If **not Done**, PR **open**, and gates are now acceptable for **automated** merge → resume **`mergeable_state`** polling + **Final Gate** check, then merge when allowed (epic rules).
+   - If **not Done**, PR **open**, and **Final Gate is still WARN/BLOCK** (gates not fixed) → **HALT again immediately.** Do not proceed to any subsequent ticket. Post Jira halt comment. Stop and await human instruction.
+   - If **not Done**, PR **open**, and **Final Gate is now PASS** (user fixed CI/gate config) → resume **`mergeable_state`** polling + **Final Gate** check, then merge when allowed (epic rules).
    - If **not Done**, no merged PR, no implementation yet → run **`implement <KEY> FULL_AUTO`** with epic constraints.
 5. **HALT** if any step fails per **Halt behavior**; otherwise repeat until no children match the JQL or epic marked complete.
 

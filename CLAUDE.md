@@ -353,7 +353,7 @@ The agent **HALT**s (and **never** self-resumes) when:
 
 1. They invoke **`continue epic SCRUM-XX`** (or equivalent)—**no** need to re-type **`FULL_AUTO`**; resume is **fully automated** for whatever is left.
 2. The agent **re-queries Jira** for children with **`statusCategory != Done`** as the **source of truth** (handles manual merges or manual **Done** transitions).
-3. For each remaining child: if **merged on GitHub** but Jira lags, **transition Jira** and **git cleanup** per skill (**do not** merge again); if it is already **Done**, skip; if a PR is still open and gates allow automated merge, **resume polling and merge** per skill; if not started, run **`implement <KEY> FULL_AUTO`** with epic **Final Gate** rules.
+3. For each remaining child **in order**: if already **Done**, skip; if **merged on GitHub** but Jira lags, **transition Jira** and **git cleanup** per skill (**do not** merge again); if a PR is **still open** and **Final Gate is still WARN/BLOCK** (gates not fixed), **HALT again immediately**—`continue epic` does not skip a WARN/BLOCK ticket to start later ones; if a PR is still open and **Final Gate is now PASS**, resume polling and merge per skill; if not started, run **`implement <KEY> FULL_AUTO`** with epic **Final Gate** rules.
 
 **Git hygiene on resume:** Before starting the **next** `feat/<ticket>` branch, **`git fetch`** / **`git checkout main`** / **`git pull --ff-only`** so the new branch is based on current **`main`** (see skill **Sequential close-out**).
 
