@@ -52,6 +52,7 @@ This section locks the **MVP semantics** so agents and tests can rely on stable 
 | Concern | MVP behavior |
 |--------|----------------|
 | Accessible sessions | Capped at **5000** per user (see `MaxMCPAccessibleSessions`). |
+| `search_all_sessions` chunk load | At most **`DefaultMaxCrossSessionChunks` (50 000)** rows loaded from `session_chunks`+embeddings per call (ordered as in SQL); larger corpora are truncated before ranking. Override with **`TALKBACK_MCP_MAX_CROSS_SESSION_CHUNKS`** (see `docs/mcp-server.md`, SCRUM-74). |
 | `search_all_sessions` `top_k` | Default **10**, max **50** (tool input). |
 | `get_decisions_by_topic` `limit` | Default **40**, max **100**. |
 | Embedding rate limit | Per-session and cross-session accounting per `TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE` (cross-session uses a fixed internal quota id — see `internal/mcpserver/cross_session_search.go`). |
