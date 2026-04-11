@@ -3,7 +3,9 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +46,31 @@ type searchAllSessionsOutput struct {
 }
 
 const crossSessionSearchSchemaVersion = "1"
+
+// DefaultMaxCrossSessionChunks caps how many chunk+embedding rows are loaded into memory for
+// search_all_sessions ranking (SCRUM-74). Override with TALKBACK_MCP_MAX_CROSS_SESSION_CHUNKS.
+const (
+	DefaultMaxCrossSessionChunks = 50_000
+	minMaxCrossSessionChunks     = 1_000
+	maxMaxCrossSessionChunks     = 500_000
+)
+
+// crossSessionChunkLoadCap returns the max rows to load from ListChunksWithEmbeddingsBySessionIDs.
+// Invalid or empty env falls back to DefaultMaxCrossSessionChunks; values clamp to [min, max].
+func crossSessionChunkLoadCap() int {
+	s := strings.TrimSpace(os.Getenv("TALKBACK_MCP_MAX_CROSS_SESSION_CHUNKS"))
+	if s == "" {
+		return DefaultMaxCrossSessionChunks
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < minMaxCrossSessionChunks {
+		return DefaultMaxCrossSessionChunks
+	}
+	if n > maxMaxCrossSessionChunks {
+		return maxMaxCrossSessionChunks
+	}
+	return n
+}
 
 func registerSearchAllSessions(server *mcp.Server, db *database.DB) {
 	const desc = "Search indexed content across every TalkBack session the acting user may read (creator, member, or global admin within cap). Embeds the query once, ranks chunks by cosine similarity globally, and returns snippets with session_id and session metadata. Does not build missing indexes — sessions without chunk embeddings contribute no hits. Requires DATABASE_URL, acting user, and OPENAI_API_KEY. Auth scope: only sessions visible to the MCP user (SCRUM-70); never a global dump of other tenants."
@@ -113,6 +140,16 @@ func registerSearchAllSessions(server *mcp.Server, db *database.DB) {
 			}, nil
 		}
 
+		capN := crossSessionChunkLoadCap()
+		truncNote := ""
+		if len(chunks) > capN {
+			chunks = chunks[:capN]
+			truncNote = fmt.Sprintf(
+				"Chunk corpus truncated to the first %d rows for ranking (ordered by session_id, source_type, chunk_idx). Raise TALKBACK_MCP_MAX_CROSS_SESSION_CHUNKS (max %d) if you need a larger working set.",
+				capN, maxMaxCrossSessionChunks,
+			)
+		}
+
 		if err := mcpAcquireSessionEmbeddingQuota(mcpCrossSessionEmbeddingQuotaID); err != nil {
 			return nil, searchAllSessionsOutput{}, err
 		}
@@ -129,11 +166,15 @@ func registerSearchAllSessions(server *mcp.Server, db *database.DB) {
 
 		scored := rag.CrossSessionTopKByChunks(chunks, embeddings[0], k)
 		if len(scored) == 0 {
+			note := "No chunks matched the query embedding (dimension mismatch or empty index rows)."
+			if truncNote != "" {
+				note = truncNote + " " + note
+			}
 			return nil, searchAllSessionsOutput{
 				SchemaVersion: crossSessionSearchSchemaVersion,
 				Query:         q,
 				Results:       nil,
-				Note:          "No chunks matched the query embedding (dimension mismatch or empty index rows).",
+				Note:          note,
 			}, nil
 		}
 
@@ -156,6 +197,7 @@ func registerSearchAllSessions(server *mcp.Server, db *database.DB) {
 			Query:         q,
 			Results:       make([]searchAllSessionsHit, 0, len(scored)),
 			LLMModel:      embedder.ModelName(),
+			Note:          truncNote,
 		}
 		for i, row := range scored {
 			sid := row.Chunk.SessionID
