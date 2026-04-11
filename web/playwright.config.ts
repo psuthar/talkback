@@ -15,8 +15,14 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: 1,
-  reporter: 'html',
+  workers: process.env.CI ? 1 : undefined,
+  timeout: 30000,
+  expect: { timeout: 10000 },
+  reporter: [
+    ['line'],
+    ['json', { outputFile: '../playwright-results.json' }],
+    ['html', { outputFolder: 'playwright-report', open: 'never' }],
+  ],
   use: {
     // Only use E2E_BASE_URL when targeting Render; otherwise local runs always use localhost (avoids .env or shell env leaking Render URL).
     baseURL: process.env.E2E_TARGET === 'render' ? (process.env.E2E_BASE_URL || 'http://localhost:3000') : 'http://localhost:3000',

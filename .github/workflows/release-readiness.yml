@@ -170,7 +170,7 @@ jobs:
           TALKBACK_BOOTSTRAP_ADMIN_DISPLAY_NAME: "CI Admin"
         run: |
           go build -o api-ci ./cmd/api
-          ./api-ci &
+          ./api-ci > api.log 2>&1 &
           echo $! > api-ci.pid
 
       - name: Wait for API to be healthy
@@ -215,8 +215,13 @@ jobs:
           print("Wrote artifacts/release-readiness/prod_health.json")
           PY
 
+      - name: Sanity check frontend
+        run: |
+          curl -I --fail http://127.0.0.1:3000
+
       - name: Run Playwright E2E tests
         id: playwright
+        timeout-minutes: 10
         continue-on-error: true
         working-directory: web
         env:
@@ -225,13 +230,13 @@ jobs:
           TALKBACK_ADMIN_EMAIL: "ci-admin@smoke.test"
           TALKBACK_ADMIN_PASSWORD: "SmokePass123!"
         run: |
-          # Must output strict JSON for e2e_to_readiness.py (single reporter to stdout).
-          # HTML report still exists via playwright config (reporter: 'html') and is staged as artifact.
-          npx playwright test --reporter=json > ../playwright-results.json || true
+          set -o pipefail
+          npx playwright test 2>&1 | tee playwright-live.log
 
       - name: Convert Playwright results to readiness schema
         continue-on-error: true
         run: |
+          test -f playwright-results.json
           python scripts/e2e_to_readiness.py \
             --input playwright-results.json \
             --output e2e_results.json
@@ -315,6 +320,19 @@ jobs:
           out.write_text("\n".join(lines) + "\n", encoding="utf-8")
           print(out.read_text(encoding="utf-8"))
           PY
+
+      - name: Upload Playwright logs and artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-logs
+          path: |
+            playwright-results.json
+            web/playwright-live.log
+            web/playwright-report/
+            web/test-results/
+            api.log
+          if-no-files-found: ignore
 
       - name: Run release readiness
         id: readiness
