@@ -318,14 +318,20 @@ Wait for confirmation before proceeding to implementation.
 
 ## 10. Epic Execution Agent
 
-Use the **`epic-run` skill** to execute all child tickets of a Jira Epic sequentially via FULL_AUTO.
+Use the **`epic-run` skill** (`.claude/skills/epic-run/SKILL.md`) to execute all child tickets of a Jira Epic in automation. Skill index: `.claude/skills/README.md`.
 
 ```
-run epic SCRUM-XX        # start a fresh run
-continue epic SCRUM-XX   # resume after a human-resolved halt
+run epic SCRUM-XX                    # start a fresh run (fails if a non-complete state file already exists)
+continue epic SCRUM-XX               # resume: same automation as above for *all* remaining work
+continue epic run for SCRUM-XX      # equivalent to continue epic
 ```
 
-Full algorithm, state file format, and halt/resume rules are in `.claude/skills/epic-run/SKILL.md`.
+### What “epic run” is supposed to do (contract)
+
+- **Goal:** Every child issue under the epic is **fully implemented**, opened as a PR, brought through **merge gates + Final Gate**, **squash-merged to `main`**, and moved to **Done** in Jira—**in order**, with **no manual steps** except when automation **HALT**s.
+- **“Deployed” in this repo:** Automation completes when code is **on `main`** and the **TalkBack PR Gate / release-readiness** expectations for that PR are satisfied (Final Gate **PASS** for epic). Separate production deploy or release tagging is **out of scope** unless the user explicitly adds it to the epic.
+- **One message should drain work:** A single **`continue epic SCRUM-XX`** must run the **full execution loop** for **every** remaining child that is not **Done** (see skill: **Drain remaining work**). Stopping after **one** merged ticket when more children remain is a **failure to follow the skill**, not an acceptable shortcut.
+- **Epic vs standalone FULL_AUTO:** Outside an epic, **`implement SCRUM-XX FULL_AUTO`** (§8) may merge when **`mergeable_state: clean`**. **Inside an epic**, the agent must **not** merge until **`mergeable_state: clean`** **and** **Final Gate `PASS`** (see skill). Treat epic as **stricter**. **You** may still squash-merge manually after a WARN; **`continue epic`** then performs **reconciliation** (Jira, branches, **`main`**) without a second merge—see **Halt and resume** below.
 
 ### Parallel marker convention
 
@@ -335,15 +341,25 @@ By default all tickets in an epic run sequentially. A ticket opts into parallel 
 
 Consecutive parallel-ok tickets are batched and run concurrently. The batch must fully resolve before the next ticket starts. Do not infer parallelism — if the ticket doesn't say it, it's sequential.
 
-### Halt and resume
+### Halt and resume (WARN / BLOCK / timeouts)
 
-The agent halts (and never self-resumes) when:
-- FULL_AUTO does not reach `mergeable_state: clean` within its polling budget
-- The unified PR gate **Final Gate** is not **`PASS`** (see `pr-gate-summary.json` field `final_gate.status`, or the **TalkBack PR Gate** check on the PR — epic runs must not merge on WARN/BLOCK or unknown gate state)
+The agent **HALT**s (and **never** self-resumes) when:
+- FULL_AUTO does not reach `mergeable_state: clean` within its polling budget (§8, `.cursor/rules/full-auto-github-polling.mdc`)
+- The unified PR gate **Final Gate** is not **`PASS`** — i.e. **`WARN`**, **`BLOCK`**, missing, or unreadable (see `pr-gate-summary.json` / **TalkBack PR Gate** check — epic runs **must not** merge in these cases)
 
-Standalone **`implement SCRUM-XX FULL_AUTO`** (outside an epic) follows CLAUDE.md §8 only; **epic runs** add the Final Gate requirement above.
+**Manual squash merge after WARN (user override):** You may **squash-merge the PR yourself** in GitHub when you accept the WARN and want to move on. The agent will **not** perform that merge while epic policy is HALT. After you merge, invoke **`continue epic SCRUM-XX`**: the agent must **reconcile**—**Jira → Done** for that child, **update local `main`**, **delete the feature branch** (remote if still present, local `feat/<key>`), update epic state, then **continue the rest of the epic** (next tickets, same automation). See **`.claude/skills/epic-run/SKILL.md`** (**User override: manual squash merge**).
 
-On halt, the agent posts a Jira comment on the epic with completed tickets, the halted ticket and reason, and remaining work. The user must explicitly invoke `continue epic SCRUM-XX` to resume.
+**After the user fixes** CI, branch protection, conflicts, or gate config (or after a **manual merge** as above):
+
+1. They invoke **`continue epic SCRUM-XX`** (or equivalent)—**no** need to re-type **`FULL_AUTO`**; resume is **fully automated** for whatever is left.
+2. The agent **re-queries Jira** for children with **`statusCategory != Done`** as the **source of truth** (handles manual merges or manual **Done** transitions).
+3. For each remaining child: if **merged on GitHub** but Jira lags, **transition Jira** and **git cleanup** per skill (**do not** merge again); if it is already **Done**, skip; if a PR is still open and gates allow automated merge, **resume polling and merge** per skill; if not started, run **`implement <KEY> FULL_AUTO`** with epic **Final Gate** rules.
+
+**Git hygiene on resume:** Before starting the **next** `feat/<ticket>` branch, **`git fetch`** / **`git checkout main`** / **`git pull --ff-only`** so the new branch is based on current **`main`** (see skill **Sequential close-out**).
+
+**Stale state file:** If `.epic-run/SCRUM-XX.json` exists and is not `complete`, use **`continue epic`**, not **`run epic`** again. To abandon a run, delete the state file manually (see skill).
+
+On halt, the agent posts a Jira comment on the epic with completed tickets, the halted ticket and reason, and remaining work. The user then fixes the blocker (or merges manually) and invokes **`continue epic SCRUM-XX`**.
 
 ---
 

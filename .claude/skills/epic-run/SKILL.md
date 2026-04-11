@@ -8,6 +8,22 @@ Stop immediately if any ticket's merge gate does not reach `clean` within the po
 budget, **or if the unified PR gate Final Gate is not `PASS`**, or if the gate cannot be read.
 Require explicit human instruction to resume.
 
+### Definition of done (per ticket)
+
+For each child: **PR merged to `main`**, Jira issue **Done**, **`mergeable_state`** was **`clean`** at merge time, and **Final Gate** was **`PASS`** before merge (epic). “Production deploy” is **not** part of this skill unless the user explicitly adds it.
+
+### Anti-patterns (common “fix-ups” to avoid)
+
+| Mistake | Why it breaks epic automation | Correct behavior |
+|--------|-------------------------------|------------------|
+| Stopping after **one** ticket when user said **`continue epic`** | User expects **all** remaining children processed in one go | **Drain** the full remaining list (see **Drain remaining work**) until Jira shows no non-Done children or **HALT** |
+| Merging on **`mergeable_state: clean`** only | Standalone FULL_AUTO; epic is stricter | Merge only when **`clean`** **and** **Final Gate `PASS`** (**Merge gate + Final Gate**) |
+| Skipping **Final Gate** because checks “look green” | WARN/BLOCK still block epic | Read **`final_gate.status`** or **TalkBack PR Gate** check; non-PASS → **HALT** |
+| Starting ticket **N+1** before **N** merged + **Done** | Violates **Sequential close-out** | Wait for merge + Jira **Done**, then new `feat/<next>` from updated **`main`** |
+| **`run epic`** when `.epic-run/<EPIC>.json` already exists (non-complete) | State conflict | Use **`continue epic`**, or delete state file only if abandoning |
+| Polling **merge gate** too few times | Host “looping” warnings are not a signal to stop | **30s** interval, up to **40 min** per `.cursor/rules/full-auto-github-polling.mdc` |
+| After user **squash-merges** (e.g. WARN override), stopping without **Jira Done** + **git cleanup** | User expects **`continue epic`** to finish close-out | Follow **User override: manual squash merge** (merge already done → reconcile only) |
+
 ---
 
 ## Invocation
@@ -56,7 +72,7 @@ The only exception is if the **user explicitly** cancels epic mode or directs a 
 1. Check for `.epic-run/SCRUM-XX.json`. If it exists and `status != "complete"`, refuse to
    start and instruct the user to use `continue epic SCRUM-XX` or delete the file manually.
 
-2. Query Jira: `parent = SCRUM-XX AND status != Done ORDER BY created ASC`.
+2. Query Jira for remaining work: `parent = SCRUM-XX AND statusCategory != Done ORDER BY created ASC` (use **`statusCategory`** so “Done” is consistent across workflows).
 
 3. Check each ticket for the parallel marker (see **Sequencing** below) and group into an
    ordered work list of items, where each item is either a single ticket or a parallel batch.
@@ -154,11 +170,13 @@ If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable
 | `final_gate.status` (or equivalent check) | Epic action |
 |---|---|
 | **`PASS`** | Eligible to merge **if** `mergeable_state` is also **`clean`**. |
-| **`WARN`** | **HALT** — do not merge. |
-| **`BLOCK`** | **HALT** — do not merge. |
+| **`WARN`** | **HALT** — agent does **not** auto-merge (epic policy). |
+| **`BLOCK`** | **HALT** — agent does **not** auto-merge. |
 | Missing / parse error / timeout | **HALT** — do not merge. |
 
 **Note:** Final Gate already combines PR Risk and Release Readiness (`scripts/pr_gate.py`). There is **no** separate epic step to re-read `ops/bundles/report.json` after merge if Final Gate was **PASS** before merge.
+
+**Human override:** The **user** may still **squash-merge** the PR themselves after a **WARN** (or otherwise accept risk and merge despite gate policy). The agent **must not** do that merge during epic HALT; the user does it in GitHub. Afterward, **`continue epic`** must **reconcile** close-out—see **User override: manual squash merge** below—not re-attempt `merge_pull_request` for that PR.
 
 ---
 
@@ -185,12 +203,41 @@ On any halt condition:
 
 ---
 
+## User override: manual squash merge (e.g. after WARN)
+
+When the user **overrides** epic policy and **squash-merges** a PR themselves (typically after a **WARN** halted automation), they will run **`continue epic SCRUM-XX`** and expect **full close-out** for that ticket **without** asking them to click through Jira or clean up git by hand.
+
+On **`continue epic`**, for each **non-Done** child, **first determine whether its PR is already merged** (GitHub MCP: `pull_request_read` / list PRs for the branch or link from Jira/comment).
+
+**If the PR is merged** (user squash-merged):
+
+1. **Do not** call **`merge_pull_request`** for that PR.
+2. **Jira:** Transition the child issue to **Done** (or the project’s terminal done state) if it is not already **Done**—including moving past **In Review** when the merge is already on **`main`**.
+3. **Remote branch:** If the head branch still exists on the origin (e.g. auto-delete disabled), delete it via **GitHub MCP** when the tool supports it; otherwise instruct the user once.
+4. **Local git (mandatory for that ticket’s feature branch):**  
+   `git fetch origin && git checkout main && git pull --ff-only origin main` → `git branch -D feat/<TICKET-KEY>` when the local branch exists (same spirit as **CLAUDE.md §8** FULL_AUTO local cleanup).
+5. Update **`.epic-run/<EPIC>.json`** for that ticket: set `status: "done"`, `merged_sha` if known, `final_gate: "manual_override"`.
+6. **Treat this ticket as fully complete for the purpose of the epic** — the manual merge is accepted as equivalent to a PASS for continuing. **Do not halt or pause here.** Proceed immediately to **Sequential close-out** and then to the **next** child (new `feat/<next>` from current **`main`**). The remaining tickets run under normal epic automation (Final Gate still applies to each new PR).
+
+**If the PR is still open** (user has not merged yet): follow normal **Resume** behavior—poll **`mergeable_state`** + **Final Gate** if pursuing automated merge, or **HALT** again until the user merges or fixes gates.
+
+---
+
 ## Resume (`continue epic SCRUM-XX`)
 
-1. Read `.epic-run/SCRUM-XX.json` if present (optional when state file is missing—re-query Jira and rebuild intent).
-2. Re-query Jira: `parent = SCRUM-XX AND statusCategory != Done` — this is the source of truth for **remaining work** (handles manual merges or out-of-band **Done** transitions).
-3. If the previous run **HALT**ed (`status: halted`, `awaiting_human: true`): clear the blocker (user fixes CI/gates or merges manually), then either re-run **`implement … FULL_AUTO`** on the halted ticket or advance if that ticket is now **Done** on Jira.
-4. **Drain:** Continue the **Execution loop** for **each** remaining child (see **Drain remaining work**) until no non-Done children remain or **HALT**.
+**Treat `continue epic` as a full automation pass**, not a single-ticket retry—same as **Drain remaining work**.
+
+1. **Git:** `git fetch origin && git checkout main && git pull --ff-only origin main` (or equivalent) before creating the next **`feat/<ticket>`** branch so work is based on latest **`main`**.
+2. Read `.epic-run/SCRUM-XX.json` if present (if missing, still proceed using Jira as truth).
+3. Re-query Jira: `parent = SCRUM-XX AND statusCategory != Done ORDER BY created ASC` — **source of truth** for remaining work (covers manual merges, manual **Done**, or user-fixed CI).
+4. For **each** child in order:
+   - If **Done** in Jira → skip (idempotent).
+   - If **not Done** but **PR is already merged** (including user **squash merge after WARN**) → run **User override: manual squash merge** close-out (**Jira Done**, branch cleanup, local **`main`**, state file)—**do not** merge again.
+   - If **not Done**, PR **open**, and gates are now acceptable for **automated** merge → resume **`mergeable_state`** polling + **Final Gate** check, then merge when allowed (epic rules).
+   - If **not Done**, no merged PR, no implementation yet → run **`implement <KEY> FULL_AUTO`** with epic constraints.
+5. **HALT** if any step fails per **Halt behavior**; otherwise repeat until no children match the JQL or epic marked complete.
+
+**Reconcile Jira with GitHub:** If **`main`** already contains the change but Jira lags (**In Review** / not **Done**), transition via Jira MCP—**do not** re-implement or open a duplicate PR.
 
 ---
 
@@ -236,7 +283,7 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 - **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 2) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
   unresolvable dependency), HALT and report.
-- Never merge without **`mergeable_state: clean`** and **`final_gate.status: PASS`** (epic); do not use default FULL_AUTO merge rules alone during an epic run.
+- Never **agent-merge** without **`mergeable_state: clean`** and **`final_gate.status: PASS`** (epic). **Exception:** the user may merge manually (e.g. squash after **WARN**); then **`continue epic`** must **reconcile** (**User override: manual squash merge**)—no second merge, but **Jira Done** + **git cleanup** are still required.
 - Never self-resume after a halt, even if the reason appears transient.
 - Parallel batches must all complete before the next sequential ticket starts.
 - **No new implementation branch for ticket N+1** until ticket N’s PR is **merged** and ticket N is **Done** in Jira (see **Sequential close-out** above).
