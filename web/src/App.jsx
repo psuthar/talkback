@@ -178,7 +178,8 @@ function App() {
   const [renameSessionId, setRenameSessionId] = useState(null)
   const [renameSessionTitle, setRenameSessionTitle] = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
-  
+  const [userIdCopiedFlash, setUserIdCopiedFlash] = useState(false)
+
   // Response states - per-section feedback
   const [createArtifactFeedback, setCreateArtifactFeedback] = useState({ type: '', message: '' })
   const [uploadMaterialFeedback, setUploadMaterialFeedback] = useState({ type: '', message: '' })
@@ -2208,6 +2209,16 @@ function App() {
     await openSession(id, sessionUserMode, true, null, true)
   }, [currentSession?.session?.id, currentSession?.id, sessionUserMode, openSession])
 
+  const copyAuthUserIdToClipboard = useCallback(async () => {
+    const uid = authUser?.id
+    if (!uid) return
+    try {
+      await navigator.clipboard.writeText(uid)
+      setUserIdCopiedFlash(true)
+      setTimeout(() => setUserIdCopiedFlash(false), 2000)
+    } catch (_) { /* ignore */ }
+  }, [authUser?.id])
+
   const setPrimaryVideoSource = useCallback(async (videoSourceId) => {
     const sessionId = currentSession?.session?.id ?? currentSession?.id
     if (!sessionId || apiBaseUrl == null || !videoSourceId) return
@@ -3192,6 +3203,22 @@ function App() {
           >
             Log out
           </button>
+          <button
+            type="button"
+            onClick={copyAuthUserIdToClipboard}
+            title="Copy your TalkBack user ID for local MCP (TALKBACK_MCP_ACTING_USER_ID)"
+            style={{
+              fontSize: '12px',
+              padding: '4px 10px',
+              cursor: 'pointer',
+              background: userIdCopiedFlash ? '#e8f5e9' : 'none',
+              border: '1px solid #999',
+              borderRadius: '4px',
+              color: '#555',
+            }}
+          >
+            {userIdCopiedFlash ? 'Copied!' : 'Copy user ID'}
+          </button>
           {/* Admin: link on all screens when user is admin; Back to app when in admin mode */}
           {authUser?.global_role === 'admin' && (
             showAdminView ? (
@@ -3331,7 +3358,32 @@ function App() {
           {/* TalkBack auth /api/me */}
           <div style={{ marginTop: '10px', fontSize: '13px' }}>
             {authUser ? (
-              <span className="success">✓ Logged in: {authUser.display_name} ({authUser.email}) · {authUser.global_role} · {authUser.status}</span>
+              <div className="success" style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'flex-start' }}>
+                <span>✓ Logged in: {authUser.display_name} ({authUser.email}) · {authUser.global_role} · {authUser.status}</span>
+                <div style={{ fontSize: '12px', color: '#333', width: '100%' }}>
+                  <span style={{ fontWeight: 600 }}>User ID </span>
+                  <code className="artifact-id" style={{ fontSize: '11px', wordBreak: 'break-all' }}>{authUser.id}</code>
+                  <button
+                    type="button"
+                    onClick={copyAuthUserIdToClipboard}
+                    style={{
+                      marginLeft: '8px',
+                      fontSize: '12px',
+                      padding: '4px 10px',
+                      cursor: 'pointer',
+                      background: userIdCopiedFlash ? '#c8e6c9' : '#f5f5f5',
+                      border: '1px solid #ccc',
+                      borderRadius: '4px',
+                      color: '#333',
+                    }}
+                  >
+                    {userIdCopiedFlash ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <p style={{ margin: 0, fontSize: '11px', color: '#666', maxWidth: '520px' }}>
+                  For local TalkBack MCP (e.g. Cursor), set <code>TALKBACK_MCP_ACTING_USER_ID</code> in your MCP config to this UUID.
+                </p>
+              </div>
             ) : (
               <span className="info">Not logged in (GET /api/me returns 401 without cookie)</span>
             )}
