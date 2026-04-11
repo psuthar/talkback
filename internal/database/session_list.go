@@ -78,3 +78,21 @@ func (db *DB) ListSessionsWithRolesForUser(ctx context.Context, user *models.Use
 	}
 	return out, nil
 }
+
+// ApplySessionListPagination applies limit/offset when limit > 0 (same rules as GET /api/sessions ?limit=&offset=).
+func ApplySessionListPagination(rows []SessionListRow, limit int, offset int) []SessionListRow {
+	if limit <= 0 {
+		return rows
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(rows) {
+		return []SessionListRow{}
+	}
+	rows = rows[offset:]
+	if limit < len(rows) {
+		rows = rows[:limit]
+	}
+	return rows
+}

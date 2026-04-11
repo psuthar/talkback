@@ -91,14 +91,7 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 					offset = o
 				}
 			}
-			if offset >= len(out) {
-				out = []SessionWithRole{}
-			} else {
-				out = out[offset:]
-				if limit < len(out) {
-					out = out[:limit]
-				}
-			}
+			out = database.ApplySessionListPagination(out, limit, offset)
 		}
 	}
 
