@@ -192,7 +192,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
 - **`go test ./...` partial failures:** If DB-backed packages fail solely due to a missing `DATABASE_URL`/`TEST_DATABASE_URL` and **none of those packages were touched** by the ticket, that is an acceptable known skip — document the exact failing packages and reason explicitly in the Jira completion comment. If any package **touched by the ticket** fails for any reason, that is a hard blocker.
 
 ### Jira completion comment (MANDATORY)
-When implementation and the PR are ready (before or immediately after transitioning to **In Review**), add a **regular issue comment** on the Jira ticket—not only transition text—so the Comments tab has a durable record. Use this structure (same spirit as SCRUM-15):
+When implementation and the PR are ready (before or immediately after transitioning to **In Review**), add a **regular issue comment** on the Jira ticket—not only transition text—so the Comments tab has a durable record. **Transition-only comments** (`jira_transition_issue` `comment` parameter) **do not** reliably appear as top-level **Comments** tab entries in team-managed Jira; you must still post the narrative via **`jira_add_comment`** with **`body`**. Use this structure (same spirit as SCRUM-15):
 
 1. **Opening line:** `{TICKET} complete.` (or `Implementation complete.`) plus the **full PR URL** (e.g. `https://github.com/psuthar/talkback/pull/N`).
 2. **Delivered:** bullet list of concrete outcomes (what shipped: behavior, APIs, migrations, notable files or subsystems—enough for support/product to skim).
@@ -219,7 +219,7 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 ### FULL_AUTO: Post-PR automation (FULL_AUTO mode only)
 
-After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` is the sole authoritative signal for FULL_AUTO** — do not consult check-run conclusions or combined status separately.
+After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` from `pull_request_read` (method: `get`) is the sole authoritative merge gate for FULL_AUTO** — do not use the **legacy combined status API** as a parallel source of truth (it does not reflect Actions the same way). **Do not** merge based on a hunch from the Actions UI alone without a fresh `mergeable_state` read. When **branch protection** lists required status checks (e.g. `go-test`, `release-readiness`, TalkBack PR Gate), GitHub incorporates them into merge eligibility; **`mergeable_state: clean`** means the PR is mergeable under those rules—including required checks—not merely that some jobs finished.
 
 **Host “looping” / anti-repetition reminders (e.g. Cursor):** Merge-gate polling **must** repeat **`sleep 30`** + **`pull_request_read`** many times in a row while CI runs; **`blocked`** for **5+ minutes** is common. That repetition is **mandatory**, not an error. **Do not** stop early solely because the environment flags “looping” — continue until **`clean`**, **`dirty`**, field absent, or the **40-minute** budget expires. If the session cannot continue, tell the user to invoke **continue epic** / resume merge polling for that PR. See `.cursor/rules/full-auto-github-polling.mdc`.
 
@@ -236,7 +236,9 @@ After the PR is created, use a single 40-minute polling budget for all non-termi
 
    If `mergeable_state` has not reached a terminal outcome after **40 minutes** of polling — i.e. still stuck in `null`, `unknown`, `unstable`, `behind`, or **`blocked` that never resolves to `clean`** — end FULL_AUTO — same end state as standard mode.
 
-2. **On `mergeable_state: clean`:** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
+   **Pre-merge guard (mandatory):** Call **`merge_pull_request` only** when the **most recent** `pull_request_read (get)` for this PR returned **`mergeable_state: clean`**. **Immediately before** calling `merge_pull_request`, perform **one more** `pull_request_read (get)`; merge **only if** it is still **`clean`**. **Never** call `merge_pull_request` if the latest read was **`blocked`**, **`null`**, **`unknown`**, **`unstable`**, **`behind`**, or **field absent** — continue polling per the table until **`clean`** or a terminal failure/timeout. **Do not** merge because an **earlier** poll showed `clean` minutes ago without a fresh read.
+
+2. **On confirmed `mergeable_state: clean` (including the immediate pre-merge read above):** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
    - **Remote branch:** GitHub auto-deletes it if "Automatically delete head branches" is enabled in repo settings. If not, delete it manually in the GitHub UI — there is no confirmed MCP tool for branch deletion.
    - **Local cleanup:**
      ```
