@@ -10,9 +10,10 @@ When running **Jira ticket workflow** in **FULL_AUTO** mode (per `CLAUDE.md` §8
 ## Polling (mandatory)
 
 1. Use **`pull_request_read`** with `method: get` (same server as `create_pull_request` / `merge_pull_request`) to read **`mergeable_state`**.
-2. **Poll every 30 seconds** for up to **40 minutes** until you have a **clear terminal signal**:
+2. **Poll every 30 seconds** for up to **40 minutes** (one shared wall-clock budget for this PR after creation) until you have a **clear terminal signal**:
    - If **`mergeable_state` is `null`**: GitHub is still computing — **keep polling** (sleep 30s between MCP calls).
-   - If **`mergeable_state` is `blocked`**, **`unstable`**, **`unknown`**, or **`behind`**: **do not** treat the first read as final — **keep polling** until it becomes **`clean`**, **`dirty`** (merge conflicts), or you hit the **40 minute** cap.
+   - If **`mergeable_state` is `blocked`**: **do not stop on the first read.** This usually means checks or reviews are still pending. **Keep polling every 30s** until **`clean`**, **`dirty`**, or the **40-minute** cap — same rule as `null` / `unstable` / `unknown` / `behind`. Treating `blocked` as an instant failure is **incorrect**.
+   - If **`mergeable_state` is `unstable`**, **`unknown`**, or **`behind`**: **do not** treat the first read as final — **keep polling** until it becomes **`clean`**, **`dirty`** (merge conflicts), or you hit the **40 minute** cap.
    - If **`mergeable_state` is `clean`**: proceed with **`merge_pull_request`** (squash) per `CLAUDE.md`.
    - If **`mergeable_state` is `dirty`**: stop — conflicts need resolution (same end state as a failed gate).
 3. **Never** stop after a single 30s wait unless the PR is already **`merged`** or you have **`clean`** / definitive **`dirty`**.

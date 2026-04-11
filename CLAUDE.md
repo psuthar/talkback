@@ -111,7 +111,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
 When the user requests implementation of a Jira ticket, two invocation modes are supported:
 
 - **`implement SCRUM-XX`** — **Standard mode (default).** Run the workflow below through PR creation and Jira **In Review**. Stop there. No auto-merge, no branch cleanup, no Jira Done transition.
-- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then follow **FULL_AUTO: Post-PR automation** below: call `pull_request_read (method: get)` via GitHub MCP; if `mergeable_state` is absent from the response, end FULL_AUTO immediately (hard stop, no polling); if present, poll until resolved, squash-merge on `clean` only — then delete the remote branch, clean up local git state, and transition Jira to **Done**. Any non-`clean` terminal value is treated identically to standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
+- **`implement SCRUM-XX FULL_AUTO`** — **Full automation mode.** Run the standard workflow, then follow **FULL_AUTO: Post-PR automation** below: call `pull_request_read (method: get)` via GitHub MCP; if `mergeable_state` is absent from the response, end FULL_AUTO immediately (hard stop, no polling); if present, apply the merge-gate table — **including when the first read is `blocked`:** poll every **30 seconds** on a single **40-minute** budget (shared with `null` / `unknown` / `unstable` / `behind`) until **`clean`** (then squash-merge, delete the remote branch, clean up local git, Jira **Done**), or until **`dirty`** (stop), the field becomes absent, or the budget expires without **`clean`**. If the gate never becomes **`clean`** within that budget (or ends in terminal **`dirty`**), same end state as standard mode: PR stays open, Jira stays **In Review**, user handles it from there.
 
 ### Jira Status Management
 - Before any code edits, test execution, or **implementation commits**, move the Jira ticket to:
@@ -148,7 +148,7 @@ When the user requests implementation of a Jira ticket, two invocation modes are
   - confirmation that **In Review** transition was applied
   - PR URL
   - confirmation that a **structured Jira completion comment** was posted (see **Jira completion comment** below)
-  - **FULL_AUTO only:** `mergeable_state` value observed (PASS = `clean`; BLOCK = terminal `blocked`/`dirty` after polling; unresolved = timed-out polling); if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
+  - **FULL_AUTO only:** `mergeable_state` value observed (PASS = `clean`; BLOCK = terminal `dirty` or **`blocked`/`null`/etc. after 40-minute 30s polling**; do **not** stop on first `blocked`); if PASS — merge SHA, branch deletion confirmation, local cleanup confirmation, Jira **Done** transition confirmation
 - If a transition is missed:
   - immediately correct status sequence in Jira
   - add a Jira comment noting correction and linking the implementation branch/PR
@@ -231,7 +231,7 @@ After the PR is created, use a single 40-minute polling budget for all non-termi
    | `null` | GitHub still computing — poll every 30s. |
    | `unknown` / `unstable` / `behind` | Not yet final — poll every 30s. |
    | `clean` | All required checks passed → proceed to step 2. |
-   | `blocked` | **Do not stop on the first read.** GitHub often returns `blocked` while required checks are still running or not yet reported. **Poll every 30s** (same 40-minute budget as other non-terminal states). If it later becomes `clean`, merge. If it **remains `blocked`** after polling stabilizes (or the budget expires with no transition to `clean`), treat as terminal BLOCK — same end state as standard mode. Report the final value. |
+   | `blocked` | **Mandatory polling — not an immediate stop.** GitHub often returns `blocked` while required checks are still running or not yet reported. **Poll every 30s** until **`clean`**, **`dirty`**, or the **40-minute** budget from first post-PR poll expires (same rolling budget as `null` / `unknown` / `unstable` / `behind`). If it becomes `clean`, proceed to step 2 (with pre-merge guard). If the budget expires while still `blocked` (or any non-`clean` state except an earlier definitive `dirty`), treat as terminal BLOCK — same end state as standard mode. Report the final value. |
    | `dirty` | Merge conflict — stop. Same end state as standard mode. Report the value. |
 
    If `mergeable_state` has not reached a terminal outcome after **40 minutes** of polling — i.e. still stuck in `null`, `unknown`, `unstable`, `behind`, or **`blocked` that never resolves to `clean`** — end FULL_AUTO — same end state as standard mode.
