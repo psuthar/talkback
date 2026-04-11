@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/citation"
+	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
@@ -40,30 +40,27 @@ type GetSessionsResponse struct {
 }
 
 type GetSessionResponse struct {
-	Session                *models.Session       `json:"session"`
-	Artifacts              []*models.Artifact    `json:"artifacts"`
-	Materials              []*models.Material     `json:"materials"`
-	VideoSources           []*models.VideoSource `json:"video_sources"`
-	PrimaryVideo           *models.VideoSource   `json:"primary_video,omitempty"`   // effective primary (explicit primary, else first ready, else first)
-	AdditionalVideos       []*models.VideoSource `json:"additional_videos,omitempty"` // all other session videos
-	RecentQuestions        []*models.Question    `json:"recent_questions"`
-	RecentAnswers          []*models.Answer      `json:"recent_answers"`
-	Mode                   string                `json:"mode"` // "creator" or "participant"
-	CreatedByDisplayName   *string               `json:"created_by_display_name,omitempty"` // session creator display name for UI
-	UnreadMaterialIDs      []string              `json:"unread_material_ids,omitempty"`   // only when participant_ref provided
-	VideoAccessURL         string                `json:"video_access_url,omitempty"`       // presigned R2 URL only when primary artifact is ready, r2, video
-	PlaybackReasonCode     string                `json:"playback_reason_code,omitempty"`   // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
-	PlaybackMessage        string                `json:"playback_message,omitempty"`      // safe message when video not playable
-	Links                  []*models.SessionLink `json:"links,omitempty"`                // session links for citation URL resolution
-	MaterialSlidesReady    map[string]bool      `json:"material_slides_ready,omitempty"` // material ID -> true when slides manifest exists (PPT/PPTX only)
-	MaterialSlidesStatus   map[string]string    `json:"material_slides_status,omitempty"` // material ID -> processing|ready|failed (PPT/PPTX only)
+	Session              *models.Session       `json:"session"`
+	Artifacts            []*models.Artifact    `json:"artifacts"`
+	Materials            []*models.Material    `json:"materials"`
+	VideoSources         []*models.VideoSource `json:"video_sources"`
+	PrimaryVideo         *models.VideoSource   `json:"primary_video,omitempty"`     // effective primary (explicit primary, else first ready, else first)
+	AdditionalVideos     []*models.VideoSource `json:"additional_videos,omitempty"` // all other session videos
+	RecentQuestions      []*models.Question    `json:"recent_questions"`
+	RecentAnswers        []*models.Answer      `json:"recent_answers"`
+	Mode                 string                `json:"mode"`                              // "creator" or "participant"
+	CreatedByDisplayName *string               `json:"created_by_display_name,omitempty"` // session creator display name for UI
+	UnreadMaterialIDs    []string              `json:"unread_material_ids,omitempty"`     // only when participant_ref provided
+	VideoAccessURL       string                `json:"video_access_url,omitempty"`        // presigned R2 URL only when primary artifact is ready, r2, video
+	PlaybackReasonCode   string                `json:"playback_reason_code,omitempty"`    // VIDEO_NOT_INGESTED, VIDEO_INGEST_PENDING, VIDEO_INGEST_FAILED
+	PlaybackMessage      string                `json:"playback_message,omitempty"`        // safe message when video not playable
+	Links                []*models.SessionLink `json:"links,omitempty"`                   // session links for citation URL resolution
+	MaterialSlidesReady  map[string]bool       `json:"material_slides_ready,omitempty"`   // material ID -> true when slides manifest exists (PPT/PPTX only)
+	MaterialSlidesStatus map[string]string     `json:"material_slides_status,omitempty"`  // material ID -> processing|ready|failed (PPT/PPTX only)
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
-type SessionWithRole struct {
-	Session *models.Session `json:"session"`
-	MyRole  string         `json:"my_role"` // "creator" | "participant" | "admin"
-}
+type SessionWithRole = database.SessionListRow
 
 // ListSessions returns all sessions the current user may access, with my_role per session (RequireAuth).
 // Admins see all sessions with my_role "admin"; others see sessions they created (my_role "creator") or are invited to (my_role "participant").
@@ -78,70 +75,11 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	var out []SessionWithRole
-
-	switch user.GlobalRole {
-	case models.GlobalRoleAdmin:
-		all, err := h.DB.ListAllSessions(ctx)
-		if err != nil {
-			log.Printf("ListSessions (admin): %v", err)
-			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
-			return
-		}
-		for _, s := range all {
-			out = append(out, SessionWithRole{Session: s, MyRole: "admin"})
-		}
-	case models.GlobalRoleParticipant:
-		// Participant role: only sessions they are invited to (no created sessions).
-		invited, err := h.DB.ListSessionsForInvitedUser(ctx, user.ID)
-		if err != nil {
-			log.Printf("ListSessions (invited): %v", err)
-			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
-			return
-		}
-		for _, s := range invited {
-			out = append(out, SessionWithRole{Session: s, MyRole: "participant"})
-		}
-		sort.Slice(out, func(i, j int) bool {
-			return out[i].Session.UpdatedAt.After(out[j].Session.UpdatedAt)
-		})
-	default:
-		// Creator (or legacy user): created + invited
-		created, err := h.DB.ListSessionsByCreatedBy(ctx, user.Email)
-		if err != nil {
-			log.Printf("ListSessions (created): %v", err)
-			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
-			return
-		}
-		invited, err := h.DB.ListSessionsForInvitedUser(ctx, user.ID)
-		if err != nil {
-			log.Printf("ListSessions (invited): %v", err)
-			http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
-			return
-		}
-		roleByID := make(map[uuid.UUID]string)
-		sessionByID := make(map[uuid.UUID]*models.Session)
-		for _, s := range created {
-			roleByID[s.ID] = "creator"
-			sessionByID[s.ID] = s
-		}
-		for _, s := range invited {
-			if _, exists := roleByID[s.ID]; !exists {
-				roleByID[s.ID] = "participant"
-				sessionByID[s.ID] = s
-			}
-		}
-		// Single list ordered by updated_at desc (collect then sort)
-		for id, s := range sessionByID {
-			out = append(out, SessionWithRole{Session: s, MyRole: roleByID[id]})
-		}
-		sort.Slice(out, func(i, j int) bool {
-			return out[i].Session.UpdatedAt.After(out[j].Session.UpdatedAt)
-		})
-	}
-
-	if out == nil {
-		out = []SessionWithRole{}
+	out, err := h.DB.ListSessionsWithRolesForUser(ctx, user)
+	if err != nil {
+		log.Printf("ListSessions: %v", err)
+		http.Error(w, "Failed to list sessions", http.StatusInternalServerError)
+		return
 	}
 
 	// Optional limit/offset pagination. Both default to "no limit / no offset" when absent or zero.
@@ -387,20 +325,20 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			newMaterial := &models.Material{
-				ID:            uuid.New(),
-				ArtifactID:    newArtifactID,
-				SessionID:     newSession.ID,
-				Kind:          m.Kind,
-				Filename:      m.Filename,
-				ContentType:   m.ContentType,
-				StorageURL:    "",
+				ID:              uuid.New(),
+				ArtifactID:      newArtifactID,
+				SessionID:       newSession.ID,
+				Kind:            m.Kind,
+				Filename:        m.Filename,
+				ContentType:     m.ContentType,
+				StorageURL:      "",
 				StorageProvider: m.StorageProvider,
-				StorageKey:    "",
-				SizeBytes:     m.SizeBytes,
-				TextStatus:    m.TextStatus,
-				ExtractedText: m.ExtractedText,
-				Title:         m.Title,
-				ErrorMessage:  m.ErrorMessage,
+				StorageKey:      "",
+				SizeBytes:       m.SizeBytes,
+				TextStatus:      m.TextStatus,
+				ExtractedText:   m.ExtractedText,
+				Title:           m.Title,
+				ErrorMessage:    m.ErrorMessage,
 			}
 			if m.StorageProvider == "r2" && m.StorageKey != "" && h.Storage != nil {
 				newKey := storage.BuildArtifactStorageKey(r2Prefix, newSession.ID, newArtifactID, m.Filename)
@@ -528,25 +466,25 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		copyVS := &models.VideoSource{
-			ID:                   uuid.New(),
-			ArtifactID:           newArtifactID,
-			SessionID:            newSession.ID,
-			Provider:             vs.Provider,
-			VideoURL:             vs.VideoURL,
-			PlaybackMode:         vs.PlaybackMode,
-			EmbedURL:             vs.EmbedURL,
-			MediaURL:             vs.MediaURL,
-			DurationSeconds:     vs.DurationSeconds,
-			PosterURL:            vs.PosterURL,
-			SourceType:           vs.SourceType,
-			StoredVideoObjectKey: nil,
-			OriginalURL:          vs.OriginalURL,
-			FailureReason:        vs.FailureReason,
-			TranscriptStatus:     vs.TranscriptStatus,
+			ID:                    uuid.New(),
+			ArtifactID:            newArtifactID,
+			SessionID:             newSession.ID,
+			Provider:              vs.Provider,
+			VideoURL:              vs.VideoURL,
+			PlaybackMode:          vs.PlaybackMode,
+			EmbedURL:              vs.EmbedURL,
+			MediaURL:              vs.MediaURL,
+			DurationSeconds:       vs.DurationSeconds,
+			PosterURL:             vs.PosterURL,
+			SourceType:            vs.SourceType,
+			StoredVideoObjectKey:  nil,
+			OriginalURL:           vs.OriginalURL,
+			FailureReason:         vs.FailureReason,
+			TranscriptStatus:      vs.TranscriptStatus,
 			AutoTranscribeEnabled: vs.AutoTranscribeEnabled,
-			TranscriptionSource:  vs.TranscriptionSource,
-			TranscriptionJobID:   nil,
-			VideoRole:            vs.VideoRole,
+			TranscriptionSource:   vs.TranscriptionSource,
+			TranscriptionJobID:    nil,
+			VideoRole:             vs.VideoRole,
 		}
 		// Copy stored video object (R2 or local) so the clone has the actual file for playback.
 		if vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
