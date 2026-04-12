@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import {
-  API_BASE,
   createSession,
   createUserAndLoginWithId,
   deleteSession,
@@ -69,7 +68,7 @@ const MOCK_REC_DECISION_READY: Record<string, unknown> = {
 
 /** Navigate to the creator view for a session. */
 async function navigateToCreatorSession(page: import('@playwright/test').Page, sessionId: string) {
-  const params = new URLSearchParams({ session: sessionId, mode: 'edit', api: API_BASE })
+  const params = new URLSearchParams({ session: sessionId, mode: 'edit' })
   await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 }

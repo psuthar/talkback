@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright global-setup output (localStorage seed for API base)
+tests/e2e/.cache/

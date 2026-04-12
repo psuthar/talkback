@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import {
-  API_BASE,
   createSession,
   createUserAndLoginWithId,
   deleteSession,
@@ -32,8 +31,8 @@ test('participant opens prepared session, sees materials panel and QA input', as
   seededSessionId = session.id
   await pasteMaterial(request, session.id, 'Overview Doc', 'This document covers project scope and timeline.')
 
-  // --- Navigate to session in view mode (api= so app uses same backend on Render) ---
-  const params = new URLSearchParams({ session: session.id, mode: 'view', api: API_BASE })
+  // --- Navigate to session in view mode ---
+  const params = new URLSearchParams({ session: session.id, mode: 'view' })
   await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 

@@ -51,7 +51,7 @@ const JPG_FILE  = path.join(FIXTURES_DIR, 'test.jpg')
 
 /** Navigate to the creator edit view for a session and wait for initial load. */
 async function navigateToCreatorSession(page, sessionId: string) {
-  const params = new URLSearchParams({ session: sessionId, mode: 'edit', api: API_BASE })
+  const params = new URLSearchParams({ session: sessionId, mode: 'edit' })
   await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 }

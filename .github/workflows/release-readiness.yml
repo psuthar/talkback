@@ -137,8 +137,12 @@ jobs:
         working-directory: web
         run: npx playwright install chromium chromium-headless-shell --with-deps
 
+      # Validation: E2E uses preview :3000 + API :8081; VITE_API_BASE_URL + global-setup localStorage
+      # (talkback.apiBaseUrl) must match TALKBACK_API_BASE on the Playwright step.
       - name: Build frontend
         working-directory: web
+        env:
+          VITE_API_BASE_URL: http://localhost:8081
         run: npm run build
 
       - name: Serve frontend (background)
