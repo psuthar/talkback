@@ -221,6 +221,13 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 
 After the PR is created, use a single 40-minute polling budget for all non-terminal states. **`mergeable_state` from `pull_request_read` (method: `get`) is the sole authoritative merge gate for FULL_AUTO** — do not use the **legacy combined status API** as a parallel source of truth (it does not reflect Actions the same way). **Do not** merge based on a hunch from the Actions UI alone without a fresh `mergeable_state` read. When **branch protection** lists required status checks (e.g. `go-test`, `release-readiness`, TalkBack PR Gate), GitHub incorporates them into merge eligibility; **`mergeable_state: clean`** means the PR is mergeable under those rules—including required checks—not merely that some jobs finished.
 
+**Hard stop — do not continue FULL_AUTO merge / Jira Done unless both are true:**
+
+- **`TalkBack PR Gate` overall outcome is PASS** — in GitHub Checks terms, the check run named **`TalkBack PR Gate`** must have **`conclusion: success`**. Do **not** treat **`neutral`** (e.g. PR Gate **WARN**, often shown as `action_required` on the check run) or **`failure`** (**BLOCK**) as permission to merge. Release Readiness can score 100/100 while the **unified** gate is still **WARN**; only the **TalkBack PR Gate** check conclusion counts for this rule.
+- **`mergeable_state` is `clean`** — per the table and pre-merge guard below (including the **immediate** pre-merge `pull_request_read`).
+
+If **either** condition fails after the polling budget, **stop**: no `merge_pull_request`, no branch cleanup, no Jira **Done** — same end state as standard mode (**In Review**, PR open). **Do not** call `merge_pull_request` just because the API might accept it (e.g. admin bypass); that violates this workflow.
+
 **Host “looping” / anti-repetition reminders (e.g. Cursor):** Merge-gate polling **must** repeat **`sleep 30`** + **`pull_request_read`** many times in a row while CI runs; **`blocked`** for **5+ minutes** is common. That repetition is **mandatory**, not an error. **Do not** stop early solely because the environment flags “looping” — continue until **`clean`**, **`dirty`**, field absent, or the **40-minute** budget expires. If the session cannot continue, tell the user to invoke **continue epic** / resume merge polling for that PR. See `.cursor/rules/full-auto-github-polling.mdc`.
 
 1. **Call `pull_request_read` (method: `get`)** via GitHub MCP and inspect `mergeable_state`. Use this field — not the legacy status API, which does not see GitHub Actions check runs.
@@ -230,15 +237,15 @@ After the PR is created, use a single 40-minute polling budget for all non-termi
    | **field absent** | **FULL_AUTO IS NOT AVAILABLE** — hard stop. No wait, no CI inference, no merge. PR stays open, Jira stays In Review. Report this limitation clearly. |
    | `null` | GitHub still computing — poll every 30s. |
    | `unknown` / `unstable` / `behind` | Not yet final — poll every 30s. |
-   | `clean` | All required checks passed → proceed to step 2. |
-   | `blocked` | **Mandatory polling — not an immediate stop.** GitHub often returns `blocked` while required checks are still running or not yet reported. **Poll every 30s** until **`clean`**, **`dirty`**, or the **40-minute** budget from first post-PR poll expires (same rolling budget as `null` / `unknown` / `unstable` / `behind`). If it becomes `clean`, proceed to step 2 (with pre-merge guard). If the budget expires while still `blocked` (or any non-`clean` state except an earlier definitive `dirty`), treat as terminal BLOCK — same end state as standard mode. Report the final value. |
+   | `clean` | Mergeability OK → proceed to step 2 **only after** confirming **`TalkBack PR Gate` → `success`** (see Hard stop above). |
+   | `blocked` | **Mandatory polling — not an immediate stop.** GitHub often returns `blocked` while required checks are still running or not yet reported. **Poll every 30s** until **`clean`**, **`dirty`**, or the **40-minute** budget from first post-PR poll expires (same rolling budget as `null` / `unknown` / `unstable` / `behind`). If it becomes `clean`, continue only if **`TalkBack PR Gate` → `success`** (Hard stop); then step 2. If the budget expires while still `blocked` (or any non-`clean` state except an earlier definitive `dirty`), treat as terminal BLOCK — same end state as standard mode. Report the final value. |
    | `dirty` | Merge conflict — stop. Same end state as standard mode. Report the value. |
 
    If `mergeable_state` has not reached a terminal outcome after **40 minutes** of polling — i.e. still stuck in `null`, `unknown`, `unstable`, `behind`, or **`blocked` that never resolves to `clean`** — end FULL_AUTO — same end state as standard mode.
 
-   **Pre-merge guard (mandatory):** Call **`merge_pull_request` only** when the **most recent** `pull_request_read (get)` for this PR returned **`mergeable_state: clean`**. **Immediately before** calling `merge_pull_request`, perform **one more** `pull_request_read (get)`; merge **only if** it is still **`clean`**. **Never** call `merge_pull_request` if the latest read was **`blocked`**, **`null`**, **`unknown`**, **`unstable`**, **`behind`**, or **field absent** — continue polling per the table until **`clean`** or a terminal failure/timeout. **Do not** merge because an **earlier** poll showed `clean` minutes ago without a fresh read.
+   **Pre-merge guard (mandatory):** Call **`merge_pull_request` only** when **both** the **Hard stop** bullets above are satisfied ( **`TalkBack PR Gate` → `success`** and **`mergeable_state: clean`** ). Use `pull_request_read` **`get_check_runs`** (or equivalent) to confirm the **TalkBack PR Gate** conclusion on the PR head SHA. **Immediately before** calling `merge_pull_request`, perform **one more** `pull_request_read (get)`; merge **only if** `mergeable_state` is still **`clean`**. **Never** call `merge_pull_request` if the latest read was **`blocked`**, **`null`**, **`unknown`**, **`unstable`**, **`behind`**, or **field absent** — continue polling per the table until **`clean`** or a terminal failure/timeout. **Do not** merge because an **earlier** poll showed `clean` minutes ago without a fresh read.
 
-2. **On confirmed `mergeable_state: clean` (including the immediate pre-merge read above):** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
+2. **On confirmed `mergeable_state: clean` *and* `TalkBack PR Gate` `conclusion: success` (including the immediate pre-merge reads above):** Call `merge_pull_request` via GitHub MCP with `merge_method: squash`. Then:
    - **Remote branch:** GitHub auto-deletes it if "Automatically delete head branches" is enabled in repo settings. If not, delete it manually in the GitHub UI — there is no confirmed MCP tool for branch deletion.
    - **Local cleanup:**
      ```
@@ -294,7 +301,7 @@ Return (mirror the Jira completion comment where applicable):
 - confirmation that the structured Jira completion comment was posted (or paste the comment body if posting failed)
 - summary of changes
 - follow-up actions
-- **FULL_AUTO only:** PR gate outcome mapped to `mergeable_state` (PASS = `clean`; BLOCK = terminal `blocked`/`dirty` after polling; unresolved = timed-out polling — **poll when initial read is `blocked`**); if PASS — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation; if BLOCK or unresolved — final `mergeable_state` value observed, no further actions taken
+- **FULL_AUTO only:** **`TalkBack PR Gate` `conclusion: success`** *and* **`mergeable_state: clean`** (after polling); if either fails — no merge, final `mergeable_state` and gate conclusion reported; if both pass — merge SHA, remote branch deletion confirmation, local cleanup confirmation, Jira Done transition confirmation
 
 ---
 
