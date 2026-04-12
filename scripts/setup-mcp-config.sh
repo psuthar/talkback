@@ -40,8 +40,13 @@ servers = {
 
 # GitHub MCP server (github/github-mcp-server via Docker).
 # Uses docker run so mergeable_state is available in get_pull_request responses.
-# Requires Docker and GITHUB_PERSONAL_ACCESS_TOKEN (repo scope).
-github_pat = os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip()
+# Requires Docker and a GitHub PAT (repo scope).
+# Accepts GITHUB_PERSONAL_ACCESS_TOKEN or GH_PERSONAL_ACCESS_TOKEN (Codespaces
+# disallows secrets prefixed with "GITHUB_", so the latter is the Codespace-safe name).
+github_pat = (
+    os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN", "").strip()
+    or os.environ.get("GH_PERSONAL_ACCESS_TOKEN", "").strip()
+)
 if github_pat:
     servers["github"] = {
         "command": "docker",
@@ -79,8 +84,9 @@ print(f"TALKBACK_MCP_API_KEY used: {key}")
 print("(set TALKBACK_MCP_API_KEY before running this script to pin your own secret)")
 print()
 if not github_pat:
-    print("GitHub MCP server NOT written — export GITHUB_PERSONAL_ACCESS_TOKEN (repo scope) and re-run.")
+    print("GitHub MCP server NOT written — export GITHUB_PERSONAL_ACCESS_TOKEN or GH_PERSONAL_ACCESS_TOKEN (repo scope) and re-run.")
     print("  Requires Docker and ghcr.io/github/github-mcp-server image (docker pull ghcr.io/github/github-mcp-server).")
+    print("  Note: Codespaces disallows secrets prefixed with GITHUB_ — use GH_PERSONAL_ACCESS_TOKEN there.")
     print()
 if not (atlassian_domain and atlassian_email and atlassian_token):
     print("Atlassian MCP server NOT written — export ATLASSIAN_DOMAIN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN and re-run.")
