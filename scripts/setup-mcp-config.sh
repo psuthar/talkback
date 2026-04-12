@@ -50,6 +50,22 @@ if github_pat:
         "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": github_pat},
     }
 
+# Atlassian MCP server (Jira + Confluence via npx).
+# Requires ATLASSIAN_DOMAIN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN.
+atlassian_domain = os.environ.get("ATLASSIAN_DOMAIN", "").strip()
+atlassian_email = os.environ.get("ATLASSIAN_EMAIL", "").strip()
+atlassian_token = os.environ.get("ATLASSIAN_API_TOKEN", "").strip()
+if atlassian_domain and atlassian_email and atlassian_token:
+    servers["atlassian"] = {
+        "command": "npx",
+        "args": ["-y", "@xuandev/atlassian-mcp"],
+        "env": {
+            "ATLASSIAN_DOMAIN": atlassian_domain,
+            "ATLASSIAN_EMAIL": atlassian_email,
+            "ATLASSIAN_API_TOKEN": atlassian_token,
+        },
+    }
+
 obj = {"mcpServers": servers}
 text = json.dumps(obj, indent=2) + "\n"
 (root / ".cursor").mkdir(parents=True, exist_ok=True)
@@ -65,6 +81,9 @@ print()
 if not github_pat:
     print("GitHub MCP server NOT written — export GITHUB_PERSONAL_ACCESS_TOKEN (repo scope) and re-run.")
     print("  Requires Docker and ghcr.io/github/github-mcp-server image (docker pull ghcr.io/github/github-mcp-server).")
+    print()
+if not (atlassian_domain and atlassian_email and atlassian_token):
+    print("Atlassian MCP server NOT written — export ATLASSIAN_DOMAIN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN and re-run.")
     print()
 print("Next: fully quit and reopen Cursor / Claude Code so MCP reloads.")
 if not db_url and not acting and not key_user_map:
