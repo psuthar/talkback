@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import {
-  API_BASE,
   createSession,
   createUserAndLoginWithId,
   deleteSession,
@@ -30,9 +29,8 @@ test('creator opens session in edit mode, sees creator-only UI', async ({ page, 
   const session = await createSession(request, 'E2E Creator Access Session')
   seededSessionId = session.id
 
-  // --- Navigate to session in edit (creator) mode ---
-  // Pass api= so the app uses the same backend we used (critical on Render: frontend must call the API service).
-  const params = new URLSearchParams({ session: session.id, mode: 'edit', api: API_BASE })
+  // --- Navigate to session in edit (creator) mode (API base from Playwright storage state / VITE) ---
+  const params = new URLSearchParams({ session: session.id, mode: 'edit' })
   await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 

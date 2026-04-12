@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import {
-  API_BASE,
   createUserAndLoginWithId,
   createSession,
   deleteSession,
@@ -40,8 +39,8 @@ test(
     seededSessionId = session.id
     await pasteMaterial(request, session.id, 'Meridian Report', FIXTURE_TEXT)
 
-    // --- 1. Navigate to session in participant view (api= so app uses same backend on Render) ---
-    const params = new URLSearchParams({ session: session.id, mode: 'view', api: API_BASE })
+    // --- 1. Navigate to session in participant view ---
+    const params = new URLSearchParams({ session: session.id, mode: 'view' })
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
 

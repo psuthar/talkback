@@ -11,7 +11,7 @@
  *   5. Newly generated invite link (accept_url) resolves to the canonical route
  *      after participant registration.
  *   6. Auth/session behavior: authenticated creator opening canonical edit URL
- *      stays on /app/sessions/:id?mode=edit (same-origin, no cross-origin api= param).
+ *      stays on /app/sessions/:id?mode=edit (API base from Playwright storage state / VITE, no ?api=).
  *
  * Seeding strategy: all sessions and users created via API; browser only used for
  * the observable browser-side assertions.
@@ -199,7 +199,7 @@ test('invitation accept_url uses same-origin accept-invite path', async ({ reque
   }
 })
 
-// ─── Test 6: Auth/session behavior — same-origin, no api= param ───────────────
+// ─── Test 6: Auth/session behavior — canonical edit URL without ?api= ─────────
 
 test('authenticated creator opens canonical edit URL without api= param and sees creator UI', async ({ page, context, request }) => {
   const email = uniqueEmail('routing-creator-same-origin')
@@ -207,7 +207,7 @@ test('authenticated creator opens canonical edit URL without api= param and sees
   const session = await createSession(request, 'E2E Same-Origin Creator Session')
 
   try {
-    // Navigate to canonical edit URL with NO api= parameter — relies on same-origin proxy.
+    // Navigate to canonical edit URL with NO ?api= (storage state seeds talkback.apiBaseUrl).
     await page.goto(`/app/sessions/${session.id}?mode=edit`)
     await page.waitForLoadState('networkidle')
 
@@ -239,7 +239,7 @@ test('creator header participant link uses canonical /app/sessions/:id path', as
   const session = await createSession(request, 'E2E Share Link Routing Session')
 
   try {
-    // Navigate to canonical edit URL (same-origin, no api= param).
+    // Navigate to canonical edit URL (no ?api=; API base from storage state / VITE).
     await page.goto(`/app/sessions/${session.id}?mode=edit`)
     await page.waitForLoadState('networkidle')
 

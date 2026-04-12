@@ -33,7 +33,6 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 import {
-  API_BASE,
   createUserAndLoginWithId,
   createSession,
   deleteSession,
@@ -51,7 +50,7 @@ const PPTX_FILE = path.join(FIXTURES_DIR, 'test.pptx')
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 async function navigateToCreatorSession(page, sessionId: string) {
-  const params = new URLSearchParams({ session: sessionId, mode: 'edit', api: API_BASE })
+  const params = new URLSearchParams({ session: sessionId, mode: 'edit' })
   await page.goto(`/?${params.toString()}`)
   await page.waitForLoadState('networkidle')
 }
