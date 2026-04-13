@@ -433,3 +433,83 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 
 - **Example manifest (Secret + ConfigMap + Deployment):** [`deploy/k8s/mcp-hosted.example.yaml`](../deploy/k8s/mcp-hosted.example.yaml) — edit image name, resources, and secret wiring before apply. Sets **`TALKBACK_MCP_HEALTH_ADDR=:8080`** and HTTP **liveness/readiness** probes on `/healthz` and `/ready`.
 - **Docker Compose:** The main stack is [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) (Postgres + API). There is no default `talkback-mcp` service there; run the MCP image beside your stack when you have a stdio bridge, or use the image in CI/smoke with `docker run -i` and a test client.
+
+## Remote deployment (Render.com)
+
+TalkBack MCP is hosted as a Render.com web service so IDEs connect via a URL instead of running a local Go process. This is the recommended path for GitHub Codespace users and any environment where a persistent local process is impractical.
+
+### How it works
+
+When **`TALKBACK_MCP_HTTP_ADDR`** or **`PORT`** is set at process start, the binary switches from stdio to **StreamableHTTP** transport (stateless, one server per request). Render.com injects `PORT` automatically — no extra config beyond the env vars below.
+
+IDE clients (Claude Code, Cursor) use a **`url`** entry in `.mcp.json` / `.cursor/mcp.json` instead of `command`/`args`. The `Authorization: Bearer` header is sent automatically on every tools/call — the API key stays in the IDE config, not on disk in the repo.
+
+### Render service setup
+
+| Setting | Value |
+|---------|-------|
+| **Build command** | `go build -o talkback-mcp ./cmd/talkback-mcp` |
+| **Start command** | `./talkback-mcp` |
+| **Port** | Render injects `PORT`; the binary listens on `:<PORT>` automatically via `resolveHTTPAddr`. |
+| **Health check path** | `/healthz` |
+
+### Required env vars (Render dashboard → Environment)
+
+| Variable | Notes |
+|----------|-------|
+| `TALKBACK_MCP_API_KEY` | Shared secret. Clients must send `Authorization: Bearer <key>`. Comma-separate for key rotation. |
+| `DATABASE_URL` | Postgres connection string (from TalkBack DB service). Enables session tools. Omit for health-check-only. |
+| `TALKBACK_MCP_ACTING_USER_ID` | TalkBack `users.id` UUID for the acting user — required when `DATABASE_URL` is set and per-key user map is not used. |
+| `OPENAI_API_KEY` | Required for search, ask, action-items, and RAG tools. |
+
+**Do not** set `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` on a network-exposed server — it defaults to `true` (strict) which is correct for hosted mode.
+
+### Health and readiness endpoints
+
+Both endpoints are **unauthenticated** — they are intended for health probes, not MCP clients.
+
+| Path | Meaning |
+|------|---------|
+| **`GET /healthz`** | Returns `{"status":"ok","service":"talkback-mcp","version":"..."}`. Use as the Render health-check path. |
+| **`GET /ready`** | Returns 200 when Postgres is reachable (or when no DB is configured), 503 otherwise. |
+
+### Client setup
+
+Run [`scripts/setup-mcp-config.sh`](../scripts/setup-mcp-config.sh) with `TALKBACK_MCP_URL` set:
+
+```bash
+export TALKBACK_MCP_URL=https://talkback-mcp.onrender.com
+export TALKBACK_MCP_API_KEY=sk-your-secret-key   # must match the server's TALKBACK_MCP_API_KEY
+./scripts/setup-mcp-config.sh
+```
+
+The script writes `.mcp.json` (Claude Code project scope) and `.cursor/mcp.json` (Cursor) with a **`url`-based entry** — no `command`/`args`, no local Go process required. Fully quit and reopen the IDE so MCP reloads.
+
+Generated entry shape:
+
+```json
+{
+  "mcpServers": {
+    "talkback": {
+      "url": "https://talkback-mcp.onrender.com",
+      "headers": {
+        "Authorization": "Bearer sk-your-secret-key"
+      }
+    }
+  }
+}
+```
+
+### GitHub Codespace setup
+
+In a Codespace, set the secrets in **GitHub → Settings → Codespaces → Secrets** (or the repo-level equivalent) and they become environment variables automatically on Codespace start:
+
+1. Add `TALKBACK_MCP_URL` → `https://talkback-mcp.onrender.com`
+2. Add `TALKBACK_MCP_API_KEY` → the server's shared secret
+3. Reopen (or rebuild) your Codespace
+4. In the Codespace terminal, run `./scripts/setup-mcp-config.sh`
+5. Restart Claude Code / Cursor
+
+**No `.bashrc` workaround needed.** Before the remote service was available, Codespace users had to add `go run ./cmd/talkback-mcp` invocations to `.bashrc` so the MCP process started on every Codespace launch. With `TALKBACK_MCP_URL` set, the IDE connects directly to the hosted server — no local process, no shell startup changes.
+
+**GitHub secret naming note:** GitHub Codespaces disallows secret names that start with `GITHUB_`. Use `GH_PERSONAL_ACCESS_TOKEN` (not `GITHUB_PERSONAL_ACCESS_TOKEN`) for the GitHub PAT secret in Codespaces. `setup-mcp-config.sh` accepts both names.
