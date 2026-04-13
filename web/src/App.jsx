@@ -4032,7 +4032,7 @@ function App() {
                   padding: '8px 16px'
                 }}
               >
-                Clear Session
+                Show All Sessions
               </button>
             </div>
             {authUser && (
