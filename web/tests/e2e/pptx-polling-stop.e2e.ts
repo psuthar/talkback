@@ -81,7 +81,7 @@ async function uploadFile(page, filePath: string) {
 
 // ─── Test ─────────────────────────────────────────────────────────────────────
 
-test('PPTX-only session: processing, ingestion, and transcript polls stop within 30 s (no active import job)', async ({
+test('PPTX-only session: processing, ingestion, and transcript polls stop within 30 s (no active import job)', { tag: '@pptx' }, async ({
   page,
   context,
   request,

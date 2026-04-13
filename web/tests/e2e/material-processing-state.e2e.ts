@@ -142,7 +142,7 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
 
   // LibreOffice slides conversion via Docker typically completes in ~30s locally.
   // The per-test timeout is set generously to handle slow Docker startup on cold machines.
-  test('PPTX: item is disabled while slides are processing, becomes enabled at terminal state', async ({ page, context, request }) => {
+  test('PPTX: item is disabled while slides are processing, becomes enabled at terminal state', { tag: '@pptx' }, async ({ page, context, request }) => {
     test.setTimeout(180_000)
     const email = uniqueEmail('proc-pptx')
     const userId = await createUserAndLoginWithId(context, request, email)

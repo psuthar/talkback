@@ -87,6 +87,25 @@ jobs:
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect PPTX/conversion-related changes
+        id: changed
+        shell: bash
+        run: |
+          # Non-PR events (push, workflow_dispatch) always install LibreOffice for full release coverage.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "pptx=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # On PRs: scan changed files for conversion-relevant paths.
+          BASE="${{ steps.base.outputs.base_ref }}"
+          CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || true)
+          if echo "$CHANGED" | grep -qE \
+            '(internal/processing/|internal/transcript/|web/tests/.*[Mm]aterial|web/tests/.*[Pp]ptx|web/e2e/.*[Mm]aterial|web/e2e/.*[Pp]ptx|\.pptx$|libreoffice|poppler)'; then
+            echo "pptx=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pptx=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: PR risk scoring (v2.8)
         id: prrisk
         continue-on-error: true
@@ -162,6 +181,7 @@ jobs:
           exit 1
 
       - name: Install LibreOffice and poppler-utils (for PPTX conversion)
+        if: steps.changed.outputs.pptx == 'true'
         run: sudo apt-get install -y --no-install-recommends libreoffice poppler-utils
 
       - name: Start API server (background)
@@ -240,7 +260,11 @@ jobs:
           TALKBACK_ADMIN_PASSWORD: "SmokePass123!"
         run: |
           set -o pipefail
-          npx playwright test 2>&1 | tee playwright-live.log
+          GREP_ARGS=""
+          if [ "${{ steps.changed.outputs.pptx }}" != "true" ]; then
+            GREP_ARGS="--grep-invert @pptx"
+          fi
+          npx playwright test $GREP_ARGS 2>&1 | tee playwright-live.log
 
       - name: Convert Playwright results to readiness schema
         continue-on-error: true
