@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/newrelic/go-agent/v3/newrelic"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
@@ -25,6 +26,7 @@ import (
 	"github.com/psuthar/talkback/internal/email"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/invitations"
+	"github.com/psuthar/talkback/internal/mcpserver"
 	"github.com/psuthar/talkback/internal/migrations"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/processing"
@@ -436,6 +438,33 @@ func main() {
 		log.Println("Teams integration: ENABLE_TEAMS=true; OAuth and /api/teams/* routes registered")
 	} else {
 		log.Println("Teams integration: ENABLE_TEAMS not set; OAuth and other /api/teams/* routes disabled (GET /api/teams/status still returns enabled:false)")
+	}
+
+	// MCP StreamableHTTP handler — optional, requires TALKBACK_MCP_API_KEY.
+	// When set, mounts the MCP handler at /mcp/ with Bearer auth middleware.
+	// /mcp/healthz and /mcp/ready are unauthenticated so cloud health probes work.
+	// The /mcp routes do NOT inherit the API's CORS or cookie middleware — they use Bearer auth only.
+	if os.Getenv("TALKBACK_MCP_API_KEY") != "" {
+		mcpAuth, err := mcpserver.LoadAuthFromEnv()
+		if err != nil {
+			log.Fatalf("MCP: config error: %v", err)
+		}
+		mcpSrv := mcpserver.NewTalkbackMCPServer(mcpserver.TalkbackServerConfig{
+			Version: "api",
+			DB:      db,
+			Storage: store,
+			Auth:    mcpAuth,
+		})
+		mcpSubMux := http.NewServeMux()
+		mcpserver.RegisterHealthHTTPRoutes(mcpSubMux, "api", db)
+		mcpHTTPHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
+			return mcpSrv
+		}, &mcp.StreamableHTTPOptions{Stateless: true})
+		mcpSubMux.Handle("/", mcpAuth.HTTPBearerAuthMiddleware(mcpHTTPHandler))
+		http.Handle("/mcp/", http.StripPrefix("/mcp", mcpSubMux))
+		log.Println("MCP: StreamableHTTP handler mounted at /mcp/ (Bearer auth required); /mcp/healthz and /mcp/ready are open")
+	} else {
+		log.Println("MCP: TALKBACK_MCP_API_KEY not set; /mcp routes not registered (set to enable MCP StreamableHTTP on this service)")
 	}
 
 	// Embedded React SPA (production same-origin serving).

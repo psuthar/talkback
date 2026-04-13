@@ -128,14 +128,16 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
         working-directory: web
-        run: npm install
+        run: npm ci
 
-      - name: Install Playwright browsers (chromium + headless shell)
+      - name: Install Playwright browsers (chromium)
         working-directory: web
-        run: npx playwright install chromium chromium-headless-shell --with-deps
+        run: npx playwright install chromium
 
       # Validation: E2E uses preview :3000 + API :8081; VITE_API_BASE_URL + global-setup localStorage
       # (talkback.apiBaseUrl) must match TALKBACK_API_BASE on the Playwright step.
