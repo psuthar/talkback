@@ -1,5 +1,11 @@
-# Minimal image for talkback-mcp (stdio MCP server). Build from repository root:
+# Minimal image for talkback-mcp. Build from repository root:
 #   docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
+#
+# Transport modes (both use this image):
+#   Stdio (default, local IDE):  no extra env vars — run as stdio MCP process
+#   HTTP (Render / remote):      set TALKBACK_MCP_HTTP_ADDR=:<port> OR let the binary
+#                                read the PORT env var injected by Render automatically.
+#                                Health routes (/healthz, /ready) are served on the same port.
 #
 # Not used by the main TalkBack API image (see /Dockerfile).
 FROM golang:1.25-alpine AS builder
@@ -14,6 +20,6 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/talkback-mcp /usr/local/bin/talkback-mcp
 RUN adduser -D -H -u 65532 mcp
 USER 65532:65532
-# Optional HTTP probes when TALKBACK_MCP_HEALTH_ADDR is set (e.g. :8080 for Kubernetes).
+# HTTP transport port (used when TALKBACK_MCP_HTTP_ADDR or PORT env var is set).
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/talkback-mcp"]
