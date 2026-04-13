@@ -25,29 +25,11 @@ services:
       - key: R2_PRESIGN_GET_TTL_SECONDS
         value: "3600"
       # Add in Dashboard: DATABASE_URL, CORS_ALLOWED_ORIGINS, BASE_URL, OPENAI_API_KEY, and R2_* above
-
-  - type: web
-    name: talkback-mcp
-    runtime: docker
-    dockerfilePath: deploy/Dockerfile.mcp
-    healthCheckPath: /healthz
-    # Cold-start risk: Render free tier spins down after inactivity (typically 30–60 s).
-    # This causes initial MCP handshake timeouts. Recommend a paid tier or an uptime
-    # monitor / keep-alive ping to avoid client connection failures.
-    envVars:
-      # Required — set in Dashboard:
+      # MCP server — mounted at /mcp on talkback-api (SCRUM-89). Set in Dashboard:
       - key: TALKBACK_MCP_API_KEY
         sync: false      # shared secret; set manually in Dashboard, never in code
       - key: TALKBACK_MCP_REQUIRE_CLIENT_KEY
         value: "true"   # strict mode: every tools/call must supply a matching API key
-      - key: DATABASE_URL
-        sync: false      # Postgres connection string; enables all session tools
-      - key: OPENAI_API_KEY
-        sync: false      # required for search, RAG, action-items, and ask tools
-      # Identity — set ONE of these in Dashboard:
       - key: TALKBACK_MCP_ACTING_USER_ID
         sync: false      # TalkBack users.id UUID (global fallback acting user)
-      # OR: TALKBACK_MCP_KEY_USER_MAP_JSON — JSON map from API key → users.id UUID (per-key)
-      # Optional — R2 object storage (parity with API for R2-stored PDFs):
-      # STORAGE_DRIVER=r2, R2_BUCKET, R2_ACCOUNT_ID, R2_ENDPOINT,
-      # R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY — set in Dashboard if needed
+      # OR: TALKBACK_MCP_KEY_USER_MAP_JSON — JSON map from API key → users.id UUID (per-key alternative)
