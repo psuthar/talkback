@@ -82,7 +82,10 @@ func main() {
 		Auth:    auth,
 	})
 
-	if httpAddr := strings.TrimSpace(os.Getenv("TALKBACK_MCP_HTTP_ADDR")); httpAddr != "" {
+	// Resolve HTTP listen address: TALKBACK_MCP_HTTP_ADDR takes precedence; fall back to PORT
+	// (injected automatically by Render.com and similar PaaS) so the binary works without
+	// extra configuration when deployed as a Render web service.
+	if httpAddr := resolveHTTPAddr(os.Getenv); httpAddr != "" {
 		// HTTP transport mode (StreamableHTTP, stateless).
 		// TALKBACK_MCP_HEALTH_ADDR is ignored in this mode — health routes are on the same mux.
 		mux := http.NewServeMux()
