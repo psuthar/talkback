@@ -1,0 +1,3 @@
+{
+  "postStartCommand": "./scripts/setup-mcp-config.sh"
+}
