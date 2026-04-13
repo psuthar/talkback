@@ -72,6 +72,7 @@ Acceptance criteria
 - [ ] <observable behavior 1>
 - [ ] <observable behavior 2>
 - [ ] <edge case or error state if relevant>
+- [ ] Tests written and passing locally covering the new behavior
 
 Out of scope
 - <anything adjacent but not included>
@@ -79,6 +80,8 @@ Out of scope
 Notes
 <Optional: constraints, dependencies, open questions>
 ```
+
+**Testing note for Stories:** Every Story that involves code changes must include a "Tests written and passing locally" acceptance criterion. Specify the behavior being tested, not just "tests pass". UI-only Stories that cannot be verified by automated tests should say so explicitly.
 
 ---
 
@@ -100,10 +103,13 @@ What
 Done when
 - [ ] <verifiable completion criterion 1>
 - [ ] <verifiable completion criterion 2>
+- [ ] Tests written and passing locally: <name the test type — unit / DB integration / handler / MCP behavioral>
 
 Notes
 <Optional: constraints, dependencies, risks>
 ```
+
+**Testing note for Tasks:** Every Task that changes product code (Go packages, DB queries, MCP handlers, migrations, frontend) must include at least one "Tests written and passing locally" item in "Done when". Name the specific test type. Docs-only and config-only Tasks are exempt.
 
 ---
 
@@ -454,3 +460,4 @@ Before finalizing any ticket, verify:
 - [ ] Notes section used for constraints, dependencies, and open questions — not mixed into criteria
 - [ ] Criteria count ≤ 6 for Stories (split if more needed)
 - [ ] Bug has all four core sections: Observed / Expected / Impact / Reproduction
+- [ ] **Code-change tickets (Task/Story/Bug) include an explicit testing criterion** — names the test type (unit, DB integration, handler, MCP behavioral) and confirms tests must pass locally before the ticket is done. Docs/config-only tickets are exempt; mark them as such in Notes.
