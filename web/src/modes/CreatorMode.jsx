@@ -1416,7 +1416,7 @@ export function CreatorMode({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           {onClearSession && (
             <button type="button" onClick={onClearSession} style={{ backgroundColor: '#f44336', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', margin: 0 }}>
-              Clear Session
+              Show All Sessions
             </button>
           )}
         </div>
