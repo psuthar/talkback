@@ -38,6 +38,7 @@ venv/
 *.test
 *.out
 go.work
+talkback-mcp
 
 # MCP configs (may contain API tokens/secrets)
 .mcp.json
