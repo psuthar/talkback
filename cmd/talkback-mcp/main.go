@@ -1,5 +1,7 @@
-// Command talkback-mcp runs the TalkBack Model Context Protocol server over stdio (newline-delimited JSON-RPC).
-// Logs must go to stderr; stdout is reserved for the MCP wire protocol.
+// Command talkback-mcp runs the TalkBack Model Context Protocol server.
+//
+// By default it runs over stdio (newline-delimited JSON-RPC). When TALKBACK_MCP_HTTP_ADDR is set
+// it starts a StreamableHTTP listener on that address instead and stdio is not started.
 package main
 
 import (
@@ -80,6 +82,28 @@ func main() {
 		Auth:    auth,
 	})
 
+	if httpAddr := strings.TrimSpace(os.Getenv("TALKBACK_MCP_HTTP_ADDR")); httpAddr != "" {
+		// HTTP transport mode (StreamableHTTP, stateless).
+		// TALKBACK_MCP_HEALTH_ADDR is ignored in this mode — health routes are on the same mux.
+		mux := http.NewServeMux()
+		mcpserver.RegisterHealthHTTPRoutes(mux, version, db)
+		mcpHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
+			return server
+		}, &mcp.StreamableHTTPOptions{Stateless: true})
+		mux.Handle("/", auth.HTTPBearerAuthMiddleware(mcpHandler))
+		hs := &http.Server{
+			Addr:              httpAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		log.Printf("transport: http (StreamableHTTP, stateless) listening on %s", httpAddr)
+		if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("http: %v", err)
+		}
+		return
+	}
+
+	// Stdio transport mode (default, backward-compatible).
 	if addr := strings.TrimSpace(os.Getenv("TALKBACK_MCP_HEALTH_ADDR")); addr != "" {
 		mux := http.NewServeMux()
 		mcpserver.RegisterHealthHTTPRoutes(mux, version, db)
@@ -96,6 +120,7 @@ func main() {
 		}()
 	}
 
+	log.Printf("transport: stdio")
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalf("server: %v", err)
 	}
