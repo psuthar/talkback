@@ -23,6 +23,8 @@ For each child: **PR merged to `main`**, Jira issue **Done**, **`mergeable_state
 | **`run epic`** when `.epic-run/<EPIC>.json` already exists (non-complete) | State conflict | Use **`continue epic`**, or delete state file only if abandoning |
 | Polling **merge gate** too few times | Host “looping” warnings are not a signal to stop | **30s** interval, up to **40 min** per `.cursor/rules/full-auto-github-polling.mdc` |
 | After user **squash-merges** (e.g. WARN override), stopping without **Jira Done** + **git cleanup** | User expects **`continue epic`** to finish close-out | Follow **User override: manual squash merge** (merge already done → reconcile only) |
+| Not transitioning the **epic issue** to **In Progress** at run start | Epic stays “To Do” while child work is actively running | Transition the epic to **In Progress** before executing the first child ticket (see **Start** algorithm) |
+| Not transitioning the **epic issue** to **Done** when all children complete | Epic stays “In Progress” even after full completion | Transition the epic to **Done** as part of **Finish** (see **Finish** section) |
 
 ---
 
@@ -81,7 +83,9 @@ The only exception is if the **user explicitly** cancels epic mode or directs a 
 
 4. Write initial state file (see **State file**).
 
-5. Execute work list items in order (see **Execution loop**).
+5. **Jira — epic In Progress** — Transition the **epic issue itself** (e.g. SCRUM-XX) to **In Progress** using `jira_get_transitions` + `jira_transition_issue`. Do this once, immediately before the first child ticket begins executing. If the epic is already **In Progress** (e.g. resumed run), skip this step (idempotent).
+
+6. Execute work list items in order (see **Execution loop**).
 
 ### Execution loop (per work-list item)
 
@@ -108,8 +112,9 @@ The only exception is if the **user explicitly** cancels epic mode or directs a 
 When all work-list items complete with PASS:
 
 1. Mark state file `status: "complete"`.
-2. Post a Jira comment on the epic summarizing all merged tickets (keys, PRs, merge SHAs).
-3. Report completion to the user.
+2. **Jira — epic Done** — Transition the **epic issue itself** to **Done** using `jira_get_transitions` + `jira_transition_issue`. This is a mandatory step; do not skip it even if all child issues are already Done.
+3. Post a Jira comment on the epic summarizing all merged tickets (keys, PRs, merge SHAs).
+4. Report completion to the user.
 
 ---
 
@@ -233,14 +238,15 @@ On **`continue epic`**, for each **non-Done** child, **first determine whether i
 
 1. **Git:** `git fetch origin && git checkout main && git pull --ff-only origin main` (or equivalent) before creating the next **`feat/<ticket>`** branch so work is based on latest **`main`**.
 2. Read `.epic-run/SCRUM-XX.json` if present (if missing, still proceed using Jira as truth).
-3. Re-query Jira: `parent = SCRUM-XX AND statusCategory != Done ORDER BY created ASC` — **source of truth** for remaining work (covers manual merges, manual **Done**, or user-fixed CI).
-4. For **each** child in order:
+3. **Jira — epic In Progress guard:** Ensure the epic issue itself is **In Progress** before processing any child ticket. Use `jira_get_transitions` + `jira_transition_issue` if it is still **To Do**. If it is already **In Progress** (or **Done** — which would be unexpected here), skip (idempotent).
+4. Re-query Jira: `parent = SCRUM-XX AND statusCategory != Done ORDER BY created ASC` — **source of truth** for remaining work (covers manual merges, manual **Done**, or user-fixed CI).
+5. For **each** child in order:
    - If **Done** in Jira → skip (idempotent).
    - If **not Done** but **PR is already merged** (including user **squash merge after WARN**) → run **User override: manual squash merge** close-out (**Jira Done**, branch cleanup, local **`main`**, state file)—**do not** merge again.
    - If **not Done**, PR **open**, and **Final Gate is still WARN/BLOCK** (gates not fixed) → **HALT again immediately.** Do not proceed to any subsequent ticket. Post Jira halt comment. Stop and await human instruction.
    - If **not Done**, PR **open**, and **Final Gate is now PASS** (user fixed CI/gate config) → resume **`mergeable_state`** polling + **Final Gate** check, then merge when allowed (epic rules).
    - If **not Done**, no merged PR, no implementation yet → run **`implement <KEY> FULL_AUTO`** with epic constraints.
-5. **HALT** if any step fails per **Halt behavior**; otherwise repeat until no children match the JQL or epic marked complete.
+6. **HALT** if any step fails per **Halt behavior**; otherwise repeat until no children match the JQL or epic marked complete.
 
 **Reconcile Jira with GitHub:** If **`main`** already contains the change but Jira lags (**In Review** / not **Done**), transition via Jira MCP—**do not** re-implement or open a duplicate PR.
 
@@ -284,7 +290,9 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 - **FULL_AUTO every ticket (default):** During epic execution, always use **`implement SCRUM-XX FULL_AUTO`** per child ticket (see **FULL_AUTO mandatory**). Do not substitute standard **`implement SCRUM-XX`**. The user does **not** need to repeat **`FULL_AUTO`** in chat—**`continue epic`** already implies it.
 - **Continue = drain:** On **`continue epic SCRUM-XX`** (or **`continue epic run for SCRUM-XX`**), process **all** remaining non-Done children in order until done or **HALT** (see **Drain remaining work**).
-- **In Progress first:** Transition the Jira ticket to **In Progress** before product code edits or implementation commits (see **In Progress before code**).
+- **Epic In Progress at run start:** Transition the **epic issue itself** to **In Progress** (via `jira_get_transitions` + `jira_transition_issue`) before the first child ticket begins executing. On `continue epic`, re-apply if the epic is still **To Do** (idempotent if already **In Progress**).
+- **Epic Done at finish:** Transition the **epic issue itself** to **Done** as part of the **Finish** step, after all child tickets are Done and before posting the summary comment. This is mandatory — do not skip even if children are already Done.
+- **In Progress first (child tickets):** Transition each child Jira ticket to **In Progress** before product code edits or implementation commits (see **In Progress before code**).
 - **Tests with code:** Every product-code ticket requires a pre-implementation test analysis (see **Execution loop** step 2) and must ship with the identified tests written and passing locally before the PR is pushed. Documentation-only or config-only tickets are exempt. CI is not a substitute for running tests locally first.
 - Never skip a ticket silently. If a ticket cannot be implemented (missing description,
   unresolvable dependency), HALT and report.

@@ -436,33 +436,25 @@ docker build -f deploy/Dockerfile.mcp -t talkback-mcp:latest .
 
 ## Remote deployment (Render.com)
 
-TalkBack MCP is hosted as a Render.com web service so IDEs connect via a URL instead of running a local Go process. This is the recommended path for GitHub Codespace users and any environment where a persistent local process is impractical.
+The TalkBack MCP handler is mounted directly on the **talkback-api** Render.com web service at `/mcp/` (SCRUM-89). IDEs connect via `<api-url>/mcp` instead of a separate service or local Go process. This is the recommended path for GitHub Codespace users and any environment where a persistent local process is impractical.
 
 ### How it works
 
-When **`TALKBACK_MCP_HTTP_ADDR`** or **`PORT`** is set at process start, the binary switches from stdio to **StreamableHTTP** transport (stateless, one server per request). Render.com injects `PORT` automatically — no extra config beyond the env vars below.
+The `cmd/api` binary mounts a **StreamableHTTP** MCP handler at `/mcp/` when `TALKBACK_MCP_API_KEY` is set. Render.com injects `PORT` automatically for the main API service — no extra port or build config needed for MCP. The `/mcp/` routes use `Authorization: Bearer` auth only (no CORS or cookie middleware). Health probe routes (`/mcp/healthz`, `/mcp/ready`) are unauthenticated.
 
-IDE clients (Claude Code, Cursor) use a **`url`** entry in `.mcp.json` / `.cursor/mcp.json` instead of `command`/`args`. The `Authorization: Bearer` header is sent automatically on every tools/call — the API key stays in the IDE config, not on disk in the repo.
+IDE clients (Claude Code, Cursor) use a **`url`** entry in `.mcp.json` / `.cursor/mcp.json` pointing to `<api-base-url>/mcp`. The `Authorization: Bearer` header is sent automatically on every tools/call — the API key stays in the IDE config, not on disk in the repo.
 
-### Render service setup
+### MCP env vars on talkback-api (Render dashboard → Environment)
 
-| Setting | Value |
-|---------|-------|
-| **Build command** | `go build -o talkback-mcp ./cmd/talkback-mcp` |
-| **Start command** | `./talkback-mcp` |
-| **Port** | Render injects `PORT`; the binary listens on `:<PORT>` automatically via `resolveHTTPAddr`. |
-| **Health check path** | `/healthz` |
-
-### Required env vars (Render dashboard → Environment)
+MCP is part of the `talkback-api` service. Add these env vars to the **talkback-api** service in the Render dashboard (in addition to the existing API env vars):
 
 | Variable | Notes |
 |----------|-------|
 | `TALKBACK_MCP_API_KEY` | Shared secret. Clients must send `Authorization: Bearer <key>`. Comma-separate for key rotation. |
-| `DATABASE_URL` | Postgres connection string (from TalkBack DB service). Enables session tools. Omit for health-check-only. |
-| `TALKBACK_MCP_ACTING_USER_ID` | TalkBack `users.id` UUID for the acting user — required when `DATABASE_URL` is set and per-key user map is not used. |
-| `OPENAI_API_KEY` | Required for search, ask, action-items, and RAG tools. |
+| `TALKBACK_MCP_REQUIRE_CLIENT_KEY` | Set `true` (strict mode). Do not set `false` on a network-exposed server. |
+| `TALKBACK_MCP_ACTING_USER_ID` | TalkBack `users.id` UUID for the acting user — required when session tools are needed and per-key user map is not used. |
 
-**Do not** set `TALKBACK_MCP_REQUIRE_CLIENT_KEY=false` on a network-exposed server — it defaults to `true` (strict) which is correct for hosted mode.
+`DATABASE_URL` and `OPENAI_API_KEY` are already on the talkback-api service; they are shared with MCP tool handlers automatically (same process).
 
 ### Health and readiness endpoints
 
@@ -470,15 +462,15 @@ Both endpoints are **unauthenticated** — they are intended for health probes, 
 
 | Path | Meaning |
 |------|---------|
-| **`GET /healthz`** | Returns `{"status":"ok","service":"talkback-mcp","version":"..."}`. Use as the Render health-check path. |
-| **`GET /ready`** | Returns 200 when Postgres is reachable (or when no DB is configured), 503 otherwise. |
+| **`GET /mcp/healthz`** | Returns `{"status":"ok","service":"talkback-mcp","version":"..."}`. |
+| **`GET /mcp/ready`** | Returns 200 when Postgres is reachable (or when no DB is configured), 503 otherwise. |
 
 ### Client setup
 
-Run [`scripts/setup-mcp-config.sh`](../scripts/setup-mcp-config.sh) with `TALKBACK_MCP_URL` set:
+Run [`scripts/setup-mcp-config.sh`](../scripts/setup-mcp-config.sh) with `TALKBACK_MCP_URL` set to the API base URL + `/mcp`:
 
 ```bash
-export TALKBACK_MCP_URL=https://talkback-mcp.onrender.com
+export TALKBACK_MCP_URL=https://talkback-api.onrender.com/mcp
 export TALKBACK_MCP_API_KEY=sk-your-secret-key   # must match the server's TALKBACK_MCP_API_KEY
 ./scripts/setup-mcp-config.sh
 ```
@@ -491,7 +483,7 @@ Generated entry shape:
 {
   "mcpServers": {
     "talkback": {
-      "url": "https://talkback-mcp.onrender.com",
+      "url": "https://talkback-api.onrender.com/mcp",
       "headers": {
         "Authorization": "Bearer sk-your-secret-key"
       }
@@ -504,7 +496,7 @@ Generated entry shape:
 
 In a Codespace, set the secrets in **GitHub → Settings → Codespaces → Secrets** (or the repo-level equivalent) and they become environment variables automatically on Codespace start:
 
-1. Add `TALKBACK_MCP_URL` → `https://talkback-mcp.onrender.com`
+1. Add `TALKBACK_MCP_URL` → `https://talkback-api.onrender.com/mcp`
 2. Add `TALKBACK_MCP_API_KEY` → the server's shared secret
 3. Reopen (or rebuild) your Codespace
 4. In the Codespace terminal, run `./scripts/setup-mcp-config.sh`
