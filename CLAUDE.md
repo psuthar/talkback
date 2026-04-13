@@ -89,6 +89,7 @@ Three MCP servers are configured for this project. Both `.cursor/mcp.json` (Curs
   - `TALKBACK_MCP_MAX_EMBEDDING_CALLS_PER_SESSION_PER_MINUTE` — optional per-session query-embedding cap (default unlimited); see `docs/mcp-server.md` (SCRUM-54)
   - `OPENAI_API_KEY` — required for `search_session` / `search_session_content` and `get_session_raw_chunks` / `get_session_retrieval_context` (embeddings only), `get_session_action_items` (embeddings + one LLM call per invocation), `get_session_source_chunks` when the session index must be built (`EnsureSessionIndex`), and `ask_session` / `ask_session_question` (embeddings + LLM answer generation)
   - **`STORAGE_DRIVER=r2`** plus the same R2 env vars as `cmd/api` — optional; enables MCP RAG indexing parity with HTTP for R2-stored PDFs (`EnsureSessionIndex` / `IndexSession`; SCRUM-49)
+- **Codespace users:** Set `TALKBACK_MCP_URL` and `TALKBACK_MCP_API_KEY` as GitHub Codespace secrets, then run `setup-mcp-config.sh` — no `.bashrc` workaround or local Go process needed. See `docs/mcp-server.md` "Remote deployment → GitHub Codespace setup".
 
 ### `github` — GitHub operations
 - **Command:** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server`
