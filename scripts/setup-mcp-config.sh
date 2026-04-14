@@ -35,13 +35,13 @@ key = os.environ["SETUP_KEY"]
 mcp_url = os.environ.get("SETUP_MCP_URL", "").strip()
 
 if mcp_url:
-    # Remote HTTP mode (StreamableHTTP): use a "url" entry.
-    # The remote server validates every tools/call via Authorization: Bearer <key>.
+    # Remote HTTP mode (StreamableHTTP): embed the key as a ?key= query parameter.
+    # This avoids the "headers" field, which Claude Code's MCP schema does not accept.
+    # The server's HTTPBearerAuthMiddleware accepts ?key= as a fallback to the
+    # Authorization: Bearer header, so both Cursor and Claude Code work with this URL.
+    sep = "&" if "?" in mcp_url else "?"
     talkback_entry = {
-        "url": mcp_url,
-        "headers": {
-            "Authorization": f"Bearer {key}",
-        },
+        "url": f"{mcp_url}{sep}key={key}",
     }
 else:
     # Local stdio mode (default): launch the binary via go run.
@@ -116,8 +116,8 @@ print(f"TALKBACK_MCP_API_KEY used: {key}")
 print("(set TALKBACK_MCP_API_KEY before running this script to pin your own secret)")
 print()
 if mcp_url:
-    print(f"Mode: REMOTE HTTP — talkback entry uses url: {mcp_url}")
-    print("      Authorization: Bearer <key> header will be sent on every tools/call.")
+    print(f"Mode: REMOTE HTTP — talkback entry uses url: {mcp_url}?key=<key>")
+    print("      Key embedded as ?key= query param (compatible with Claude Code + Cursor).")
     print("      No local Go process is required. Ensure the remote server is running.")
 else:
     print("Mode: LOCAL stdio — talkback entry uses 'go run ./cmd/talkback-mcp'.")
