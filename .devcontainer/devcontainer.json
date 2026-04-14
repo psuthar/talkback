@@ -2,6 +2,12 @@
   "name": "TalkBack",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
 
+  // Explicitly enable Docker-in-Docker so `docker` commands work inside the
+  // workspace (needed for the GitHub MCP server and the postgres sidecar below).
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
   "forwardPorts": [3000, 8080],
   "portsAttributes": {
     "3000": {
@@ -14,15 +20,26 @@
     }
   },
 
+  // DATABASE_URL is set automatically so `go run ./cmd/api` and `go test` work
+  // without any manual export. A Codespace secret named DATABASE_URL will
+  // override this value (correct behavior for custom setups).
+  "remoteEnv": {
+    "DATABASE_URL": "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable"
+  },
+
   // Runs once when the container is first created.
-  // Installs all dependencies and pulls the GitHub MCP Docker image.
-  "postCreateCommand": "go mod download && cd web && npm install && docker pull ghcr.io/github/github-mcp-server || true",
+  // - Installs Go and Node dependencies
+  // - Pre-pulls the GitHub MCP Docker image (|| true so a transient failure
+  //   doesn't abort the build)
+  // - Starts a pgvector/postgres sidecar for the API and go test
+  "postCreateCommand": "go mod download && cd web && npm install && docker pull ghcr.io/github/github-mcp-server || true && docker run -d --name talkback-postgres --restart=always -p 5432:5432 -e POSTGRES_USER=talkback -e POSTGRES_PASSWORD=talkback -e POSTGRES_DB=talkback pgvector/pgvector:pg16",
 
   // Runs on every Codespace start (including after a resume).
-  // Reads TALKBACK_MCP_URL / TALKBACK_MCP_API_KEY from Codespace secrets
+  // Ensures postgres is running (idempotent: no-op if already up) then
+  // reads TALKBACK_MCP_URL / TALKBACK_MCP_API_KEY from Codespace secrets
   // and writes .mcp.json for Claude Code / Cursor.
   // See docs/mcp-server.md — "GitHub Codespace setup" for required secrets.
-  "postStartCommand": "./scripts/setup-mcp-config.sh",
+  "postStartCommand": "docker start talkback-postgres 2>/dev/null || true && ./scripts/setup-mcp-config.sh",
 
   "customizations": {
     "vscode": {
