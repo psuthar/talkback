@@ -1,3 +1,36 @@
 {
-  "postStartCommand": "./scripts/setup-mcp-config.sh"
+  "name": "TalkBack",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+
+  "forwardPorts": [3000, 8080],
+  "portsAttributes": {
+    "3000": {
+      "label": "Web dev server",
+      "onAutoForward": "notify"
+    },
+    "8080": {
+      "label": "API",
+      "onAutoForward": "notify"
+    }
+  },
+
+  // Runs once when the container is first created.
+  // Installs all dependencies and pulls the GitHub MCP Docker image.
+  "postCreateCommand": "go mod download && cd web && npm install && docker pull ghcr.io/github/github-mcp-server || true",
+
+  // Runs on every Codespace start (including after a resume).
+  // Reads TALKBACK_MCP_URL / TALKBACK_MCP_API_KEY from Codespace secrets
+  // and writes .mcp.json for Claude Code / Cursor.
+  // See docs/mcp-server.md — "GitHub Codespace setup" for required secrets.
+  "postStartCommand": "./scripts/setup-mcp-config.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "esbenp.prettier-vscode",
+        "dbaeumer.vscode-eslint"
+      ]
+    }
+  }
 }
