@@ -2,7 +2,7 @@
 FROM node:20-alpine AS webbuilder
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci
+RUN npm ci || npm ci
 COPY web ./
 RUN npm run build
 
