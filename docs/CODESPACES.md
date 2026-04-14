@@ -55,6 +55,65 @@ If you set a Codespace secret named `DATABASE_URL`, it overrides this value (use
 
 ---
 
+## Long-running sessions (epic runs and extended CI polling)
+
+Epic runs can take 30–60+ minutes of CI polling. GitHub Codespaces will suspend after the configured idle timeout if no active connection exists — the timeout tracks **connection activity**, not process activity. If your SSH session drops (e.g. laptop goes to sleep), the inactivity clock starts even though your processes are still running.
+
+Use the following technique to keep a Codespace alive indefinitely.
+
+### Setup (one time)
+
+1. **Set your idle timeout to 240 minutes** (the maximum) — GitHub → Settings → Codespaces → Default idle timeout.
+
+2. **Create a free UptimeRobot account** at [uptimerobot.com](https://uptimerobot.com). The free tier supports 5-minute ping intervals and is enough.
+
+### Before starting each epic run
+
+```bash
+# 1. Start a trivial HTTP server on port 3000 (already forwarded by the devcontainer).
+#    The web dev server (npm run dev) is not running during epic runs, so port 3000 is free.
+python3 -m http.server 3000 &
+
+# 2. In the Codespace Ports tab: right-click port 3000 → Port Visibility → Public.
+#    This produces a stable URL like:
+#    https://<codespace-name>-3000.app.github.dev
+
+# 3. In UptimeRobot: Add Monitor → HTTP(s) → paste the URL above → 5-minute interval.
+#    UptimeRobot pings every 5 min; GitHub sees an active connection; Codespace never suspends.
+
+# 4. Start a tmux session so the epic run survives SSH disconnection.
+tmux new -s epic
+
+# 5. Inside tmux: start the epic run.
+#    claude "run epic SCRUM-XX"
+```
+
+To reconnect after closing your laptop:
+
+```bash
+ssh <your-codespace>         # or reopen in browser
+tmux attach -t epic          # pick up exactly where the run left off
+```
+
+### Why this works
+
+- UptimeRobot pings the public URL every 5 minutes → GitHub sees an active HTTP connection → inactivity timer resets.
+- `tmux` keeps the terminal session alive on the Codespace host regardless of whether your SSH/browser connection is open.
+- The 240-minute idle timeout is a belt-and-suspenders fallback if UptimeRobot ever misses a ping.
+
+### Cleanup
+
+When the epic run finishes, kill the HTTP server and remove the UptimeRobot monitor:
+
+```bash
+# Kill the background HTTP server
+pkill -f "python3 -m http.server 3000"
+
+# In the Ports tab: set port 3000 back to Private (or leave it — it serves nothing sensitive).
+```
+
+---
+
 ## Troubleshooting
 
 ### 1. `setup-mcp-config.sh` reports a missing key or writes a local-mode config
