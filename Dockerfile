@@ -29,7 +29,8 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
       poppler-utils \
-      libreoffice-nogui && \
+      libreoffice-nogui \
+      unoconv && \
     rm -rf /var/lib/apt/lists/*
 
 # Ensure soffice is on PATH and verify headless conversion works (build fails if missing)
