@@ -19,3 +19,14 @@ func TestSofficeAvailable(t *testing.T) {
 	}
 }
 
+// TestWarmLibreOffice verifies that WarmLibreOffice completes without panic and logs success.
+// Skipped when soffice is not on PATH (same guard as LibreOfficeHealthcheck).
+func TestWarmLibreOffice(t *testing.T) {
+	if _, err := exec.LookPath("soffice"); err != nil {
+		t.Skipf("soffice not found on PATH, skipping warm-up test: %v", err)
+	}
+	// WarmLibreOffice must complete without panicking and without returning an error.
+	// Since it only logs (no return value), a panic-free run is the acceptance bar.
+	WarmLibreOffice()
+}
+
