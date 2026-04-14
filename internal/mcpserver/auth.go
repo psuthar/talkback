@@ -16,6 +16,10 @@ import (
 // and TALKBACK_MCP_ACTING_USER_ID is a valid UUID.
 type actingUserCtxKey struct{}
 
+// callerActingUserHeader is the HTTP header name clients use to supply their acting user UUID
+// when TALKBACK_MCP_ALLOW_CALLER_ACTING_USER is enabled on the server.
+const callerActingUserHeader = "X-Talkback-Acting-User-Id"
+
 // ActingUserID returns the configured TalkBack user ID for this MCP deployment, if any.
 func ActingUserID(ctx context.Context) (uuid.UUID, bool) {
 	v, ok := ctx.Value(actingUserCtxKey{}).(uuid.UUID)
@@ -37,6 +41,10 @@ type Auth struct {
 	// When false (set via TALKBACK_MCP_REQUIRE_CLIENT_KEY=false), only the server env is configured;
 	// use for Cursor/Claude Code hosts that cannot attach _meta on tool calls. Default is true.
 	RequireClientKey bool
+	// AllowCallerActingUser, when true, lets an authenticated client supply the acting user UUID
+	// via the X-Talkback-Acting-User-Id HTTP header. Requires TALKBACK_MCP_ALLOW_CALLER_ACTING_USER=true
+	// on the server. Opt-in so server operators explicitly consent to clients self-identifying.
+	AllowCallerActingUser bool
 }
 
 // LoadAuthFromEnv loads TALKBACK_MCP_API_KEY (required, non-empty) and optional
@@ -73,11 +81,13 @@ func LoadAuthFromEnv() (Auth, error) {
 		return Auth{}, err
 	}
 	requireClientKey := envBoolDefaultTrue(os.Getenv("TALKBACK_MCP_REQUIRE_CLIENT_KEY"))
+	allowCallerActingUser := envBoolDefaultFalse(os.Getenv("TALKBACK_MCP_ALLOW_CALLER_ACTING_USER"))
 	return Auth{
-		acceptedKeys:     keys,
-		actingUserID:     uid,
-		keyToUser:        keyToUser,
-		RequireClientKey: requireClientKey,
+		acceptedKeys:          keys,
+		actingUserID:          uid,
+		keyToUser:             keyToUser,
+		RequireClientKey:      requireClientKey,
+		AllowCallerActingUser: allowCallerActingUser,
 	}, nil
 }
 
@@ -139,6 +149,23 @@ func (a Auth) ActingUserForClientKey(clientKey string) (uuid.UUID, bool) {
 	return uuid.UUID{}, false
 }
 
+// ExtractCallerActingUserID reads the X-Talkback-Acting-User-Id header from HTTP extras, if present.
+// Returns (uuid, true) when the header contains a valid non-nil UUID.
+func ExtractCallerActingUserID(extra *mcp.RequestExtra) (uuid.UUID, bool) {
+	if extra == nil || extra.Header == nil {
+		return uuid.UUID{}, false
+	}
+	h := strings.TrimSpace(extra.Header.Get(callerActingUserHeader))
+	if h == "" {
+		return uuid.UUID{}, false
+	}
+	u, err := uuid.Parse(h)
+	if err != nil || u == uuid.Nil {
+		return uuid.UUID{}, false
+	}
+	return u, true
+}
+
 func envBoolDefaultTrue(s string) bool {
 	if strings.TrimSpace(s) == "" {
 		return true
@@ -148,6 +175,15 @@ func envBoolDefaultTrue(s string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func envBoolDefaultFalse(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
