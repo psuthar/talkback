@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -154,6 +155,75 @@ func TestRequireToolAuthMiddleware_relaxedAllowsWithoutClientKey(t *testing.T) {
 	_, err := handler(context.Background(), "tools/call", req)
 	require.NoError(t, err)
 	require.True(t, called)
+}
+
+func TestRequireToolAuthMiddleware_callerActingUserHeader(t *testing.T) {
+	t.Parallel()
+	callerUID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	a := Auth{
+		acceptedKeys:          []string{"good"},
+		RequireClientKey:      true,
+		AllowCallerActingUser: true,
+	}
+	mw := a.RequireToolAuthMiddleware()
+
+	t.Run("header is used when flag is on", func(t *testing.T) {
+		t.Parallel()
+		var sawCtx context.Context
+		next := func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+			sawCtx = ctx
+			return nil, nil
+		}
+		handler := mw(next)
+		params := &mcp.CallToolParamsRaw{
+			Name: "list_sessions",
+			Meta: mcp.Meta{"talkback": map[string]any{"apiKey": "good"}},
+		}
+		h := http.Header{}
+		h.Set(callerActingUserHeader, callerUID.String())
+		req := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
+			Params: params,
+			Extra:  &mcp.RequestExtra{Header: h},
+		}
+		_, err := handler(context.Background(), "tools/call", req)
+		require.NoError(t, err)
+		got, ok := ActingUserID(sawCtx)
+		require.True(t, ok)
+		require.Equal(t, callerUID, got)
+	})
+
+	t.Run("header is ignored when flag is off", func(t *testing.T) {
+		t.Parallel()
+		globalUID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+		a2 := Auth{
+			acceptedKeys:          []string{"good"},
+			actingUserID:          globalUID,
+			RequireClientKey:      true,
+			AllowCallerActingUser: false,
+		}
+		mw2 := a2.RequireToolAuthMiddleware()
+		var sawCtx context.Context
+		next := func(ctx context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+			sawCtx = ctx
+			return nil, nil
+		}
+		handler := mw2(next)
+		params := &mcp.CallToolParamsRaw{
+			Name: "list_sessions",
+			Meta: mcp.Meta{"talkback": map[string]any{"apiKey": "good"}},
+		}
+		h := http.Header{}
+		h.Set(callerActingUserHeader, callerUID.String())
+		req := &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
+			Params: params,
+			Extra:  &mcp.RequestExtra{Header: h},
+		}
+		_, err := handler(context.Background(), "tools/call", req)
+		require.NoError(t, err)
+		got, ok := ActingUserID(sawCtx)
+		require.True(t, ok)
+		require.Equal(t, globalUID, got, "should use global acting user, not caller header")
+	})
 }
 
 func TestRequireToolAuthMiddleware_rejectsBadKey(t *testing.T) {

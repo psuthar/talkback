@@ -58,8 +58,8 @@ func main() {
 				log.Printf("info: DATABASE_URL with TALKBACK_MCP_KEY_USER_MAP_JSON — listed API keys use per-key TalkBack users; other valid keys still need TALKBACK_MCP_ACTING_USER_ID or they get acting_user_not_configured on session tools")
 			}
 		}
-		if !hasGlobal && (!auth.HasPerKeyActingUsers() || !auth.RequireClientKey) {
-			log.Printf("warning: DATABASE_URL is set but TALKBACK_MCP_ACTING_USER_ID is unset — session tools will return 403 with error_code=acting_user_not_configured; set a TalkBack users.id UUID (or use TALKBACK_MCP_KEY_USER_MAP_JSON with TALKBACK_MCP_REQUIRE_CLIENT_KEY=true)")
+		if !hasGlobal && (!auth.HasPerKeyActingUsers() || !auth.RequireClientKey) && !auth.AllowCallerActingUser {
+			log.Printf("warning: DATABASE_URL is set but TALKBACK_MCP_ACTING_USER_ID is unset — session tools will return 403 with error_code=acting_user_not_configured; set a TalkBack users.id UUID, use TALKBACK_MCP_KEY_USER_MAP_JSON with TALKBACK_MCP_REQUIRE_CLIENT_KEY=true, or set TALKBACK_MCP_ALLOW_CALLER_ACTING_USER=true to let clients supply their user ID via X-Talkback-Acting-User-Id header")
 		}
 	}
 

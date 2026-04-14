@@ -39,7 +39,15 @@ func (a Auth) RequireToolAuthMiddleware() mcp.Middleware {
 					logMCPAuthFailed(p.Name)
 					return nil, fmt.Errorf("unauthorized: invalid or missing API key")
 				}
-				if uid, ok := a.ActingUserForClientKey(key); ok {
+				// Resolve acting user: caller-supplied header takes precedence when the server
+				// opts in, then per-key map, then global env fallback.
+				if a.AllowCallerActingUser {
+					if uid, ok := ExtractCallerActingUserID(req.GetExtra()); ok {
+						ctx = context.WithValue(ctx, actingUserCtxKey{}, uid)
+					} else if uid, ok := a.ActingUserForClientKey(key); ok {
+						ctx = context.WithValue(ctx, actingUserCtxKey{}, uid)
+					}
+				} else if uid, ok := a.ActingUserForClientKey(key); ok {
 					ctx = context.WithValue(ctx, actingUserCtxKey{}, uid)
 				}
 			} else if a.actingUserID != uuid.Nil {
