@@ -38,7 +38,7 @@
   // Ensures postgres is running (idempotent: no-op if already up) then
   // reads TALKBACK_MCP_URL / TALKBACK_MCP_API_KEY from Codespace secrets
   // and writes .mcp.json for Claude Code / Cursor.
-  // See docs/mcp-server.md — "GitHub Codespace setup" for required secrets.
+  // See docs/CODESPACES.md for required secrets and the first-run checklist.
   "postStartCommand": "docker start talkback-postgres 2>/dev/null || true && ./scripts/setup-mcp-config.sh",
 
   "customizations": {
