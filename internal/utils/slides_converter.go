@@ -48,6 +48,53 @@ func sofficeCmd() (string, error) {
 	return path, nil
 }
 
+// WarmLibreOffice runs a minimal soffice conversion so the OS page-caches the binary and shared
+// libraries and the LibreOffice user profile is created before the first real PPTX upload.
+// This cuts ~2-3s off the first post-deploy conversion.
+//
+// Call in a background goroutine at API startup — the function is non-blocking by design but
+// may take up to 30s on a cold host (image pull, font cache). Failure is logged but never fatal.
+// Skipped when TALKBACK_SOFFICE_CMD is set (Docker wrapper mode).
+func WarmLibreOffice() {
+	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
+		log.Println("LibreOffice warm-up: skipped (TALKBACK_SOFFICE_CMD is set)")
+		return
+	}
+	cmdPath, err := sofficeCmd()
+	if err != nil {
+		log.Printf("LibreOffice warm-up: skipped (%v)", err)
+		return
+	}
+
+	// Write a tiny HTML file — any format LibreOffice can convert will force profile creation.
+	tmpFile, err := os.CreateTemp("", "talkback-lo-warmup-*.html")
+	if err != nil {
+		log.Printf("LibreOffice warm-up: could not create temp file: %v", err)
+		return
+	}
+	tmpFile.WriteString("<html><body>warmup</body></html>")
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
+	outDir, err := os.MkdirTemp("", "talkback-lo-warmup-out-*")
+	if err != nil {
+		log.Printf("LibreOffice warm-up: could not create temp dir: %v", err)
+		return
+	}
+	defer os.RemoveAll(outDir)
+
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, cmdPath, "--headless", "--convert-to", "pdf", "--outdir", outDir, tmpFile.Name())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("LibreOffice warm-up: conversion failed in %v: %v; output=%s", time.Since(start), err, string(out))
+		return
+	}
+	log.Printf("LibreOffice warm-up complete in %v", time.Since(start))
+}
+
 // LibreOfficeHealthcheck runs soffice --version at startup and returns a one-line log message.
 // Used locally and on Render to confirm PPT/slide conversion is available. Does not block startup.
 // When TALKBACK_SOFFICE_CMD is set (e.g. Docker wrapper), we skip running it—wrapper exit code/output

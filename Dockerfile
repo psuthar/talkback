@@ -36,6 +36,14 @@ RUN apt-get update && \
 ENV PATH="/usr/bin:${PATH}"
 RUN which soffice && soffice --version
 
+# Pre-bake the LibreOffice user profile into the image layer.
+# Running a dummy conversion forces LO to create ~/.config/libreoffice/ and load font metadata
+# at build time — not at first-request time — so the cold-start overhead is paid once during
+# the Docker build rather than on every fresh deploy.
+RUN echo "<html><body>warmup</body></html>" > /tmp/lo-warmup.html && \
+    soffice --headless --convert-to pdf --outdir /tmp /tmp/lo-warmup.html 2>/dev/null || true && \
+    rm -f /tmp/lo-warmup.html /tmp/lo-warmup.pdf
+
 COPY --from=builder /go/bin/app /app
 COPY --from=builder /go/bin/reset-db /reset-db
 
