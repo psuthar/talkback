@@ -48,25 +48,78 @@ func sofficeCmd() (string, error) {
 	return path, nil
 }
 
-// WarmLibreOffice runs a minimal soffice conversion so the OS page-caches the binary and shared
-// libraries and the LibreOffice user profile is created before the first real PPTX upload.
-// This cuts ~2-3s off the first post-deploy conversion.
+// unoconvCmd returns the unoconv executable path: TALKBACK_UNOCONV_CMD if set, otherwise searches PATH.
+func unoconvCmd() (string, error) {
+	if cmd := os.Getenv("TALKBACK_UNOCONV_CMD"); cmd != "" {
+		return cmd, nil
+	}
+	path, err := exec.LookPath("unoconv")
+	if err != nil {
+		return "", fmt.Errorf("unoconv not found on PATH: %w", err)
+	}
+	return path, nil
+}
+
+// useUnoconv reports whether the unoconv persistent-listener path should be used for PPTX→PDF conversion.
+// It returns false when TALKBACK_SOFFICE_CMD is set (Docker wrapper mode) or when unoconv is absent.
+// Set TALKBACK_USE_UNOCONV=false to explicitly disable even when unoconv is installed.
+func useUnoconv() bool {
+	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
+		return false // Docker wrapper mode: unoconv is not applicable
+	}
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TALKBACK_USE_UNOCONV"))); v == "false" {
+		return false
+	}
+	_, err := unoconvCmd()
+	return err == nil
+}
+
+// convertWithUnoconv converts srcPath to PDF using the unoconv persistent listener, writing
+// the result into outDir. Returns the path to the produced PDF or an error.
+// unoconv maintains a background LibreOffice listener process; subsequent conversions reuse it,
+// reducing per-call cost from ~8-10s (fresh soffice) to ~0.5-1s.
+func convertWithUnoconv(ctx context.Context, srcPath, outDir string) (string, error) {
+	cmdPath, err := unoconvCmd()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, cmdPath, "-f", "pdf", "-o", outDir, srcPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("unoconv conversion to PDF timed out")
+		}
+		return "", fmt.Errorf("unoconv conversion to PDF failed: %w; output=%s", err, string(out))
+	}
+	baseName := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
+	pdfPath := filepath.Join(outDir, baseName+".pdf")
+	if _, err := os.Stat(pdfPath); err != nil {
+		// Try case-insensitive extension match.
+		candidates, _ := filepath.Glob(filepath.Join(outDir, baseName+".*"))
+		for _, c := range candidates {
+			if strings.EqualFold(filepath.Ext(c), ".pdf") {
+				return c, nil
+			}
+		}
+		return "", fmt.Errorf("unoconv did not produce expected PDF %s: %w", pdfPath, err)
+	}
+	return pdfPath, nil
+}
+
+// WarmLibreOffice runs a minimal conversion so the OS page-caches the binary and shared libraries
+// and the LibreOffice user profile is created before the first real PPTX upload.
+// When unoconv is active, the warm-up call also starts the persistent listener so the first real
+// conversion reuses it (~0.5s) instead of spawning a fresh process (~8-10s).
 //
 // Call in a background goroutine at API startup — the function is non-blocking by design but
-// may take up to 30s on a cold host (image pull, font cache). Failure is logged but never fatal.
+// may take up to 30s on a cold host. Failure is logged but never fatal.
 // Skipped when TALKBACK_SOFFICE_CMD is set (Docker wrapper mode).
 func WarmLibreOffice() {
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		log.Println("LibreOffice warm-up: skipped (TALKBACK_SOFFICE_CMD is set)")
 		return
 	}
-	cmdPath, err := sofficeCmd()
-	if err != nil {
-		log.Printf("LibreOffice warm-up: skipped (%v)", err)
-		return
-	}
 
-	// Write a tiny HTML file — any format LibreOffice can convert will force profile creation.
+	// Write a tiny HTML file — any format LibreOffice can convert triggers profile/listener init.
 	tmpFile, err := os.CreateTemp("", "talkback-lo-warmup-*.html")
 	if err != nil {
 		log.Printf("LibreOffice warm-up: could not create temp file: %v", err)
@@ -87,12 +140,27 @@ func WarmLibreOffice() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if useUnoconv() {
+		// Start the unoconv listener by performing a dummy conversion.
+		if _, err := convertWithUnoconv(ctx, tmpFile.Name(), outDir); err != nil {
+			log.Printf("LibreOffice warm-up (unoconv): failed in %v: %v", time.Since(start), err)
+			return
+		}
+		log.Printf("LibreOffice warm-up complete (unoconv listener started) in %v", time.Since(start))
+		return
+	}
+
+	cmdPath, err := sofficeCmd()
+	if err != nil {
+		log.Printf("LibreOffice warm-up: skipped (%v)", err)
+		return
+	}
 	cmd := exec.CommandContext(ctx, cmdPath, "--headless", "--convert-to", "pdf", "--outdir", outDir, tmpFile.Name())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("LibreOffice warm-up: conversion failed in %v: %v; output=%s", time.Since(start), err, string(out))
 		return
 	}
-	log.Printf("LibreOffice warm-up complete in %v", time.Since(start))
+	log.Printf("LibreOffice warm-up complete (soffice direct) in %v", time.Since(start))
 }
 
 // LibreOfficeHealthcheck runs soffice --version at startup and returns a one-line log message.
@@ -394,14 +462,18 @@ func slideNumberFromFilename(name string) int {
 }
 
 // ConvertSlidesToPNGsWithLibreOffice converts a local PPT/PPTX file to one PNG per slide.
-// It first converts to PDF with LibreOffice (soffice), then uses pdftoppm to produce one PNG per page,
-// because soffice --convert-to png only exports the first slide for PPT/PPTX.
+// Step 1 converts to PDF (via unoconv when available, falling back to soffice --headless).
+// Step 2 uses pdftoppm to rasterise each PDF page to PNG.
 // Callers are responsible for treating failures as best-effort only.
 func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error) {
 	overallStart := time.Now()
-	cmdPath, err := sofficeCmd()
-	if err != nil {
-		return nil, err
+
+	// Validate that at least one converter is available before acquiring the semaphore.
+	unoconvActive := useUnoconv()
+	if !unoconvActive {
+		if _, err := sofficeCmd(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Serialize slide conversions to avoid resource contention on constrained platforms.
@@ -413,21 +485,23 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	defer func() { <-slideConversionSem }()
 
 	var tmpDir string
+	var mkdirErr error
 	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
 		base := uploadRootForTemp()
 		if err := os.MkdirAll(base, 0755); err != nil {
 			return nil, fmt.Errorf("create temp base for soffice: %w", err)
 		}
-		tmpDir, err = os.MkdirTemp(base, "talkback-slides-*")
+		tmpDir, mkdirErr = os.MkdirTemp(base, "talkback-slides-*")
 	} else {
-		tmpDir, err = os.MkdirTemp("", "talkback-slides-*")
+		tmpDir, mkdirErr = os.MkdirTemp("", "talkback-slides-*")
 	}
-	if err != nil {
-		return nil, err
+	if mkdirErr != nil {
+		return nil, mkdirErr
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Step 1: PPT/PPTX → PDF (soffice exports all slides to PDF; --convert-to png only does first slide)
+	// Step 1: PPT/PPTX → PDF
+	// unoconv reuses a persistent LibreOffice listener (~0.5-1s); soffice spawns a fresh process (~8-10s).
 	sofficeTimeout := 3 * time.Minute
 	if s := strings.TrimSpace(os.Getenv("TALKBACK_SOFFICE_TIMEOUT")); s != "" {
 		if seconds, parseErr := strconv.Atoi(s); parseErr == nil && seconds > 0 {
@@ -437,41 +511,44 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	ctx, cancel := context.WithTimeout(context.Background(), sofficeTimeout)
 	defer cancel()
 
-	tSoffice := time.Now()
-	cmd := exec.CommandContext(
-		ctx,
-		cmdPath,
-		"--headless",
-		"--convert-to", "pdf",
-		"--outdir", tmpDir,
-		srcPath,
-	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("soffice conversion to PDF timed out after %s", sofficeTimeout)
+	tConv := time.Now()
+	var pdfPath string
+	if unoconvActive {
+		var err error
+		pdfPath, err = convertWithUnoconv(ctx, srcPath, tmpDir)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("soffice conversion to PDF failed: %w; output=%s", err, string(output))
-	}
-
-	baseName := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
-	pdfPath := filepath.Join(tmpDir, baseName+".pdf")
-	if _, err := os.Stat(pdfPath); err != nil {
-		// On Windows LibreOffice may emit mixed-case extension (e.g. .PDF); resolve case-insensitively.
-		candidates, _ := filepath.Glob(filepath.Join(tmpDir, baseName+".*"))
-		resolved := ""
-		for _, c := range candidates {
-			if strings.EqualFold(filepath.Ext(c), ".pdf") {
-				resolved = c
-				break
+		log.Printf("slides timing: unoconv pptx→pdf %v src=%s", time.Since(tConv), srcPath)
+	} else {
+		cmdPath, _ := sofficeCmd() // already validated above
+		cmd := exec.CommandContext(ctx, cmdPath, "--headless", "--convert-to", "pdf", "--outdir", tmpDir, srcPath)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, fmt.Errorf("soffice conversion to PDF timed out after %s", sofficeTimeout)
 			}
+			return nil, fmt.Errorf("soffice conversion to PDF failed: %w; output=%s", err, string(output))
 		}
-		if resolved == "" {
-			return nil, fmt.Errorf("soffice did not produce expected PDF %s: %w", pdfPath, err)
+		baseName := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
+		pdfPath = filepath.Join(tmpDir, baseName+".pdf")
+		if _, err := os.Stat(pdfPath); err != nil {
+			// On Windows LibreOffice may emit mixed-case extension (e.g. .PDF); resolve case-insensitively.
+			candidates, _ := filepath.Glob(filepath.Join(tmpDir, baseName+".*"))
+			resolved := ""
+			for _, c := range candidates {
+				if strings.EqualFold(filepath.Ext(c), ".pdf") {
+					resolved = c
+					break
+				}
+			}
+			if resolved == "" {
+				return nil, fmt.Errorf("soffice did not produce expected PDF %s: %w", pdfPath, err)
+			}
+			pdfPath = resolved
 		}
-		pdfPath = resolved
+		log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(tConv), srcPath)
 	}
-	log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(tSoffice), srcPath)
 
 	// Step 2: PDF → one PNG per page (pdftoppm)
 	outPrefix := filepath.Join(tmpDir, "slide")
