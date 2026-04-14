@@ -38,7 +38,10 @@ func buildTestMCPHandler(t *testing.T, apiKey string) http.Handler {
 	mcpserver.RegisterHealthHTTPRoutes(mcpSubMux, "test", nil)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 		return server
-	}, &mcp.StreamableHTTPOptions{Stateless: true})
+	}, &mcp.StreamableHTTPOptions{
+		Stateless:                  true,
+		DisableLocalhostProtection: true,
+	})
 	mcpSubMux.Handle("/", auth.HTTPBearerAuthMiddleware(mcpHandler))
 
 	// Wrap with StripPrefix so that /mcp/healthz → /healthz inside the sub-mux,
@@ -129,6 +132,32 @@ func TestMCPIntegration_mcpWrongBearerRejected(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+// TestMCPIntegration_nonLocalhostHostAllowed verifies that a request with a non-loopback
+// Host header (simulating a cloud reverse proxy like Render) is not rejected with 403.
+// Before SCRUM-92, the go-sdk DNS rebinding guard blocked these requests because the server
+// listens on 127.0.0.1 (httptest default) while the Host header is a public hostname.
+func TestMCPIntegration_nonLocalhostHostAllowed(t *testing.T) {
+	srv := httptest.NewServer(buildTestMCPHandler(t, "integration-key"))
+	t.Cleanup(srv.Close)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mcp/", strings.NewReader(`{"jsonrpc":"2.0","method":"initialize","id":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer integration-key")
+	// Simulate a reverse proxy forwarding the original public Host header (e.g. Render).
+	req.Host = "talkback-895n.onrender.com"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /mcp/ with public Host: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("got 403 Forbidden with public Host header — DNS rebinding protection not disabled: %s", body)
 	}
 }
 

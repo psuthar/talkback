@@ -459,7 +459,15 @@ func main() {
 		mcpserver.RegisterHealthHTTPRoutes(mcpSubMux, "api", db)
 		mcpHTTPHandler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 			return mcpSrv
-		}, &mcp.StreamableHTTPOptions{Stateless: true})
+		}, &mcp.StreamableHTTPOptions{
+			Stateless: true,
+			// DisableLocalhostProtection is required for cloud deployments (e.g. Render) where
+			// the reverse proxy connects to the Go process on 127.0.0.1:PORT while forwarding
+			// the original public Host header (e.g. talkback-895n.onrender.com). Without this,
+			// the go-sdk DNS rebinding guard rejects every request with 403. The endpoint is
+			// already protected by HTTPBearerAuthMiddleware, so disabling the guard is safe here.
+			DisableLocalhostProtection: true,
+		})
 		mcpSubMux.Handle("/", mcpAuth.HTTPBearerAuthMiddleware(mcpHTTPHandler))
 		http.Handle("/mcp/", http.StripPrefix("/mcp", mcpSubMux))
 		log.Println("MCP: StreamableHTTP handler mounted at /mcp/ (Bearer auth required); /mcp/healthz and /mcp/ready are open")
