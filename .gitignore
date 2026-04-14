@@ -43,6 +43,8 @@ talkback-mcp
 # MCP configs (may contain API tokens/secrets)
 .mcp.json
 .cursor/mcp.json
+# Persists TALKBACK_MCP_URL / TALKBACK_MCP_API_KEY for setup-mcp-config.sh re-runs
+.env.mcp
 
 # Local draft PR body (CLAUDE.md §7); prefer GitHub MCP for PR creation—do not commit by accident
 pr-body.md

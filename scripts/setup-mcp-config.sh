@@ -4,27 +4,51 @@
 #
 # Transport modes
 # ---------------
-# Local stdio (default):
-#   Run without TALKBACK_MCP_URL. The generated config launches the binary via
-#   "go run ./cmd/talkback-mcp" in the local repo. Requires Go to be on PATH.
+# Remote HTTP (default when TALKBACK_MCP_URL is known):
+#   Uses "npx mcp-remote" as the command — a stdio↔StreamableHTTP bridge that lets
+#   Claude Code connect to the live Render.com server without a local Go process.
+#   Requires Node.js/npx (already used for the Atlassian MCP server).
+#   URL preference is read (in order) from:
+#     1. Shell env: TALKBACK_MCP_URL
+#     2. .env.mcp file in the repo root (KEY=VALUE pairs, one per line)
+#   The key is similarly read from TALKBACK_MCP_API_KEY, then .env.mcp.
 #
-# Remote HTTP (Render.com or any hosted instance):
-#   Export TALKBACK_MCP_URL before running this script. The generated config
-#   uses a "url" entry (StreamableHTTP) instead of "command"/"args", so no
-#   local Go process is needed. Requires TALKBACK_MCP_API_KEY to be the API
-#   key accepted by the remote server.
-#
-#   Example:
-#     export TALKBACK_MCP_URL=https://talkback-mcp.onrender.com
-#     export TALKBACK_MCP_API_KEY=sk-your-secret-key
+#   Example (one-time setup, persisted via .env.mcp):
+#     echo "TALKBACK_MCP_URL=https://talkback-895n.onrender.com/mcp/" >> .env.mcp
+#     echo "TALKBACK_MCP_API_KEY=your-secret-key" >> .env.mcp
 #     ./scripts/setup-mcp-config.sh
+#
+# Local stdio (explicit opt-in only):
+#   Set TALKBACK_MCP_FORCE_LOCAL=true. The generated config launches the binary via
+#   "go run ./cmd/talkback-mcp". Requires Go on PATH. Only needed when actively
+#   developing/testing changes to the MCP server itself.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Load .env.mcp if present (KEY=VALUE lines; ignores comments and blanks).
+ENV_MCP="$ROOT/.env.mcp"
+if [[ -f "$ENV_MCP" ]]; then
+  while IFS='=' read -r _k _v || [[ -n "$_k" ]]; do
+    [[ "$_k" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${_k// }" ]] && continue
+    _k="${_k// /}"
+    _v="${_v#"${_v%%[! ]*}"}"  # ltrim
+    _v="${_v%"${_v##*[! ]}"}"  # rtrim
+    # Only export if not already set in the environment
+    case "$_k" in
+      TALKBACK_MCP_URL|TALKBACK_MCP_API_KEY|TALKBACK_MCP_ACTING_USER_ID|TALKBACK_MCP_KEY_USER_MAP_JSON|TALKBACK_MCP_FORCE_LOCAL)
+        [[ -z "${!_k:-}" ]] && export "$_k=$_v"
+        ;;
+    esac
+  done < "$ENV_MCP"
+fi
+
 KEY="${TALKBACK_MCP_API_KEY:-$(openssl rand -hex 16)}"
 export SETUP_ROOT="$ROOT"
 export SETUP_KEY="$KEY"
 export SETUP_MCP_URL="${TALKBACK_MCP_URL:-}"
+export SETUP_FORCE_LOCAL="${TALKBACK_MCP_FORCE_LOCAL:-false}"
 
 python3 <<'PY'
 import json, os
@@ -33,18 +57,36 @@ from pathlib import Path
 root = Path(os.environ["SETUP_ROOT"])
 key = os.environ["SETUP_KEY"]
 mcp_url = os.environ.get("SETUP_MCP_URL", "").strip()
+force_local = os.environ.get("SETUP_FORCE_LOCAL", "false").strip().lower() == "true"
 
-if mcp_url:
-    # Remote HTTP mode (StreamableHTTP): embed the key as a ?key= query parameter.
-    # This avoids the "headers" field, which Claude Code's MCP schema does not accept.
-    # The server's HTTPBearerAuthMiddleware accepts ?key= as a fallback to the
-    # Authorization: Bearer header, so both Cursor and Claude Code work with this URL.
-    sep = "&" if "?" in mcp_url else "?"
+if mcp_url and not force_local:
+    # Remote HTTP mode: use "npx mcp-remote" as a stdio↔StreamableHTTP bridge.
+    # This avoids a raw "url" entry in .mcp.json, which causes Claude Code to fail
+    # loading all MCPs when mixed with command-based entries.
+    #
+    # Auth: pass Authorization:Bearer via --header. Use an env var for the value so
+    # spaces are preserved correctly (Claude Code / Cursor mangle spaces inside args).
+    # mcp-remote uses "http-first" strategy, which supports our StreamableHTTP server.
+    #
+    # Ensure trailing slash on the URL — /mcp without it redirects (307) and
+    # mcp-remote may not follow the redirect.
+    base = mcp_url.rstrip("/") + "/"
     talkback_entry = {
-        "url": f"{mcp_url}{sep}key={key}",
+        "command": "npx",
+        "args": [
+            "mcp-remote",
+            base,
+            "--header",
+            "Authorization:${TALKBACK_MCP_AUTH_HEADER}",
+        ],
+        "env": {
+            "TALKBACK_MCP_AUTH_HEADER": f"Bearer {key}",
+        },
     }
 else:
-    # Local stdio mode (default): launch the binary via go run.
+    # Local stdio mode (explicit opt-in via TALKBACK_MCP_FORCE_LOCAL=true):
+    # launch the binary via go run. Only use this when actively developing the
+    # MCP server. For normal use, set TALKBACK_MCP_URL (or .env.mcp) instead.
     talkback_env = {
         "TALKBACK_MCP_API_KEY": key,
         "TALKBACK_MCP_REQUIRE_CLIENT_KEY": "false",
@@ -115,13 +157,19 @@ print()
 print(f"TALKBACK_MCP_API_KEY used: {key}")
 print("(set TALKBACK_MCP_API_KEY before running this script to pin your own secret)")
 print()
-if mcp_url:
-    print(f"Mode: REMOTE HTTP — talkback entry uses url: {mcp_url}?key=<key>")
-    print("      Key embedded as ?key= query param (compatible with Claude Code + Cursor).")
-    print("      No local Go process is required. Ensure the remote server is running.")
+if mcp_url and not force_local:
+    base = mcp_url.rstrip("/") + "/"
+    print(f"Mode: REMOTE HTTP — talkback entry uses 'npx mcp-remote {base}'")
+    print("      Auth: Authorization: Bearer <key> via --header + env var.")
+    print("      No local Go process required. Ensure the remote server is running.")
+    print("      Tip: persist this URL in .env.mcp so re-running this script keeps remote mode.")
 else:
     print("Mode: LOCAL stdio — talkback entry uses 'go run ./cmd/talkback-mcp'.")
-    print("      Set TALKBACK_MCP_URL before running this script to switch to remote mode.")
+    if force_local:
+        print("      (TALKBACK_MCP_FORCE_LOCAL=true — explicit local opt-in)")
+    else:
+        print("      TALKBACK_MCP_URL not set. Set it (or add to .env.mcp) to switch to remote mode.")
+        print("      Example: echo 'TALKBACK_MCP_URL=https://talkback-895n.onrender.com/mcp/' >> .env.mcp")
     if not db_url and not acting and not key_user_map:
         print()
         print("Optional: export DATABASE_URL and TALKBACK_MCP_ACTING_USER_ID, then re-run this script to")
