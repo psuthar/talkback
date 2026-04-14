@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -682,29 +684,41 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 		return
 	}
 
-	manifest := utils.SlideManifest{
-		Slides: make([]utils.SlideManifestEntry, 0, len(slides)),
-	}
+	// Pre-allocate manifest entries by slide index so order is deterministic regardless
+	// of which goroutine finishes first.
+	manifestEntries := make([]utils.SlideManifestEntry, len(slides))
 
 	tUpload := time.Now()
-	var uploadBytes int64
-	for _, slide := range slides {
-		key := storage.SlideImageKeyFromArtifactKey(artifactKey, slide.Index)
-
-		_, _, err := h.Storage.Put(ctx, key, bytes.NewReader(slide.Data), "image/png", int64(len(slide.Data)))
-		if err != nil {
-			log.Printf("failed uploading derived slide %d for %s: %v", slide.Index, artifactKey, err)
-			h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
-			return
-		}
-		uploadBytes += int64(len(slide.Data))
-
-		manifest.Slides = append(manifest.Slides, utils.SlideManifestEntry{
-			Index:      slide.Index,
-			StorageKey: key,
-		})
+	var uploadBytes atomic.Int64
+	var uploadErr atomic.Value // stores first error string
+	var wg sync.WaitGroup
+	for i, slide := range slides {
+		wg.Add(1)
+		go func(idx int, s utils.ConvertedSlide) {
+			defer wg.Done()
+			key := storage.SlideImageKeyFromArtifactKey(artifactKey, s.Index)
+			_, _, err := h.Storage.Put(ctx, key, bytes.NewReader(s.Data), "image/png", int64(len(s.Data)))
+			if err != nil {
+				uploadErr.CompareAndSwap(nil, err.Error())
+				log.Printf("failed uploading derived slide %d for %s: %v", s.Index, artifactKey, err)
+				return
+			}
+			uploadBytes.Add(int64(len(s.Data)))
+			manifestEntries[idx] = utils.SlideManifestEntry{
+				Index:      s.Index,
+				StorageKey: key,
+			}
+		}(i, slide)
 	}
+	wg.Wait()
 	uploadElapsed := time.Since(tUpload)
+
+	if errVal := uploadErr.Load(); errVal != nil {
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, errVal.(string))
+		return
+	}
+
+	manifest := utils.SlideManifest{Slides: manifestEntries}
 
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
@@ -725,7 +739,7 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 
 	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
 	log.Printf("slides pipeline summary: key=%s slides=%d convert=%v upload_pngs=%v (%d bytes) manifest_put=%v total=%v",
-		artifactKey, len(manifest.Slides), convElapsed, uploadElapsed, uploadBytes, manifestElapsed, time.Since(pipelineStart))
+		artifactKey, len(manifest.Slides), convElapsed, uploadElapsed, uploadBytes.Load(), manifestElapsed, time.Since(pipelineStart))
 	log.Printf("generated %d derived slides for %s", len(manifest.Slides), artifactKey)
 }
 
