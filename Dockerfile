@@ -23,15 +23,24 @@ RUN CGO_ENABLED=0 go build -o /go/bin/reset-db -v ./cmd/reset-db
 
 # Final stage: runtime image
 # Use debian-slim so we can install LibreOffice (soffice) for PPTX -> slides/image/text processing
-FROM debian:stable-slim
+# Pinned to bookworm-slim (not floating debian:stable-slim) to avoid repo/tag desync on Render.
+FROM debian:bookworm-slim
 
+# Retry once on transient mirror failures (exit 100 = package fetch error).
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates \
       poppler-utils \
       libreoffice-nogui \
       unoconv && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* || \
+    (sleep 5 && apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      poppler-utils \
+      libreoffice-nogui \
+      unoconv && \
+    rm -rf /var/lib/apt/lists/*)
 
 # Ensure soffice is on PATH and verify headless conversion works (build fails if missing)
 ENV PATH="/usr/bin:${PATH}"
