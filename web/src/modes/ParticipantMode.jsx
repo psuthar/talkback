@@ -6,6 +6,7 @@ import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { getDefaultApiBaseUrl } from '../config'
+import { VideoStartOverlay } from '../components/VideoStartOverlay'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
@@ -811,7 +812,7 @@ export function ParticipantMode({
                 )}
                 {video && !(currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code) && (
                   <>
-                    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
                       <VideoPlayer
                         video={video}
                         onEvent={handleVideoPlayerEvent}
@@ -823,6 +824,10 @@ export function ParticipantMode({
                         creatorIdentity={currentSession?.session?.created_by ?? creatorIdentity}
                         primaryVideoAccessUrl={primaryVideoAccessUrl}
                         primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
+                      />
+                      <VideoStartOverlay
+                        sessionId={currentSession?.session?.id}
+                        playing={isVideoPlaying}
                       />
                     </div>
                     <div style={{ flexShrink: 0, marginTop: '6px' }}>

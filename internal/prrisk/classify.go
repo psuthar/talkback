@@ -124,7 +124,8 @@ func IsTestPath(path string) bool {
 	if strings.HasSuffix(p, ".spec.ts") || strings.HasSuffix(p, ".spec.tsx") {
 		return true
 	}
-	if strings.Contains(p, "__tests__/") || strings.Contains(p, ".test.ts") || strings.Contains(p, ".test.tsx") {
+	if strings.Contains(p, "__tests__/") || strings.Contains(p, ".test.ts") || strings.Contains(p, ".test.tsx") ||
+		strings.Contains(p, ".test.js") || strings.Contains(p, ".test.jsx") {
 		return true
 	}
 	return false

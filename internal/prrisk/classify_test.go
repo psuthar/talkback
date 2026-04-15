@@ -45,6 +45,12 @@ func TestIsTestPath(t *testing.T) {
 	if IsTestPath("internal/handlers/sessions.go") {
 		t.Error("should not be test")
 	}
+	if !IsTestPath("web/src/test/VideoStartOverlay.test.jsx") {
+		t.Error("expected .test.jsx to be a test path")
+	}
+	if !IsTestPath("web/src/components/Foo.test.js") {
+		t.Error("expected .test.js to be a test path")
+	}
 }
 
 func TestIsE2EPath(t *testing.T) {
