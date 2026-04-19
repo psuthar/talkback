@@ -9,7 +9,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"runtime/debug"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -46,6 +49,16 @@ type dbPingResponse struct {
 }
 
 func main() {
+	bootAt := time.Now().UTC()
+	pid := os.Getpid()
+	log.Printf("Process boot start: pid=%d started_at=%s", pid, bootAt.Format(time.RFC3339Nano))
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC: pid=%d recovered=%v\n%s", pid, r, string(debug.Stack()))
+			os.Exit(1)
+		}
+	}()
+
 	// Load .env only outside production (Render sets ENV=production and uses dashboard env vars)
 	if env := os.Getenv("ENV"); env != "production" {
 		if err := godotenv.Load(); err != nil {
@@ -493,9 +506,50 @@ func main() {
 	}
 
 	log.Printf("Server starting on %s", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatal(err)
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           nil,
+		ReadHeaderTimeout: 15 * time.Second,
+		ErrorLog:          log.New(os.Stderr, "http-server: ", log.LstdFlags),
 	}
+
+	serveErrCh := make(chan error, 1)
+	go func() {
+		log.Printf("HTTP listen begin: pid=%d addr=%s", pid, addr)
+		serveErrCh <- server.ListenAndServe()
+	}()
+
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	select {
+	case <-sigCtx.Done():
+		sig := "unknown"
+		if s := sigCtx.Err(); s != nil {
+			sig = s.Error()
+		}
+		log.Printf("Shutdown signal received: pid=%d signal_ctx=%s uptime=%s", pid, sig, time.Since(bootAt).Round(time.Millisecond))
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancelShutdown()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP graceful shutdown failed: pid=%d err=%v", pid, err)
+		} else {
+			log.Printf("HTTP graceful shutdown complete: pid=%d", pid)
+		}
+		cancel()
+	case err := <-serveErrCh:
+		switch {
+		case err == nil:
+			log.Printf("HTTP server stopped cleanly: pid=%d uptime=%s", pid, time.Since(bootAt).Round(time.Millisecond))
+		case err == http.ErrServerClosed:
+			log.Printf("HTTP server closed: pid=%d uptime=%s", pid, time.Since(bootAt).Round(time.Millisecond))
+		default:
+			log.Printf("HTTP server exited with error: pid=%d err=%v uptime=%s", pid, err, time.Since(bootAt).Round(time.Millisecond))
+			os.Exit(1)
+		}
+	}
+
+	log.Printf("Process exit: pid=%d uptime=%s", pid, time.Since(bootAt).Round(time.Millisecond))
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
