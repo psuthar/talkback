@@ -451,10 +451,22 @@ export function QAHistory({
   voicePolishMode,
   askQuestionFeedback
 }) {
-  // Per-question collapse/expand. Default all collapsed when user loads the list.
+  // Per-question collapse/expand. Answered cards default to expanded on first load.
   const [expandedCards, setExpandedCards] = useState({})
   // Track which question IDs we've already auto-expanded so refetches don't re-expand (participant mode).
   const autoExpandedIdsRef = useRef(new Set())
+  const initialExpandDoneRef = useRef(false)
+
+  // On initial load, expand all cards that already have answers.
+  useEffect(() => {
+    if (initialExpandDoneRef.current || !questions?.length) return
+    initialExpandDoneRef.current = true
+    const initial = {}
+    for (const q of questions) {
+      if (q.answer) initial[q.id] = true
+    }
+    if (Object.keys(initial).length > 0) setExpandedCards(initial)
+  }, [questions])
 
   // When user clicks Reply, expand that card and its root so the inline form is visible.
   useEffect(() => {
