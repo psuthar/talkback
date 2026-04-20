@@ -536,7 +536,6 @@ export function ParticipantMode({
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
           <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32' }}>
             {currentSession.session.title}
-            <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
           </h2>
           <span style={{
             backgroundColor: currentSession.session.created_by === authUser?.email ? '#2e7d32' : '#757575',
