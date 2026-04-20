@@ -3220,7 +3220,7 @@ function App() {
                 </>
               )}
               {authUser.global_role === 'admin' && (
-                <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#1976d2', color: '#fff', fontSize: '11px', fontWeight: '600' }}>Admin</span>
+                <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#1976d2', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
               )}
             </span>
             <button
@@ -3383,7 +3383,7 @@ function App() {
                 <span>✓ Logged in: {authUser.display_name} ({authUser.email}) · {authUser.global_role} · {authUser.status}</span>
                 <div style={{ fontSize: '12px', color: '#333', width: '100%' }}>
                   <span style={{ fontWeight: 600 }}>User ID </span>
-                  <code className="artifact-id" style={{ fontSize: '11px', wordBreak: 'break-all' }}>{authUser.id}</code>
+                  <code className="artifact-id" style={{ fontSize: '12px', wordBreak: 'break-all' }}>{authUser.id}</code>
                   <button
                     type="button"
                     onClick={copyAuthUserIdToClipboard}
@@ -3401,7 +3401,7 @@ function App() {
                     {userIdCopiedFlash ? 'Copied!' : 'Copy'}
                   </button>
                 </div>
-                <p style={{ margin: 0, fontSize: '11px', color: '#666', maxWidth: '520px' }}>
+                <p style={{ margin: 0, fontSize: '12px', color: '#666', maxWidth: '520px' }}>
                   For local TalkBack MCP (e.g. Cursor), set <code>TALKBACK_MCP_ACTING_USER_ID</code> in your MCP config to this UUID.
                 </p>
               </div>
@@ -3597,7 +3597,7 @@ function App() {
                                 <span style={{ fontWeight: 'bold' }}>{session.title || 'Untitled session'}</span>
                                 <span
                                   style={{
-                                    fontSize: '10px',
+                                    fontSize: '12px',
                                     padding: '2px 6px',
                                     borderRadius: '4px',
                                     backgroundColor: myRole === 'admin' ? '#1976d2' : myRole === 'creator' ? '#2e7d32' : '#757575',
@@ -3609,8 +3609,8 @@ function App() {
                                   {myRole}
                                 </span>
                               </div>
-                              <div style={{ fontSize: '11px', color: '#666', marginBottom: '5px' }}>
-                                ID: <code style={{ fontSize: '10px' }}>{session.id}</code>
+                              <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px' }}>
+                                ID: <code style={{ fontSize: '12px' }}>{session.id}</code>
                               </div>
                               <div style={{ fontSize: '12px', color: '#666' }}>
                                 Status: <span style={{ color: session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>{session.status}</span>
@@ -3794,11 +3794,11 @@ function App() {
                                     {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
                                   </div>
                                   <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                    {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '11px' }}>Video</span>}
+                                    {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '12px' }}>Video</span>}
                                     {rec.has_transcript ? (
-                                      <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '11px', fontWeight: 500 }}>Transcript</span>
+                                      <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '12px', fontWeight: 500 }}>Transcript</span>
                                     ) : (
-                                      <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '11px' }}>No transcript</span>
+                                      <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '12px' }}>No transcript</span>
                                     )}
                                   </div>
                                   <button
@@ -3996,7 +3996,7 @@ function App() {
                   {currentSession?.session && authUser?.email && (
                     <span
                       style={{
-                        fontSize: '10px',
+                        fontSize: '12px',
                         padding: '2px 6px',
                         borderRadius: '4px',
                         backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575',
@@ -4010,7 +4010,7 @@ function App() {
                   )}
                 </div>
                 <div style={{ fontSize: '12px', color: '#666' }}>
-                  ID: <code style={{ fontSize: '11px' }}>{currentSession?.session?.id ?? '—'}</code> | 
+                  ID: <code style={{ fontSize: '12px' }}>{currentSession?.session?.id ?? '—'}</code> | 
                   Status: <span style={{ 
                     color: currentSession?.session?.status === 'open' ? '#4CAF50' : '#999',
                     fontWeight: 'bold'

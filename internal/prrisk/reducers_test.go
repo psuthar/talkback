@@ -293,6 +293,44 @@ func TestReducerTestHeavyDiffBelowThreshold(t *testing.T) {
 	}
 }
 
+// TestReducerStyleOnlyFiresForFrontendOnlyChange verifies style_only_note reducer fires
+// when the commit declares Style-only and no backend domains are hit.
+func TestReducerStyleOnlyFiresForFrontendOnlyChange(t *testing.T) {
+	s := Signals{
+		StyleOnlyNoteFound:   true,
+		StyleOnlyNoteSnippet: "Style-only: font size accessibility fixes",
+		DomainHits:           map[string]int{DomainWeb: 5, DomainOrchestration: 2},
+	}
+	w := DefaultWeights()
+	reducers := DetectReducers(s, []RiskFactor{}, w)
+	found := findReducer(reducers, "style_only_note")
+	if found == nil {
+		t.Fatal("expected style_only_note reducer for frontend-only style change")
+	}
+	if found.Points != w.StyleOnlyReducerPoints {
+		t.Errorf("points: want %v got %v", w.StyleOnlyReducerPoints, found.Points)
+	}
+	if found.CategoryKey != CategoryTestConfidence {
+		t.Errorf("category: want %s got %s", CategoryTestConfidence, found.CategoryKey)
+	}
+}
+
+// TestReducerStyleOnlyDoesNotFireWithBackendChanges verifies style_only_note reducer
+// does not fire when backend domains are also touched.
+func TestReducerStyleOnlyDoesNotFireWithBackendChanges(t *testing.T) {
+	backendDomains := []string{DomainAuth, DomainAPI, DomainDatabase, DomainRAG, DomainProcessing, DomainMigrations}
+	for _, domain := range backendDomains {
+		s := Signals{
+			StyleOnlyNoteFound: true,
+			DomainHits:         map[string]int{DomainWeb: 3, domain: 1},
+		}
+		reducers := DetectReducers(s, []RiskFactor{}, DefaultWeights())
+		if findReducer(reducers, "style_only_note") != nil {
+			t.Errorf("style_only_note should not fire when backend domain %q is touched", domain)
+		}
+	}
+}
+
 func findReducer(reducers []RiskReducer, id string) *RiskReducer {
 	for i := range reducers {
 		if reducers[i].ID == id {

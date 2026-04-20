@@ -91,6 +91,25 @@ func DetectReducers(s Signals, factors []RiskFactor, w ScoreWeights) []RiskReduc
 		}
 	}
 
+	// Style-only frontend change: commit declares "Style-only:" and no backend domains touched.
+	if s.StyleOnlyNoteFound && w.StyleOnlyReducerPoints > 0 {
+		backendHit := s.DomainHits[DomainAuth] > 0 ||
+			s.DomainHits[DomainAPI] > 0 ||
+			s.DomainHits[DomainDatabase] > 0 ||
+			s.DomainHits[DomainRAG] > 0 ||
+			s.DomainHits[DomainProcessing] > 0 ||
+			s.DomainHits[DomainMigrations] > 0
+		if !backendHit {
+			reducers = append(reducers, RiskReducer{
+				ID:          "style_only_note",
+				Label:       "Style-only frontend change (commit note)",
+				Points:      w.StyleOnlyReducerPoints,
+				Evidence:    shortSnippet(s.StyleOnlyNoteSnippet),
+				CategoryKey: CategoryTestConfidence,
+			})
+		}
+	}
+
 	// If the diff only touches tests (no sensitive non-test code), reduce overall risk a bit.
 	sensitiveInDiff := s.DomainHits[DomainAuth] > 0 ||
 		s.DomainHits[DomainRAG] > 0 ||

@@ -62,7 +62,7 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
             <span style={{
               background: '#e65100',
               color: '#fff',
-              fontSize: '10px',
+              fontSize: '12px',
               fontWeight: 'bold',
               padding: '2px 6px',
               borderRadius: '10px',
@@ -80,7 +80,7 @@ function TreeSection({ title, children }) {
   return (
     <div style={{ marginBottom: '12px' }}>
       <div style={{
-        fontSize: '11px',
+        fontSize: '12px',
         fontWeight: 'bold',
         textTransform: 'uppercase',
         color: '#444',
@@ -139,7 +139,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
           {title}
         </span>
         {meta && (
-          <span style={{ fontSize: '11px', color: '#555', flexShrink: 0, ...metaStyle }}>{meta}</span>
+          <span style={{ fontSize: '12px', color: '#555', flexShrink: 0, ...metaStyle }}>{meta}</span>
         )}
       </button>
       {onDelete && (
