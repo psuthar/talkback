@@ -665,9 +665,19 @@ export function ParticipantMode({
                             placeholder="Rationale (optional)"
                             value={stanceRationale}
                             onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                            onBlur={() => { if (myStance?.stance && !stanceSubmitting) submitStance(myStance.stance) }}
                             style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
                           />
+                          {myStance?.stance && stanceRationale !== (myStance?.rationale ?? '') && (
+                            <button
+                              type="button"
+                              data-testid="save-rationale-btn"
+                              onClick={() => submitStance(myStance.stance)}
+                              disabled={stanceSubmitting}
+                              style={{ padding: '3px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', color: 'var(--color-primary)', cursor: stanceSubmitting ? 'default' : 'pointer', marginBottom: '4px' }}
+                            >
+                              {stanceSubmitting ? 'Saving…' : 'Save rationale'}
+                            </button>
+                          )}
                           {stanceFeedback.message && (
                             <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{stanceFeedback.message}</p>
                           )}
