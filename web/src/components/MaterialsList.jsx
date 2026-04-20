@@ -81,7 +81,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                 }}>{status}</span>
               </div>
               {material.storage_url && (
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: '5px' }}>
+                <div style={{ fontSize: '12px', color: '#999', marginBottom: '5px' }}>
                   Storage: <code>{material.storage_url}</code>
                 </div>
               )}

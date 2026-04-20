@@ -97,7 +97,7 @@ function InvitationActionButton({ apiBaseUrl, invitationId, action, onDone }) {
     }
   }
   return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginRight: '8px', padding: '2px 8px', fontSize: '11px' }}>
+    <button type="button" onClick={handleClick} disabled={loading} style={{ marginRight: '8px', padding: '2px 8px', fontSize: '12px' }}>
       {loading ? '…' : label}
     </button>
   )
@@ -124,7 +124,7 @@ function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError 
     }
   }
   return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '11px' }}>
+    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '12px' }}>
       {loading ? '…' : 'Copy link'}
     </button>
   )
@@ -161,7 +161,7 @@ function OpenEmailDraftButton({ apiBaseUrl, invitationId, invitation, sessionTit
     }
   }
   return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '11px' }}>
+    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '12px' }}>
       {loading ? '…' : 'Open email draft'}
     </button>
   )
@@ -1580,7 +1580,7 @@ export function CreatorMode({
                     : ''}
             </span>
             {ingestionStatus.updated_at && (
-              <span style={{ fontSize: '11px', color: '#666' }}>
+              <span style={{ fontSize: '12px', color: '#666' }}>
                 Updated: {new Date(ingestionStatus.updated_at).toLocaleString()}
               </span>
             )}
@@ -1631,9 +1631,9 @@ export function CreatorMode({
                   </button>
                   {stancePanelExpanded && (
                     <div style={{ marginTop: '8px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
                       {currentSession.session.decision_outcome ? (
-                        <p style={{ margin: 0, fontSize: '11px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
                       ) : (
                         <>
                           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
@@ -1652,7 +1652,7 @@ export function CreatorMode({
                                     disabled={stanceSubmitting}
                                     style={{
                                       padding: '4px 10px',
-                                      fontSize: '11px',
+                                      fontSize: '12px',
                                       borderRadius: '6px',
                                       border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
                                       backgroundColor: bg,
@@ -1675,7 +1675,7 @@ export function CreatorMode({
                                 style={{
                                   marginLeft: 'auto',
                                   padding: '4px 10px',
-                                  fontSize: '11px',
+                                  fontSize: '12px',
                                   borderRadius: '6px',
                                   border: '1px solid #9e9e9e',
                                   backgroundColor: '#fff',
@@ -1694,14 +1694,14 @@ export function CreatorMode({
                             value={stanceRationale}
                             onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
                             onBlur={() => { if (stanceData?.my_stance?.stance && !stanceSubmitting) submitStance(stanceData.my_stance.stance) }}
-                            style={{ width: '100%', padding: '4px 8px', fontSize: '11px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
+                            style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
                           />
                           {stanceFeedback.message && (
-                            <p style={{ margin: 0, fontSize: '11px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
                           )}
                         </>
                       )}
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
                         {[
                           ['Agree', stanceData?.aggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
@@ -1710,7 +1710,7 @@ export function CreatorMode({
                           ['Abstain', stanceData?.aggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
                           ['Need More Info', stanceData?.aggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
                         ].map(([label, count, color, bg]) => (
-                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
+                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
                             {label}: {count}
                           </span>
                         ))}
@@ -1718,7 +1718,7 @@ export function CreatorMode({
                       {(stanceData?.responses?.length > 0) ? (
                         <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           {stanceData.responses.map((r) => (
-                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
+                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '12px' }}>
                               <span style={{ fontWeight: 600 }}>{r.user_email}</span>
                               {' — '}
                               <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
@@ -1727,7 +1727,7 @@ export function CreatorMode({
                           ))}
                         </div>
                       ) : (
-                        <p style={{ margin: 0, fontSize: '11px', color: '#888' }}>No responses yet.</p>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>No responses yet.</p>
                       )}
                     </div>
                   )}
@@ -1753,7 +1753,7 @@ export function CreatorMode({
                         {contextSaving ? 'Saving…' : 'Save'}
                       </button>
                       {contextFeedback.message && (
-                        <span style={{ fontSize: '11px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{contextFeedback.message}</span>
+                        <span style={{ fontSize: '12px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{contextFeedback.message}</span>
                       )}
                     </div>
                   </div>
@@ -1783,7 +1783,7 @@ export function CreatorMode({
                         <div className={inviteFeedback.type} style={{ fontSize: '12px', padding: '4px 6px', marginBottom: '6px' }}>{inviteFeedback.message}</div>
                       )}
                       {sessionInvitations?.length > 0 && (
-                        <div style={{ fontSize: '11px', overflowX: 'auto' }}>
+                        <div style={{ fontSize: '12px', overflowX: 'auto' }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                               <tr style={{ borderBottom: '1px solid #ddd', textAlign: 'left' }}>
@@ -2060,7 +2060,7 @@ export function CreatorMode({
                       }
                       return (
                         <div key={seg.idx} style={{ marginBottom: '10px', padding: '6px 0', borderBottom: '1px solid #eee' }}>
-                          <span style={{ fontSize: '11px', color: '#666', marginRight: '8px' }}>
+                          <span style={{ fontSize: '12px', color: '#666', marginRight: '8px' }}>
                             {mmSs(seg.start_ms)}–{mmSs(seg.end_ms)}
                           </span>
                           <span style={{ fontSize: '13px' }}>{seg.text}</span>
@@ -2091,7 +2091,7 @@ export function CreatorMode({
               )}
             </button>
             {!rightPanelCollapsed && debugMode && (
-              <button onClick={createMockQuestion} disabled={mockQuestionLoading || loading || !currentSession?.session?.id} style={{ fontSize: '11px', padding: '2px 6px', marginLeft: 'auto', margin: '0 0 0 auto' }}>
+              <button onClick={createMockQuestion} disabled={mockQuestionLoading || loading || !currentSession?.session?.id} style={{ fontSize: '12px', padding: '2px 6px', marginLeft: 'auto', margin: '0 0 0 auto' }}>
                 {mockQuestionLoading ? '…' : '🧪'}
               </button>
             )}
@@ -2106,7 +2106,7 @@ export function CreatorMode({
                     type="button"
                     onClick={() => loadOrchestrationRecommendations(currentSession?.session?.id, { sync: true })}
                     disabled={orchestrationLoading || !currentSession?.session?.id}
-                    style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}
+                    style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}
                   >
                     {orchestrationLoading ? 'Refreshing…' : 'Refresh'}
                   </button>
@@ -2133,7 +2133,7 @@ export function CreatorMode({
                       else if (decisionReadinessComplete) cardBg = '#e8f5e9'
                       return (
                         <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: cardBg }}>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '11px' }}>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '12px' }}>
                             <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
                             <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
                           </div>
@@ -2151,7 +2151,7 @@ export function CreatorMode({
                                 style={{ width: '100%', boxSizing: 'border-box', fontSize: '12px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
                               />
                               {recordOutcomeError ? (
-                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '11px', color: '#c62828' }}>
+                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '12px', color: '#c62828' }}>
                                   {recordOutcomeError}
                                 </div>
                               ) : null}
@@ -2161,7 +2161,7 @@ export function CreatorMode({
                                   type="button"
                                   disabled={actioning}
                                   onClick={() => saveDecisionOutcomeFromOrchestration(currentSession?.session?.id, rec, recordOutcomeText)}
-                                  style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}
+                                  style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}
                                 >
                                   {actioning ? '…' : 'Save outcome'}
                                 </button>
@@ -2172,7 +2172,7 @@ export function CreatorMode({
                                     setRecordOutcomeRecId(null)
                                     setRecordOutcomeError('')
                                   }}
-                                  style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e0e0', color: '#333' }}
+                                  style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#e0e0e0', color: '#333' }}
                                 >
                                   Cancel
                                 </button>
@@ -2182,16 +2182,16 @@ export function CreatorMode({
                           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                             {isDraftReview && (
                               <>
-                                <button data-testid={`orchestration-approve-${rec.id}`} type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                                <button data-testid={`orchestration-approve-${rec.id}`} type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
                                   {actioning ? '…' : 'Approve draft'}
                                 </button>
-                                <button data-testid={`orchestration-dismiss-draft-${rec.id}`} type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#ef9a9a' }}>
+                                <button data-testid={`orchestration-dismiss-draft-${rec.id}`} type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#ef9a9a' }}>
                                   Dismiss draft
                                 </button>
                               </>
                             )}
                             {isUnanswered && (
-                              <button data-testid={`orchestration-generate-${rec.id}`} type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                              <button data-testid={`orchestration-generate-${rec.id}`} type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
                                 Generate draft
                               </button>
                             )}
@@ -2205,15 +2205,15 @@ export function CreatorMode({
                                   setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
                                   setRecordOutcomeError('')
                                 }}
-                                style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}
+                                style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}
                               >
                                 Record outcome
                               </button>
                             )}
-                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')} style={{ margin: 0, padding: '4px 8px', fontSize: '11px' }}>
+                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
                               Mark complete
                             </button>
-                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')} style={{ margin: 0, padding: '4px 8px', fontSize: '11px', backgroundColor: '#e0e0e0', color: '#333' }}>
+                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')} style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#e0e0e0', color: '#333' }}>
                               Dismiss
                             </button>
                           </div>
@@ -2315,7 +2315,7 @@ export function CreatorMode({
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                     <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
                                     {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                                      <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                                     )}
                                   </div>
                                 ) : (
@@ -2323,10 +2323,10 @@ export function CreatorMode({
                                     <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                       Q: {q.question_text}
                                       {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                                        <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                                       )}
                                     </div>
-                                    <div style={{ fontSize: '11px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
+                                    <div style={{ fontSize: '12px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
                                       Asked: {new Date(q.created_at).toLocaleString()}
                                       {' · asked by '}
                                       {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}

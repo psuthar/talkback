@@ -259,7 +259,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                 <span style={{ fontSize: '12px', color: '#888' }}>({replyCount} {replyCount === 1 ? 'reply' : 'replies'})</span>
               )}
               {isUnread && (
-                <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
               )}
             </div>
           ) : (
@@ -269,10 +269,10 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                   <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     Q: {q.question_text}
                     {isUnread && (
-                      <span style={{ fontSize: '10px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                     )}
                   </div>
-                  <div style={{ fontSize: '11px', color: '#999', marginTop: '5px' }}>
+                  <div style={{ fontSize: '12px', color: '#999', marginTop: '5px' }}>
                     Asked: {new Date(q.created_at).toLocaleString()}
                     {' · asked by '}
                     {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}

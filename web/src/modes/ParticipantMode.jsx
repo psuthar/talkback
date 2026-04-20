@@ -604,9 +604,9 @@ export function ParticipantMode({
                   </button>
                   {stancePanelExpanded && (
                     <div style={{ marginTop: '8px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
                       {currentSession.session.decision_outcome ? (
-                        <p style={{ margin: 0, fontSize: '11px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
                       ) : (
                         <>
                           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
@@ -624,7 +624,7 @@ export function ParticipantMode({
                                     disabled={stanceSubmitting}
                                     style={{
                                       padding: '4px 10px',
-                                      fontSize: '11px',
+                                      fontSize: '12px',
                                       borderRadius: '6px',
                                       border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
                                       backgroundColor: bg,
@@ -647,7 +647,7 @@ export function ParticipantMode({
                                 style={{
                                   marginLeft: 'auto',
                                   padding: '4px 10px',
-                                  fontSize: '11px',
+                                  fontSize: '12px',
                                   borderRadius: '6px',
                                   border: '1px solid #9e9e9e',
                                   backgroundColor: '#fff',
@@ -666,14 +666,14 @@ export function ParticipantMode({
                             value={stanceRationale}
                             onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
                             onBlur={() => { if (myStance?.stance && !stanceSubmitting) submitStance(myStance.stance) }}
-                            style={{ width: '100%', padding: '4px 8px', fontSize: '11px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
+                            style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
                           />
                           {stanceFeedback.message && (
-                            <p style={{ margin: 0, fontSize: '11px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
                           )}
                         </>
                       )}
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
                         {[
                           ['Agree', stanceAggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
@@ -682,7 +682,7 @@ export function ParticipantMode({
                           ['Abstain', stanceAggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
                           ['Need More Info', stanceAggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
                         ].map(([label, count, color, bg]) => (
-                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
+                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
                             {label}: {count}
                           </span>
                         ))}
@@ -690,7 +690,7 @@ export function ParticipantMode({
                       {(stanceResponses?.length > 0) ? (
                         <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                           {stanceResponses.map((r, i) => (
-                            <div key={r.id || `r-${i}`} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '11px' }}>
+                            <div key={r.id || `r-${i}`} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '12px' }}>
                               <span style={{ fontWeight: 600 }}>{r.user_email || 'Unknown'}</span>
                               {' — '}
                               <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
@@ -699,7 +699,7 @@ export function ParticipantMode({
                           ))}
                         </div>
                       ) : (
-                        <p style={{ margin: 0, fontSize: '11px', color: '#888' }}>No responses yet.</p>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>No responses yet.</p>
                       )}
                     </div>
                   )}

@@ -47,7 +47,7 @@ export function AddContentSection({
   }
 
   const subsectionLabel = {
-    fontSize: '11px',
+    fontSize: '12px',
     fontWeight: 700,
     textTransform: 'uppercase',
     color: '#444',
@@ -98,7 +98,7 @@ export function AddContentSection({
             >
               {uploading ? 'Uploading…' : '+ Choose file'}
             </button>
-            <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+            <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
               PDF, DOCX, XLSX, PPTX, images, MP4
             </div>
             {uploadFeedback?.message && (
@@ -165,7 +165,7 @@ export function AddContentSection({
                 <button
                   type="button"
                   onClick={() => setAddError(null)}
-                  style={{ fontSize: '11px', color: '#c62828', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                  style={{ fontSize: '12px', color: '#c62828', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
                 >
                   Dismiss
                 </button>
