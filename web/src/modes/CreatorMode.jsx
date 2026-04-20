@@ -1403,11 +1403,11 @@ export function CreatorMode({
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
           {currentSession?.session && (
             <>
-              <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--color-success)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {currentSession.session.title}
                 <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
               </h2>
-              <span style={{ fontSize: '12px', color: currentSession.session.status === 'open' ? '#2e7d32' : '#999', fontWeight: 'bold', flexShrink: 0 }}>
+              <span style={{ fontSize: '12px', color: currentSession.session.status === 'open' ? 'var(--color-success)' : '#999', fontWeight: 'bold', flexShrink: 0 }}>
                 {currentSession.session.status}
               </span>
             </>
@@ -1415,7 +1415,7 @@ export function CreatorMode({
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           {onClearSession && (
-            <button type="button" onClick={onClearSession} style={{ backgroundColor: '#f44336', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', margin: 0 }}>
+            <button type="button" onClick={onClearSession} style={{ backgroundColor: 'var(--color-danger)', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', margin: 0 }}>
               Show All Sessions
             </button>
           )}
@@ -1464,7 +1464,7 @@ export function CreatorMode({
             padding: '12px 16px',
             borderRadius: 0,
             borderBottom: '1px solid #e0e0e0',
-            backgroundColor: allComplete ? '#e8f5e9' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : (isWaiting || isAwaitingWhisper) ? '#e3f2fd' : '#fff8e1',
+            backgroundColor: allComplete ? 'var(--color-success-bg)' : hasJob && processingStatus.state === 'failed_permanent' ? '#ffebee' : (isWaiting || isAwaitingWhisper) ? 'var(--color-primary-bg)' : '#fff8e1',
             borderLeft: allComplete ? '3px solid #4CAF50' : hasJob && processingStatus.state === 'failed_permanent' ? '3px solid #f44336' : (isWaiting || isAwaitingWhisper) ? '3px solid #2196F3' : '3px solid #ff9800'
           }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
@@ -1481,12 +1481,12 @@ export function CreatorMode({
                       <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                         <span style={{
                           fontSize: '13px',
-                          color: completed ? '#4CAF50' : active ? (showWarning ? '#f44336' : '#1976D2') : '#9e9e9e',
+                          color: completed ? 'var(--color-success-mid)' : active ? (showWarning ? 'var(--color-danger)' : 'var(--color-primary)') : '#9e9e9e',
                           fontWeight: active ? activeWeight : 400
                         }}>
                           {completed ? '✓' : showSpinner ? '⌛' : showWaiting ? '⏸' : showWarning ? '⚠' : '○'}
                         </span>
-                        <span style={{ color: completed ? '#2e7d32' : active ? '#1a1a1a' : '#9e9e9e', fontSize: '13px', fontWeight: active ? activeWeight : 400 }}>{label}</span>
+                        <span style={{ color: completed ? 'var(--color-success)' : active ? '#1a1a1a' : '#9e9e9e', fontSize: '13px', fontWeight: active ? activeWeight : 400 }}>{label}</span>
                         {idx < PROCESSING_STEPS.length - 1 && <span style={{ marginLeft: '1px', marginRight: '1px', color: '#bdbdbd', fontSize: '12px' }}>→</span>}
                       </div>
                     )
@@ -1527,7 +1527,7 @@ export function CreatorMode({
                     style={{
                       padding: '4px 10px',
                       fontSize: '12px',
-                      backgroundColor: '#2196F3',
+                      backgroundColor: 'var(--color-primary-mid)',
                       color: 'white',
                       border: 'none',
                       borderRadius: '4px',
@@ -1541,7 +1541,7 @@ export function CreatorMode({
                 {hasJob && processingStatus.state === 'failed_permanent' && (processingStatus.last_error_code === 'zoom_auth' || processingStatus.last_error_code === 'zoom_not_connected') && (
                   <a
                     href={buildCanonicalSessionUrl(sessionId, { mode: 'edit', zoom: 'connect' })}
-                    style={{ fontSize: '12px', color: '#1976D2', fontWeight: 500 }}
+                    style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: 500 }}
                   >
                     Reconnect Zoom
                   </a>
@@ -1563,7 +1563,7 @@ export function CreatorMode({
           justifyContent: 'space-between',
           flexWrap: 'wrap',
           gap: '8px',
-          backgroundColor: ingestionStatus.state === 'ready' ? '#e8f5e9' : ingestionStatus.state === 'failed' ? '#ffebee' : '#fff8e1',
+          backgroundColor: ingestionStatus.state === 'ready' ? 'var(--color-success-bg)' : ingestionStatus.state === 'failed' ? '#ffebee' : '#fff8e1',
           borderLeft: ingestionStatus.state === 'ready' ? '3px solid #4CAF50' : ingestionStatus.state === 'failed' ? '3px solid #f44336' : '3px solid #ff9800'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1593,7 +1593,7 @@ export function CreatorMode({
               style={{
                 padding: '4px 10px',
                 fontSize: '12px',
-                backgroundColor: '#2196F3',
+                backgroundColor: 'var(--color-primary-mid)',
                 color: 'white',
                 border: 'none',
                 borderRadius: '4px',
@@ -1640,9 +1640,9 @@ export function CreatorMode({
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                               {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
                                 const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
-                                const bg = s === 'agree' ? '#e8f5e9' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : '#e3f2fd'
-                                const border = s === 'agree' ? '#81c784' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
-                                const textColor = s === 'agree' ? '#2e7d32' : s === 'disagree' ? '#c62828' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : '#1565c0'
+                                const bg = s === 'agree' ? 'var(--color-success-bg)' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : 'var(--color-primary-bg)'
+                                const border = s === 'agree' ? 'var(--color-success-light)' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
+                                const textColor = s === 'agree' ? 'var(--color-success)' : s === 'disagree' ? 'var(--color-danger-dark)' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : 'var(--color-primary-dark)'
                                 const myStance = stanceData?.my_stance
                                 return (
                                   <button
@@ -1697,18 +1697,18 @@ export function CreatorMode({
                             style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
                           />
                           {stanceFeedback.message && (
-                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{stanceFeedback.message}</p>
                           )}
                         </>
                       )}
                       <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
                         {[
-                          ['Agree', stanceData?.aggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
-                          ['Disagree', stanceData?.aggregate?.disagree ?? 0, '#c62828', '#ffebee'],
+                          ['Agree', stanceData?.aggregate?.agree ?? 0, 'var(--color-success)', 'var(--color-success-bg)'],
+                          ['Disagree', stanceData?.aggregate?.disagree ?? 0, 'var(--color-danger-dark)', '#ffebee'],
                           ['Conditional', stanceData?.aggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
                           ['Abstain', stanceData?.aggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
-                          ['Need More Info', stanceData?.aggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
+                          ['Need More Info', stanceData?.aggregate?.need_more_info ?? 0, 'var(--color-primary-dark)', 'var(--color-primary-bg)']
                         ].map(([label, count, color, bg]) => (
                           <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
                             {label}: {count}
@@ -1753,7 +1753,7 @@ export function CreatorMode({
                         {contextSaving ? 'Saving…' : 'Save'}
                       </button>
                       {contextFeedback.message && (
-                        <span style={{ fontSize: '12px', color: contextFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{contextFeedback.message}</span>
+                        <span style={{ fontSize: '12px', color: contextFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{contextFeedback.message}</span>
                       )}
                     </div>
                   </div>
@@ -1913,7 +1913,7 @@ export function CreatorMode({
                       style={{
                         padding: '8px 16px',
                         fontSize: '14px',
-                        backgroundColor: '#2196F3',
+                        backgroundColor: 'var(--color-primary-mid)',
                         color: 'white',
                         border: 'none',
                         borderRadius: '4px',
@@ -1930,9 +1930,9 @@ export function CreatorMode({
                 <div style={{ padding: '6px 12px', fontSize: '13px', color: '#ccc', backgroundColor: '#1a1a1a' }}>
                   <strong style={{ color: '#999' }}>Transcript:</strong>{' '}
                   <span style={{
-                    color: video.transcript_status === 'ready' ? '#4CAF50' :
+                    color: video.transcript_status === 'ready' ? 'var(--color-success-mid)' :
                            video.transcript_status === 'pending' ? '#ff9800' :
-                           video.transcript_status === 'failed' ? '#f44336' : '#999',
+                           video.transcript_status === 'failed' ? 'var(--color-danger)' : '#999',
                     fontWeight: 'bold'
                   }}>
                     {video.transcript_status === 'missing' ? 'No transcript' :
@@ -1947,8 +1947,8 @@ export function CreatorMode({
                       {' | '}
                       <strong style={{ color: '#999' }}>Job:</strong>{' '}
                       <span style={{
-                        color: transcriptJobs[video.id].status === 'completed' ? '#4CAF50' :
-                               transcriptJobs[video.id].status === 'failed' ? '#f44336' : '#ff9800',
+                        color: transcriptJobs[video.id].status === 'completed' ? 'var(--color-success-mid)' :
+                               transcriptJobs[video.id].status === 'failed' ? 'var(--color-danger)' : '#ff9800',
                         fontWeight: 'bold'
                       }}>
                         {transcriptJobs[video.id].status}
@@ -2009,7 +2009,7 @@ export function CreatorMode({
                   </div>
                 ) : transcriptData.status === 'failed' ? (
                   <div>
-                    <div style={{ color: '#c62828', marginBottom: '10px', fontSize: '13px' }}>
+                    <div style={{ color: 'var(--color-danger-dark)', marginBottom: '10px', fontSize: '13px' }}>
                       {transcriptData.error_message || 'Transcript failed.'}
                     </div>
                     {(processingStatus?.state != null && processingStatus.state !== '') ? (
@@ -2020,7 +2020,7 @@ export function CreatorMode({
                         style={{
                           padding: '6px 12px',
                           fontSize: '13px',
-                          backgroundColor: '#2196F3',
+                          backgroundColor: 'var(--color-primary-mid)',
                           color: 'white',
                           border: 'none',
                           borderRadius: '4px',
@@ -2038,7 +2038,7 @@ export function CreatorMode({
                         style={{
                           padding: '6px 12px',
                           fontSize: '13px',
-                          backgroundColor: '#2196F3',
+                          backgroundColor: 'var(--color-primary-mid)',
                           color: 'white',
                           border: 'none',
                           borderRadius: '4px',
@@ -2086,7 +2086,7 @@ export function CreatorMode({
               {!rightPanelCollapsed && (
                 <span style={{ marginLeft: '6px' }}>
                   Q&A{questions.length > 0 ? ` (${questions.length})` : ''}
-                  {unreadQuestionIds.length > 0 && <span style={{ marginLeft: '4px', display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#f44336', verticalAlign: 'middle' }} />}
+                  {unreadQuestionIds.length > 0 && <span style={{ marginLeft: '4px', display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: 'var(--color-danger)', verticalAlign: 'middle' }} />}
                 </span>
               )}
             </button>
@@ -2130,12 +2130,12 @@ export function CreatorMode({
                       const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
                       let cardBg = '#fff'
                       if (isDraftReview) cardBg = '#fff8e1'
-                      else if (decisionReadinessComplete) cardBg = '#e8f5e9'
+                      else if (decisionReadinessComplete) cardBg = 'var(--color-success-bg)'
                       return (
                         <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: cardBg }}>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '12px' }}>
                             <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
-                            <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: '#e3f2fd', color: '#0d47a1', fontWeight: 600 }}>{rec.status}</span>
+                            <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: 'var(--color-primary-bg)', color: 'var(--color-primary-dark)', fontWeight: 600 }}>{rec.status}</span>
                           </div>
                           <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#222' }}>{rec.summary}</div>
                           {rec.suggested_action && <div style={{ fontSize: '12px', color: '#444', marginBottom: '6px' }}>{rec.suggested_action}</div>}
@@ -2151,7 +2151,7 @@ export function CreatorMode({
                                 style={{ width: '100%', boxSizing: 'border-box', fontSize: '12px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
                               />
                               {recordOutcomeError ? (
-                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '12px', color: '#c62828' }}>
+                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '12px', color: 'var(--color-danger-dark)' }}>
                                   {recordOutcomeError}
                                 </div>
                               ) : null}
@@ -2205,7 +2205,7 @@ export function CreatorMode({
                                   setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
                                   setRecordOutcomeError('')
                                 }}
-                                style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#c8e6c9', color: '#1b5e20' }}
+                                style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: 'var(--color-success-bg-hover)', color: '#1b5e20' }}
                               >
                                 Record outcome
                               </button>
@@ -2315,7 +2315,7 @@ export function CreatorMode({
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                     <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
                                     {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                                     )}
                                   </div>
                                 ) : (
@@ -2323,7 +2323,7 @@ export function CreatorMode({
                                     <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                                       Q: {q.question_text}
                                       {unreadQuestionIds && unreadQuestionIds.includes(String(q.id)) && (
-                                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                                       )}
                                     </div>
                                     <div style={{ fontSize: '12px', color: '#999', marginTop: '5px', marginBottom: '10px' }}>
@@ -2331,7 +2331,7 @@ export function CreatorMode({
                                       {' · asked by '}
                                       {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
                                       {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-                                        <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
+                                        <span style={{ marginLeft: '8px', color: 'var(--color-primary-mid)', fontWeight: 'bold' }}>
                                           | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
                                         </span>
                                       )}
@@ -2351,8 +2351,8 @@ export function CreatorMode({
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap', marginBottom: '5px' }}>
                                             <span>
                                               Status: <span style={{
-                                                color: q.answer.answer_status === 'answered' ? '#4CAF50' :
-                                                       q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
+                                                color: q.answer.answer_status === 'answered' ? 'var(--color-success-mid)' :
+                                                       q.answer.answer_status === 'not_covered' ? '#ff9800' : 'var(--color-danger)',
                                                 fontWeight: 'bold'
                                               }}>{q.answer.answer_status}</span>
                                             </span>
@@ -2390,9 +2390,9 @@ export function CreatorMode({
                                                 />
                                                 <span>
                                                   {q.answer.confirmed ? (
-                                                    <span style={{ color: '#2e7d32' }} title="Verified">✓</span>
+                                                    <span style={{ color: 'var(--color-success)' }} title="Verified">✓</span>
                                                   ) : (
-                                                    <span style={{ color: '#c62828' }} title="Not verified">✕</span>
+                                                    <span style={{ color: 'var(--color-danger-dark)' }} title="Not verified">✕</span>
                                                   )}
                                                   <span style={{ marginLeft: '4px' }}>{q.answer.confirmed ? 'Verified' : 'Verify this answer'}</span>
                                                 </span>
@@ -2402,7 +2402,7 @@ export function CreatorMode({
                                               <button
                                                 type="button"
                                                 onClick={() => startAnswering(q.id, q.answer)}
-                                                style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: '#1565c0', backgroundColor: '#e3f2fd', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer', margin: 0 }}
+                                                style={{ padding: '6px 12px', fontSize: '13px', fontWeight: 600, color: 'var(--color-primary-dark)', backgroundColor: 'var(--color-primary-bg)', border: '1px solid #2196F3', borderRadius: '4px', cursor: 'pointer', margin: 0 }}
                                               >
                                                 {q.answer ? 'Replace answer' : 'Answer'}
                                               </button>
@@ -2437,13 +2437,13 @@ export function CreatorMode({
                                             type="button"
                                             style={{
                                               marginTop: 0,
-                                              backgroundColor: answerVoiceRecording ? '#d32f2f' : '#1976D2',
+                                              backgroundColor: answerVoiceRecording ? 'var(--color-danger-mid)' : 'var(--color-primary)',
                                               padding: '8px 12px'
                                             }}
                                           >
                                             {answerVoiceRecording ? 'Stop Mic' : (answerVoiceUploading ? 'Processing…' : 'Mic')}
                                           </button>
-                                          <div style={{ fontSize: '13px', color: answerVoiceRecording ? '#d32f2f' : '#666' }}>
+                                          <div style={{ fontSize: '13px', color: answerVoiceRecording ? 'var(--color-danger-mid)' : '#666' }}>
                                             {answerVoiceRecording ? 'Listening…' : answerVoiceUploading ? 'Processing…' : ''}
                                           </div>
                                         </div>

@@ -52,7 +52,7 @@ export function QAPanel({
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2',
+            backgroundColor: voiceRecording ? 'var(--color-danger-mid)' : 'var(--color-primary)',
             color: '#fff',
             border: 'none',
             borderRadius: '4px',
@@ -69,7 +69,7 @@ export function QAPanel({
         </button>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {voiceRecording && (
-            <span style={{ fontSize: '12px', color: '#d32f2f' }}>Listening…</span>
+            <span style={{ fontSize: '12px', color: 'var(--color-danger-mid)' }}>Listening…</span>
           )}
           {!showVoiceConfirm && (
             <>
@@ -134,7 +134,7 @@ export function QAPanel({
                     padding: '3px',
                     border: '1px solid #e0e0e0',
                     borderRadius: '4px',
-                    background: voicePolishing && voicePolishMode === 'llm' ? '#e3f2fd' : 'rgba(255,255,255,0.9)',
+                    background: voicePolishing && voicePolishMode === 'llm' ? 'var(--color-primary-bg)' : 'rgba(255,255,255,0.9)',
                     cursor: (!voiceTranscribedText?.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',

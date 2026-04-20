@@ -182,8 +182,8 @@ export function AcceptInvitePage({ apiBaseUrl, token, authUser, authChecked, onL
   const cardStyle = { border: '1px solid #ddd', borderRadius: '8px', padding: '24px', backgroundColor: '#fafafa', marginTop: '16px' }
   const headingStyle = { marginBottom: '8px', textAlign: 'center' }
   const subStyle = { color: '#666', textAlign: 'center', marginBottom: '16px', fontSize: '14px' }
-  const errorStyle = { marginBottom: '16px', padding: '10px', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffebee', color: '#c62828' }
-  const btnPrimary = { padding: '10px 20px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }
+  const errorStyle = { marginBottom: '16px', padding: '10px', borderRadius: '6px', fontSize: '14px', backgroundColor: '#ffebee', color: 'var(--color-danger-dark)' }
+  const btnPrimary = { padding: '10px 20px', backgroundColor: 'var(--color-primary-mid)', color: 'white', border: 'none', borderRadius: '6px', fontSize: '14px', fontWeight: '600', cursor: 'pointer' }
   const btnSecondary = { padding: '8px 14px', backgroundColor: '#757575', color: 'white', border: 'none', borderRadius: '6px', fontSize: '13px', cursor: 'pointer', marginLeft: '8px' }
 
   if (!authChecked) {

@@ -26,8 +26,8 @@ function CitationBadge({ citation, onClick }) {
       style={{
         padding: '4px 10px',
         fontSize: '12px',
-        backgroundColor: canNavigate ? '#e3f2fd' : '#f5f5f5',
-        color: canNavigate ? '#1976D2' : '#555',
+        backgroundColor: canNavigate ? 'var(--color-primary-bg)' : '#f5f5f5',
+        color: canNavigate ? 'var(--color-primary)' : '#555',
         border: `1px solid ${canNavigate ? '#90caf9' : '#e0e0e0'}`,
         borderRadius: '4px',
         cursor: 'pointer',
@@ -100,7 +100,7 @@ function InlineReplyForm({
       borderRadius: '6px',
       backgroundColor: '#f0f8ff'
     }}>
-      <div style={{ fontSize: '12px', color: '#1565c0', marginBottom: '8px', fontWeight: 600 }}>
+      <div style={{ fontSize: '12px', color: 'var(--color-primary-dark)', marginBottom: '8px', fontWeight: 600 }}>
         Ask a follow-up…
       </div>
       <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
@@ -116,7 +116,7 @@ function InlineReplyForm({
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: voiceRecording ? '#d32f2f' : '#1976D2',
+            backgroundColor: voiceRecording ? 'var(--color-danger-mid)' : 'var(--color-primary)',
             color: '#fff',
             border: 'none',
             borderRadius: '4px',
@@ -133,7 +133,7 @@ function InlineReplyForm({
         </button>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {voiceRecording && (
-            <span style={{ fontSize: '12px', color: '#d32f2f' }}>Listening…</span>
+            <span style={{ fontSize: '12px', color: 'var(--color-danger-mid)' }}>Listening…</span>
           )}
           {!showVoiceConfirm && (
             <>
@@ -265,7 +265,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                 <span style={{ fontSize: '12px', color: '#888' }}>({replyCount} {replyCount === 1 ? 'reply' : 'replies'})</span>
               )}
               {isUnread && (
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
               )}
             </div>
           ) : (
@@ -275,7 +275,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                   <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     Q: {q.question_text}
                     {isUnread && (
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1976D2', backgroundColor: '#e3f2fd', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
                     )}
                   </div>
                   <div style={{ fontSize: '12px', color: '#999', marginTop: '5px' }}>
@@ -283,7 +283,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                     {' · asked by '}
                     {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
                     {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-                      <span style={{ marginLeft: '8px', color: '#2196F3', fontWeight: 'bold' }}>
+                      <span style={{ marginLeft: '8px', color: 'var(--color-primary-mid)', fontWeight: 'bold' }}>
                         | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
                       </span>
                     )}
@@ -309,8 +309,8 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
               data-testid="answer-status"
               className={`answer-status ${q.answer.answer_status}`}
               style={{
-                color: q.answer.answer_status === 'answered' ? '#4CAF50' :
-                  q.answer.answer_status === 'not_covered' ? '#ff9800' : '#f44336',
+                color: q.answer.answer_status === 'answered' ? 'var(--color-success-mid)' :
+                  q.answer.answer_status === 'not_covered' ? '#ff9800' : 'var(--color-danger)',
                 fontWeight: 'bold'
               }}
             >{ANSWER_STATUS_LABELS[q.answer.answer_status] ?? 'Unknown'}</span>
@@ -321,7 +321,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                 {q.answer.confirmed && confirmedByLabel && (
                   <span style={{
                     marginLeft: '10px',
-                    color: '#4CAF50',
+                    color: 'var(--color-success-mid)',
                     fontWeight: 'bold',
                     fontSize: '13px'
                   }}>
@@ -347,7 +347,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
           )}
         </div>
       ) : (
-        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: q._pending ? '#e3f2fd' : '#f5f5f5', borderRadius: '3px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ marginTop: '10px', padding: '10px', backgroundColor: q._pending ? 'var(--color-primary-bg)' : '#f5f5f5', borderRadius: '3px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className="spinner" style={{ width: 16, height: 16, flexShrink: 0 }} aria-hidden />
           <span>{q._pending ? 'Getting an answer…' : 'Processing…'}</span>
         </div>

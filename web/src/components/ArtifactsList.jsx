@@ -25,7 +25,7 @@ export function ArtifactsList({ artifacts, readOnly = true }) {
             )}
             <div style={{ fontSize: '12px', color: '#999' }}>
               Status: <span style={{ 
-                color: artifact.status === 'ready' ? '#4CAF50' : '#999',
+                color: artifact.status === 'ready' ? 'var(--color-success-mid)' : '#999',
                 fontWeight: 'bold'
               }}>{artifact.status}</span>
             </div>

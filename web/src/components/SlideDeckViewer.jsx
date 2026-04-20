@@ -118,7 +118,7 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
   }
   if (error) {
     return (
-      <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ padding: '24px', color: '#c62828' }}>
+      <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ padding: '24px', color: 'var(--color-danger-dark)' }}>
         Unable to load slides.
       </div>
     )
@@ -154,7 +154,7 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
             href={originalFileUrl}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ fontSize: '14px', color: '#1976d2', fontWeight: 500 }}
+            style={{ fontSize: '14px', color: 'var(--color-primary)', fontWeight: 500 }}
           >
             Open original file in the meantime
           </a>

@@ -358,7 +358,7 @@ export function Html5VideoPlayer({
           {formatTime(currentTime)} / {duration ? formatTime(duration) : '--:--'}
         </span>
         <span style={{ 
-          color: playing ? '#4CAF50' : '#999',
+          color: playing ? 'var(--color-success-mid)' : '#999',
           fontWeight: 'bold'
         }}>
           {playing ? '▶ Playing' : '⏸ Paused'}
@@ -600,7 +600,7 @@ export function VideoPlayer({
             href={openUrl || video.video_url}
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: '#2196F3', textDecoration: 'underline' }}
+            style={{ color: 'var(--color-primary-mid)', textDecoration: 'underline' }}
           >
             Open in new tab
           </a>

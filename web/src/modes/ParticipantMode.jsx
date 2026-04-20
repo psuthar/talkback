@@ -512,7 +512,7 @@ export function ParticipantMode({
             style={{
               padding: '8px 16px',
               fontSize: '14px',
-              backgroundColor: '#1976d2',
+              backgroundColor: 'var(--color-primary)',
               color: '#fff',
               border: 'none',
               borderRadius: '4px',
@@ -534,11 +534,11 @@ export function ParticipantMode({
     <>
       <div className="participant-layout-topbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
-          <h2 style={{ margin: 0, fontSize: '18px', color: '#2e7d32' }}>
+          <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--color-success)' }}>
             {currentSession.session.title}
           </h2>
           <span style={{
-            backgroundColor: currentSession.session.created_by === authUser?.email ? '#2e7d32' : '#757575',
+            backgroundColor: currentSession.session.created_by === authUser?.email ? 'var(--color-success)' : '#757575',
             color: 'white',
             padding: '4px 12px',
             borderRadius: '4px',
@@ -552,7 +552,7 @@ export function ParticipantMode({
           <button
             type="button"
             onClick={onClearSession}
-            style={{ backgroundColor: '#1976D2', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
+            style={{ backgroundColor: 'var(--color-primary)', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
           >
             Show All Sessions
           </button>
@@ -598,7 +598,7 @@ export function ParticipantMode({
               {/* Decisions: same section as creator — Your decision + Members' decisions */}
               {currentSession?.session?.primary_decision && (
                 <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold', color: '#1565c0' }}>
+                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-dark)' }}>
                     <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
                     {' '}Decisions ({stanceAggregate?.total ?? stanceResponses?.length ?? 0})
                   </button>
@@ -613,9 +613,9 @@ export function ParticipantMode({
                             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                               {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
                                 const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
-                                const bg = s === 'agree' ? '#e8f5e9' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : '#e3f2fd'
-                                const border = s === 'agree' ? '#81c784' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
-                                const textColor = s === 'agree' ? '#2e7d32' : s === 'disagree' ? '#c62828' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : '#1565c0'
+                                const bg = s === 'agree' ? 'var(--color-success-bg)' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : 'var(--color-primary-bg)'
+                                const border = s === 'agree' ? 'var(--color-success-light)' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
+                                const textColor = s === 'agree' ? 'var(--color-success)' : s === 'disagree' ? 'var(--color-danger-dark)' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : 'var(--color-primary-dark)'
                                 return (
                                   <button
                                     key={s}
@@ -669,18 +669,18 @@ export function ParticipantMode({
                             style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
                           />
                           {stanceFeedback.message && (
-                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? '#c62828' : '#2e7d32' }}>{stanceFeedback.message}</p>
+                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{stanceFeedback.message}</p>
                           )}
                         </>
                       )}
                       <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
                       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
                         {[
-                          ['Agree', stanceAggregate?.agree ?? 0, '#2e7d32', '#e8f5e9'],
-                          ['Disagree', stanceAggregate?.disagree ?? 0, '#c62828', '#ffebee'],
+                          ['Agree', stanceAggregate?.agree ?? 0, 'var(--color-success)', 'var(--color-success-bg)'],
+                          ['Disagree', stanceAggregate?.disagree ?? 0, 'var(--color-danger-dark)', '#ffebee'],
                           ['Conditional', stanceAggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
                           ['Abstain', stanceAggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
-                          ['Need More Info', stanceAggregate?.need_more_info ?? 0, '#1565C0', '#e3f2fd']
+                          ['Need More Info', stanceAggregate?.need_more_info ?? 0, 'var(--color-primary-dark)', 'var(--color-primary-bg)']
                         ].map(([label, count, color, bg]) => (
                           <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
                             {label}: {count}
@@ -724,7 +724,7 @@ export function ParticipantMode({
                     textAlign: 'left',
                     fontSize: '13px',
                     fontWeight: 'bold',
-                    color: '#2e7d32'
+                    color: 'var(--color-success)'
                   }}
                 >
                   <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>

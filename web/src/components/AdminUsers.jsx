@@ -428,13 +428,13 @@ export function AdminUsers({
         {sessionsExpanded && (
           <div style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
             {deletingSessionId && (
-              <div style={{ marginBottom: '12px', padding: '12px', background: '#e3f2fd', borderRadius: '6px' }}>
+              <div style={{ marginBottom: '12px', padding: '12px', background: 'var(--color-primary-bg)', borderRadius: '6px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                   <span className="spinner" style={{ flexShrink: 0 }} />
                   <span style={{ fontSize: '14px' }}>Deleting session…</span>
                 </div>
                 <div style={{ width: '100%', height: '8px', background: '#bbdefb', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                  <div style={{ height: '100%', width: '30%', background: 'var(--color-primary)', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
                 </div>
               </div>
             )}
@@ -470,7 +470,7 @@ export function AdminUsers({
                             type="button"
                             disabled={isDeleting}
                             onClick={() => handleOpenRenameSession(session)}
-                            style={{ fontSize: '12px', padding: '4px 10px', marginRight: '8px', backgroundColor: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
+                            style={{ fontSize: '12px', padding: '4px 10px', marginRight: '8px', backgroundColor: 'var(--color-primary)', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
                           >
                             Rename
                           </button>
@@ -478,7 +478,7 @@ export function AdminUsers({
                             type="button"
                             disabled={isDeleting}
                             onClick={() => setDeleteConfirmSessionId(session.id)}
-                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
+                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: isDeleting ? 'not-allowed' : 'pointer', opacity: isDeleting ? 0.7 : 1 }}
                           >
                             Delete
                           </button>
@@ -533,7 +533,7 @@ export function AdminUsers({
                   <span style={{ fontSize: '14px', color: '#555' }}>Deleting session…</span>
                 </div>
                 <div style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                  <div style={{ height: '100%', width: '30%', background: 'var(--color-primary)', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
                 </div>
               </>
             ) : (
@@ -551,7 +551,7 @@ export function AdminUsers({
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleDeleteSessionConfirm(deleteConfirmSessionId) }}
-                    style={{ padding: '8px 16px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                   >
                     Continue
                   </button>
@@ -657,7 +657,7 @@ export function AdminUsers({
                   <span style={{ fontSize: '14px', color: '#555' }}>Removing user…</span>
                 </div>
                 <div style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: '30%', background: '#1976d2', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
+                  <div style={{ height: '100%', width: '30%', background: 'var(--color-primary)', borderRadius: '4px', animation: 'progress-indeterminate 1.2s ease-in-out infinite' }} />
                 </div>
               </>
             ) : (
@@ -675,7 +675,7 @@ export function AdminUsers({
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleRemoveUser(removeId) }}
-                    style={{ padding: '8px 16px', backgroundColor: '#d32f2f', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
                   >
                     Continue
                   </button>

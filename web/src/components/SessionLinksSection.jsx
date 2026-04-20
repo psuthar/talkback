@@ -77,19 +77,19 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
           type="button"
           onClick={addLink}
           disabled={adding || !urlInput.trim()}
-          style={{ padding: '8px 16px', fontSize: '14px', borderRadius: '4px', border: 'none', backgroundColor: '#1976D2', color: '#fff', cursor: adding ? 'not-allowed' : 'pointer' }}
+          style={{ padding: '8px 16px', fontSize: '14px', borderRadius: '4px', border: 'none', backgroundColor: 'var(--color-primary)', color: '#fff', cursor: adding ? 'not-allowed' : 'pointer' }}
         >
           {adding ? 'Adding…' : 'Add link'}
         </button>
       </div>
       {addError && (
-        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: '#c62828', borderRadius: '4px', fontSize: '13px' }}>
+        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: 'var(--color-danger-dark)', borderRadius: '4px', fontSize: '13px' }}>
           {addError}
           <button type="button" onClick={() => setAddError(null)} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>Dismiss</button>
         </div>
       )}
       {deleteError && (
-        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: '#c62828', borderRadius: '4px', fontSize: '13px' }}>
+        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: 'var(--color-danger-dark)', borderRadius: '4px', fontSize: '13px' }}>
           {deleteError}
           <button type="button" onClick={() => setDeleteError(null)} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>Dismiss</button>
         </div>
@@ -121,16 +121,16 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
                 </div>
                 <div style={{ fontSize: '12px', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {link.status === 'verified' && (
-                    <span style={{ fontSize: '14px', color: '#4CAF50' }} title="Verified" aria-hidden>✓</span>
+                    <span style={{ fontSize: '14px', color: 'var(--color-success-mid)' }} title="Verified" aria-hidden>✓</span>
                   )}
                   {(link.status === 'pending' || link.status === 'processing') && (
                     <span style={{ fontSize: '14px', color: '#ed6c02' }} title="Processing">Processing…</span>
                   )}
                   {link.status === 'failed' && (
                     <>
-                      <span style={{ fontSize: '14px', color: '#c62828' }} title="Failed" aria-hidden>✕</span>
+                      <span style={{ fontSize: '14px', color: 'var(--color-danger-dark)' }} title="Failed" aria-hidden>✕</span>
                       {link.error_message && (
-                        <span style={{ color: '#c62828', marginLeft: '4px' }} title={link.error_message}>
+                        <span style={{ color: 'var(--color-danger-dark)', marginLeft: '4px' }} title={link.error_message}>
                           {link.error_message.length > 60 ? link.error_message.slice(0, 60) + '…' : link.error_message}
                         </span>
                       )}
@@ -142,7 +142,7 @@ export function SessionLinksSection({ sessionId, links = [], apiBaseUrl, refetch
                 type="button"
                 onClick={() => deleteLink(link.id)}
                 disabled={deletingId === link.id}
-                style={{ padding: '4px 10px', fontSize: '12px', color: '#c62828', border: '1px solid #c62828', borderRadius: '4px', background: 'transparent', cursor: deletingId === link.id ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '4px 10px', fontSize: '12px', color: 'var(--color-danger-dark)', border: '1px solid #c62828', borderRadius: '4px', background: 'transparent', cursor: deletingId === link.id ? 'not-allowed' : 'pointer' }}
               >
                 {deletingId === link.id ? 'Deleting…' : 'Delete'}
               </button>
