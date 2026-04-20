@@ -215,6 +215,7 @@ If Jira MCP or API is available, use it to post this comment; otherwise note in 
 - Use commit messages prefixed with the ticket number
 - Example:
   SCRUM-12: add session state evaluator
+- **Style-only commits:** When all changed files are in `web/` and the changes are purely cosmetic (font sizes, colors, spacing, placeholder text, labels — no logic, state, or API changes), include a `Style-only: <brief description>` line in the commit message. This prevents a false-positive WARN in the PR gate. Only apply when **no** backend files are touched.
 
 ### Pull Request
 - Push branch to GitHub
