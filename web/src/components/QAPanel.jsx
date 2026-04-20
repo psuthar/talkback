@@ -77,7 +77,7 @@ export function QAPanel({
                 data-testid="question-input"
                 value={questionText}
                 onChange={(e) => setQuestionText(e.target.value)}
-                placeholder="Ask a question..."
+                placeholder="Click on the microphone or type here to ask a question"
                 rows={2}
                 style={{
                   width: '100%',
