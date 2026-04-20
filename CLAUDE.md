@@ -182,6 +182,23 @@ When the user requests implementation of a Jira ticket, two invocation modes are
    - What test type fits? Unit test, DB integration test (real Postgres via `internal/test/testdb`), handler test (`setupTestHandlersParallel`), MCP behavioral test — match what the repo uses for similar code.
 3. Record the test plan as a brief list before implementation. This is the acceptance bar: the ticket is not done until those tests are written, locally passing, and included in the PR.
 
+**Test type decision rules (apply to every ticket):**
+
+| Changed area | Required test type |
+|---|---|
+| Any file outside `web/` (Go code) | At minimum one `*_test.go` file in the diff |
+| New API handler or changed handler behavior | Handler test via `setupTestHandlersParallel` |
+| New DB query or schema change | DB integration test via `internal/test/testdb` |
+| MCP tool added or changed | MCP behavioral test |
+| `web/` logic change (state, API calls, conditional rendering) | E2E spec added or updated in `web/tests/` |
+| `web/` style-only change (font, color, spacing, text) | No test required — use `Style-only:` commit convention |
+| Docs/config only, no executable behavior | No test required |
+
+**Hard stop before committing:**
+- If any file outside `web/` was changed → at least one `*_test.go` must be in the diff. If not, write the tests first.
+- If any `web/` logic changed (not style-only) → at least one E2E spec must be added or updated. If not, write it first.
+- Run `go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir /tmp/prrisk-check` and check for `tests_missing` in the output. If present and the change is not `Style-only`, do not commit — write the missing tests first.
+
 **After implementation:**
 - Add or update the tests identified above in the same commit/PR as the implementation.
 - Run the affected packages locally before pushing (e.g. `go test ./internal/mcpserver/...` for MCP changes). Fix failures before pushing — CI is not a substitute for running tests locally first.
