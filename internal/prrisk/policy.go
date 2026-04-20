@@ -56,7 +56,10 @@ func mergeRecommendation(r Result) string {
 		return "warn"
 	case "low":
 		if okBool(factorIDs(r.Factors), "tests_missing") {
-			return "warn"
+			// Style-only frontend changes explicitly waive the tests_missing gate.
+			if !okBool(reducerIDs(r.Reducers), "style_only_note") {
+				return "warn"
+			}
 		}
 		return "pass"
 	default:

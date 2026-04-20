@@ -197,6 +197,10 @@ func evidenceMigrationsGate(label string, s Signals) ValidationEvidence {
 // evidenceAddTests evaluates test presence via behavioral coverage and test LOC ratio.
 func evidenceAddTests(label string, s Signals, ci *riskcontext.ContextInsights) ValidationEvidence {
 	id := "add_tests_or_evidence"
+	if s.StyleOnlyNoteFound {
+		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "git_signals",
+			Rationale: "Style-only commit note present: purely cosmetic frontend change, no test required."}
+	}
 	if ci != nil && ci.Proximity.BehavioralCoverage == "adequate" {
 		return ValidationEvidence{ID: id, Label: label, Status: EvidencePass, Source: "proximity",
 			Rationale: "Behavioral coverage is adequate: E2E or non-sensitive domain with co-located tests."}
