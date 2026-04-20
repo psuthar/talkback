@@ -76,6 +76,7 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 	files, gitErr := DiffNumstat(repoRoot, baseRef)
 
 	valFound, valSnippet := detectValidationNote(repoRoot, baseRef)
+	styleOnly, styleSnippet := detectStyleOnlyNote(repoRoot, baseRef)
 
 	s := Signals{
 		RepoRoot:              repoRoot,
@@ -89,6 +90,8 @@ func ExtractSignals(repoRoot, baseRef string) Signals {
 		GitError:              gitErr,
 		ValidationNoteFound:   valFound,
 		ValidationNoteSnippet: valSnippet,
+		StyleOnlyNoteFound:    styleOnly,
+		StyleOnlyNoteSnippet:  styleSnippet,
 	}
 	for _, f := range files {
 		s.FileCount++
@@ -153,5 +156,33 @@ func detectValidationNote(repoRoot, baseRef string) (bool, string) {
 		}
 	}
 	_ = stderr // keep stderr for future debugging without changing behavior.
+	return false, ""
+}
+
+// detectStyleOnlyNote checks commit messages for a "Style-only:" prefix, indicating
+// a purely cosmetic/CSS change with no logic impact. Mirrors detectValidationNote.
+func detectStyleOnlyNote(repoRoot, baseRef string) (bool, string) {
+	cmd := exec.Command("git", "-C", repoRoot, "log", "--format=%B", fmt.Sprintf("%s...HEAD", baseRef))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return false, ""
+	}
+	lines := strings.Split(stdout.String(), "\n")
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" {
+			continue
+		}
+		lower := strings.ToLower(stripped)
+		if strings.HasPrefix(lower, "style-only:") || strings.HasPrefix(lower, "style only:") {
+			if len(stripped) > 120 {
+				return true, stripped[:120]
+			}
+			return true, stripped
+		}
+	}
+	_ = stderr
 	return false, ""
 }

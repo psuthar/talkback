@@ -54,6 +54,8 @@ type Signals struct {
 	GitError              string         `json:"git_error,omitempty"`
 	ValidationNoteFound   bool           `json:"validation_note_found,omitempty"`
 	ValidationNoteSnippet string         `json:"validation_note_snippet,omitempty"`
+	StyleOnlyNoteFound    bool           `json:"style_only_note_found,omitempty"`
+	StyleOnlyNoteSnippet  string         `json:"style_only_note_snippet,omitempty"`
 	// RepoRoot is the git worktree root used for contextual git queries (v2.4+).
 	RepoRoot string `json:"repo_root,omitempty"`
 }
@@ -237,6 +239,7 @@ type ScoreWeights struct {
 	TestsMissingPoints  float64
 
 	// Reducers subtract points from the base score.
+	StyleOnlyReducerPoints        float64 // style-only frontend change (commit note: "Style-only:")
 	ValidationNoteReducerPoints   float64 // strong validation note (E2E/smoke evidence)
 	WorkflowPartialReducerPoints  float64 // moderate validation note (staging/CI evidence)
 	UnitTestEvidenceReducerPoints float64
@@ -275,6 +278,7 @@ func DefaultWeights() ScoreWeights {
 		ConfigPoints:        8,
 		TestsMissingPoints:  18,
 
+		StyleOnlyReducerPoints:        20,
 		ValidationNoteReducerPoints:   6,
 		WorkflowPartialReducerPoints:  4,
 		UnitTestEvidenceReducerPoints: 5,
