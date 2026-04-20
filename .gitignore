@@ -5,6 +5,10 @@
 # Epic-run agent state files (transient; may contain API tokens in PR URLs)
 .epic-run/
 
+# Paperclip agent artifacts (transient; used only during execution runs)
+plan.md
+plan.json
+
 # Environment variables
 .env
 web/.env.e2e
@@ -71,8 +75,12 @@ ops/baselines/*.json
 
 # Test output (e.g. Playwright)
 test-results/
+playwright-results.json
 # Local Playwright HTML report (`npx playwright test` / `npm run test:e2e`); CI uploads reports via workflow artifacts, not this tree
 playwright-report/
+
+# Untracked root-level artifact (do not match cmd/api)
+/api
 
 # OS
 .DS_Store

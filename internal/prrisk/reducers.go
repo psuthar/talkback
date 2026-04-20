@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+func reducerIDs(reducers []RiskReducer) map[string]struct{} {
+	m := make(map[string]struct{}, len(reducers))
+	for _, r := range reducers {
+		m[r.ID] = struct{}{}
+	}
+	return m
+}
+
 func factorIDs(factors []RiskFactor) map[string]struct{} {
 	m := make(map[string]struct{}, len(factors))
 	for _, f := range factors {
