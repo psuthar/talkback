@@ -22,6 +22,18 @@ function makeQuestion(id, answerStatus) {
   }
 }
 
+function makeQuestionWithoutAnswer(id) {
+  return {
+    id,
+    question_text: `Question ${id}`,
+    created_at: '2026-01-01T00:00:00Z',
+    asked_by: 'user@example.com',
+    video_time_seconds: null,
+    replies: [],
+    answer: null,
+  }
+}
+
 function renderQAHistory(questions) {
   return render(
     <QAHistory
@@ -32,17 +44,40 @@ function renderQAHistory(questions) {
   )
 }
 
-function expandCard(container) {
-  const expandBtn = container.querySelector('button[aria-label="Expand"]')
-  if (expandBtn) {
-    fireEvent.click(expandBtn)
-  }
-}
+describe('QAHistory default expand behavior', () => {
+  it('cards with answers are expanded by default on load', () => {
+    const { container } = renderQAHistory([makeQuestion('q1', 'answered')])
+    // Answer text should be visible without clicking Expand
+    const answerEl = container.querySelector('[data-testid="answer-text"]')
+    expect(answerEl).not.toBeNull()
+    expect(answerEl.textContent).toContain('Some answer text.')
+  })
+
+  it('cards without answers remain collapsed by default', () => {
+    const { container } = renderQAHistory([makeQuestionWithoutAnswer('q2')])
+    const answerEl = container.querySelector('[data-testid="answer-text"]')
+    expect(answerEl).toBeNull()
+    // Expand button should be present
+    const expandBtn = container.querySelector('button[aria-label="Expand"]')
+    expect(expandBtn).not.toBeNull()
+  })
+
+  it('collapse toggle works after default-open state', () => {
+    const { container } = renderQAHistory([makeQuestion('q3', 'answered')])
+    // Initially expanded — answer visible
+    expect(container.querySelector('[data-testid="answer-text"]')).not.toBeNull()
+    // Click Collapse
+    const collapseBtn = container.querySelector('button[aria-label="Collapse"]')
+    expect(collapseBtn).not.toBeNull()
+    fireEvent.click(collapseBtn)
+    // After collapse — answer hidden
+    expect(container.querySelector('[data-testid="answer-text"]')).toBeNull()
+  })
+})
 
 describe('QAHistory answer_status mapping', () => {
   it('renders "Answered" for answered status', () => {
     const { container } = renderQAHistory([makeQuestion('q1', 'answered')])
-    expandCard(container)
     const statusEl = container.querySelector('[data-testid="answer-status"]')
     expect(statusEl).not.toBeNull()
     expect(statusEl.textContent).toBe('Answered')
@@ -51,7 +86,6 @@ describe('QAHistory answer_status mapping', () => {
 
   it('renders "Not covered by session" for not_covered status', () => {
     const { container } = renderQAHistory([makeQuestion('q2', 'not_covered')])
-    expandCard(container)
     const statusEl = container.querySelector('[data-testid="answer-status"]')
     expect(statusEl).not.toBeNull()
     expect(statusEl.textContent).toBe('Not covered by session')
@@ -60,7 +94,6 @@ describe('QAHistory answer_status mapping', () => {
 
   it('renders "Unable to answer" for error status', () => {
     const { container } = renderQAHistory([makeQuestion('q3', 'error')])
-    expandCard(container)
     const statusEl = container.querySelector('[data-testid="answer-status"]')
     expect(statusEl).not.toBeNull()
     expect(statusEl.textContent).toBe('Unable to answer')
@@ -69,7 +102,6 @@ describe('QAHistory answer_status mapping', () => {
 
   it('renders "Unknown" for unrecognized status values', () => {
     const { container } = renderQAHistory([makeQuestion('q4', 'future_status')])
-    expandCard(container)
     const statusEl = container.querySelector('[data-testid="answer-status"]')
     expect(statusEl).not.toBeNull()
     expect(statusEl.textContent).toBe('Unknown')
