@@ -88,7 +88,7 @@ export function AddContentSection({
                 border: '1px dashed #81c784',
                 borderRadius: '4px',
                 background: uploading ? '#f5f5f5' : '#f1f8e9',
-                color: uploading ? '#999' : '#2e7d32',
+                color: uploading ? '#999' : 'var(--color-success)',
                 fontSize: '13px',
                 fontWeight: 500,
                 cursor: uploading ? 'not-allowed' : 'pointer',
@@ -145,7 +145,7 @@ export function AddContentSection({
                   padding: '6px 10px',
                   fontSize: '12px',
                   margin: 0,
-                  backgroundColor: '#1976D2',
+                  backgroundColor: 'var(--color-primary)',
                   color: '#fff',
                   border: 'none',
                   borderRadius: '3px',
@@ -159,13 +159,13 @@ export function AddContentSection({
             {addError && (
               <div
                 role="alert"
-                style={{ fontSize: '12px', color: '#c62828', marginTop: '4px' }}
+                style={{ fontSize: '12px', color: 'var(--color-danger-dark)', marginTop: '4px' }}
               >
                 {addError}{' '}
                 <button
                   type="button"
                   onClick={() => setAddError(null)}
-                  style={{ fontSize: '12px', color: '#c62828', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                  style={{ fontSize: '12px', color: 'var(--color-danger-dark)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
                 >
                   Dismiss
                 </button>

@@ -93,7 +93,7 @@ function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry,
   return (
     <div style={{ marginTop: '12px', padding: '10px 12px', backgroundColor: '#f0f7ff', borderRadius: '6px', border: '1px solid #b3d9ff', fontSize: '13px' }}>
       <span style={{ fontWeight: 600, color: '#333' }}>Import status:</span>{' '}
-      <span style={{ color: processingStatus.state === 'ready' ? '#4CAF50' : processingStatus.state.startsWith('failed') ? '#c62828' : '#1976D2' }}>
+      <span style={{ color: processingStatus.state === 'ready' ? 'var(--color-success-mid)' : processingStatus.state.startsWith('failed') ? 'var(--color-danger-dark)' : 'var(--color-primary)' }}>
         {processingStatus.state === 'ready' ? 'Complete' : processingStatus.state.replace(/_/g, ' ')}
       </span>
       {processingStatus.last_error_message && (
@@ -104,7 +104,7 @@ function AppVideoImportStatus({ sessionId, apiBaseUrl, creatorIdentity, onRetry,
           type="button"
           onClick={handleRetry}
           disabled={retrying}
-          style={{ marginLeft: '12px', padding: '4px 10px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: retrying ? 'not-allowed' : 'pointer' }}
+          style={{ marginLeft: '12px', padding: '4px 10px', fontSize: '12px', backgroundColor: 'var(--color-primary-mid)', color: 'white', border: 'none', borderRadius: '4px', cursor: retrying ? 'not-allowed' : 'pointer' }}
         >
           {retrying ? 'Retrying…' : 'Retry import'}
         </button>
@@ -3049,7 +3049,7 @@ function App() {
           left: '50%',
           transform: 'translateX(-50%)',
           padding: '12px 24px',
-          backgroundColor: '#4CAF50',
+          backgroundColor: 'var(--color-success-mid)',
           color: 'white',
           borderRadius: '8px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
@@ -3220,7 +3220,7 @@ function App() {
                 </>
               )}
               {authUser.global_role === 'admin' && (
-                <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#1976d2', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
+                <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
               )}
             </span>
             <button
@@ -3267,7 +3267,7 @@ function App() {
               rel="noopener noreferrer"
               style={{
                 padding: '8px 16px',
-                backgroundColor: '#4CAF50',
+                backgroundColor: 'var(--color-success-mid)',
                 color: 'white',
                 textDecoration: 'none',
                 borderRadius: '4px',
@@ -3285,7 +3285,7 @@ function App() {
                 e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.15)'
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#4CAF50'
+                e.currentTarget.style.backgroundColor = 'var(--color-success-mid)'
                 e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
               }}
             >
@@ -3392,7 +3392,7 @@ function App() {
                       fontSize: '12px',
                       padding: '4px 10px',
                       cursor: 'pointer',
-                      background: userIdCopiedFlash ? '#c8e6c9' : '#f5f5f5',
+                      background: userIdCopiedFlash ? 'var(--color-success-bg-hover)' : '#f5f5f5',
                       border: '1px solid #ccc',
                       borderRadius: '4px',
                       color: '#333',
@@ -3489,7 +3489,7 @@ function App() {
                   else if (nav.mode === 'view') openSession(id, 'participant')
                   else openSession(id, authUser?.global_role === 'participant' ? 'participant' : 'creator')
                 }}
-                style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', backgroundColor: '#1976d2', color: '#fff', border: 'none', borderRadius: '4px' }}
+                style={{ padding: '8px 16px', fontSize: '14px', cursor: 'pointer', backgroundColor: 'var(--color-primary)', color: '#fff', border: 'none', borderRadius: '4px' }}
               >
                 Try again
               </button>
@@ -3509,7 +3509,7 @@ function App() {
               </button>
             </div>
           )}
-          <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: '#e3f2fd' }}>
+          <div className="section" style={{ border: '2px solid #2196F3', backgroundColor: 'var(--color-primary-bg)' }}>
             {!currentSession ? (
           <>
             {/* Show Create vs Use Existing toggle only when no sessions and user can create; otherwise show list first */}
@@ -3520,7 +3520,7 @@ function App() {
                 <button
                   onClick={() => setSessionMode('create')}
                   style={{
-                    backgroundColor: sessionMode === 'create' ? '#2196F3' : '#e0e0e0',
+                    backgroundColor: sessionMode === 'create' ? 'var(--color-primary-mid)' : '#e0e0e0',
                     color: sessionMode === 'create' ? 'white' : 'black',
                     padding: '8px 16px',
                     border: 'none',
@@ -3533,7 +3533,7 @@ function App() {
                 <button
                   onClick={() => setSessionMode('select')}
                   style={{
-                    backgroundColor: sessionMode === 'select' ? '#2196F3' : '#e0e0e0',
+                    backgroundColor: sessionMode === 'select' ? 'var(--color-primary-mid)' : '#e0e0e0',
                     color: sessionMode === 'select' ? 'white' : 'black',
                     padding: '8px 16px',
                     border: 'none',
@@ -3586,11 +3586,11 @@ function App() {
                                 border: '1px solid #ddd',
                                 borderRadius: '5px',
                                 cursor: 'pointer',
-                                backgroundColor: session.status === 'open' ? '#e8f5e9' : '#f5f5f5',
+                                backgroundColor: session.status === 'open' ? 'var(--color-success-bg)' : '#f5f5f5',
                                 transition: 'background-color 0.2s'
                               }}
-                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? '#c8e6c9' : '#e0e0e0' }}
-                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? '#e8f5e9' : '#f5f5f5' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? 'var(--color-success-bg-hover)' : '#e0e0e0' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = session.status === 'open' ? 'var(--color-success-bg)' : '#f5f5f5' }}
                               onClick={() => openSession(session.id, myRole === 'participant' ? 'participant' : 'creator')}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
@@ -3600,7 +3600,7 @@ function App() {
                                     fontSize: '12px',
                                     padding: '2px 6px',
                                     borderRadius: '4px',
-                                    backgroundColor: myRole === 'admin' ? '#1976d2' : myRole === 'creator' ? '#2e7d32' : '#757575',
+                                    backgroundColor: myRole === 'admin' ? 'var(--color-primary)' : myRole === 'creator' ? 'var(--color-success)' : '#757575',
                                     color: '#fff',
                                     fontWeight: '600',
                                     textTransform: 'capitalize'
@@ -3613,7 +3613,7 @@ function App() {
                                 ID: <code style={{ fontSize: '12px' }}>{session.id}</code>
                               </div>
                               <div style={{ fontSize: '12px', color: '#666' }}>
-                                Status: <span style={{ color: session.status === 'open' ? '#4CAF50' : '#999', fontWeight: 'bold' }}>{session.status}</span>
+                                Status: <span style={{ color: session.status === 'open' ? 'var(--color-success-mid)' : '#999', fontWeight: 'bold' }}>{session.status}</span>
                                 {session.updated_at && ` · Updated ${new Date(session.updated_at).toLocaleDateString()}`}
                               </div>
                               {canCreateSessions && (myRole === 'creator' || myRole === 'admin') && (
@@ -3675,7 +3675,7 @@ function App() {
                     <button
                       onClick={() => setCreateSource(CREATE_SOURCE.ZOOM)}
                       style={{
-                        backgroundColor: createSource === CREATE_SOURCE.ZOOM ? '#2196F3' : '#e0e0e0',
+                        backgroundColor: createSource === CREATE_SOURCE.ZOOM ? 'var(--color-primary-mid)' : '#e0e0e0',
                         color: createSource === CREATE_SOURCE.ZOOM ? 'white' : 'black',
                         padding: '8px 16px',
                         border: 'none',
@@ -3704,7 +3704,7 @@ function App() {
                     <button
                       onClick={() => setCreateSource(CREATE_SOURCE.EMPTY)}
                       style={{
-                        backgroundColor: createSource === CREATE_SOURCE.EMPTY ? '#2196F3' : '#e0e0e0',
+                        backgroundColor: createSource === CREATE_SOURCE.EMPTY ? 'var(--color-primary-mid)' : '#e0e0e0',
                         color: createSource === CREATE_SOURCE.EMPTY ? 'white' : 'black',
                         padding: '8px 16px',
                         border: 'none',
@@ -3746,7 +3746,7 @@ function App() {
                     <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Zoom</div>
                     {zoomConnection ? (
                       <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#2e7d32', fontSize: '14px' }}>
+                        <span style={{ color: 'var(--color-success)', fontSize: '14px' }}>
                           Connected as {zoomConnection.zoom_user_email || zoomConnection.zoom_user_id || 'Zoom user'}
                         </span>
                         <button type="button" onClick={disconnectZoom} style={{ padding: '4px 10px', fontSize: '13px' }}>
@@ -3794,9 +3794,9 @@ function App() {
                                     {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'} · {rec.duration_minutes ?? 0} min
                                   </div>
                                   <div style={{ marginBottom: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                    {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: '#e3f2fd', borderRadius: '4px', fontSize: '12px' }}>Video</span>}
+                                    {rec.has_video && <span style={{ padding: '2px 6px', backgroundColor: 'var(--color-primary-bg)', borderRadius: '4px', fontSize: '12px' }}>Video</span>}
                                     {rec.has_transcript ? (
-                                      <span style={{ padding: '2px 6px', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', fontSize: '12px', fontWeight: 500 }}>Transcript</span>
+                                      <span style={{ padding: '2px 6px', backgroundColor: 'var(--color-success-bg)', color: 'var(--color-success)', borderRadius: '4px', fontSize: '12px', fontWeight: 500 }}>Transcript</span>
                                     ) : (
                                       <span style={{ padding: '2px 6px', backgroundColor: '#f5f5f5', color: '#757575', borderRadius: '4px', fontSize: '12px' }}>No transcript</span>
                                     )}
@@ -3805,7 +3805,7 @@ function App() {
                                     type="button"
                                     onClick={() => openZoomImportModal(rec)}
                                     disabled={zoomImporting || !rec.has_transcript}
-                                    style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
+                                    style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: 'var(--color-primary-mid)', color: 'white', border: 'none', borderRadius: '4px', cursor: zoomImporting || !rec.has_transcript ? 'not-allowed' : 'pointer' }}
                                   >
                                     Import
                                   </button>
@@ -3826,7 +3826,7 @@ function App() {
                               setZoomPasteUrlExpanded((v) => !v)
                               if (!zoomPasteUrlExpanded && !zoomTitle?.trim()) setZoomTitle('Zoom Recording')
                             }}
-                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '13px', color: '#2196F3', textDecoration: 'underline', marginBottom: '8px' }}
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: '13px', color: 'var(--color-primary-mid)', textDecoration: 'underline', marginBottom: '8px' }}
                           >
                             {zoomPasteUrlExpanded ? '▼' : '▶'} Or paste a Zoom recording URL
                           </button>
@@ -3854,7 +3854,7 @@ function App() {
                                 </button>
                               </div>
                               {zoomTranscriptStatus === 'ready' && (
-                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#e8f5e9', borderRadius: '4px', fontSize: '13px', color: '#2e7d32' }}>
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--color-success-bg)', borderRadius: '4px', fontSize: '13px', color: 'var(--color-success)' }}>
                                   ✓ {zoomTranscriptMessage}
                                   {zoomTranscriptTopic && <span style={{ display: 'block', marginTop: '4px', opacity: 0.9 }}>Recording: {zoomTranscriptTopic}</span>}
                                 </div>
@@ -3868,12 +3868,12 @@ function App() {
                                 </div>
                               )}
                               {zoomTranscriptStatus === 'not_available' && (
-                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: 'var(--color-danger-dark)' }}>
                                   Transcript not available: {zoomTranscriptMessage}
                                 </div>
                               )}
                               {zoomTranscriptStatus === 'recording_not_found' && (
-                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: 'var(--color-danger-dark)' }}>
                                   {zoomTranscriptMessage}
                                 </div>
                               )}
@@ -3883,7 +3883,7 @@ function App() {
                                 </div>
                               )}
                               {(zoomTranscriptStatus === 'error' || zoomTranscriptStatus === 'api_error') && zoomTranscriptMessage && (
-                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: '#c62828' }}>
+                                <div style={{ marginTop: '8px', padding: '8px', backgroundColor: '#ffebee', borderRadius: '4px', fontSize: '13px', color: 'var(--color-danger-dark)' }}>
                                   {zoomTranscriptMessage}
                                 </div>
                               )}
@@ -3917,7 +3917,7 @@ function App() {
                     <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Microsoft Teams</div>
                     {teamsConnection ? (
                       <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#2e7d32', fontSize: '14px' }}>
+                        <span style={{ color: 'var(--color-success)', fontSize: '14px' }}>
                           Connected as {teamsConnection.teams_email || teamsConnection.teams_user_id || 'Teams user'}
                         </span>
                         <button type="button" onClick={disconnectTeams} style={{ padding: '4px 10px', fontSize: '13px' }}>
@@ -3999,7 +3999,7 @@ function App() {
                         fontSize: '12px',
                         padding: '2px 6px',
                         borderRadius: '4px',
-                        backgroundColor: currentSession.session.created_by === authUser.email ? '#2e7d32' : '#757575',
+                        backgroundColor: currentSession.session.created_by === authUser.email ? 'var(--color-success)' : '#757575',
                         color: '#fff',
                         fontWeight: '600',
                         textTransform: 'capitalize'
@@ -4012,7 +4012,7 @@ function App() {
                 <div style={{ fontSize: '12px', color: '#666' }}>
                   ID: <code style={{ fontSize: '12px' }}>{currentSession?.session?.id ?? '—'}</code> | 
                   Status: <span style={{ 
-                    color: currentSession?.session?.status === 'open' ? '#4CAF50' : '#999',
+                    color: currentSession?.session?.status === 'open' ? 'var(--color-success-mid)' : '#999',
                     fontWeight: 'bold'
                   }}>{currentSession?.session?.status ?? '—'}</span>
                 </div>
@@ -4027,7 +4027,7 @@ function App() {
                   window.history.replaceState(null, '', `/?mode=${mode}${apiSuffix}`)
                 }} 
                 style={{ 
-                  backgroundColor: '#f44336',
+                  backgroundColor: 'var(--color-danger)',
                   color: 'white',
                   padding: '8px 16px'
                 }}

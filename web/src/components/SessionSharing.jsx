@@ -22,7 +22,7 @@ export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
     <div className="section" style={{ 
       marginBottom: '20px', 
       padding: '15px', 
-      backgroundColor: '#e3f2fd', 
+      backgroundColor: 'var(--color-primary-bg)', 
       borderRadius: '5px',
       border: '1px solid #2196F3'
     }}>
@@ -45,7 +45,7 @@ export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
             onClick={() => copyToClipboard(sessionId)}
             style={{
               padding: '8px 16px',
-              backgroundColor: copied ? '#4CAF50' : '#2196F3',
+              backgroundColor: copied ? 'var(--color-success-mid)' : 'var(--color-primary-mid)',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
@@ -80,7 +80,7 @@ export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
             onClick={() => copyToClipboard(defaultUrl)}
             style={{
               padding: '8px 16px',
-              backgroundColor: copied ? '#4CAF50' : '#2196F3',
+              backgroundColor: copied ? 'var(--color-success-mid)' : 'var(--color-primary-mid)',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
@@ -112,7 +112,7 @@ export function SessionSharing({ sessionId, sessionTitle, apiBaseUrl }) {
             onClick={() => copyToClipboard(participantUrl)}
             style={{
               padding: '8px 16px',
-              backgroundColor: copied ? '#4CAF50' : '#2196F3',
+              backgroundColor: copied ? 'var(--color-success-mid)' : 'var(--color-primary-mid)',
               color: 'white',
               border: 'none',
               borderRadius: '4px',

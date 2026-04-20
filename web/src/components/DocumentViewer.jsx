@@ -139,7 +139,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
               href={doc.url + (doc.fragment && !doc.url.includes('#') ? '#' + doc.fragment : '')}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ fontSize: '13px', color: '#1976d2', whiteSpace: 'nowrap' }}
+              style={{ fontSize: '13px', color: 'var(--color-primary)', whiteSpace: 'nowrap' }}
             >
               Open in new tab
             </a>

@@ -46,7 +46,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
     <div className="section" style={{ marginBottom: '20px', backgroundColor: '#f9f9f9', border: '1px solid #ddd' }}>
       <h2>Materials ({materials.length})</h2>
       {deleteError && (
-        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: '#c62828', borderRadius: '4px', fontSize: '13px' }}>
+        <div style={{ padding: '8px 12px', marginBottom: '12px', backgroundColor: '#ffebee', color: 'var(--color-danger-dark)', borderRadius: '4px', fontSize: '13px' }}>
           {deleteError}
           <button type="button" onClick={() => setDeleteError(null)} style={{ marginLeft: '8px', padding: '2px 8px', fontSize: '12px' }}>Dismiss</button>
         </div>
@@ -75,8 +75,8 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                 Kind: <strong>{material.kind}</strong> |
                 Type: <strong>{material.content_type}</strong> |
                 Status: <span style={{
-                  color: status === 'N/A' ? '#666' : status === 'ready' ? '#4CAF50' :
-                         (material.text_status === 'pending' || material.text_status === 'processing') ? '#ff9800' : material.text_status === 'failed' ? '#f44336' : '#666',
+                  color: status === 'N/A' ? '#666' : status === 'ready' ? 'var(--color-success-mid)' :
+                         (material.text_status === 'pending' || material.text_status === 'processing') ? '#ff9800' : material.text_status === 'failed' ? 'var(--color-danger)' : '#666',
                   fontWeight: 'bold'
                 }}>{status}</span>
               </div>
@@ -97,7 +97,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   border: '1px solid #e0e0e0'
                 }}>
                   <strong>{material.kind === 'video' ? 'Transcript:' : 'Extracted Text Preview:'}</strong>
-                  <div style={{ marginTop: '5px', fontStyle: material.extracted_text ? 'italic' : 'normal', color: material.text_status === 'failed' ? '#c62828' : '#555' }}>
+                  <div style={{ marginTop: '5px', fontStyle: material.extracted_text ? 'italic' : 'normal', color: material.text_status === 'failed' ? 'var(--color-danger-dark)' : '#555' }}>
                     {material.extracted_text
                       ? (material.extracted_text.length > 500
                         ? material.extracted_text.substring(0, 500) + '...'
@@ -118,7 +118,7 @@ export function MaterialsList({ materials, sessionId, apiBaseUrl, refetchSession
                   padding: '6px 12px',
                   fontSize: '12px',
                   border: '1px solid #f44336',
-                  color: '#f44336',
+                  color: 'var(--color-danger)',
                   background: '#fff',
                   borderRadius: '4px',
                   cursor: deletingId === material.id ? 'not-allowed' : 'pointer',

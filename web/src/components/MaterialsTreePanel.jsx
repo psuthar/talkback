@@ -102,14 +102,14 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
         alignItems: 'center',
         marginBottom: '2px',
         borderRadius: '4px',
-        background: selected ? '#e8f5e9' : 'transparent',
+        background: selected ? 'var(--color-success-bg)' : 'transparent',
         ...(disabled && { opacity: 0.7 }),
       }}
       onMouseEnter={(e) => {
         if (!selected && !disabled) e.currentTarget.style.background = '#f0f0f0'
       }}
       onMouseLeave={(e) => {
-        if (!selected) e.currentTarget.style.background = selected ? '#e8f5e9' : 'transparent'
+        if (!selected) e.currentTarget.style.background = selected ? 'var(--color-success-bg)' : 'transparent'
       }}
     >
       <button
@@ -161,7 +161,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
             fontSize: '14px',
             lineHeight: 1,
           }}
-          onMouseEnter={(e) => { if (!deleting) e.currentTarget.style.color = '#c62828' }}
+          onMouseEnter={(e) => { if (!deleting) e.currentTarget.style.color = 'var(--color-danger-dark)' }}
           onMouseLeave={(e) => { if (!deleting) e.currentTarget.style.color = '#999' }}
         >
           {deleting ? '…' : '×'}
@@ -229,7 +229,7 @@ export function MaterialsTreePanel({
   const materialStatusMeta = (m) => {
     if (isMaterialImage(m)) return null
     if (m.text_status === 'pending' || m.text_status === 'processing') return { label: 'Processing…', color: '#e65100' }
-    if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
+    if (m.text_status === 'failed') return { label: 'Failed', color: 'var(--color-danger-dark)' }
     return null
   }
   const isProcessingStatus = (status) => {
@@ -300,7 +300,7 @@ export function MaterialsTreePanel({
   const materialStatusMetaDocument = (m) => {
     if (isSlideDeckMaterial(m)) {
       const slideStatus = resolveSlidesStatus(m)
-      if (slideStatus === 'failed') return { label: 'Failed', color: '#c62828' }
+      if (slideStatus === 'failed') return { label: 'Failed', color: 'var(--color-danger-dark)' }
       if (slideStatus !== 'ready') return {
         label: (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
@@ -317,7 +317,7 @@ export function MaterialsTreePanel({
 
   const materialStatusMetaImage = (m) => {
     if (m.text_status === 'pending' || m.text_status === 'processing') return { label: 'Processing…', color: '#e65100' }
-    if (m.text_status === 'failed') return { label: 'Failed', color: '#c62828' }
+    if (m.text_status === 'failed') return { label: 'Failed', color: 'var(--color-danger-dark)' }
     return null
   }
   const videoDisplayTitle = (v) => {
@@ -401,7 +401,7 @@ export function MaterialsTreePanel({
                     icon={null}
                     title={videoDisplayTitle(v)}
                     meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
-                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: '#c62828' } : undefined}
+                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
                     selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
                     onClick={() => {
                       setSelectedVideo(v)
@@ -554,13 +554,13 @@ export function MaterialsTreePanel({
                     marginBottom: '2px',
                     border: 'none',
                     borderRadius: '4px',
-                    background: isSelected ? '#e8f5e9' : 'transparent',
+                    background: isSelected ? 'var(--color-success-bg)' : 'transparent',
                     cursor: linkSelectable ? 'pointer' : 'not-allowed',
                     fontSize: '13px',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '8px',
-                    color: linkSelectable ? '#1976d2' : '#999',
+                    color: linkSelectable ? 'var(--color-primary)' : '#999',
                     opacity: linkSelectable ? 1 : 0.7
                   }}
                   onMouseEnter={(e) => {
@@ -575,11 +575,11 @@ export function MaterialsTreePanel({
                   </span>
                   <span style={{ flexShrink: 0, fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
                     {link.status === 'verified' ? (
-                      <span style={{ color: '#2e7d32' }} aria-hidden>✓</span>
+                      <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
                     ) : link.status === 'pending' || link.status === 'processing' ? (
                       <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
                     ) : (
-                      <span style={{ color: '#c62828' }} aria-hidden>✕</span>
+                      <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
                     )}
                   </span>
                 </button>

@@ -7,7 +7,7 @@ function statusDisplay(m) {
 }
 
 function statusColor(s) {
-  return s === 'ready' ? '#4CAF50' : s === 'pending' || s === 'processing' ? '#ff9800' : s === 'failed' ? '#f44336' : '#666'
+  return s === 'ready' ? 'var(--color-success-mid)' : s === 'pending' || s === 'processing' ? '#ff9800' : s === 'failed' ? 'var(--color-danger)' : '#666'
 }
 
 export function SessionMaterialsTab({
@@ -305,11 +305,11 @@ export function SessionMaterialsTab({
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', backgroundColor: '#2196F3', color: '#fff', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '8px 14px', backgroundColor: 'var(--color-primary-mid)', color: '#fff', borderRadius: 6, cursor: 'pointer', fontWeight: 500 }}>
           <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml,video/mp4,.mp4" multiple onChange={uploadFiles} disabled={uploading || !sessionId} style={{ display: 'none' }} />
           {uploading ? 'Uploading…' : 'Upload file'}
         </label>
-        <button type="button" onClick={() => setPasteModal(true)} disabled={pasting || !sessionId} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #2196F3', backgroundColor: '#fff', color: '#2196F3', cursor: 'pointer', fontWeight: 500 }}>
+        <button type="button" onClick={() => setPasteModal(true)} disabled={pasting || !sessionId} style={{ padding: '8px 14px', borderRadius: 6, border: '1px solid #2196F3', backgroundColor: '#fff', color: 'var(--color-primary-mid)', cursor: 'pointer', fontWeight: 500 }}>
           Paste text
         </button>
       </div>
@@ -318,7 +318,7 @@ export function SessionMaterialsTab({
         <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>Add video URL</label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.loom.com/share/... or https://example.com/video.mp4" style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }} />
-          <button type="button" onClick={addVideoUrl} disabled={videoUrlAdding || !sessionId || !videoUrl.trim()} style={{ padding: '8px 14px', borderRadius: 6, border: 'none', backgroundColor: '#4CAF50', color: '#fff', cursor: videoUrlAdding || !sessionId || !videoUrl.trim() ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
+          <button type="button" onClick={addVideoUrl} disabled={videoUrlAdding || !sessionId || !videoUrl.trim()} style={{ padding: '8px 14px', borderRadius: 6, border: 'none', backgroundColor: 'var(--color-success-mid)', color: '#fff', cursor: videoUrlAdding || !sessionId || !videoUrl.trim() ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
             {videoUrlAdding ? 'Adding…' : 'Add'}
           </button>
         </div>
@@ -335,7 +335,7 @@ export function SessionMaterialsTab({
             <input type="text" placeholder="Title (optional)" value={pasteTitle} onChange={e => setPasteTitle(e.target.value)} style={{ width: '100%', padding: 8, marginBottom: 10, boxSizing: 'border-box' }} />
             <textarea placeholder="Paste your text here…" value={pasteText} onChange={e => setPasteText(e.target.value)} rows={8} style={{ width: '100%', padding: 8, boxSizing: 'border-box' }} />
             <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <button type="button" onClick={pasteSubmit} disabled={pasting || !pasteText.trim()} style={{ padding: '8px 16px', background: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>{pasting ? 'Adding…' : 'Add'}</button>
+              <button type="button" onClick={pasteSubmit} disabled={pasting || !pasteText.trim()} style={{ padding: '8px 16px', background: 'var(--color-primary-mid)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>{pasting ? 'Adding…' : 'Add'}</button>
               <button type="button" onClick={() => setPasteModal(false)} disabled={pasting} style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
             </div>
           </div>
@@ -359,9 +359,9 @@ export function SessionMaterialsTab({
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {duplicateWarning.nameToMaterialId && duplicateWarning.duplicateNames.some(name => duplicateWarning.nameToMaterialId[(name || '').toLowerCase().trim()]) && (
-                <button type="button" onClick={confirmReplace} disabled={uploading} style={{ padding: '8px 16px', background: '#2e7d32', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Replace'}</button>
+                <button type="button" onClick={confirmReplace} disabled={uploading} style={{ padding: '8px 16px', background: 'var(--color-success)', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Replace'}</button>
               )}
-              <button type="button" onClick={confirmDuplicateUpload} disabled={uploading} style={{ padding: '8px 16px', background: '#2196F3', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Upload as duplicate'}</button>
+              <button type="button" onClick={confirmDuplicateUpload} disabled={uploading} style={{ padding: '8px 16px', background: 'var(--color-primary-mid)', color: '#fff', border: 'none', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>{uploading ? 'Uploading…' : 'Upload as duplicate'}</button>
               <button type="button" onClick={() => setDuplicateWarning(null)} disabled={uploading} style={{ padding: '8px 16px', border: '1px solid #ccc', borderRadius: 6, cursor: uploading ? 'not-allowed' : 'pointer' }}>Cancel</button>
             </div>
           </div>
@@ -383,13 +383,13 @@ export function SessionMaterialsTab({
                     <div style={{ fontWeight: 600 }}>{title}</div>
                     <div style={{ fontSize: 12, color: '#666' }}>
                       {m.content_type || 'text'} · <span style={{ color: statusColor(m.text_status || m.status), fontWeight: 500 }}>{status}</span>
-                      {m.error_message && <span style={{ color: '#f44336', marginLeft: 8 }}>{m.error_message}</span>}
+                      {m.error_message && <span style={{ color: 'var(--color-danger)', marginLeft: 8 }}>{m.error_message}</span>}
                     </div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" onClick={() => setPreviewMaterial(m)} style={{ padding: '6px 12px', fontSize: 12, border: '1px solid #2196F3', color: '#2196F3', background: '#fff', borderRadius: 4, cursor: 'pointer' }}>View</button>
-                  <button type="button" onClick={() => deleteMaterial(m.id)} disabled={deletingId === m.id} style={{ padding: '6px 12px', fontSize: 12, border: '1px solid #f44336', color: '#f44336', background: '#fff', borderRadius: 4, cursor: 'pointer' }}>{deletingId === m.id ? '…' : 'Delete'}</button>
+                  <button type="button" onClick={() => setPreviewMaterial(m)} style={{ padding: '6px 12px', fontSize: 12, border: '1px solid #2196F3', color: 'var(--color-primary-mid)', background: '#fff', borderRadius: 4, cursor: 'pointer' }}>View</button>
+                  <button type="button" onClick={() => deleteMaterial(m.id)} disabled={deletingId === m.id} style={{ padding: '6px 12px', fontSize: 12, border: '1px solid #f44336', color: 'var(--color-danger)', background: '#fff', borderRadius: 4, cursor: 'pointer' }}>{deletingId === m.id ? '…' : 'Delete'}</button>
                 </div>
               </div>
             )
