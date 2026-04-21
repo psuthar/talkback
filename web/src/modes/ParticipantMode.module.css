@@ -20,6 +20,12 @@
   color: var(--color-primary-dark);
 }
 
+/* Override the global `button:hover` rule so the toggle does not flip to solid
+   primary-blue and render its dark text unreadable against the dark background. */
+.decisionsPanelToggle:hover {
+  background-color: var(--color-success-bg-hover);
+}
+
 .decisionsPanelBody {
   padding: 8px 20px 12px;
   display: flex;
