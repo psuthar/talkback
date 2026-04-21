@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import styles from './QAPanel.module.css'
 import { QAHistory } from './QAHistory'
+import { MicIcon } from './icons/MicIcon'
 
 export function QAPanel({
   questions,
@@ -43,12 +44,6 @@ export function QAPanel({
   const handleConfirmVoice = () => { setIsProcessing(true); confirmVoiceQuestion() }
 
   const isThinking = isProcessing
-
-  const MicIcon = () => (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable="false">
-      <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-    </svg>
-  )
 
   const askBlock = (
     <footer className="participant-qa-footer">
