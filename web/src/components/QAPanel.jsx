@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import styles from './QAPanel.module.css'
 import { QAHistory } from './QAHistory'
 
@@ -30,7 +31,18 @@ export function QAPanel({
   voicePolishing,
   voicePolishMode
 }) {
-  const isThinking = loading && questionText && (!currentAnswer || !currentAnswer.answer)
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  useEffect(() => {
+    if (isProcessing && !loading) {
+      setIsProcessing(false)
+    }
+  }, [loading])
+
+  const handleAsk = () => { setIsProcessing(true); askSessionQuestion() }
+  const handleConfirmVoice = () => { setIsProcessing(true); confirmVoiceQuestion() }
+
+  const isThinking = isProcessing
 
   const MicIcon = () => (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable="false">
@@ -96,7 +108,7 @@ export function QAPanel({
                   )}
                 </button>
               )}
-              <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.voiceConfirmSubmit}>
+              <button type="button" onClick={handleConfirmVoice} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.voiceConfirmSubmit}>
                 Confirm & Submit
               </button>
               <button
@@ -112,7 +124,7 @@ export function QAPanel({
             <button
               data-testid="ask-button"
               type="button"
-              onClick={askSessionQuestion}
+              onClick={handleAsk}
               disabled={!questionText?.trim() || loading}
               className={styles.askBtn}
             >
