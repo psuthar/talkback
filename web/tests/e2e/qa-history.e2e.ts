@@ -24,6 +24,45 @@ test.afterAll(async ({ request }) => {
   if (seededUserId) await deleteUserViaAdmin(request, seededUserId)
 })
 
+test('citation badges show human-readable labels (not raw source_type enums)', async ({ page, context, request }) => {
+  const email = uniqueEmail('qa-citation')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Citation User')
+  const session = await createSession(request, 'E2E Citation Badge Session')
+  const sessionId = session.id
+
+  await pasteMaterial(request, sessionId, 'Alpha Report', 'The board decided to expand to Europe in Q3.')
+
+  const askRes = await request.post(`${API_BASE}/api/sessions/${sessionId}/ask`, {
+    data: { question_text: 'What did the board decide?', asked_via: 'text' },
+  })
+  expect(askRes.ok()).toBe(true)
+
+  const params = new URLSearchParams({ session: sessionId, mode: 'view' })
+  await page.goto(`/?${params.toString()}`)
+  await page.waitForLoadState('networkidle')
+
+  const questionItem = page.locator('[data-testid="question-item"]').first()
+  await questionItem.waitFor({ state: 'visible', timeout: 10_000 })
+
+  const expandBtn = questionItem.getByRole('button', { name: 'Expand' })
+  const isExpandable = await expandBtn.isVisible({ timeout: 1_000 }).catch(() => false)
+  if (isExpandable) await expandBtn.click()
+
+  // If any citation badges are present, they must not show raw source_type enums
+  const badges = page.locator('[data-testid="citation-badge"]')
+  const badgeCount = await badges.count()
+  for (let i = 0; i < badgeCount; i++) {
+    const text = await badges.nth(i).innerText()
+    expect(text.trim()).not.toMatch(/^transcript$/i)
+    expect(text.trim()).not.toMatch(/^material$/i)
+  }
+
+  // Cleanup
+  await loginAsAdmin(request)
+  await deleteSession(request, sessionId)
+  await deleteUserViaAdmin(request, userId)
+})
+
 test('previously asked question is visible in QA history panel', async ({ page, context, request }) => {
   // --- Seed: user + session + material via API ---
   const email = uniqueEmail('qa-history')
