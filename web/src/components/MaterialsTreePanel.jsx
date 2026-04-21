@@ -339,11 +339,9 @@ export function MaterialsTreePanel({
           )}
         </TreeSection>
 
-        <TreeSection title="Additional Videos">
-          {otherVideos.length === 0 ? (
-            <div className={styles.emptyNote}>None</div>
-          ) : (
-            otherVideos.map((v) => (
+        {otherVideos.length > 0 && (
+          <TreeSection title="Additional Videos">
+            {otherVideos.map((v) => (
               (() => {
                 const materialId = videoMaterialId(v)
                 const videoSelectable = !isProcessingStatus(v?.transcript_status)
@@ -369,46 +367,40 @@ export function MaterialsTreePanel({
                   />
                 )
               })()
-            ))
-          )}
-        </TreeSection>
-
-        {!hideTranscriptSection && (
-          <TreeSection title="Transcript">
-            {video_sources.filter(v => v.transcript_text).length === 0 ? (
-              <div className={styles.emptyNote}>None</div>
-            ) : (
-              video_sources.map((v, idx) => {
-                if (!v.transcript_text) return null
-                const transcriptId = `transcript-${v.id}`
-                const isSelected = selectedDocumentId === transcriptId
-                return (
-                  <TreeItem
-                    key={transcriptId}
-                    icon={null}
-                    title={video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript'}
-                    meta=""
-                    selected={isSelected}
-                    onClick={(e) => {
-                      onSelectDocument({
-                        type: 'transcript',
-                        text: v.transcript_text,
-                        title: video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript',
-                        transcriptId
-                      }, e)
-                    }}
-                  />
-                )
-              })
-            )}
+            ))}
           </TreeSection>
         )}
 
-        <TreeSection title="Documents">
-          {documentMaterials.length === 0 ? (
-            <div className={styles.emptyNote}>None</div>
-          ) : (
-            documentMaterials.map(m => {
+        {!hideTranscriptSection && video_sources.filter(v => v.transcript_text).length > 0 && (
+          <TreeSection title="Transcript">
+            {video_sources.map((v, idx) => {
+              if (!v.transcript_text) return null
+              const transcriptId = `transcript-${v.id}`
+              const isSelected = selectedDocumentId === transcriptId
+              return (
+                <TreeItem
+                  key={transcriptId}
+                  icon={null}
+                  title={video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript'}
+                  meta=""
+                  selected={isSelected}
+                  onClick={(e) => {
+                    onSelectDocument({
+                      type: 'transcript',
+                      text: v.transcript_text,
+                      title: video_sources.length > 1 ? `Transcript – Video ${idx + 1}` : 'Transcript',
+                      transcriptId
+                    }, e)
+                  }}
+                />
+              )
+            })}
+          </TreeSection>
+        )}
+
+        {documentMaterials.length > 0 && (
+          <TreeSection title="Documents">
+            {documentMaterials.map(m => {
               const statusInfo = materialStatusMetaDocument(m)
               const isNew = unreadSet.has(String(m.id))
               const metaNode = (statusInfo?.label || isNew)
@@ -441,15 +433,13 @@ export function MaterialsTreePanel({
                     : undefined}
                 />
               )
-            })
-          )}
-        </TreeSection>
+            })}
+          </TreeSection>
+        )}
 
-        <TreeSection title="Images">
-          {imageMaterials.length === 0 ? (
-            <div className={styles.emptyNote}>None</div>
-          ) : (
-            imageMaterials.map(m => {
+        {imageMaterials.length > 0 && (
+          <TreeSection title="Images">
+            {imageMaterials.map(m => {
               const statusInfo = materialStatusMetaImage(m)
               const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
               const viewable = isMaterialViewable(m)
@@ -469,15 +459,13 @@ export function MaterialsTreePanel({
                   buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
                 />
               )
-            })
-          )}
-        </TreeSection>
+            })}
+          </TreeSection>
+        )}
 
-        <TreeSection title={newLinkCount > 0 ? `Links • New ${newLinkCount}` : 'Links'}>
-          {!Array.isArray(links) || links.length === 0 ? (
-            <div className={styles.emptyNote}>None</div>
-          ) : (
-            links.map((link) => {
+        {Array.isArray(links) && links.length > 0 && (
+          <TreeSection title={newLinkCount > 0 ? `Links • New ${newLinkCount}` : 'Links'}>
+            {links.map((link) => {
               const linkDocId = `link-${link.id}`
               const isSelected = selectedDocumentId === linkDocId
               const linkSelectable = !isProcessingStatus(link.status)
@@ -524,9 +512,13 @@ export function MaterialsTreePanel({
                   </span>
                 </button>
               )
-            })
-          )}
-        </TreeSection>
+            })}
+          </TreeSection>
+        )}
+
+        {!presentationVideo && otherVideos.length === 0 && documentMaterials.length === 0 && imageMaterials.length === 0 && (!Array.isArray(links) || links.length === 0) && (hideTranscriptSection || video_sources.filter(v => v.transcript_text).length === 0) && (
+          <div className={styles.emptyNote} data-testid="no-materials-message">No materials yet — creator can add files.</div>
+        )}
       </div>
   )
 
