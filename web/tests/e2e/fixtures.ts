@@ -85,6 +85,20 @@ export async function createSession(
 }
 
 /**
+ * Set the primary_decision on a session via PATCH /api/sessions/:id.
+ * Requires an authenticated request context (creator or admin).
+ */
+export async function setSessionPrimaryDecision(
+  request: APIRequestContext,
+  sessionId: string,
+  primaryDecision: string
+): Promise<void> {
+  await request.patch(`${API_BASE}/api/sessions/${sessionId}`, {
+    data: { primary_decision: primaryDecision },
+  })
+}
+
+/**
  * Paste text material into a session.
  * The material is immediately text_status=ready — no async pipeline.
  */
