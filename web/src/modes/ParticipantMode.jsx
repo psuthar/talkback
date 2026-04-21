@@ -7,6 +7,7 @@ import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
+import styles from './ParticipantMode.module.css'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 
@@ -501,7 +502,7 @@ export function ParticipantMode({
           {sessionLoadError || 'Unable to load session. Please check the API connection and try again.'}
         </div>
         {isFailedFetch && (
-          <p style={{ fontSize: '13px', color: '#666', marginBottom: '12px' }}>
+          <p className={styles.errorNote}>
             The app could not reach the API server at <strong>{apiBaseUrl || 'same origin (Vite proxy)'}</strong>. Check that the API is running on <code>http://localhost:8080</code>. If you're using the Vite dev server, you can leave <strong>API Base URL</strong> unset. For unusual setups (or shared links), you can add <code>?api=http://localhost:8080</code> to the link.
           </p>
         )}
@@ -509,15 +510,7 @@ export function ParticipantMode({
           <button
             type="button"
             onClick={() => onRetryLoadSession()}
-            style={{
-              padding: '8px 16px',
-              fontSize: '14px',
-              backgroundColor: 'var(--color-primary)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
+            className={styles.retryBtn}
           >
             Retry loading session
           </button>
@@ -533,8 +526,8 @@ export function ParticipantMode({
   return (
     <>
       <div className="participant-layout-topbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', minWidth: 0 }}>
-          <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--color-success)' }}>
+        <div className={styles.topbarInner}>
+          <h2 className={styles.sessionTitle}>
             {currentSession.session.title}
           </h2>
           <span style={{
@@ -560,17 +553,7 @@ export function ParticipantMode({
       </div>
 
       {(currentSession.session.premise || currentSession.session.primary_decision || currentSession.session.decision_outcome) && (
-        <div style={{
-          flexShrink: 0,
-          display: 'flex',
-          gap: '20px',
-          flexWrap: 'wrap',
-          padding: '4px 20px',
-          backgroundColor: '#f1f8e9',
-          borderBottom: '1px solid #c8e6c9',
-          fontSize: '13px',
-          color: '#333'
-        }}>
+        <div className={styles.decisionBanner}>
           {currentSession.session.premise && (
             <span><strong>Premise:</strong> {currentSession.session.premise}</span>
           )}
@@ -597,20 +580,20 @@ export function ParticipantMode({
             <>
               {/* Decisions: same section as creator — Your decision + Members' decisions */}
               {currentSession?.session?.primary_decision && (
-                <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', fontWeight: 'bold', color: 'var(--color-primary-dark)' }}>
-                    <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
+                <div className={styles.panelSection}>
+                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className={`creator-collapsible-btn ${styles.collapsibleBtn} ${styles.collapsibleBtnDecisions}`} aria-expanded={stancePanelExpanded}>
+                    <span className={styles.panelChevron} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
                     {' '}Decisions ({stanceAggregate?.total ?? stanceResponses?.length ?? 0})
                   </button>
                   {stancePanelExpanded && (
-                    <div style={{ marginTop: '8px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
+                    <div className={styles.decisionsPanelContent}>
+                      <div className={styles.decisionsSectionLabel}>Your decision</div>
                       {currentSession.session.decision_outcome ? (
-                        <p style={{ margin: 0, fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
+                        <p className={styles.stancesLockedMsg}>Outcome recorded — stances are locked.</p>
                       ) : (
                         <>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          <div className={styles.stanceRow}>
+                            <div className={styles.stanceBtnsGroup}>
                               {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
                                 const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
                                 const bg = s === 'agree' ? 'var(--color-success-bg)' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : 'var(--color-primary-bg)'
@@ -665,7 +648,7 @@ export function ParticipantMode({
                             placeholder="Rationale (optional)"
                             value={stanceRationale}
                             onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                            style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
+                            className={styles.rationaleInput}
                           />
                           {myStance?.stance && stanceRationale !== (myStance?.rationale ?? '') && (
                             <button
@@ -683,8 +666,8 @@ export function ParticipantMode({
                           )}
                         </>
                       )}
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                      <div className={styles.membersDecisionsLabel}>Members&apos; decisions</div>
+                      <div className={styles.membersDecisionsRow}>
                         {[
                           ['Agree', stanceAggregate?.agree ?? 0, 'var(--color-success)', 'var(--color-success-bg)'],
                           ['Disagree', stanceAggregate?.disagree ?? 0, 'var(--color-danger-dark)', '#ffebee'],
@@ -698,18 +681,18 @@ export function ParticipantMode({
                         ))}
                       </div>
                       {(stanceResponses?.length > 0) ? (
-                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div className={styles.responsesScrollArea}>
                           {stanceResponses.map((r, i) => (
-                            <div key={r.id || `r-${i}`} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '12px' }}>
-                              <span style={{ fontWeight: 600 }}>{r.user_email || 'Unknown'}</span>
+                            <div key={r.id || `r-${i}`} className={styles.responseRow}>
+                              <span className={styles.responseEmail}>{r.user_email || 'Unknown'}</span>
                               {' — '}
-                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
-                              {r.rationale && r.rationale.trim() && <span style={{ color: '#666', marginLeft: '4px' }}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
+                              <span className={styles.responseStance}>{(r.stance || '').replace(/_/g, ' ')}</span>
+                              {r.rationale && r.rationale.trim() && <span className={styles.responseRationale}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>No responses yet.</p>
+                        <p className={styles.noResponsesMsg}>No responses yet.</p>
                       )}
                     </div>
                   )}
@@ -717,42 +700,29 @@ export function ParticipantMode({
               )}
 
               {/* Members: read-only list of invited members */}
-              <div style={{ flexShrink: 0, padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
+              <div className={styles.panelSection}>
                 <button
                   type="button"
                   onClick={() => setMembersPanelExpanded((e) => !e)}
                   aria-expanded={membersPanelExpanded}
-                  style={{
-                    width: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '4px 0',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    fontSize: '13px',
-                    fontWeight: 'bold',
-                    color: 'var(--color-success)'
-                  }}
+                  className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
                 >
-                  <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
+                  <span className={styles.panelChevron} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                   Members{Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
                 </button>
                 {membersPanelExpanded && (
-                  <div style={{ marginTop: '8px', fontSize: '12px' }}>
+                  <div className={styles.membersContent}>
                     {Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? (
-                      <ul style={{ margin: 0, paddingLeft: '18px', color: '#333' }}>
+                      <ul className={styles.membersList}>
                         {sessionInvitations.map((inv) => (
-                          <li key={inv.id} style={{ marginBottom: '4px' }}>
-                            <span style={{ fontWeight: 500 }}>{inv.invited_email}</span>
-                            <span style={{ color: '#666', marginLeft: '4px' }}>({inv.invited_role || 'participant'}, {inv.status})</span>
+                          <li key={inv.id} className={styles.memberItem}>
+                            <span className={styles.memberEmail}>{inv.invited_email}</span>
+                            <span className={styles.memberRole}>({inv.invited_role || 'participant'}, {inv.status})</span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <div style={{ color: '#666', fontStyle: 'italic' }}>No invited members listed.</div>
+                      <div className={styles.noMembersMsg}>No invited members listed.</div>
                     )}
                   </div>
                 )}
@@ -786,12 +756,12 @@ export function ParticipantMode({
         </aside>
 
         <main className="participant-video-stage">
-          <div style={{ padding: '12px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+          <div className={styles.videoStageContent}>
             {/* Decision outcome only (Your decision lives in top "Your Position" bar) */}
             {currentSession?.session?.decision_outcome?.trim() && (
-              <div style={{ flexShrink: 0, marginBottom: '16px', padding: '12px', backgroundColor: '#f1f8e9', border: '1px solid #c8e6c9', borderRadius: '8px' }}>
-                <div style={{ fontWeight: '600', marginBottom: '2px', color: '#555' }}>Decision Outcome</div>
-                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '13px', color: '#333' }}>{currentSession.session.decision_outcome.trim()}</div>
+              <div className={styles.decisionOutcomeCard}>
+                <div className={styles.decisionOutcomeLabel}>Decision Outcome</div>
+                <div className={styles.decisionOutcomeText}>{currentSession.session.decision_outcome.trim()}</div>
               </div>
             )}
 
@@ -807,21 +777,18 @@ export function ParticipantMode({
             ) : (currentSession.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id ? (
               <>
                 {currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code && (
-                  <div style={{
-                    padding: '24px',
-                    backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : '#f5f5f5',
-                    borderRadius: '8px',
-                    textAlign: 'center',
-                    border: '1px solid #e0e0e0'
-                  }}>
-                    <p style={{ margin: 0, color: '#333', fontSize: '15px' }}>
+                  <div
+                    className={styles.videoPendingCard}
+                    style={{ backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : '#f5f5f5' }}
+                  >
+                    <p className={styles.videoPendingText}>
                       {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : 'Video not available for this session.')}
                     </p>
                   </div>
                 )}
                 {video && !(currentSession?.session?.primary_video_artifact_id && !hasPrimaryR2Video && currentSession?.playback_reason_code) && (
                   <>
-                    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                    <div className={styles.videoPlayerWrap}>
                       <VideoPlayer
                         video={video}
                         onEvent={handleVideoPlayerEvent}
@@ -839,7 +806,7 @@ export function ParticipantMode({
                         playing={isVideoPlaying}
                       />
                     </div>
-                    <div style={{ flexShrink: 0, marginTop: '6px' }}>
+                    <div className={styles.transcriptWrap}>
                       {video.transcript_text ? (
                         <TranscriptViewer
                           transcriptText={video.transcript_text}
@@ -851,7 +818,7 @@ export function ParticipantMode({
                           highlightRangeMs={transcriptHighlightRange}
                         />
                       ) : (
-                        <div style={{ padding: '12px', color: '#666', fontSize: '14px', fontStyle: 'italic' }}>
+                        <div className={styles.transcriptUnavailable}>
                           Transcript: {video.transcript_status === 'pending' || video.transcript_status === 'processing' ? 'Processing…' : 'No transcript yet.'}
                         </div>
                       )}
@@ -860,7 +827,7 @@ export function ParticipantMode({
                 )}
               </>
             ) : (
-              <div style={{ padding: '20px', color: '#666', fontStyle: 'italic' }}>
+              <div className={styles.noVideosMsg}>
                 No videos in this session yet.
               </div>
             )}

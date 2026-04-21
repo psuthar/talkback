@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMaterialSlides } from '../api/materials'
+import styles from './MaterialsTreePanel.module.css'
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
 function ensureSpinnerStyle() {
@@ -14,22 +15,7 @@ function ensureSpinnerStyle() {
 /** Small inline spinner shown while async background tasks are running (e.g. slide generation). */
 function InlineSpinner() {
   ensureSpinnerStyle()
-  return (
-    <span
-      aria-hidden
-      style={{
-        display: 'inline-block',
-        width: '10px',
-        height: '10px',
-        border: '2px solid #e65100',
-        borderTopColor: 'transparent',
-        borderRadius: '50%',
-        animation: 'tb-spin 0.8s linear infinite',
-        verticalAlign: 'middle',
-        flexShrink: 0,
-      }}
-    />
-  )
+  return <span aria-hidden className={styles.inlineSpinner} />
 }
 
 /** Shared "Materials" header with chevron for creator and participant left panel */
@@ -54,19 +40,12 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
       tabIndex={0}
       aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
     >
-      <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{collapsed ? '▷' : '▼'}</span>
+      <span className={styles.panelHeaderChevron} aria-hidden>{collapsed ? '▷' : '▼'}</span>
       {!collapsed && (
-        <span style={{ fontWeight: 'bold', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <span className={styles.panelHeaderLabel}>
           Materials
           {unreadCount > 0 && (
-            <span style={{
-              background: '#e65100',
-              color: '#fff',
-              fontSize: '12px',
-              fontWeight: 'bold',
-              padding: '2px 6px',
-              borderRadius: '10px',
-            }} title="New documents added by creator">
+            <span className={styles.panelHeaderBadge} title="New documents added by creator">
               New {unreadCount}
             </span>
           )}
@@ -78,18 +57,9 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
 
 function TreeSection({ title, children }) {
   return (
-    <div style={{ marginBottom: '12px' }}>
-      <div style={{
-        fontSize: '12px',
-        fontWeight: 'bold',
-        textTransform: 'uppercase',
-        color: '#444',
-        padding: '4px 0',
-        borderBottom: '1px solid #eee'
-      }}>
-        {title}
-      </div>
-      <div style={{ paddingTop: '4px' }}>{children}</div>
+    <div className={styles.treeSection}>
+      <div className={styles.treeSectionTitle}>{title}</div>
+      <div className={styles.treeSectionBody}>{children}</div>
     </div>
   )
 }
@@ -97,11 +67,8 @@ function TreeSection({ title, children }) {
 function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle }) {
   return (
     <div
+      className={styles.treeItemRow}
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        marginBottom: '2px',
-        borderRadius: '4px',
         background: selected ? 'var(--color-success-bg)' : 'transparent',
         ...(disabled && { opacity: 0.7 }),
       }}
@@ -118,28 +85,16 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
         title={buttonTitle}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
+        className={styles.treeItemBtn}
         style={{
-          flex: 1,
-          minWidth: 0,
-          textAlign: 'left',
-          padding: '8px 10px',
-          border: 'none',
-          borderRadius: '4px',
-          background: 'transparent',
           cursor: disabled ? 'not-allowed' : 'pointer',
-          fontSize: '13px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          color: disabled ? '#888' : '#1a1a1a'
+          color: disabled ? '#888' : '#1a1a1a',
         }}
       >
-        {icon != null && icon !== '' && <span style={{ flexShrink: 0 }}>{icon}</span>}
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
-          {title}
-        </span>
+        {icon != null && icon !== '' && <span className={styles.treeItemIcon}>{icon}</span>}
+        <span className={styles.treeItemTitle}>{title}</span>
         {meta && (
-          <span style={{ fontSize: '12px', color: '#555', flexShrink: 0, ...metaStyle }}>{meta}</span>
+          <span className={styles.treeItemMeta} style={metaStyle}>{meta}</span>
         )}
       </button>
       {onDelete && (
@@ -149,17 +104,10 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
           disabled={deleting}
           aria-label={`Remove ${title}`}
           title={`Remove ${title}`}
+          className={styles.treeItemDeleteBtn}
           style={{
-            flexShrink: 0,
-            padding: '4px 6px',
-            marginRight: '4px',
-            border: 'none',
-            borderRadius: '3px',
-            background: 'transparent',
             color: deleting ? '#bbb' : '#999',
             cursor: deleting ? 'not-allowed' : 'pointer',
-            fontSize: '14px',
-            lineHeight: 1,
           }}
           onMouseEnter={(e) => { if (!deleting) e.currentTarget.style.color = 'var(--color-danger-dark)' }}
           onMouseLeave={(e) => { if (!deleting) e.currentTarget.style.color = '#999' }}
@@ -303,7 +251,7 @@ export function MaterialsTreePanel({
       if (slideStatus === 'failed') return { label: 'Failed', color: 'var(--color-danger-dark)' }
       if (slideStatus !== 'ready') return {
         label: (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <span className={styles.inlineStatusRow}>
             <InlineSpinner />
             <span>Generating slides…</span>
           </span>
@@ -359,7 +307,7 @@ export function MaterialsTreePanel({
   }
 
   const content = (
-    <div ref={scrollRef} className="materials-tree-content" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px' }}>
+    <div ref={scrollRef} className={`materials-tree-content ${styles.scrollArea}`}>
         {deleteError && (
           <div className="error" style={{ marginBottom: 8, fontSize: 12, padding: '4px 6px' }}>
             {deleteError}
@@ -367,7 +315,7 @@ export function MaterialsTreePanel({
         )}
         <TreeSection title="Presentation">
           {!presentationVideo ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>No presentation video selected yet.</div>
+            <div className={styles.emptyNote}>No presentation video selected yet.</div>
           ) : (
             <TreeItem
               key={presentationVideo.id}
@@ -388,7 +336,7 @@ export function MaterialsTreePanel({
 
         <TreeSection title="Additional Videos">
           {otherVideos.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+            <div className={styles.emptyNote}>None</div>
           ) : (
             otherVideos.map((v) => (
               (() => {
@@ -423,7 +371,7 @@ export function MaterialsTreePanel({
         {!hideTranscriptSection && (
           <TreeSection title="Transcript">
             {video_sources.filter(v => v.transcript_text).length === 0 ? (
-              <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+              <div className={styles.emptyNote}>None</div>
             ) : (
               video_sources.map((v, idx) => {
                 if (!v.transcript_text) return null
@@ -453,16 +401,14 @@ export function MaterialsTreePanel({
 
         <TreeSection title="Documents">
           {documentMaterials.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
-              None
-            </div>
+            <div className={styles.emptyNote}>None</div>
           ) : (
             documentMaterials.map(m => {
               const statusInfo = materialStatusMetaDocument(m)
               const isNew = unreadSet.has(String(m.id))
               const metaNode = (statusInfo?.label || isNew)
                 ? (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
+                  <span className={styles.linkStatusGap}>
                     {statusInfo?.label}
                     {statusInfo?.label && isNew && <span> • </span>}
                     {isNew && <span>New</span>}
@@ -496,9 +442,7 @@ export function MaterialsTreePanel({
 
         <TreeSection title="Images">
           {imageMaterials.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>
-              None
-            </div>
+            <div className={styles.emptyNote}>None</div>
           ) : (
             imageMaterials.map(m => {
               const statusInfo = materialStatusMetaImage(m)
@@ -526,7 +470,7 @@ export function MaterialsTreePanel({
 
         <TreeSection title={newLinkCount > 0 ? `Links • New ${newLinkCount}` : 'Links'}>
           {!Array.isArray(links) || links.length === 0 ? (
-            <div style={{ fontSize: '12px', color: '#999', padding: '4px 0' }}>None</div>
+            <div className={styles.emptyNote}>None</div>
           ) : (
             links.map((link) => {
               const linkDocId = `link-${link.id}`
@@ -547,21 +491,12 @@ export function MaterialsTreePanel({
                       onSelectLink?.(link)
                     }
                   }}
+                  className={styles.linkBtn}
                   style={{
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '8px 10px',
-                    marginBottom: '2px',
-                    border: 'none',
-                    borderRadius: '4px',
                     background: isSelected ? 'var(--color-success-bg)' : 'transparent',
                     cursor: linkSelectable ? 'pointer' : 'not-allowed',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
                     color: linkSelectable ? 'var(--color-primary)' : '#999',
-                    opacity: linkSelectable ? 1 : 0.7
+                    opacity: linkSelectable ? 1 : 0.7,
                   }}
                   onMouseEnter={(e) => {
                     if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
@@ -570,10 +505,10 @@ export function MaterialsTreePanel({
                     if (!isSelected) e.currentTarget.style.background = 'transparent'
                   }}
                 >
-                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'inherit' }}>
+                  <span className={styles.linkTitleCell}>
                     {link.title || link.url}
                   </span>
-                  <span style={{ flexShrink: 0, fontSize: '14px' }} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
+                  <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
                     {link.status === 'verified' ? (
                       <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
                     ) : link.status === 'pending' || link.status === 'processing' ? (
@@ -593,7 +528,7 @@ export function MaterialsTreePanel({
   if (hideHeader) return content
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0 }}>
+    <div className={styles.contentPanel}>
       <MaterialsPanelHeader collapsed={collapsed} onCollapsedChange={onCollapsedChange} unreadCount={unreadSet.size} />
       {content}
     </div>
