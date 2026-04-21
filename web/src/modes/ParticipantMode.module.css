@@ -1,3 +1,37 @@
+/* Top-level decisions panel (between topbar strip and main grid) */
+.decisionsPanel {
+  flex-shrink: 0;
+  border-bottom: 1px solid #c8e6c9;
+  background-color: #f1f8e9;
+}
+
+.decisionsPanelToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  font-weight: bold;
+  color: var(--color-primary-dark);
+}
+
+.decisionsPanelBody {
+  padding: 8px 20px 12px;
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.decisionsPanelCol {
+  flex: 1;
+  min-width: 240px;
+}
+
 /* Error/loading state */
 .errorNote {
   font-size: 13px;
