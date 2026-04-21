@@ -35,7 +35,16 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: #f5f5f5;
+}
+
+#root {
   padding: 20px;
+}
+
+#root:has(.participant-full-width),
+#root:has(.creator-session-pinned),
+#root:has(.admin-full-width) {
+  padding: 0;
 }
 
 code {
@@ -52,15 +61,15 @@ code {
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-/* Participant mode: use full viewport width, no side margins (body has padding: 20px) */
+/* Participant mode: full viewport width — no negative margin needed; #root padding is suppressed via :has() */
 .container.participant-full-width {
   max-width: none;
-  width: calc(100% + 40px);
-  margin: 0 -20px;
+  width: 100%;
+  margin: 0;
   padding: 0;
   border-radius: 0;
   box-shadow: none;
-  box-sizing: content-box;
+  box-sizing: border-box;
 }
 
 /* Admin mode: use full width so admin panel is not narrow with blank side panels; no horizontal scroll */
@@ -562,16 +571,16 @@ button:disabled {
   background: #f5f5f5;
 }
 
-/* Creator mode pinned layout */
+/* Creator mode pinned layout — no negative margin needed; #root padding is suppressed via :has() */
 .container.creator-session-pinned {
   max-width: none;
-  width: calc(100% + 40px);
-  margin: 0 -20px;
+  width: 100%;
+  margin: 0;
   padding: 0;
   border-radius: 0;
   box-shadow: none;
-  box-sizing: content-box;
-  height: calc(100vh - 40px);
+  box-sizing: border-box;
+  height: 100vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
