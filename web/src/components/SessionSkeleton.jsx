@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react'
 import styles from './SessionSkeleton.module.css'
 
 function SkeletonBar({ width = '100%', height = 14 }) {
@@ -6,15 +5,6 @@ function SkeletonBar({ width = '100%', height = 14 }) {
 }
 
 export function SessionSkeleton() {
-  const [visible, setVisible] = useState(false)
-
-  useEffect(() => {
-    const id = setTimeout(() => setVisible(true), 200)
-    return () => clearTimeout(id)
-  }, [])
-
-  if (!visible) return null
-
   return (
     <div className={styles.root} data-testid="session-skeleton">
       <div className={styles.topbar}>

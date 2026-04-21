@@ -7,6 +7,7 @@ import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
+import { SessionSkeleton } from './components/SessionSkeleton'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
 import {
@@ -4065,6 +4066,11 @@ function App() {
         )}
       </div>
         </>
+      )}
+
+      {/* Skeleton placeholder while a participant session is loading — ParticipantMode below only mounts once currentSession is set, so without this the screen is blank (or briefly flashes a raw error) during the load window. */}
+      {viewMode === 'session' && isParticipantMode && urlSessionId && !currentSession && sessionSelectFeedback.type !== 'error' && (
+        <SessionSkeleton />
       )}
 
       {/* Session View - Mode-based rendering. Only show when a session is open so participants without a session see only the session list (no materials/player). */}

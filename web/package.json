@@ -8,11 +8,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first playwright test",
     "test:e2e:local": "bash ../scripts/run-e2e-local.sh",
-    "test:e2e:render": "cross-env E2E_TARGET=render playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:render": "cross-env E2E_TARGET=render NODE_OPTIONS=--dns-result-order=ipv4first playwright test",
+    "test:e2e:ui": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first playwright test --ui",
+    "test:e2e:headed": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first playwright test --headed"
   },
   "dependencies": {
     "mammoth": "^1.11.0",

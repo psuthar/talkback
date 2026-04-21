@@ -236,8 +236,11 @@ test('skeleton loading state shown during participant session load (no raw error
   const session = await createSession(request, 'E2E Skeleton Loading Session')
 
   try {
-    // Slow down the session API so the skeleton has time to appear (>200ms delay)
-    await page.route(`**/api/sessions/${session.id}**`, async (route) => {
+    // Slow down the session GET so the skeleton has time to appear.
+    // NOTE: the SPA fetches `${apiBase}/sessions/:id` (un-prefixed) — NOT `/api/sessions/:id` —
+    // so the pattern must cover both. `**/sessions/:id**` matches both routes (the leading `**`
+    // absorbs any `/api` prefix when present).
+    await page.route(`**/sessions/${session.id}**`, async (route) => {
       await new Promise((r) => setTimeout(r, 600))
       await route.continue()
     })
