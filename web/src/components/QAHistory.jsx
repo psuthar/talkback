@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import styles from './QAHistory.module.css'
 
 const ANSWER_STATUS_LABELS = {
   answered: 'Answered',
@@ -23,15 +24,11 @@ function CitationBadge({ citation, onClick }) {
       type="button"
       onClick={onClick}
       title={citation.excerpt || citation.snippet || 'View source'}
+      className={styles.citationBtn}
       style={{
-        padding: '4px 10px',
-        fontSize: '12px',
         backgroundColor: canNavigate ? 'var(--color-primary-bg)' : '#f5f5f5',
         color: canNavigate ? 'var(--color-primary)' : '#555',
         border: `1px solid ${canNavigate ? '#90caf9' : '#e0e0e0'}`,
-        borderRadius: '4px',
-        cursor: 'pointer',
-        fontWeight: 500
       }}
     >
       {citation.citation_id ? `[${citation.citation_id}]` : ''} {label}
@@ -93,47 +90,34 @@ function InlineReplyForm({
   }, [])
 
   return (
-    <div style={{
-      marginTop: '12px',
-      padding: '12px',
-      border: '2px solid #2196F3',
-      borderRadius: '6px',
-      backgroundColor: '#f0f8ff'
-    }}>
-      <div style={{ fontSize: '12px', color: 'var(--color-primary-dark)', marginBottom: '8px', fontWeight: 600 }}>
+    <div className={styles.replyForm}>
+      <div className={styles.replyFormHeader}>
         Ask a follow-up…
       </div>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
+      <div className={styles.replyFormRow}>
         <button
           type="button"
           onClick={toggleVoiceRecording}
           disabled={loading || voiceUploading}
           title={voiceRecording ? 'Stop recording' : 'Record with microphone'}
           aria-label={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          className={styles.replyFormMicBtn}
           style={{
-            flexShrink: 0,
-            padding: '8px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             backgroundColor: voiceRecording ? 'var(--color-danger-mid)' : 'var(--color-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: (loading || voiceUploading) ? 'not-allowed' : 'pointer'
+            cursor: (loading || voiceUploading) ? 'not-allowed' : 'pointer',
           }}
         >
           {voiceRecording ? (
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>Stop</span>
+            <span className={styles.replyFormMicStop}>Stop</span>
           ) : voiceUploading ? (
             <span className="spinner" style={{ width: 18, height: 18 }} aria-hidden />
           ) : (
             <MicIcon />
           )}
         </button>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div className={styles.replyFormInputCol}>
           {voiceRecording && (
-            <span style={{ fontSize: '12px', color: 'var(--color-danger-mid)' }}>Listening…</span>
+            <span className={styles.replyFormListening}>Listening…</span>
           )}
           {!showVoiceConfirm && (
             <>
@@ -143,20 +127,14 @@ function InlineReplyForm({
                 onChange={(e) => setQuestionText(e.target.value)}
                 placeholder="Ask a follow-up..."
                 rows={2}
-                style={{
-                  width: '100%',
-                  resize: 'vertical',
-                  minHeight: '44px',
-                  padding: '8px',
-                  boxSizing: 'border-box'
-                }}
+                className={styles.replyFormTextarea}
               />
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <div className={styles.replyFormActions}>
                 <button
                   type="button"
                   onClick={askSessionQuestion}
                   disabled={!questionText?.trim() || loading}
-                  style={{ padding: '6px 14px' }}
+                  className={styles.replyFormAskBtn}
                 >
                   Ask
                 </button>
@@ -164,7 +142,7 @@ function InlineReplyForm({
                   type="button"
                   onClick={onCancel}
                   disabled={loading}
-                  style={{ padding: '6px 14px', backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
+                  className={styles.replyFormCancelBtn}
                 >
                   Cancel
                 </button>
@@ -172,29 +150,29 @@ function InlineReplyForm({
             </>
           )}
           {showVoiceConfirm && (
-            <div style={{ marginTop: '8px', padding: '10px', border: '1px solid #ddd', borderRadius: '4px', backgroundColor: '#fff' }}>
+            <div className={styles.replyFormVoiceConfirm}>
               <textarea
                 value={voiceTranscribedText}
                 onChange={(e) => setVoiceTranscribedText(e.target.value)}
                 rows={2}
-                style={{ width: '100%', padding: '6px', boxSizing: 'border-box', marginBottom: '8px' }}
+                className={styles.replyFormVoiceTextarea}
               />
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className={styles.replyFormVoiceActions}>
                 {polishVoiceQuestion && (
                   <button
                     type="button"
                     onClick={() => polishVoiceQuestion(true)}
                     disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
                     title="AI polish"
-                    style={{ padding: '4px 8px', fontSize: '12px' }}
+                    className={styles.replyFormPolishBtn}
                   >
                     {voicePolishing && voicePolishMode === 'llm' ? <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden /> : 'Polish'}
                   </button>
                 )}
-                <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} style={{ padding: '6px 12px' }}>
+                <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.replyFormConfirmBtn}>
                   Confirm & Submit
                 </button>
-                <button type="button" onClick={() => cancelVoiceReview?.()} disabled={loading} style={{ padding: '6px 12px', backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}>
+                <button type="button" onClick={() => cancelVoiceReview?.()} disabled={loading} className={styles.replyFormVoiceCancelBtn}>
                   Cancel
                 </button>
               </div>
@@ -203,10 +181,10 @@ function InlineReplyForm({
         </div>
       </div>
       {voiceFeedback?.message && (
-        <div className={voiceFeedback.type} style={{ fontSize: '12px', marginTop: '6px' }}>{voiceFeedback.message}</div>
+        <div className={`${voiceFeedback.type} ${styles.replyFormFeedback}`}>{voiceFeedback.message}</div>
       )}
       {askQuestionFeedback?.message && (
-        <div className={askQuestionFeedback.type} style={{ fontSize: '12px', marginTop: '6px' }}>{askQuestionFeedback.message}</div>
+        <div className={`${askQuestionFeedback.type} ${styles.replyFormFeedback}`}>{askQuestionFeedback.message}</div>
       )}
     </div>
   )
@@ -237,53 +215,44 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
         borderLeft: isReply ? '3px solid #90caf9' : undefined
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '4px' }}>
+      <div className={styles.qaCardHeader}>
         {onToggle && (
           <button
             type="button"
             onClick={onToggle}
             aria-label={collapsed ? 'Expand' : 'Collapse'}
-            style={{
-              flexShrink: 0,
-              marginTop: '2px',
-              padding: '2px 6px',
-              fontSize: '12px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              color: '#666'
-            }}
+            className={styles.qaCardToggleBtn}
           >
             {collapsed ? '▶' : '▼'}
           </button>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div className={styles.qaCardBody}>
           {collapsed ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 'bold', color: '#333' }}>Q: {q.question_text}</span>
+            <div className={styles.qaCardCollapsedRow}>
+              <span className={styles.qaCardQuestionText}>Q: {q.question_text}</span>
               {replyCount > 0 && (
-                <span style={{ fontSize: '12px', color: '#888' }}>({replyCount} {replyCount === 1 ? 'reply' : 'replies'})</span>
+                <span className={styles.qaCardReplyCount}>({replyCount} {replyCount === 1 ? 'reply' : 'replies'})</span>
               )}
               {isUnread && (
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                <span className={styles.qaCardNewBadge}>New</span>
               )}
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: '5px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <div className={styles.qaCardExpandedRow}>
+                <div className={styles.qaCardQuestionInner}>
+                  <div className={styles.qaCardQuestionTitle}>
                     Q: {q.question_text}
                     {isUnread && (
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', padding: '2px 6px', borderRadius: '4px' }}>New</span>
+                      <span className={styles.qaCardNewBadge}>New</span>
                     )}
                   </div>
-                  <div style={{ fontSize: '12px', color: '#999', marginTop: '5px' }}>
+                  <div className={styles.qaCardMeta}>
                     Asked: {new Date(q.created_at).toLocaleString()}
                     {' · asked by '}
-                    {q.asked_by ? <strong>{q.asked_by}</strong> : <span style={{ color: '#999' }}>—</span>}
+                    {q.asked_by ? <strong>{q.asked_by}</strong> : <span className={styles.qaCardAnonLabel}>—</span>}
                     {q.video_time_seconds !== null && q.video_time_seconds !== undefined && (
-                      <span style={{ marginLeft: '8px', color: 'var(--color-primary-mid)', fontWeight: 'bold' }}>
+                      <span className={styles.qaCardVideoTime}>
                         | At {Math.floor(q.video_time_seconds / 60)}:{(q.video_time_seconds % 60).toString().padStart(2, '0')}
                       </span>
                     )}
@@ -293,16 +262,16 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                   <button
                     type="button"
                     onClick={() => onReply(q)}
-                    style={{ flexShrink: 0, padding: '4px 10px', fontSize: '12px' }}
+                    className={styles.qaCardReplyBtn}
                   >
                     Reply
                   </button>
                 )}
               </div>
       {q.answer ? (
-        <div style={{ marginTop: '10px', paddingLeft: '10px', borderLeft: '3px solid #4CAF50' }}>
-          <div data-testid="answer-text" className="answer-text" style={{ marginBottom: '5px' }}><strong>A:</strong> {q.answer.answer_text}</div>
-          <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+        <div className={styles.qaCardAnswerBlock}>
+          <div data-testid="answer-text" className={`answer-text ${styles.qaCardAnswerText}`}><strong>A:</strong> {q.answer.answer_text}</div>
+          <div className={styles.qaCardAnswerMeta}>
             From: {answerFromLabel ? <strong>{answerFromLabel}</strong> : <strong>—</strong>}
             {' | '}
             Status: <span
@@ -319,12 +288,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                 {' | '}
                 Confidence: {q.answer.confidence != null ? (q.answer.confidence * 100).toFixed(0) + '%' : 'N/A'}
                 {q.answer.confirmed && confirmedByLabel && (
-                  <span style={{
-                    marginLeft: '10px',
-                    color: 'var(--color-success-mid)',
-                    fontWeight: 'bold',
-                    fontSize: '13px'
-                  }}>
+                  <span className={styles.qaCardConfirmed}>
                     ✓ Confirmed by {confirmedByLabel}
                   </span>
                 )}
@@ -332,9 +296,9 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
             )}
           </div>
           {q.answer.citations && q.answer.citations.length > 0 && (
-            <div data-testid="citations" className="citations" style={{ marginTop: '10px' }}>
+            <div data-testid="citations" className={`citations ${styles.qaCardCitations}`}>
               <strong>Citations:</strong>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+              <div className={styles.citationList}>
                 {q.answer.citations.map((citation, cidx) => (
                   <CitationBadge
                     key={cidx}
@@ -348,7 +312,7 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
         </div>
       ) : (
         <div style={{ marginTop: '10px', padding: '10px', backgroundColor: q._pending ? 'var(--color-primary-bg)' : '#f5f5f5', borderRadius: '3px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="spinner" style={{ width: 16, height: 16, flexShrink: 0 }} aria-hidden />
+          <span className={`spinner ${styles.qaCardPendingSpinner}`} aria-hidden />
           <span>{q._pending ? 'Getting an answer…' : 'Processing…'}</span>
         </div>
       )}
@@ -383,7 +347,7 @@ function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, 
         const isUnread = unreadQuestionIds && unreadQuestionIds.includes(String(q.id))
 
         return (
-          <div key={q.id} style={{ marginBottom: isRootLevel ? '8px' : 0 }}>
+          <div key={q.id} className={isRootLevel ? styles.threadRootItem : undefined}>
             <QACard
               q={q}
               isUnread={isUnread}
@@ -398,7 +362,7 @@ function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, 
               replyCount={isRootLevel ? replyCount : 0}
             />
             {showReplies && hasReplies && (
-              <div style={{ paddingLeft: '28px', borderLeft: '2px solid #e0e0e0', marginTop: '4px' }}>
+              <div className={styles.threadRepliesIndent}>
                 <ThreadList
                   roots={byParent[q.id]}
                   byParent={byParent}

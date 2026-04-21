@@ -1,3 +1,4 @@
+import styles from './QAPanel.module.css'
 import { QAHistory } from './QAHistory'
 
 export function QAPanel({
@@ -39,37 +40,30 @@ export function QAPanel({
 
   const askBlock = (
     <footer className="participant-qa-footer">
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', marginBottom: '8px' }}>
+      <div className={styles.askRow}>
         <button
           type="button"
           onClick={toggleVoiceRecording}
           disabled={loading || voiceUploading}
           title={voiceRecording ? 'Stop recording' : 'Record with microphone'}
           aria-label={voiceRecording ? 'Stop recording' : 'Record with microphone'}
+          className={styles.micBtn}
           style={{
-            flexShrink: 0,
-            padding: '8px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             backgroundColor: voiceRecording ? 'var(--color-danger-mid)' : 'var(--color-primary)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '4px',
             cursor: (loading || voiceUploading) ? 'not-allowed' : 'pointer'
           }}
         >
           {voiceRecording ? (
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>Stop</span>
+            <span className={styles.micBtnStop}>Stop</span>
           ) : voiceUploading ? (
             <span className="spinner" style={{ width: 18, height: 18 }} aria-hidden />
           ) : (
             <MicIcon />
           )}
         </button>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div className={styles.inputCol}>
           {voiceRecording && (
-            <span style={{ fontSize: '12px', color: 'var(--color-danger-mid)' }}>Listening…</span>
+            <span className={styles.listeningLabel}>Listening…</span>
           )}
           {!showVoiceConfirm && (
             <>
@@ -79,20 +73,14 @@ export function QAPanel({
                 onChange={(e) => setQuestionText(e.target.value)}
                 placeholder="Click on the microphone or type here to ask a question"
                 rows={2}
-                style={{
-                  width: '100%',
-                  resize: 'vertical',
-                  minHeight: '44px',
-                  padding: '8px',
-                  boxSizing: 'border-box'
-                }}
+                className={styles.questionTextarea}
               />
               <button
                 data-testid="ask-button"
                 type="button"
                 onClick={askSessionQuestion}
                 disabled={!questionText?.trim() || loading}
-                style={{ width: '100%' }}
+                className={styles.askBtn}
               >
                 Ask
               </button>
@@ -101,74 +89,58 @@ export function QAPanel({
         </div>
       </div>
       {voiceFeedback.message && (
-        <div className={voiceFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
+        <div className={`${voiceFeedback.type} ${styles.feedbackMsg}`}>
           {voiceFeedback.message}
         </div>
       )}
       {showVoiceConfirm && !replyingToQuestionId && (
-          <div style={{
-            marginTop: '10px',
-            padding: '10px',
-            border: '1px solid #ddd',
-            borderRadius: '4px',
-            backgroundColor: '#f9f9f9'
-          }}>
-            <div style={{ position: 'relative', marginBottom: '8px' }}>
-              <textarea
-                value={voiceTranscribedText}
-                onChange={(e) => setVoiceTranscribedText(e.target.value)}
-                rows={2}
-                style={{ width: '100%', paddingRight: '26px', boxSizing: 'border-box', padding: '6px' }}
-              />
-              {polishVoiceQuestion && (
-                <button
-                  type="button"
-                  onClick={() => polishVoiceQuestion(true)}
-                  disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
-                  title="AI polish"
-                  style={{
-                    position: 'absolute',
-                    top: '6px',
-                    right: '6px',
-                    margin: 0,
-                    padding: '3px',
-                    border: '1px solid #e0e0e0',
-                    borderRadius: '4px',
-                    background: voicePolishing && voicePolishMode === 'llm' ? 'var(--color-primary-bg)' : 'rgba(255,255,255,0.9)',
-                    cursor: (!voiceTranscribedText?.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
-                  }}
-                >
-                  {voicePolishing && voicePolishMode === 'llm' ? (
-                    <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden />
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ display: 'block' }}>
-                      <path d="M12 1l2.753 8.247L23 12l-8.247 2.753L12 23l-2.753-8.247L1 12l8.247-2.753z" />
-                    </svg>
-                  )}
-                </button>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} style={{ marginTop: 0 }}>
-                Confirm & Submit
-              </button>
+        <div className={styles.voiceConfirmBox}>
+          <div className={styles.voiceTextareaWrap}>
+            <textarea
+              value={voiceTranscribedText}
+              onChange={(e) => setVoiceTranscribedText(e.target.value)}
+              rows={2}
+              className={styles.voiceTextarea}
+            />
+            {polishVoiceQuestion && (
               <button
                 type="button"
-                onClick={() => cancelVoiceReview?.()}
-                disabled={loading}
-                style={{ marginTop: 0, backgroundColor: '#fff', color: '#333', border: '1px solid #666' }}
+                onClick={() => polishVoiceQuestion(true)}
+                disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
+                title="AI polish"
+                className={styles.polishBtn}
+                style={{
+                  background: voicePolishing && voicePolishMode === 'llm' ? 'var(--color-primary-bg)' : 'rgba(255,255,255,0.9)',
+                  cursor: (!voiceTranscribedText?.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
+                }}
               >
-                Cancel
+                {voicePolishing && voicePolishMode === 'llm' ? (
+                  <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden />
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ display: 'block' }}>
+                    <path d="M12 1l2.753 8.247L23 12l-8.247 2.753L12 23l-2.753-8.247L1 12l8.247-2.753z" />
+                  </svg>
+                )}
               </button>
-            </div>
+            )}
           </div>
-        )}
+          <div className={styles.voiceConfirmActions}>
+            <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.voiceConfirmSubmit}>
+              Confirm & Submit
+            </button>
+            <button
+              type="button"
+              onClick={() => cancelVoiceReview?.()}
+              disabled={loading}
+              className={styles.voiceConfirmCancel}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {askQuestionFeedback.message && (
-        <div className={askQuestionFeedback.type} style={{ marginTop: '8px', fontSize: '12px' }}>
+        <div className={`${askQuestionFeedback.type} ${styles.feedbackMsgBottom}`}>
           {askQuestionFeedback.message}
         </div>
       )}
@@ -179,18 +151,9 @@ export function QAPanel({
     <>
       {askBlock}
       <div className="participant-qa-scroll">
-        <h3 style={{ margin: 0, marginBottom: '8px', fontSize: '14px', color: '#555' }}>Q&A</h3>
+        <h3 className={styles.qaHeader}>Q&A</h3>
         {isThinking && (
-          <div style={{
-            padding: '12px',
-            marginBottom: '12px',
-            backgroundColor: '#fff3e0',
-            borderRadius: '4px',
-            fontSize: '13px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
+          <div className={styles.thinkingIndicator}>
             <span className="spinner" aria-hidden />
             <span>Thinking…</span>
           </div>

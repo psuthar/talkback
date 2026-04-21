@@ -1,0 +1,126 @@
+.askRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.micBtn {
+  flex-shrink: 0;
+  padding: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+}
+
+.micBtnStop {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inputCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.listeningLabel {
+  font-size: 12px;
+  color: var(--color-danger-mid);
+}
+
+.questionTextarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 44px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.askBtn {
+  width: 100%;
+}
+
+.voiceConfirmBox {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+}
+
+.voiceTextareaWrap {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.voiceTextarea {
+  width: 100%;
+  padding: 6px;
+  padding-right: 26px;
+  box-sizing: border-box;
+}
+
+.polishBtn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.voiceConfirmActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.voiceConfirmSubmit {
+  margin-top: 0;
+}
+
+.voiceConfirmCancel {
+  margin-top: 0;
+  background-color: #fff;
+  color: #333;
+  border: 1px solid #666;
+}
+
+.feedbackMsg {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.feedbackMsgBottom {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.qaHeader {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.thinkingIndicator {
+  padding: 12px;
+  margin-bottom: 12px;
+  background-color: #fff3e0;
+  border-radius: 4px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
