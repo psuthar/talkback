@@ -7,6 +7,7 @@ import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
+import { SessionSkeleton } from '../components/SessionSkeleton'
 import styles from './ParticipantMode.module.css'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
@@ -495,28 +496,31 @@ export function ParticipantMode({
   }, [hasSession])
 
   if (!hasSession) {
-    const isFailedFetch = (sessionLoadError || '').toLowerCase().includes('failed to fetch')
-    return (
-      <div className="section">
-        <div className="error" style={{ marginBottom: '20px' }}>
-          {sessionLoadError || 'Unable to load session. Please check the API connection and try again.'}
+    if (sessionLoadError) {
+      const isFailedFetch = sessionLoadError.toLowerCase().includes('failed to fetch')
+      return (
+        <div className="section">
+          <div className="error" style={{ marginBottom: '20px' }}>
+            {sessionLoadError}
+          </div>
+          {isFailedFetch && (
+            <p className={styles.errorNote}>
+              The app could not reach the API server at <strong>{apiBaseUrl || 'same origin (Vite proxy)'}</strong>. Check that the API is running on <code>http://localhost:8080</code>. If you&apos;re using the Vite dev server, you can leave <strong>API Base URL</strong> unset. For unusual setups (or shared links), you can add <code>?api=http://localhost:8080</code> to the link.
+            </p>
+          )}
+          {sessionIdFromUrl && onRetryLoadSession && (
+            <button
+              type="button"
+              onClick={() => onRetryLoadSession()}
+              className={styles.retryBtn}
+            >
+              Retry loading session
+            </button>
+          )}
         </div>
-        {isFailedFetch && (
-          <p className={styles.errorNote}>
-            The app could not reach the API server at <strong>{apiBaseUrl || 'same origin (Vite proxy)'}</strong>. Check that the API is running on <code>http://localhost:8080</code>. If you're using the Vite dev server, you can leave <strong>API Base URL</strong> unset. For unusual setups (or shared links), you can add <code>?api=http://localhost:8080</code> to the link.
-          </p>
-        )}
-        {sessionIdFromUrl && onRetryLoadSession && (
-          <button
-            type="button"
-            onClick={() => onRetryLoadSession()}
-            className={styles.retryBtn}
-          >
-            Retry loading session
-          </button>
-        )}
-      </div>
-    )
+      )
+    }
+    return <SessionSkeleton />
   }
 
   const gridClassName = materialsCollapsed

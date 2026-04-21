@@ -7,6 +7,7 @@ import { AddContentSection } from '../components/AddContentSection'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
+import { SessionSkeleton } from '../components/SessionSkeleton'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
 const PROGRESSION_TICK_MS = 200 // Advance displayed step at most one per tick
@@ -1389,9 +1390,10 @@ export function CreatorMode({
   }
 
   if (!currentSession) {
+    if (loading) return <SessionSkeleton />
     return (
       <div style={{ padding: '20px', color: '#666', textAlign: 'center' }}>
-        {loading ? 'Loading session...' : 'No session loaded. Select or create a session to continue.'}
+        No session loaded. Select or create a session to continue.
       </div>
     )
   }
