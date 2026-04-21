@@ -38,23 +38,6 @@
   min-width: 240px;
 }
 
-/* Error/loading state */
-.errorNote {
-  font-size: 13px;
-  color: var(--color-text-muted);
-  margin-bottom: 12px;
-}
-
-.retryBtn {
-  padding: 8px 16px;
-  font-size: 14px;
-  background-color: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
 /* Topbar */
 .topbarInner {
   display: flex;

@@ -3478,8 +3478,10 @@ function App() {
             <div className="info" style={{ marginBottom: '12px' }}>Loading session…</div>
           )}
           {!currentSession && urlSessionId && !loading && sessionSelectFeedback.type === 'error' && sessionSelectFeedback.message && (
-            <div className="section error" style={{ marginBottom: '16px', padding: '14px', borderRadius: '8px' }}>
-              <div style={{ marginBottom: '12px', fontWeight: '500' }}>{sessionSelectFeedback.message}</div>
+            <div className="section error" data-testid="session-load-error" style={{ marginBottom: '16px', padding: '14px', borderRadius: '8px' }}>
+              <div style={{ marginBottom: '12px', fontWeight: '500' }}>
+                {import.meta.env.DEV ? sessionSelectFeedback.message : 'Unable to connect. Please try again or contact support.'}
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -4181,9 +4183,6 @@ function App() {
               voicePolishMode={voicePolishMode}
               refetchSession={refetchSession}
               markMaterialsSeen={markMaterialsSeen}
-              sessionLoadError={sessionSelectFeedback.type === 'error' ? sessionSelectFeedback.message : ''}
-              sessionIdFromUrl={urlSessionId}
-              onRetryLoadSession={urlSessionId ? () => openSession(urlSessionId, 'participant') : null}
               replyingToQuestionId={replyingToQuestionId}
               setReplyingToQuestionId={setReplyingToQuestionId}
               currentAskerName={authUser?.email ?? undefined}
