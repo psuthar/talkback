@@ -8,8 +8,14 @@ const ANSWER_STATUS_LABELS = {
   error: 'Unable to answer',
 }
 
+const SOURCE_TYPE_LABELS = {
+  transcript: 'Transcript',
+  material: 'Document',
+  link: 'Link',
+}
+
 function CitationBadge({ citation, onClick }) {
-  const label = citation.label || (citation.citation_id ? `[${citation.citation_id}]` : citation.source_type)
+  const label = citation.label || SOURCE_TYPE_LABELS[citation.source_type] || citation.source_type || 'Source'
   const canNavigate = citation.anchor?.start_ms != null ||
     citation?.source_type === 'material' ||
     citation?.source_type === 'link' ||
@@ -17,8 +23,9 @@ function CitationBadge({ citation, onClick }) {
   return (
     <button
       type="button"
+      data-testid="citation-badge"
       onClick={onClick}
-      title={citation.excerpt || citation.snippet || 'View source'}
+      title={citation.excerpt || citation.snippet || label}
       className={styles.citationBtn}
       style={{
         backgroundColor: canNavigate ? 'var(--color-primary-bg)' : '#f5f5f5',
@@ -26,7 +33,9 @@ function CitationBadge({ citation, onClick }) {
         border: `1px solid ${canNavigate ? '#90caf9' : '#e0e0e0'}`,
       }}
     >
-      {citation.citation_id ? `[${citation.citation_id}]` : ''} {label}
+      {citation.citation_id ? <span>[{citation.citation_id}]</span> : null}
+      {' '}
+      <span className={styles.citationLabel}>{label}</span>
     </button>
   )
 }

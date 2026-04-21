@@ -75,6 +75,60 @@ describe('QAHistory default expand behavior', () => {
   })
 })
 
+function makeQuestionWithCitations(id, citations) {
+  return {
+    id,
+    question_text: `Question ${id}`,
+    created_at: '2026-01-01T00:00:00Z',
+    asked_by: 'user@example.com',
+    video_time_seconds: null,
+    replies: [],
+    answer: {
+      answer_text: 'Answer with citations.',
+      answer_status: 'answered',
+      model: 'gpt-4',
+      confidence: 0.9,
+      confirmed: false,
+      cited_materials: [],
+      citations,
+    },
+  }
+}
+
+describe('CitationBadge label rendering', () => {
+  it('shows human-readable "Transcript" label for transcript source_type with no label', () => {
+    const q = makeQuestionWithCitations('q-cit-1', [
+      { citation_id: 'C1', source_type: 'transcript', chunk_id: 'chunk-1' },
+    ])
+    const { container } = renderQAHistory([q])
+    const badge = container.querySelector('[data-testid="citation-badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).not.toMatch(/^transcript$/i)
+    expect(badge.textContent).toContain('Transcript')
+  })
+
+  it('shows human-readable "Document" label for material source_type with no label', () => {
+    const q = makeQuestionWithCitations('q-cit-2', [
+      { citation_id: 'C1', source_type: 'material', chunk_id: 'chunk-2' },
+    ])
+    const { container } = renderQAHistory([q])
+    const badge = container.querySelector('[data-testid="citation-badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).not.toMatch(/^material$/i)
+    expect(badge.textContent).toContain('Document')
+  })
+
+  it('prefers citation.label over source_type fallback', () => {
+    const q = makeQuestionWithCitations('q-cit-3', [
+      { citation_id: 'C1', source_type: 'transcript', chunk_id: 'chunk-3', label: 'Transcript 01:12–04:38' },
+    ])
+    const { container } = renderQAHistory([q])
+    const badge = container.querySelector('[data-testid="citation-badge"]')
+    expect(badge).not.toBeNull()
+    expect(badge.textContent).toContain('Transcript 01:12–04:38')
+  })
+})
+
 describe('QAHistory answer_status mapping', () => {
   it('renders "Answered" for answered status', () => {
     const { container } = renderQAHistory([makeQuestion('q1', 'answered')])

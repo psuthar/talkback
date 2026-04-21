@@ -5,6 +5,16 @@
   border-radius: 4px;
   cursor: pointer;
   font-weight: 500;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.citationLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .citationList {
