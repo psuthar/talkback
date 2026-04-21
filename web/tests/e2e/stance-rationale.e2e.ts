@@ -5,6 +5,7 @@ import {
   deleteSession,
   deleteUserViaAdmin,
   loginAsAdmin,
+  setSessionPrimaryDecision,
   uniqueEmail,
 } from './fixtures'
 
@@ -28,10 +29,18 @@ test(
     const session = await createSession(request, 'Stance Rationale E2E Session')
     seededSessionId = session.id
 
+    // Decisions section only renders when session.primary_decision is set
+    await setSessionPrimaryDecision(request, session.id, 'Adopt the proposed approach')
+
     // Navigate to session in participant view
     const params = new URLSearchParams({ session: session.id, mode: 'view' })
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
+
+    // Materials panel is collapsed by default — expand it so the Decisions section renders
+    const expandMaterials = page.getByRole('button', { name: 'Expand materials panel' })
+    await expect(expandMaterials).toBeVisible({ timeout: 10_000 })
+    await expandMaterials.click()
 
     // Expand the Decisions panel in the materials sidebar
     const decisionsToggle = page.getByRole('button', { name: /Decisions/i })
