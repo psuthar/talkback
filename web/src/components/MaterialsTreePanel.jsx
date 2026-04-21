@@ -41,6 +41,11 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
       aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
     >
       <span className={styles.panelHeaderChevron} aria-hidden>{collapsed ? '▷' : '▼'}</span>
+      {collapsed && unreadCount > 0 && (
+        <span className={styles.panelHeaderBadgeCollapsed} title={`${unreadCount} new material${unreadCount !== 1 ? 's' : ''}`}>
+          {unreadCount}
+        </span>
+      )}
       {!collapsed && (
         <span className={styles.panelHeaderLabel}>
           Materials
