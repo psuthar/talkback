@@ -47,8 +47,8 @@ test(
     await expect(decisionsToggle).toBeVisible({ timeout: 10_000 })
     await decisionsToggle.click()
 
-    // Select a stance
-    const agreeBtn = page.getByRole('button', { name: 'Agree' })
+    // Select a stance ("Agree" is a substring of "Disagree", so use exact match)
+    const agreeBtn = page.getByRole('button', { name: 'Agree', exact: true })
     await expect(agreeBtn).toBeVisible({ timeout: 5_000 })
     await agreeBtn.click()
 
