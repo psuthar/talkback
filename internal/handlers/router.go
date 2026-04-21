@@ -629,6 +629,15 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/video-sources/{video_source_id}/display-title - PATCH (set display title)
+		if parts[2] == "video-sources" && parts[4] == "display-title" {
+			if r.Method == http.MethodPatch {
+				h.UpdateVideoSourceDisplayTitle(w, r)
+				return
+			}
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		// /sessions/{id}/video/transcript/upload - POST (transcript file upload)
 		if parts[2] == "video" && parts[3] == "transcript" && parts[4] == "upload" {
 			if r.Method == http.MethodPost {

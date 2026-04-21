@@ -129,8 +129,9 @@ type VideoSource struct {
 	TranscriptionJobID    *uuid.UUID            `json:"transcription_job_id,omitempty"`
 	RawVTT                *string               `json:"raw_vtt,omitempty"`             // Original VTT from Zoom (optional)
 	TranscriptSegments    []TranscriptSegment   `json:"transcript_segments,omitempty"` // Normalized start/end/text (optional)
-	VideoRole             *VideoRole           `json:"video_role,omitempty"`         // primary | secondary; only one primary per session
-	CreatedAt             time.Time             `json:"created_at"`
+	VideoRole             *VideoRole           `json:"video_role,omitempty"`          // primary | secondary; only one primary per session
+	DisplayTitle          *string              `json:"display_title,omitempty"`       // Human-readable title set by creator
+	CreatedAt             time.Time            `json:"created_at"`
 }
 
 // TranscriptSegment is a normalized VTT cue for jump-to-moment and citations
