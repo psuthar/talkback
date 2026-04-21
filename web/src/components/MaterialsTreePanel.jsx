@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getMaterialSlides } from '../api/materials'
+import { getMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
 import styles from './MaterialsTreePanel.module.css'
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
@@ -56,6 +56,33 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
           )}
         </span>
       )}
+    </div>
+  )
+}
+
+function VideoTitleEditRow({ currentTitle, saving, onSave, onCancel, value, onChange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}>
+      <input
+        data-testid="video-title-input"
+        autoFocus
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); onSave() }
+          if (e.key === 'Escape') onCancel()
+        }}
+        placeholder={currentTitle}
+        style={{ flex: 1, fontSize: 12, padding: '2px 4px', border: '1px solid #ccc', borderRadius: 3 }}
+        disabled={saving}
+      />
+      <button type="button" onClick={onSave} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+        {saving ? '…' : 'Save'}
+      </button>
+      <button type="button" onClick={onCancel} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+        Cancel
+      </button>
     </div>
   )
 }
@@ -148,6 +175,10 @@ export function MaterialsTreePanel({
 }) {
   const scrollRef = useRef(null)
   const [probedSlidesStatus, setProbedSlidesStatus] = useState({})
+  const [editingTitleId, setEditingTitleId] = useState(null)
+  const [editingTitleValue, setEditingTitleValue] = useState('')
+  const [savingTitleId, setSavingTitleId] = useState(null)
+  const [displayTitleOverrides, setDisplayTitleOverrides] = useState({})
 
   if (!session) return null
 
@@ -274,6 +305,13 @@ export function MaterialsTreePanel({
     return null
   }
   const videoDisplayTitle = (v) => {
+    if (v?.id && displayTitleOverrides[v.id] !== undefined) {
+      return displayTitleOverrides[v.id] || videoUrlFallbackTitle(v)
+    }
+    if (v?.display_title) return v.display_title
+    return videoUrlFallbackTitle(v)
+  }
+  const videoUrlFallbackTitle = (v) => {
     const decodeSegment = (seg) => {
       if (!seg) return seg
       try {
@@ -294,10 +332,21 @@ export function MaterialsTreePanel({
       const seg = v.stored_video_object_key.split('/').filter(Boolean).pop()
       const decoded = decodeSegment(seg)
       if (decoded) return decoded
-      return seg || v.provider || 'Video'
+      return seg || v?.provider || 'Video'
     }
     return v?.provider || 'Video'
   }
+  const saveDisplayTitle = async (videoSourceId) => {
+    setSavingTitleId(videoSourceId)
+    try {
+      const trimmed = editingTitleValue.trim() || null
+      await updateVideoDisplayTitle(apiBaseUrl, session.id, videoSourceId, trimmed)
+      setDisplayTitleOverrides((prev) => ({ ...prev, [videoSourceId]: trimmed }))
+    } catch (_) {}
+    setSavingTitleId(null)
+    setEditingTitleId(null)
+  }
+
   const videoMaterialId = (v) => {
     if (!v) return null
     const norm = (s) => String(s || '').replace(/\\/g, '/').toLowerCase()
@@ -321,21 +370,42 @@ export function MaterialsTreePanel({
         <TreeSection title="Presentation">
           {!presentationVideo ? (
             <div className={styles.emptyNote}>No presentation video selected yet.</div>
-          ) : (
-            <TreeItem
-              key={presentationVideo.id}
-              testId="primary-video-item"
-              icon={null}
-              title={videoDisplayTitle(presentationVideo)}
-              meta="Primary"
-              selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
-              onClick={() => {
-                setSelectedVideo(presentationVideo)
-                setVideoId(presentationVideo.id)
-                setVideoPlayerKey(prev => prev + 1)
-                onSelectVideo?.()
-              }}
+          ) : editingTitleId === presentationVideo.id ? (
+            <VideoTitleEditRow
+              currentTitle={videoDisplayTitle(presentationVideo)}
+              saving={savingTitleId === presentationVideo.id}
+              value={editingTitleValue}
+              onChange={setEditingTitleValue}
+              onSave={() => saveDisplayTitle(presentationVideo.id)}
+              onCancel={() => setEditingTitleId(null)}
             />
+          ) : (
+            <>
+              <TreeItem
+                key={presentationVideo.id}
+                testId="primary-video-item"
+                icon={null}
+                title={videoDisplayTitle(presentationVideo)}
+                meta="Primary"
+                selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
+                onClick={() => {
+                  setSelectedVideo(presentationVideo)
+                  setVideoId(presentationVideo.id)
+                  setVideoPlayerKey(prev => prev + 1)
+                  onSelectVideo?.()
+                }}
+              />
+              {canManage && (
+                <button
+                  data-testid="edit-video-title-btn"
+                  type="button"
+                  onClick={() => { setEditingTitleId(presentationVideo.id); setEditingTitleValue(presentationVideo.display_title || '') }}
+                  style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
+                >
+                  Edit title
+                </button>
+              )}
+            </>
           )}
         </TreeSection>
 
@@ -345,26 +415,47 @@ export function MaterialsTreePanel({
               (() => {
                 const materialId = videoMaterialId(v)
                 const videoSelectable = !isProcessingStatus(v?.transcript_status)
-                return (
-                  <TreeItem
+                return editingTitleId === v.id ? (
+                  <VideoTitleEditRow
                     key={v.id}
-                    testId="video-item"
-                    icon={null}
-                    title={videoDisplayTitle(v)}
-                    meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
-                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
-                    selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
-                    onClick={() => {
-                      setSelectedVideo(v)
-                      setVideoId(v.id)
-                      setVideoPlayerKey(prev => prev + 1)
-                      onSelectVideo?.()
-                    }}
-                    onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
-                    deleting={materialId ? deletingId === String(materialId) : false}
-                    disabled={!videoSelectable}
-                    buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
+                    currentTitle={videoDisplayTitle(v)}
+                    saving={savingTitleId === v.id}
+                    value={editingTitleValue}
+                    onChange={setEditingTitleValue}
+                    onSave={() => saveDisplayTitle(v.id)}
+                    onCancel={() => setEditingTitleId(null)}
                   />
+                ) : (
+                  <div key={v.id}>
+                    <TreeItem
+                      testId="video-item"
+                      icon={null}
+                      title={videoDisplayTitle(v)}
+                      meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
+                      metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
+                      selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
+                      onClick={() => {
+                        setSelectedVideo(v)
+                        setVideoId(v.id)
+                        setVideoPlayerKey(prev => prev + 1)
+                        onSelectVideo?.()
+                      }}
+                      onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
+                      deleting={materialId ? deletingId === String(materialId) : false}
+                      disabled={!videoSelectable}
+                      buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
+                    />
+                    {canManage && (
+                      <button
+                        data-testid="edit-video-title-btn"
+                        type="button"
+                        onClick={() => { setEditingTitleId(v.id); setEditingTitleValue(v.display_title || '') }}
+                        style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
+                      >
+                        Edit title
+                      </button>
+                    )}
+                  </div>
                 )
               })()
             ))}

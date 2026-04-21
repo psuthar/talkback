@@ -339,6 +339,56 @@ func (h *Handlers) SetSessionPrimaryVideoSource(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]string{"message": "Primary video set"})
 }
 
+// UpdateVideoSourceDisplayTitle sets or clears the display_title on a video source. Creator or admin only.
+// PATCH /sessions/{sessionId}/video-sources/{videoSourceId}/display-title
+func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.Request) {
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// expected: api / sessions / {id} / video-sources / {vsID} / display-title
+	if len(pathParts) != 6 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "video-sources" || pathParts[5] != "display-title" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(pathParts[2])
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	videoSourceID, err := uuid.Parse(pathParts[4])
+	if err != nil {
+		http.Error(w, "Invalid video source ID", http.StatusBadRequest)
+		return
+	}
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+	currentUser := r.Header.Get("X-Current-User")
+	if currentUser == "" {
+		currentUser = r.URL.Query().Get("user")
+	}
+	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
+		if u := UserFromContext(r.Context()); u == nil || u.GlobalRole != models.GlobalRoleAdmin {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+	var body struct {
+		DisplayTitle *string `json:"display_title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.DB.UpdateVideoSourceDisplayTitle(r.Context(), sessionID, videoSourceID, body.DisplayTitle); err != nil {
+		log.Printf("UpdateVideoSourceDisplayTitle: %v", err)
+		http.Error(w, "Video source not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Display title updated"})
+}
+
 // ZoomVideoStream is deprecated for playback: app uses in-app player only (primary video from R2/local).
 // When session has primary_video_artifact_id this returns 410. Legacy sessions without primary could use it; frontend no longer requests it for playback.
 // GET /sessions/{sessionId}/video-sources/{videoSourceId}/stream

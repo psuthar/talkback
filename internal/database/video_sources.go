@@ -128,7 +128,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 	var sourceTypeStr string
 	var segmentsRaw []byte
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
 		FROM video_sources
 		WHERE artifact_id = $1
 	`
@@ -156,6 +156,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 		&videoSource.RawVTT,
 		&segmentsRaw,
 		&videoRolePtr,
+		&videoSource.DisplayTitle,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
@@ -175,7 +176,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 // GetVideoSourcesBySessionID retrieves all video sources for a session
 func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.VideoSource, error) {
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
 		FROM video_sources
 		WHERE session_id = $1
 		ORDER BY created_at
@@ -216,6 +217,7 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 			&vs.RawVTT,
 			&segmentsRaw,
 			&videoRolePtr,
+			&vs.DisplayTitle,
 			&vs.CreatedAt,
 		)
 		if err != nil {
@@ -249,7 +251,7 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 	var segmentsRaw []byte
 	var videoRolePtr *string
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
 		FROM video_sources
 		WHERE id = $1
 	`
@@ -277,6 +279,7 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 		&videoSource.RawVTT,
 		&segmentsRaw,
 		&videoRolePtr,
+		&videoSource.DisplayTitle,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
@@ -341,6 +344,22 @@ func (db *DB) DeleteVideoSourceByID(ctx context.Context, videoSourceID uuid.UUID
 	}
 	if result.RowsAffected() == 0 {
 		return fmt.Errorf("video source not found")
+	}
+	return nil
+}
+
+// UpdateVideoSourceDisplayTitle sets a human-readable display title for a video source.
+// The video must belong to the given session (ownership check). Pass nil to clear the title.
+func (db *DB) UpdateVideoSourceDisplayTitle(ctx context.Context, sessionID, videoSourceID uuid.UUID, title *string) error {
+	result, err := db.Pool.Exec(ctx,
+		`UPDATE video_sources SET display_title = $1 WHERE id = $2 AND session_id = $3`,
+		title, videoSourceID, sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update video source display title: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("video source not found or wrong session")
 	}
 	return nil
 }
