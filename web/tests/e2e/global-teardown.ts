@@ -26,12 +26,22 @@ const ADMIN_PASSWORD = process.env.TALKBACK_ADMIN_PASSWORD || 'SmokePass123!'
 const SMOKE_PASSWORD = 'SmokePass123!'
 
 export default async function globalTeardown() {
+  console.log(`[teardown] API_BASE=${API_BASE}`)
   const ctx = await playwrightRequest.newContext({ baseURL: API_BASE })
 
-  // 1. Login as admin
-  const loginRes = await ctx.post(`${API_BASE}/api/auth/login`, {
-    data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
-  })
+  // 1. Login as admin. Explicit short timeout so a misconfigured API_BASE (e.g. an unreachable
+  // host left over from E2E_TARGET=render) fails in ~10s instead of the default 30s.
+  let loginRes
+  try {
+    loginRes = await ctx.post(`${API_BASE}/api/auth/login`, {
+      data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+      timeout: 10_000,
+    })
+  } catch (err) {
+    console.warn(`[teardown] Admin login request failed (${(err as Error).message}) — skipping DB cleanup.`)
+    await ctx.dispose()
+    return
+  }
   if (!loginRes.ok()) {
     const st = loginRes.status()
     console.warn(

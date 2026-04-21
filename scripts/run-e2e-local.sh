@@ -108,10 +108,31 @@ else
 fi
 
 export TALKBACK_API_BASE="http://localhost:${PORT}"
+# Node 17+ resolves `localhost` to IPv6 ::1 first; the API binds IPv4 only, so without ipv4first
+# Playwright's fixtures and global teardown hit ECONNREFUSED on ::1:8080. Prepending preserves any
+# caller-set NODE_OPTIONS.
+export NODE_OPTIONS="--dns-result-order=ipv4first ${NODE_OPTIONS:-}"
 export TALKBACK_ADMIN_EMAIL="${TALKBACK_ADMIN_EMAIL:-$TALKBACK_BOOTSTRAP_ADMIN_EMAIL}"
 export TALKBACK_ADMIN_PASSWORD="${TALKBACK_ADMIN_PASSWORD:-$TALKBACK_BOOTSTRAP_ADMIN_PASSWORD}"
+
+# Pre-flight: verify admin credentials match the running API. Without this, Playwright global
+# teardown (and any admin-scoped fixtures) silently retry/stall, which looks like a hang.
+ADMIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${TALKBACK_API_BASE}/api/auth/login" \
+  -H 'content-type: application/json' \
+  --data "{\"email\":\"${TALKBACK_ADMIN_EMAIL}\",\"password\":\"${TALKBACK_ADMIN_PASSWORD}\"}" || echo "000")
+if [ "$ADMIN_STATUS" != "200" ]; then
+  echo "run-e2e-local: admin login pre-flight failed (HTTP ${ADMIN_STATUS}) at ${TALKBACK_API_BASE}." >&2
+  echo "  TALKBACK_ADMIN_EMAIL/PASSWORD must match the bootstrap admin of the running API." >&2
+  echo "  If you're reusing an API started with different env, restart it or update web/.env to match." >&2
+  exit 1
+fi
 
 cd web
 # Playwright 1.50+ uses chromium headless shell by default; install both like CI --with-deps browsers.
 npx playwright install chromium chromium-headless-shell >/dev/null 2>&1 || true
-npx playwright test "$@"
+# Default to the `list` reporter for interactive runs (real-time per-test progress) when the
+# caller hasn't specified one. Matches playwright.config.ts 'line' fallback but streams line-by-line.
+case " $* " in
+  *" --reporter="*|*" --reporter "*) npx playwright test "$@" ;;
+  *) npx playwright test --reporter=list "$@" ;;
+esac

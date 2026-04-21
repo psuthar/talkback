@@ -228,6 +228,43 @@ test('authenticated creator opens canonical edit URL without api= param and sees
   }
 })
 
+// ─── Test 7b: Skeleton loading state appears instead of raw error during participant session load ──
+
+test('skeleton loading state shown during participant session load (no raw error flash)', async ({ page, context, request }) => {
+  const email = uniqueEmail('routing-skeleton')
+  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Skeleton User')
+  const session = await createSession(request, 'E2E Skeleton Loading Session')
+
+  try {
+    // Slow down the session GET so the skeleton has time to appear.
+    // NOTE: the SPA fetches `${apiBase}/sessions/:id` (un-prefixed) — NOT `/api/sessions/:id` —
+    // so the pattern must cover both. `**/sessions/:id**` matches both routes (the leading `**`
+    // absorbs any `/api` prefix when present).
+    await page.route(`**/sessions/${session.id}**`, async (route) => {
+      await new Promise((r) => setTimeout(r, 600))
+      await route.continue()
+    })
+
+    // Navigate to the session URL
+    page.goto(`/app/sessions/${session.id}?mode=view`)
+
+    // After 300ms (before session response arrives), the skeleton must be visible
+    await page.waitForTimeout(300)
+    await expect(page.getByTestId('session-skeleton')).toBeVisible({ timeout: 2_000 })
+
+    // The raw error message must NOT appear during loading
+    await expect(page.getByText('Unable to load session')).not.toBeVisible()
+
+    // Eventually the session loads and skeleton disappears
+    await expect(page.getByTestId('question-input')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('session-skeleton')).not.toBeVisible()
+  } finally {
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
+    await deleteUserViaAdmin(request, userId)
+  }
+})
+
 // ─── Test 7: Creator header "View as Participant" link uses canonical route ────
 // Validates Flow 5: newly generated share/session links land on the canonical route.
 // The "View as Participant" anchor rendered in the creator header must use
