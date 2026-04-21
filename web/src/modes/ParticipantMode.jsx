@@ -56,9 +56,6 @@ export function ParticipantMode({
   voicePolishMode,
   refetchSession,
   markMaterialsSeen,
-  sessionLoadError,
-  sessionIdFromUrl,
-  onRetryLoadSession,
   replyingToQuestionId,
   setReplyingToQuestionId,
   currentAskerName,
@@ -496,31 +493,6 @@ export function ParticipantMode({
   }, [hasSession])
 
   if (!hasSession) {
-    if (sessionLoadError) {
-      const isFailedFetch = sessionLoadError.toLowerCase().includes('failed to fetch')
-      const isDev = import.meta.env.DEV
-      return (
-        <div className="section">
-          <div className="error" data-testid="session-load-error" style={{ marginBottom: '20px' }}>
-            {isDev ? sessionLoadError : 'Unable to connect. Please try again or contact support.'}
-          </div>
-          {isFailedFetch && isDev && (
-            <p className={styles.errorNote}>
-              The app could not reach the API server at <strong>{apiBaseUrl || 'same origin (Vite proxy)'}</strong>. Check that the API is running on <code>http://localhost:8080</code>. If you&apos;re using the Vite dev server, you can leave <strong>API Base URL</strong> unset. For unusual setups (or shared links), you can add <code>?api=http://localhost:8080</code> to the link.
-            </p>
-          )}
-          {sessionIdFromUrl && onRetryLoadSession && (
-            <button
-              type="button"
-              onClick={() => onRetryLoadSession()}
-              className={styles.retryBtn}
-            >
-              Retry loading session
-            </button>
-          )}
-        </div>
-      )
-    }
     return <SessionSkeleton />
   }
 
