@@ -56,7 +56,7 @@ function buildThreadTree(questions) {
   return { roots, byParent }
 }
 
-const SYSTEM_GENERATED_LABEL = 'System Generated'
+const SYSTEM_GENERATED_LABEL = 'Answered by TalkBack AI'
 
 // Inline reply form shown under a Q&A card when user clicks Reply (textarea + mic + Ask + Cancel).
 function InlineReplyForm({
