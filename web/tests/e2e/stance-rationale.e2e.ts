@@ -37,12 +37,7 @@ test(
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
 
-    // Materials panel is collapsed by default — expand it so the Decisions section renders
-    const expandMaterials = page.getByRole('button', { name: 'Expand materials panel' })
-    await expect(expandMaterials).toBeVisible({ timeout: 10_000 })
-    await expandMaterials.click()
-
-    // Expand the Decisions panel in the materials sidebar
+    // Decisions panel is now top-level (between topbar and grid) — expand it directly
     const decisionsToggle = page.getByRole('button', { name: /Decisions/i })
     await expect(decisionsToggle).toBeVisible({ timeout: 10_000 })
     await decisionsToggle.click()
