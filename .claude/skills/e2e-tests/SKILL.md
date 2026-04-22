@@ -1,5 +1,8 @@
 # Skill: e2e-tests
 
+Policy source: `docs/agent/testing-validation.md`.
+This skill focuses on browser E2E tactics and Playwright execution details, not global test policy ownership.
+
 ## Purpose
 
 Write and refine browser-based end-to-end tests for TalkBack's core user journeys. Tests run a real browser against a real running stack (frontend + backend + Postgres) and validate what the user actually sees and can do.
@@ -211,7 +214,7 @@ Participant types question → submits → loading state visible → answer stat
 5. **Use `waitForResponse` for async state changes** — when clicking "Ask", wait for the answer API response, not a DOM timeout.
 6. **Assert terminal state** — for answers, wait until `.answer-status` is visible and has a terminal class.
 7. **Run `npx playwright test --headed` locally** and confirm pass.
-8. **Run full suite** and confirm no regressions.
+8. **Then run validation required by policy** in `docs/agent/testing-validation.md`.
 
 ---
 

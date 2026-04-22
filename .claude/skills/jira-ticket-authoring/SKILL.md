@@ -1,5 +1,8 @@
 # Skill: jira-ticket-authoring
 
+Policy source: `docs/agent/workflow-jira.md`.
+This skill covers Jira ticket writing templates only and is not execution policy.
+
 ## Purpose
 
 Produce consistent, concise, reviewable Jira tickets. Applies to Epics, Stories, Tasks, and Bugs. Output is paste-ready for Jira and deterministic in structure.

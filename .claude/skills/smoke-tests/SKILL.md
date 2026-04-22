@@ -1,5 +1,8 @@
 # Skill: smoke-tests
 
+Policy source: `docs/agent/testing-validation.md`.
+This skill focuses on backend smoke/integration test tactics and examples, not global test policy ownership.
+
 ## Purpose
 
 Write and refine deterministic smoke/integration tests for TalkBack's core backend flows. Tests must produce a reliable green/red signal fast, without browser automation, without flaky timing, and without mocking the database.
@@ -95,8 +98,8 @@ Verify: answer row persisted, `answer_status` is `"answered"` or `"not_covered"`
 5. **Assert on response status first**, then unmarshal body, then assert specific fields.
 6. **For async pipeline steps** — assert that the job row was enqueued (DB query), not that it completed, unless you control a synchronous test double for the worker.
 7. **For LLM/RAG answers** — use a stub answer injector or check structural validity only (see answer assertion rules below).
-8. **Run `go test ./internal/handlers/... -run TestSmoke -v`** and confirm pass before considering done.
-9. **Run full suite `go test ./...`** and confirm no regressions.
+8. **Run `go test ./internal/handlers/... -run TestSmoke -v`** and confirm pass.
+9. **Then run validation required by policy** in `docs/agent/testing-validation.md`.
 
 ---
 

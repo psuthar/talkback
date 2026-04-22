@@ -1,5 +1,8 @@
 # Feature-Plan Skill
 
+Policy source: `docs/agent/overview.md` and `CLAUDE.md`.
+This skill defines planning output structure and execution steps, not global policy ownership.
+
 ## Purpose
 
 Provide a **consistent workflow** for designing new TalkBack features. When invoked, Claude produces a structured plan covering architecture, schema, API, UI, testing, rollout, and MVP vs future enhancements—**without implementing code**. Useful for decision intelligence, participant simulation, invitation workflow, transcript-derived analysis, observability/agent enhancements, and similar features.

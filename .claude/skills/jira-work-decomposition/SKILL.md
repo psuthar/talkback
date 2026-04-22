@@ -1,5 +1,8 @@
 # Skill: jira-work-decomposition
 
+Policy source: `docs/agent/workflow-jira.md`.
+This skill covers decomposition strategy only and is not execution policy.
+
 ## Purpose
 
 Decompose a rough initiative or feature request into a well-structured, sequenced set of Jira tickets (Epics, Stories, Tasks, Bugs) before any ticket is written. Output is a ticket list ready to hand to `jira-ticket-authoring`.

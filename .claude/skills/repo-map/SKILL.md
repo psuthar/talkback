@@ -1,5 +1,8 @@
 # Repo-Map Skill
 
+Policy source: `docs/agent/overview.md`.
+This skill provides mapping methodology and output format, not policy ownership.
+
 ## Purpose
 
 Enable Claude to **generate a repo architecture map** of TalkBack consistently. When invoked, Claude produces a concise overview of the system, backend, frontend, data flow, integrations, workers, technical debt/risk areas, and likely extension points—**without editing files** unless explicitly requested.
