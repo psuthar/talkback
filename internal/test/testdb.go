@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,59 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
+
+// LoadTestEnvFiles loads `.env` then `.env.test` from the current working directory,
+// each parent directory up to the filesystem root, and the directory containing `go.mod`
+// (if found). Later files override earlier ones for the same key. Already-set process
+// env vars are not overwritten (godotenv default). This lets `go test ./...` pick up
+// `DATABASE_URL` from a repo-root `.env` copied from `.env.example`.
+func LoadTestEnvFiles() {
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "."
+	}
+	var dirs []string
+	dir := wd
+	for i := 0; i < 10; i++ {
+		dirs = append(dirs, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	if root := findModuleRoot(wd); root != "" {
+		dirs = append(dirs, root)
+	}
+	seen := make(map[string]struct{})
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		_ = godotenv.Load(filepath.Join(d, ".env"))
+		_ = godotenv.Load(filepath.Join(d, ".env.test"))
+	}
+}
+
+func findModuleRoot(start string) string {
+	dir := start
+	for i := 0; i < 10; i++ {
+		mod := filepath.Join(dir, "go.mod")
+		if st, err := os.Stat(mod); err == nil && !st.IsDir() {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
 
 // isSafeDatabaseName checks if a database name contains only safe characters
 // PostgreSQL database names can contain letters, digits, underscores, and hyphens
@@ -141,9 +195,7 @@ func DropTestDatabaseURL(testDatabaseURL string) error {
 // Caller must run migrations and set DATABASE_URL. Cleanup drops the database.
 // Use from TestMain to get one DB for all tests; each test then truncates and reuses.
 func CreateSharedTestDB() (databaseURL string, cleanup func(), err error) {
-	_ = godotenv.Load(".env.test")
-	_ = godotenv.Load("../.env.test")
-	_ = godotenv.Load("../../.env.test")
+	LoadTestEnvFiles()
 	databaseURL = os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
 		databaseURL = os.Getenv("DATABASE_URL")
@@ -217,11 +269,7 @@ func dropTestDatabase(t *testing.T, testDatabaseURL string) {
 func SetupTestDB(t *testing.T) (string, func()) {
 	t.Helper()
 
-	// Try to load .env.test file (ignore errors if it doesn't exist)
-	// Try multiple paths since test working directory may vary
-	_ = godotenv.Load(".env.test")
-	_ = godotenv.Load("../.env.test")
-	_ = godotenv.Load("../../.env.test")
+	LoadTestEnvFiles()
 
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {

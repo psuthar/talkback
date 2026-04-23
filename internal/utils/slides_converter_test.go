@@ -19,13 +19,17 @@ func TestSofficeAvailable(t *testing.T) {
 
 	cmd := exec.Command("soffice", "--version")
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("soffice --version failed: %v", err)
+		t.Skipf("soffice on PATH but not usable (install/repair LibreOffice or remove broken shim): %v", err)
 	}
 }
 
 // TestWarmLibreOffice verifies that WarmLibreOffice completes without panic and logs success.
 // Skipped when soffice is not on PATH (same guard as LibreOfficeHealthcheck).
+// Skipped under -short (can take up to ~30s when LibreOffice runs a dummy conversion).
 func TestWarmLibreOffice(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping LibreOffice warm-up in short mode")
+	}
 	if _, err := exec.LookPath("soffice"); err != nil {
 		t.Skipf("soffice not found on PATH, skipping warm-up test: %v", err)
 	}

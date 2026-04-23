@@ -16,33 +16,40 @@ Before running tests, ensure:
    docker compose -f deploy/docker-compose.yml up -d
    ```
 
-2. **DATABASE_URL is set:**
+2. **`DATABASE_URL` is available to tests** (pick one):
+   - **Recommended:** copy [`.env.example`](.env.example) to `.env` at the repo root. `go test` helpers load `.env` and `.env.test` automatically from the repo root (see `internal/test.LoadTestEnvFiles`).
+   - **Or** export in your shell:
    ```powershell
    $env:DATABASE_URL = "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable"
    ```
-
-   Or create a `.env` file with:
-   ```
-   DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+   ```bash
+   export DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
    ```
 
-   **Note:** `TEST_DATABASE_URL` is optional - if not set, tests will use `DATABASE_URL`.
+   **Note:** `TEST_DATABASE_URL` is optional — if not set, tests use `DATABASE_URL`.
 
 ### Run all tests
 
-**Option 1: Using PowerShell script (recommended)**
+**Option 1: Using PowerShell script (Windows, recommended)**
 ```powershell
 .\scripts\test.ps1
 ```
 
-**Option 2: Manual**
+**Option 2: Using Bash script (macOS / Linux)**
 ```bash
-# Set environment variable
-$env:DATABASE_URL = "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable"
+chmod +x scripts/test.sh   # once
+./scripts/test.sh
+```
 
-# Run tests
+**Option 3: Manual**
+```bash
+export DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
 go test ./...
 ```
+
+### Loom live integration test
+
+`internal/utils` includes an optional test that calls Loom’s real GraphQL API. It runs only when **`TALKBACK_RUN_LOOM_LIVE_TEST=1`** (GitHub Actions sets this) or is skipped otherwise. Use `go test -short ./...` if you want a fast run and to skip other short-mode tests consistently with prior usage.
 
 ### Run tests with coverage
 ```bash
@@ -139,9 +146,12 @@ Tests use the same database as development. Set `TEST_DATABASE_URL` environment 
 ### Connection Errors
 
 **Error: "TEST_DATABASE_URL or DATABASE_URL must be set"**
-- Solution: Set the environment variable:
+- Solution: Create a repo-root `.env` from `.env.example` (includes `DATABASE_URL`), or export:
   ```powershell
   $env:DATABASE_URL = "postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable"
+  ```
+  ```bash
+  export DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
   ```
 
 **Error: "connection refused" or "connection timeout"**

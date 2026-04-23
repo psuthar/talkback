@@ -12,7 +12,6 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/migrations"
@@ -22,9 +21,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_ = godotenv.Load(".env.test")
-	_ = godotenv.Load("../.env.test")
-	_ = godotenv.Load("../../.env.test")
 	sharedURL, cleanupDB, err := test.CreateSharedTestDB()
 	if err != nil {
 		log.Fatalf("Create shared test DB: %v", err)

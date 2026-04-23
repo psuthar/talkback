@@ -121,6 +121,7 @@ jobs:
         continue-on-error: true
         env:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
+          TALKBACK_RUN_LOOM_LIVE_TEST: "1"
         run: go test ./... -count=1 -coverprofile=coverage.out
 
       # Go tests use a migrated DB (see internal/database/db_test.go). When tests pass, migrations are validated.
