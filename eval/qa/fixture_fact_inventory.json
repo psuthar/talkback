@@ -1,0 +1,396 @@
+{
+  "version": "1.0.0",
+  "description": "Deterministic fixture-backed candidate prompts for TalkBack Q&A evaluation.",
+  "cases": [
+    {
+      "case_id": "FF-001",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "What happened to the Meridian proposal?",
+      "expected_status": "answered",
+      "expected_keywords": ["meridian", "approved"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Meridian proposal approved."
+        }
+      ],
+      "rationale": "Direct fact from deterministic smoke fixture text."
+    },
+    {
+      "case_id": "FF-002",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "What is the APAC expansion budget in the fixture text?",
+      "expected_status": "answered",
+      "expected_keywords": ["apac", "2.4m", "budget"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "APAC expansion budget confirmed at 2.4M."
+        },
+        {
+          "source_file": "web/tests/e2e/participant-happy-path.e2e.ts",
+          "source_symbol": "FIXTURE_TEXT",
+          "evidence": "APAC expansion confirmed at 2.4M."
+        }
+      ],
+      "rationale": "Budget fact appears in both smoke and e2e fixtures."
+    },
+    {
+      "case_id": "FF-003",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "What churn target is described?",
+      "expected_status": "answered",
+      "expected_keywords": ["churn", "below 6%"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Churn reduced to below 6% this quarter."
+        }
+      ],
+      "rationale": "Explicit threshold in fixture text."
+    },
+    {
+      "case_id": "FF-004",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Is the Meridian proposal approved according to the fixture?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "approved", "meridian"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Meridian proposal approved."
+        }
+      ],
+      "rationale": "Yes/no question with explicit support."
+    },
+    {
+      "case_id": "FF-005",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Is the APAC budget stated as 2.4M?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "2.4m", "apac"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "APAC expansion budget confirmed at 2.4M."
+        }
+      ],
+      "rationale": "Closed-form verification of numeric fact."
+    },
+    {
+      "case_id": "FF-006",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Does the fixture say churn is below 6 percent?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "churn", "below 6%"],
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/participant-happy-path.e2e.ts",
+          "source_symbol": "FIXTURE_TEXT",
+          "evidence": "Churn target below 6% this quarter."
+        }
+      ],
+      "rationale": "Cross-check from e2e fixture copy."
+    },
+    {
+      "case_id": "FF-007",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Which region's expansion is mentioned?",
+      "expected_status": "answered",
+      "expected_keywords": ["apac"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "APAC expansion budget confirmed at 2.4M."
+        }
+      ],
+      "rationale": "Entity extraction from deterministic phrase."
+    },
+    {
+      "case_id": "FF-008",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "What two outcomes are described besides the proposal decision?",
+      "expected_status": "answered",
+      "expected_keywords": ["apac", "2.4m", "churn", "below 6%"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "APAC budget confirmed at 2.4M and churn reduced to below 6%."
+        }
+      ],
+      "rationale": "Compositional prompt combining two explicit facts."
+    },
+    {
+      "case_id": "FF-009",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Is there any mention of Europe expansion in the Meridian fixture text?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Only APAC expansion is mentioned."
+        }
+      ],
+      "rationale": "Negative-space claim: Europe is absent."
+    },
+    {
+      "case_id": "FF-010",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Does the fixture include a 3.0M APAC budget?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Budget in fixture is 2.4M."
+        }
+      ],
+      "rationale": "Contradictory numeric claim should not be grounded."
+    },
+    {
+      "case_id": "FF-011",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "What exact month was the APAC budget approved?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "No month is provided."
+        }
+      ],
+      "rationale": "Temporal detail is intentionally missing."
+    },
+    {
+      "case_id": "FF-012",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Who approved the Meridian proposal?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Approval actor is not named."
+        }
+      ],
+      "rationale": "No actor identity appears in fixture."
+    },
+    {
+      "case_id": "FF-013",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Is a profitability percentage provided in the fixture text?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/participant-happy-path.e2e.ts",
+          "source_symbol": "FIXTURE_TEXT",
+          "evidence": "Only churn and budget are quantified."
+        }
+      ],
+      "rationale": "Unmentioned metric should remain unsupported."
+    },
+    {
+      "case_id": "FF-014",
+      "fixture_id": "qa_history_project_omega",
+      "question": "What is the Project Omega budget in the QA history fixture?",
+      "expected_status": "answered",
+      "expected_keywords": ["project omega", "1.2m", "budget"],
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "Decision was made to proceed with Project Omega at 1.2M budget."
+        }
+      ],
+      "rationale": "Direct fact from QA history fixture."
+    },
+    {
+      "case_id": "FF-015",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Did the fixture indicate proceeding with Project Omega?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "proceed", "project omega"],
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "Decision was made to proceed with Project Omega."
+        }
+      ],
+      "rationale": "Binary inference from explicit sentence."
+    },
+    {
+      "case_id": "FF-016",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Is the Project Omega budget 1.2M?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "1.2m"],
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "Project Omega at 1.2M budget."
+        }
+      ],
+      "rationale": "Deterministic numeric check."
+    },
+    {
+      "case_id": "FF-017",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Does the QA history fixture mention APAC?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "Fixture discusses Project Omega and 1.2M only."
+        }
+      ],
+      "rationale": "Cross-fixture leakage guard."
+    },
+    {
+      "case_id": "FF-018",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Does the QA history fixture contain a churn target?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "No churn language in Project Omega fixture."
+        }
+      ],
+      "rationale": "Negative-space case for absent KPI."
+    },
+    {
+      "case_id": "FF-019",
+      "fixture_id": "qa_history_project_omega",
+      "question": "What quarter is Project Omega scheduled for?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "No timing details are included."
+        }
+      ],
+      "rationale": "Temporal detail omitted by fixture."
+    },
+    {
+      "case_id": "FF-020",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What premise is set in the session update smoke test?",
+      "expected_status": "answered",
+      "expected_keywords": ["decide", "apac expansion"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_session_update_test.go",
+          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
+          "evidence": "premise: We need to decide on the APAC expansion."
+        }
+      ],
+      "rationale": "Deterministic fixture from session update payload."
+    },
+    {
+      "case_id": "FF-021",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What primary decision string is used in the APAC session update test?",
+      "expected_status": "answered",
+      "expected_keywords": ["approve", "2.4m", "apac"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_session_update_test.go",
+          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
+          "evidence": "primary_decision: Approve 2.4M budget for APAC."
+        }
+      ],
+      "rationale": "Exact decision fixture appears in test body."
+    },
+    {
+      "case_id": "FF-022",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Is the session update fixture budget value 2.4M?",
+      "expected_status": "answered",
+      "expected_keywords": ["yes", "2.4m"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_session_update_test.go",
+          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
+          "evidence": "Approve 2.4M budget for APAC."
+        }
+      ],
+      "rationale": "Closed-form confirmation for budget token."
+    },
+    {
+      "case_id": "FF-023",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Does the APAC session update fixture include churn data?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_session_update_test.go",
+          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
+          "evidence": "Fixture includes premise and decision, not churn metric."
+        }
+      ],
+      "rationale": "Prevent borrowing churn info from unrelated fixture."
+    },
+    {
+      "case_id": "FF-024",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Who approved the APAC budget in the session update fixture?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_session_update_test.go",
+          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
+          "evidence": "No actor identity is specified."
+        }
+      ],
+      "rationale": "Actor information not present in fixture payload."
+    },
+    {
+      "case_id": "FF-025",
+      "fixture_id": "no_content_not_covered_path",
+      "question": "When there is no indexed content, what answer status should be returned?",
+      "expected_status": "answered",
+      "expected_keywords": ["not_covered"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_ask_answer_test.go",
+          "source_symbol": "TestSmoke_AskAnswer_NoContent_ReturnsDeterministicNotCovered",
+          "evidence": "With no content, response MUST be not_covered."
+        },
+        {
+          "source_file": "internal/utils/qa.go",
+          "source_symbol": "GenerateAnswer",
+          "evidence": "Short-circuit returns answer_status not_covered when chunks are empty."
+        }
+      ],
+      "rationale": "Deterministic system behavior useful for sanity eval."
+    },
+    {
+      "case_id": "FF-026",
+      "fixture_id": "no_content_not_covered_path",
+      "question": "Does an empty-content ask path include citations?",
+      "expected_status": "answered",
+      "expected_keywords": ["no", "citations", "empty"],
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_ask_answer_test.go",
+          "source_symbol": "TestSmoke_AskAnswer_NoContent_ReturnsDeterministicNotCovered",
+          "evidence": "assert.Empty(resp.Answer.Citations)"
+        }
+      ],
+      "rationale": "Deterministic structural expectation for not_covered."
+    }
+  ]
+}

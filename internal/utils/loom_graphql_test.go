@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -590,17 +591,20 @@ func TestLoomGraphQLRequestStructure_ValidatesExactJSONFormat(t *testing.T) {
 }
 
 // TestLoomGraphQLClient_ResolveVideoSource_LiveIntegration tests against Loom's live GraphQL API.
-// This test makes a real HTTP request to Loom to validate that our implementation works
-// with the actual service. This test can be skipped by running: go test -short
+// This test makes a real HTTP request to Loom. It is opt-in so local runs and CI without network
+// expectations stay stable: set TALKBACK_RUN_LOOM_LIVE_TEST=1 (CI workflows set this).
+// Also skipped when -short is set.
 //
 // IMPORTANT: This test validates backwards compatibility - if Loom changes their API
 // in a backwards-incompatible way, this test will fail.
 //
 // Video used: https://www.loom.com/share/19aeabbe324b45cb9ec3c74ab3547e66
 func TestLoomGraphQLClient_ResolveVideoSource_LiveIntegration(t *testing.T) {
-	// Skip if short flag is set (for fast test runs)
 	if testing.Short() {
 		t.Skip("Skipping live integration test (use -short flag)")
+	}
+	if os.Getenv("TALKBACK_RUN_LOOM_LIVE_TEST") != "1" {
+		t.Skip("Skipping Loom live GraphQL integration; set TALKBACK_RUN_LOOM_LIVE_TEST=1 to run (see TESTING.md)")
 	}
 
 	// Video ID from Loom share URL: https://www.loom.com/share/19aeabbe324b45cb9ec3c74ab3547e66

@@ -10,7 +10,6 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/migrations"
@@ -22,10 +21,6 @@ import (
 var mcptestDBEnabled bool
 
 func TestMain(m *testing.M) {
-	_ = godotenv.Load(".env.test")
-	_ = godotenv.Load("../.env.test")
-	_ = godotenv.Load("../../.env.test")
-
 	sharedURL, cleanupDB, err := test.CreateSharedTestDB()
 	if err != nil {
 		log.Printf("mcpserver: skipping DB-backed tests: %v", err)
