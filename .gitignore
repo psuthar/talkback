@@ -73,6 +73,10 @@ ops/bundles/*.json
 ops/baselines/*.json
 !ops/baselines/.gitkeep
 
+# Q&A eval runner outputs (timestamped); keep directory via .gitkeep
+eval/qa/runs/*
+!eval/qa/runs/.gitkeep
+
 # Test output (e.g. Playwright)
 test-results/
 playwright-results.json
