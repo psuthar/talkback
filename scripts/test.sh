@@ -7,8 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "Ensuring Postgres is up (docker compose)..."
-docker compose -f deploy/docker-compose.yml up -d
+echo "Ensuring Postgres is up (docker compose; postgres service only — avoids binding :8080)..."
+docker compose -f deploy/docker-compose.yml up -d postgres
 sleep 2
 
 export DATABASE_URL="${DATABASE_URL:-postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable}"

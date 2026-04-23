@@ -11,9 +11,9 @@ This project follows **Test Driven Development (TDD)** principles. All new code 
 ### Prerequisites
 
 Before running tests, ensure:
-1. **Postgres is running:**
+1. **Postgres is running** (start **postgres** only so port `8080` is not taken by compose `api`):
    ```bash
-   docker compose -f deploy/docker-compose.yml up -d
+   docker compose -f deploy/docker-compose.yml up -d postgres
    ```
 
 2. **`DATABASE_URL` is available to tests** (pick one):
