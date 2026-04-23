@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talkback.local/schemas/expected_scores_v1.schema.json",
+  "title": "TalkBack Q&A expected scores v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "description", "defaults", "case_targets"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weight", "correctness_min", "hallucination_max"],
+      "properties": {
+        "weight": { "type": "number", "exclusiveMinimum": 0 },
+        "correctness_min": { "type": "number", "minimum": 0, "maximum": 1 },
+        "hallucination_max": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "case_targets": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case_id", "weight", "correctness_min", "hallucination_max"],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "pattern": "^FF-[0-9]{3}$"
+          },
+          "weight": { "type": "number", "exclusiveMinimum": 0 },
+          "correctness_min": { "type": "number", "minimum": 0, "maximum": 1 },
+          "hallucination_max": { "type": "number", "minimum": 0, "maximum": 1 },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}
