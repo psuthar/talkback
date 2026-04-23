@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talkback.local/schemas/eval_cases_v1.schema.json",
+  "title": "TalkBack Q&A eval cases v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "description", "cases"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "cases": {
+      "type": "array",
+      "minItems": 15,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "fixture_id",
+        "question",
+        "expected_status",
+        "hallucination_constraints"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "pattern": "^FF-[0-9]{3}$"
+        },
+        "fixture_id": { "type": "string", "minLength": 1 },
+        "question": { "type": "string", "minLength": 1 },
+        "expected_status": {
+          "type": "string",
+          "enum": ["answered", "not_covered"]
+        },
+        "expected_keywords": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "hallucination_constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "answer_must_not_contain": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "notes": { "type": "string" }
+          }
+        }
+      },
+      "if": {
+        "properties": { "expected_status": { "const": "answered" } },
+        "required": ["expected_status"]
+      },
+      "then": { "required": ["expected_keywords"] }
+    }
+  }
+}

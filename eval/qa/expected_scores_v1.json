@@ -1,0 +1,121 @@
+{
+  "version": "1.0.0",
+  "description": "Expected score targets for eval_cases_v1 (correctness floor and hallucination ceiling per case). Used by future judges/aggregators.",
+  "defaults": {
+    "weight": 1.0,
+    "correctness_min": 0.82,
+    "hallucination_max": 0.18
+  },
+  "case_targets": [
+    {
+      "case_id": "FF-001",
+      "weight": 1.0,
+      "correctness_min": 0.88,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-002",
+      "weight": 1.0,
+      "correctness_min": 0.85,
+      "hallucination_max": 0.15
+    },
+    {
+      "case_id": "FF-003",
+      "weight": 1.0,
+      "correctness_min": 0.85,
+      "hallucination_max": 0.15
+    },
+    {
+      "case_id": "FF-004",
+      "weight": 1.0,
+      "correctness_min": 0.85,
+      "hallucination_max": 0.14
+    },
+    {
+      "case_id": "FF-005",
+      "weight": 1.0,
+      "correctness_min": 0.86,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-006",
+      "weight": 1.0,
+      "correctness_min": 0.85,
+      "hallucination_max": 0.14
+    },
+    {
+      "case_id": "FF-007",
+      "weight": 1.0,
+      "correctness_min": 0.82,
+      "hallucination_max": 0.16
+    },
+    {
+      "case_id": "FF-008",
+      "weight": 1.2,
+      "correctness_min": 0.8,
+      "hallucination_max": 0.18,
+      "notes": "Multi-fact; slightly higher weight."
+    },
+    {
+      "case_id": "FF-009",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "Negative space; tight hallucination bound."
+    },
+    {
+      "case_id": "FF-010",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-011",
+      "weight": 1.0,
+      "correctness_min": 0.76,
+      "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-012",
+      "weight": 1.0,
+      "correctness_min": 0.76,
+      "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-013",
+      "weight": 1.0,
+      "correctness_min": 0.76,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-014",
+      "weight": 1.0,
+      "correctness_min": 0.86,
+      "hallucination_max": 0.14
+    },
+    {
+      "case_id": "FF-015",
+      "weight": 1.0,
+      "correctness_min": 0.84,
+      "hallucination_max": 0.14
+    },
+    {
+      "case_id": "FF-016",
+      "weight": 1.0,
+      "correctness_min": 0.86,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-017",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-018",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.1
+    }
+  ]
+}
