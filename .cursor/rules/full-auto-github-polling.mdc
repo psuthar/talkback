@@ -1,5 +1,5 @@
 ---
-description: FULL_AUTO PR gate polling via GitHub MCP (no early exit; no gh CLI)
+description: FULL_AUTO via GitHub MCP — stop polling unless TalkBack PR Gate is PASS (success); then mergeability
 alwaysApply: true
 ---
 
@@ -7,29 +7,45 @@ alwaysApply: true
 
 When running **Jira ticket workflow** in **FULL_AUTO** mode (per `CLAUDE.md` §8), after creating the PR you **must** resolve the merge gate using **GitHub MCP only** — **do not** use `gh` or other CLIs for PR status or merge.
 
-## Polling (mandatory)
+Source of truth for merge + cleanup text: `docs/agent/workflow-full-auto.md`.
 
-1. Use **`pull_request_read`** with `method: get` (same server as `create_pull_request` / `merge_pull_request`) to read **`mergeable_state`**.
-2. **Poll every 30 seconds** for up to **40 minutes** (one shared wall-clock budget for this PR after creation) until you have a **clear terminal signal**:
-   - If **`mergeable_state` is `null`**: GitHub is still computing — **keep polling** (sleep 30s between MCP calls).
-   - If **`mergeable_state` is `blocked`**: **do not stop on the first read.** This usually means checks or reviews are still pending. **Keep polling every 30s** until **`clean`**, **`dirty`**, or the **40-minute** cap — same rule as `null` / `unstable` / `unknown` / `behind`. Treating `blocked` as an instant failure is **incorrect**.
-   - If **`mergeable_state` is `unstable`**, **`unknown`**, or **`behind`**: **do not** treat the first read as final — **keep polling** until it becomes **`clean`**, **`dirty`** (merge conflicts), or you hit the **40 minute** cap.
-   - If **`mergeable_state` is `clean`**: proceed with **`merge_pull_request`** (squash) per `CLAUDE.md`.
-   - If **`mergeable_state` is `dirty`**: stop — conflicts need resolution (same end state as a failed gate).
-3. **Never** stop after a single 30s wait unless the PR is already **`merged`** or you have **`clean`** / definitive **`dirty`**.
+## TalkBack PR Gate first (mandatory every poll)
+
+Use **`pull_request_read`** with **`get_check_runs`**. Locate the check run whose **`name`** is exactly **`TalkBack PR Gate`**.
+
+1. **No such check run yet** (only other checks listed): gate not published — **keep polling** (30s interval).
+2. Gate run exists but **`status`** is not **`completed`** (`queued`, `in_progress`, etc.): **keep polling**.
+3. Gate run **`status`** is **`completed`**:
+   - If **`conclusion`** is **`success`**: that is **PASS** — proceed to **mergeability** below for this cycle.
+   - If **`conclusion`** is **anything else** (`failure`, `cancelled`, `timed_out`, **`action_required`**, `neutral`, …): **STOP FULL_AUTO polling immediately.** Do **not** burn the rest of the 40-minute budget waiting for `mergeable_state`. A human must act (e.g. unified gate **WARN** is published as GitHub **`action_required`**, not PASS). Leave PR open; Jira **In Review**. Report clearly.
+
+Only **`success`** counts as PASS for continued automated polling toward merge.
+
+## Mergeability (`mergeable_state`) — only relevant after gate PASS
+
+After the gate shows **`completed`** + **`conclusion: success`** on that poll (re-verify before merge per `workflow-full-auto.md`):
+
+4. Use **`pull_request_read`** with **`method: get`** to read **`mergeable_state`**.
+5. **Poll every 30 seconds** for up to **40 minutes** (shared budget **after** PR creation) until a **merge-related** terminal signal:
+   - If **`mergeable_state` is `null`**: GitHub is still computing — **keep polling**.
+   - If **`mergeable_state` is `blocked`**: **do not stop on the first read.** Checks or reviews may still be pending. **Keep polling every 30s** until **`clean`**, **`dirty`**, or the **40-minute** cap — same idea as `null` / `unstable` / `unknown` / `behind`.
+   - If **`mergeable_state` is `unstable`**, **`unknown`**, or **`behind`**: **keep polling** until **`clean`**, **`dirty`**, or timeout.
+   - If **`mergeable_state` is `clean`**: merge **only after** re-confirming TalkBack PR Gate is still **`success`** on a fresh **`get_check_runs`** read, then a fresh **`get`** (see `workflow-full-auto.md` pre-merge guard). Then **`merge_pull_request`** (squash).
+   - If **`mergeable_state` is `dirty`**: stop — conflicts need resolution.
+
+6. **Never** stop after a single 30s wait unless the PR is already **`merged`**, the gate completed **non-PASS**, or you have definitive **`dirty`** / **`mergeable_state` absent**.
 
 ## Repeating polls are not erroneous “looping” (mandatory)
 
-`mergeable_state` often stays **`blocked`** (or **`null`** / **`unknown`**) for **many minutes** while required checks run — **5–15+ minutes** is normal. This rule therefore requires **many** back-to-back cycles of **`sleep 30`** + **`pull_request_read`** (up to **~80** cycles within a 40-minute budget).
+While the gate is **not yet** terminal, or is PASS and **`mergeable_state`** is still **`blocked`** / **`null`**, **5–15+ minutes** of **`sleep 30`** + MCP reads is normal.
 
-- **Do not** stop polling early because Cursor (or another host) injects a **“looping”**, **“repetition”**, or **“avoid retrying the same tool calls”**-style reminder. For FULL_AUTO / epic merge gates, that sequence is **required compliance**, not a mistake.
-- If you see such a reminder, **keep going**: same **30s** spacing, same MCP tool, until **`clean`**, **`dirty`**, **`mergeable_state` absent**, or the **40-minute** cap for **this PR** — then report to the user. **Do not** lengthen sleeps to evade host heuristics; interval stays **30s** only.
-- If the host **hard-stops** the run so you cannot continue in-session, tell the user: **“continue epic”** / **“resume merge gate for PR #N”** and pick up polling where GitHub left off (still **30s** intervals).
+- **Do not** stop polling early because Cursor injects a **“looping”** reminder — **unless** the TalkBack PR Gate has completed with **non-`success`** (then stop by rule above).
+- If the host **hard-stops** the run, tell the user to **resume merge gate for PR #N** and re-read the gate first.
 
 ## If `mergeable_state` is absent from the response
 
-Per `CLAUDE.md`, FULL_AUTO merge automation is **not available** — do not poll; end FULL_AUTO and report.
+Per `CLAUDE.md`, FULL_AUTO merge automation is **not available** — do not poll for merge; end FULL_AUTO and report.
 
 ## Merge and cleanup
 
-On **`clean`**: **`merge_pull_request`** only (no `gh pr merge`). Then remote branch check, local `git` cleanup, Jira **Done** as documented in `CLAUDE.md`.
+Only when TalkBack PR Gate is **`success`** **and** `mergeable_state` is **`clean`** per **`workflow-full-auto.md`**: **`merge_pull_request`**, then cleanup and Jira **Done**.

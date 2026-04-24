@@ -4,26 +4,43 @@ Source of truth: This file owns FULL_AUTO merge-gate polling, merge rules, clean
 
 ## Core Rule
 
-Use GitHub MCP `pull_request_read` (`method: get`) and `mergeable_state` as the merge gate authority. Do not use legacy combined status as a parallel source of truth for mergeability.
+Use GitHub MCP `pull_request_read`: **`get_check_runs`** for **TalkBack PR Gate** (PASS = `conclusion: success`) and **`method: get`** for **`mergeable_state`**. Both are required for merge; see **Stop polling when the gate is not PASS** below. Do not use legacy combined status as a parallel source of truth for mergeability.
 
 ## Hard Stop Conditions
 
 Do not proceed to merge/Jira Done unless both are true:
 
-- `TalkBack PR Gate` check run has `conclusion: success`
+- `TalkBack PR Gate` check run has `conclusion: success` (this is **PASS** in the unified gate summary)
 - `mergeable_state` is `clean`
 
-If either condition fails after polling budget, stop FULL_AUTO: PR remains open, Jira remains In Review.
+If either merge condition fails, stop FULL_AUTO: PR remains open, Jira remains In Review. If the gate completes **non-PASS**, stop immediately (do not wait for the polling budget). If the gate is **PASS** but `mergeable_state` never becomes `clean`, stop when the polling budget expires.
+
+### TalkBack PR Gate vs gate summary (PASS / WARN)
+
+GitHub Checks use `conclusion`, not the PR comment table. In this repo, unified gate **PASS** maps to check `conclusion: success`. **WARN** maps to `conclusion: action_required` (human review / attention needed); that is **not** PASS. See `scripts/pr_gate_check_payload.py`.
 
 ## Polling Policy (Mandatory)
 
+Each poll cycle must read **both** check runs (for TalkBack PR Gate) and PR details (for `mergeable_state`). Order: use `pull_request_read` with `get_check_runs` first, then `method: get` for mergeability.
+
+### Stop polling when the gate is not PASS
+
+If the **TalkBack PR Gate** check run exists and `status` is **`completed`** with **`conclusion` other than `success`**, **stop FULL_AUTO polling immediately** — do not continue until the 40-minute budget expires. Continued polling does not help: a human must act (e.g. approve, fix BLOCK, or accept WARN risk). Leave the PR open and Jira **In Review**.
+
+While the gate check is **missing**, **`queued`**, or **`in_progress`**, keep polling (same 30s interval, shared budget) until the gate completes or timeout.
+
+### Mergeability after gate PASS
+
+Only after the gate shows **`completed`** + **`conclusion: success`** does mergeability polling matter for merge:
+
 - Poll every 30 seconds on one shared 40-minute budget.
 - Continue polling for: `null`, `unknown`, `unstable`, `behind`, and `blocked`.
-- `blocked` is not an immediate stop; continue polling.
+- `blocked` is not an immediate stop *while the gate outcome is still unknown or still PASS*; continue polling.
 - Stop immediately for:
+  - **TalkBack PR Gate completed with non-`success` conclusion** (see above)
   - field absent (`mergeable_state` missing): FULL_AUTO unavailable
   - terminal `dirty`
-  - budget expiration without reaching `clean`
+  - budget expiration without reaching `clean` (only applies while gate remains PASS)
 
 Merge-state table:
 

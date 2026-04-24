@@ -69,6 +69,7 @@ jobs:
         run: |
           python3 scripts/qa_eval_datasets.py
           python3 scripts/test_qa_eval_datasets.py
+          python3 scripts/test_qa_eval_harness_smoke.py
 
       - name: Fetch refs for git diff
         run: git fetch --all --tags --prune || true

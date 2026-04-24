@@ -19,7 +19,7 @@ This is the repository entrypoint for agent behavior. Keep this file concise and
 2. Work from `feat/<ticket-number>` branches; do not implement directly on `main`.
 3. Keep changes minimal, scoped, and backward-compatible unless ticket scope requires otherwise.
 4. Do not skip required tests; apply repository testing policy before commit and before completion.
-5. For FULL_AUTO, obey `mergeable_state` + TalkBack PR Gate pass requirements before merge.
+5. For FULL_AUTO, obey TalkBack PR Gate PASS (`conclusion: success`) and `mergeable_state` clean before merge; **stop polling** when the gate completes non-PASS (see `docs/agent/workflow-full-auto.md`).
 6. Use GitHub MCP for PR lifecycle automation; avoid shell-based PR creation/edit when MCP tools are available.
 
 ## Karpathy-style Guardrails
