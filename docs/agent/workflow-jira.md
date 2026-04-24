@@ -57,6 +57,17 @@ Required structure:
 4. Risks/deployment notes.
 5. Optional follow-up items.
 
+Minimum detail expectations:
+
+- Include concrete file/module outcomes (not just "done").
+- Include exact validation commands run and pass/fail outcome.
+- Include any known risk, limitation, or dependency for follow-up.
+
+Hard stop before FULL_AUTO merge handoff:
+
+- Do not proceed to FULL_AUTO polling/merge steps until this structured Jira comment has been posted on the ticket.
+- If missing, post the comment first, then continue.
+
 ## Commit and PR Requirements
 
 - Commit message prefix: ticket key (for example, `SCRUM-12: ...`).

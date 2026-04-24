@@ -42,8 +42,8 @@ When asked to implement a Jira ticket:
 5. Add/update required tests per `docs/agent/testing-validation.md`.
 6. Run validations and resolve failures.
 7. Push and create PR to `main`.
-8. Transition Jira to In Review and post structured completion comment.
-9. If FULL_AUTO was requested, execute `docs/agent/workflow-full-auto.md`.
+8. Transition Jira to In Review and post structured completion comment (delivered outcomes + exact validations + risks/follow-ups).
+9. If FULL_AUTO was requested, execute `docs/agent/workflow-full-auto.md` (verify structured Jira comment exists before Done transition, then post final FULL_AUTO closure comment).
 
 ## Planning Mode Reminder
 

@@ -78,7 +78,14 @@ git pull --ff-only origin main
 git branch -D feat/<ticket-number>
 ```
 
+- Before transitioning Jira to Done, verify the ticket already has the structured implementation comment required by `docs/agent/workflow-jira.md`.
+  - If missing, post that comment first and only then continue.
 - Transition Jira ticket to Done.
+- Post a final closure Jira comment confirming FULL_AUTO completion with:
+  1. merged PR URL,
+  2. merge/landing commit SHA on `main`,
+  3. local/remote branch cleanup result,
+  4. any residual risk or follow-up note.
 
 ## Git Push Authentication Note
 
