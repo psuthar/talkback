@@ -48,6 +48,7 @@ This workflow references that policy and does not redefine test minimums.
 ## Jira Completion Comment (Mandatory)
 
 Post a regular issue comment (not only transition comments) using `jira_add_comment` with `body`.
+Never use `comment` for this tool call; it causes API rejection and format drift retries.
 
 Required structure:
 
@@ -56,6 +57,32 @@ Required structure:
 3. Validation commands and outcomes.
 4. Risks/deployment notes.
 5. Optional follow-up items.
+
+Mandatory formatting rule:
+
+- Do not post freeform prose completion comments.
+- If an API call fails, retry with corrected parameters but preserve this exact sectioned structure.
+- Do not continue with FULL_AUTO handoff until the structured-format comment is confirmed posted.
+
+Copy/paste template:
+
+```text
+<TICKET> implementation complete. PR: <full-pr-url>
+
+Delivered outcomes
+- <concrete file/module outcome>
+- <concrete file/module outcome>
+
+Validation commands and outcomes
+- <command> -> PASS/FAIL
+- <command> -> PASS/FAIL
+
+Risks / deployment notes
+- <risk, limitation, or dependency>
+
+Optional follow-up
+- <optional next action>
+```
 
 Minimum detail expectations:
 
