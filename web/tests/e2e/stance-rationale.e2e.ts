@@ -37,25 +37,30 @@ test(
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
 
-    // Decisions panel is now top-level (between topbar and grid) — expand it directly
-    const decisionsToggle = page.getByRole('button', { name: /Decisions/i })
-    await expect(decisionsToggle).toBeVisible({ timeout: 10_000 })
-    await decisionsToggle.click()
+    // DecisionBar is sticky at the bottom of the participant view — no toggle to expand
+    const decisionBar = page.getByTestId('decision-bar')
+    await expect(decisionBar).toBeVisible({ timeout: 10_000 })
 
-    // Select a stance ("Agree" is a substring of "Disagree", so use exact match)
-    const agreeBtn = page.getByRole('button', { name: 'Agree', exact: true })
+    // Select a stance ("Agree" is a substring of "Disagree", so target by testid)
+    const agreeBtn = page.getByTestId('stance-btn-agree')
     await expect(agreeBtn).toBeVisible({ timeout: 5_000 })
     await agreeBtn.click()
 
     // Wait for stance to save (feedback disappears or updates)
     await page.waitForTimeout(1_000)
 
+    // After submitting, the bar shows the submitted view; click Edit ▾ to reveal the rationale input
+    const editBtn = page.getByTestId('stance-edit-btn')
+    await expect(editBtn).toBeVisible({ timeout: 5_000 })
+    await editBtn.click()
+
     // Type rationale text
-    const rationaleInput = page.getByPlaceholder('Rationale (optional)')
+    const rationaleInput = page.getByTestId('stance-rationale-input')
+    await expect(rationaleInput).toBeVisible({ timeout: 3_000 })
     await rationaleInput.fill('My rationale text')
 
     // "Save rationale" button should appear (rationale differs from saved)
-    const saveBtn = page.getByTestId('save-rationale-btn')
+    const saveBtn = page.getByTestId('stance-save-rationale-btn')
     await expect(saveBtn).toBeVisible({ timeout: 3_000 })
 
     // Blur the input — Save button must still be visible (no auto-submit on blur)
