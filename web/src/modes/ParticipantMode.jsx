@@ -9,6 +9,7 @@ import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
+import { DecisionBar } from '../components/DecisionBar'
 import {
   STORAGE_KEY_MATERIALS_COLLAPSED,
   getStoredMaterialsCollapsed,
@@ -109,7 +110,6 @@ export function ParticipantMode({
   const [myStance, setMyStance] = useState(null)
   const [stanceAggregate, setStanceAggregate] = useState(null)
   const [stanceResponses, setStanceResponses] = useState([]) // per-person list with user_email
-  const [stancePanelExpanded, setStancePanelExpanded] = useState(false) // Left-panel Decisions section: collapsed on load
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -572,135 +572,6 @@ export function ParticipantMode({
       />
 
 
-      {currentSession?.session?.primary_decision && (
-        <div className={styles.decisionsPanel}>
-          <button
-            type="button"
-            onClick={() => setStancePanelExpanded(e => !e)}
-            aria-expanded={stancePanelExpanded}
-            className={styles.decisionsPanelToggle}
-          >
-            <span className={styles.panelChevron} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
-            Decisions ({stanceAggregate?.total ?? stanceResponses?.length ?? 0})
-          </button>
-          {stancePanelExpanded && (
-            <div className={styles.decisionsPanelBody}>
-              <div className={styles.decisionsPanelCol}>
-                <div className={styles.decisionsSectionLabel}>Your decision</div>
-                {currentSession.session.decision_outcome ? (
-                  <p className={styles.stancesLockedMsg}>Outcome recorded — stances are locked.</p>
-                ) : (
-                  <>
-                    <div className={styles.stanceRow}>
-                      <div className={styles.stanceBtnsGroup}>
-                        {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
-                          const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
-                          const bg = s === 'agree' ? 'var(--color-success-bg)' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : 'var(--color-primary-bg)'
-                          const border = s === 'agree' ? 'var(--color-success-light)' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
-                          const textColor = s === 'agree' ? 'var(--color-success)' : s === 'disagree' ? 'var(--color-danger-dark)' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : 'var(--color-primary-dark)'
-                          return (
-                            <button
-                              key={s}
-                              type="button"
-                              onClick={() => submitStance(s)}
-                              disabled={stanceSubmitting}
-                              style={{
-                                padding: '4px 10px',
-                                fontSize: '12px',
-                                borderRadius: '6px',
-                                border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
-                                backgroundColor: bg,
-                                color: textColor,
-                                fontWeight: myStance?.stance === s ? 700 : 500,
-                                cursor: stanceSubmitting ? 'default' : 'pointer',
-                                margin: 0
-                              }}
-                            >
-                              {label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {(myStance?.stance || stanceRationale?.trim()) && (
-                        <button
-                          type="button"
-                          onClick={clearStance}
-                          disabled={stanceSubmitting}
-                          style={{
-                            marginLeft: 'auto',
-                            padding: '4px 10px',
-                            fontSize: '12px',
-                            borderRadius: '6px',
-                            border: '1px solid #9e9e9e',
-                            backgroundColor: '#fff',
-                            color: '#616161',
-                            fontWeight: 500,
-                            cursor: stanceSubmitting ? 'default' : 'pointer'
-                          }}
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="Rationale (optional)"
-                      value={stanceRationale}
-                      onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                      className={styles.rationaleInput}
-                    />
-                    {myStance?.stance && stanceRationale !== (myStance?.rationale ?? '') && (
-                      <button
-                        type="button"
-                        data-testid="save-rationale-btn"
-                        onClick={() => submitStance(myStance.stance)}
-                        disabled={stanceSubmitting}
-                        style={{ padding: '3px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', color: 'var(--color-primary)', cursor: stanceSubmitting ? 'default' : 'pointer', marginBottom: '4px' }}
-                      >
-                        {stanceSubmitting ? 'Saving…' : 'Save rationale'}
-                      </button>
-                    )}
-                    {stanceFeedback.message && (
-                      <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{stanceFeedback.message}</p>
-                    )}
-                  </>
-                )}
-              </div>
-              <div className={styles.decisionsPanelCol}>
-                <div className={styles.membersDecisionsLabel}>Members&apos; decisions</div>
-                <div className={styles.membersDecisionsRow}>
-                  {[
-                    ['Agree', stanceAggregate?.agree ?? 0, 'var(--color-success)', 'var(--color-success-bg)'],
-                    ['Disagree', stanceAggregate?.disagree ?? 0, 'var(--color-danger-dark)', '#ffebee'],
-                    ['Conditional', stanceAggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
-                    ['Abstain', stanceAggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
-                    ['Need More Info', stanceAggregate?.need_more_info ?? 0, 'var(--color-primary-dark)', 'var(--color-primary-bg)']
-                  ].map(([label, count, color, bg]) => (
-                    <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
-                      {label}: {count}
-                    </span>
-                  ))}
-                </div>
-                {(stanceResponses?.length > 0) ? (
-                  <div className={styles.responsesScrollArea}>
-                    {stanceResponses.map((r, i) => (
-                      <div key={r.id || `r-${i}`} className={styles.responseRow}>
-                        <span className={styles.responseEmail}>{r.user_email || 'Unknown'}</span>
-                        {' — '}
-                        <span className={styles.responseStance}>{(r.stance || '').replace(/_/g, ' ')}</span>
-                        {r.rationale && r.rationale.trim() && <span className={styles.responseRationale}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className={styles.noResponsesMsg}>No responses yet.</p>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       <div className={gridClassName}>
         <aside
           className={`participant-materials-panel ${materialsCollapsed ? 'materials-panel-collapsed' : 'materials-panel-expanded'}`}
@@ -886,6 +757,21 @@ export function ParticipantMode({
           />
         </aside>
       </div>
+
+      <DecisionBar
+        primaryDecision={currentSession.session.primary_decision}
+        decisionOutcome={currentSession.session.decision_outcome}
+        myStance={myStance}
+        stanceAggregate={stanceAggregate}
+        stanceResponses={stanceResponses}
+        sessionInvitations={sessionInvitations}
+        stanceRationale={stanceRationale}
+        setStanceRationale={setStanceRationale}
+        stanceSubmitting={stanceSubmitting}
+        stanceFeedback={stanceFeedback}
+        submitStance={submitStance}
+        clearStance={clearStance}
+      />
 
     </>
   )
