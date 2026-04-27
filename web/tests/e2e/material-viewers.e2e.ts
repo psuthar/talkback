@@ -306,8 +306,8 @@ test.describe('Material upload and viewer flow', () => {
     await addLinkResponse
     await sessionRefetch.catch(() => { /* refetch may be a no-op; continue */ })
 
-    // Link should appear in the "Links" section of the materials tree
-    const linkItem = page.getByTestId('link-item').filter({ hasText: 'example.com' })
+    // Link should appear in the "Links" section — row text is `title || url` (verified links often show a resolved title like "Example Domain", not the raw hostname).
+    const linkItem = page.getByTestId('link-item').filter({ hasText: /example\.com|Example Domain/i })
     await expect(linkItem).toBeVisible({ timeout: 15_000 })
 
     // Click to open in center panel
