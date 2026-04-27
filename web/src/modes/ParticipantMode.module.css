@@ -53,19 +53,6 @@
   color: var(--color-success);
 }
 
-/* Decision banner (premise / primary decision / outcome strip) */
-.decisionBanner {
-  flex-shrink: 0;
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  padding: 4px 20px;
-  background-color: #f1f8e9;
-  border-bottom: 1px solid #c8e6c9;
-  font-size: 13px;
-  color: #333;
-}
-
 /* Shared panel section wrapper (decisions + members in sidebar) */
 .panelSection {
   flex-shrink: 0;

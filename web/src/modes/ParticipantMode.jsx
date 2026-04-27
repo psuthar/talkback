@@ -8,9 +8,12 @@ import { DocumentViewer } from '../components/DocumentViewer'
 import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
+import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import styles from './ParticipantMode.module.css'
 
 const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
+const STORAGE_KEY_VIDEO_STARTED = 'talkback.participant.videoStarted'
+const VIDEO_STARTED_THRESHOLD_S = 5
 
 export function ParticipantMode({
   authUser,
@@ -96,6 +99,7 @@ export function ParticipantMode({
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
+  const [videoStarted, setVideoStarted] = useState(false)
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
@@ -258,6 +262,37 @@ export function ParticipantMode({
       }
     }
   }, [currentSession?.session?.id])
+
+  // Decision Brief progress: load persisted "videoStarted" flag per session so it survives reloads
+  useEffect(() => {
+    const sid = currentSession?.session?.id
+    if (!sid) {
+      setVideoStarted(false)
+      return
+    }
+    try {
+      const stored = localStorage.getItem(`${STORAGE_KEY_VIDEO_STARTED}.${sid}`)
+      setVideoStarted(stored === 'true')
+    } catch {
+      // ignore
+    }
+  }, [currentSession?.session?.id])
+
+  // Detect video play start (≥ threshold seconds) and persist so the chip stays lit on reload
+  useEffect(() => {
+    if (videoStarted) return
+    const sid = currentSession?.session?.id
+    if (!sid) return
+    const overThreshold = typeof currentVideoTime === 'number' && currentVideoTime >= VIDEO_STARTED_THRESHOLD_S
+    if (isVideoPlaying || overThreshold) {
+      setVideoStarted(true)
+      try {
+        localStorage.setItem(`${STORAGE_KEY_VIDEO_STARTED}.${sid}`, 'true')
+      } catch {
+        // ignore
+      }
+    }
+  }, [videoStarted, isVideoPlaying, currentVideoTime, currentSession?.session?.id])
 
   // When primary video has transcript text but no segments, fetch session transcript (e.g. Zoom). Do not fetch for additional videos — they use their own transcript only.
   useEffect(() => {
@@ -529,19 +564,17 @@ export function ParticipantMode({
         )}
       </div>
 
-      {(currentSession.session.premise || currentSession.session.primary_decision || currentSession.session.decision_outcome) && (
-        <div className={styles.decisionBanner}>
-          {currentSession.session.premise && (
-            <span><strong>Premise:</strong> {currentSession.session.premise}</span>
-          )}
-          {currentSession.session.primary_decision && (
-            <span><strong>Decision:</strong> {currentSession.session.primary_decision}</span>
-          )}
-          {currentSession.session.decision_outcome && (
-            <span><strong>Outcome:</strong> {currentSession.session.decision_outcome}</span>
-          )}
-        </div>
-      )}
+      <DecisionBriefHeader
+        premise={currentSession.session.premise}
+        decision={currentSession.session.primary_decision}
+        decisionOutcome={currentSession.session.decision_outcome}
+        videoStarted={videoStarted}
+        qaCount={Array.isArray(questions) && authUser?.email
+          ? questions.filter(q => typeof q?.asked_by === 'string' && q.asked_by.trim().toLowerCase() === authUser.email.trim().toLowerCase()).length
+          : 0}
+        stanceSubmitted={!!myStance?.stance}
+      />
+
 
       {currentSession?.session?.primary_decision && (
         <div className={styles.decisionsPanel}>
