@@ -41,4 +41,49 @@ describe('MaterialsPanelHeader', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} />)
     expect(screen.queryByText('Materials')).toBeNull()
   })
+
+  it('shows counted "Materials (N)" rail label when collapsed and itemCount provided', () => {
+    render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={4} />)
+    const label = screen.getByTestId('materials-collapsed-label')
+    expect(label.textContent).toBe('Materials (4)')
+  })
+
+  it('renders counted label even when itemCount is zero', () => {
+    render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={0} />)
+    expect(screen.getByTestId('materials-collapsed-label').textContent).toBe('Materials (0)')
+  })
+
+  it('falls back to chevron rail when itemCount is not provided', () => {
+    render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} />)
+    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+    // Chevron remains the only visible affordance
+    expect(screen.getByRole('button').textContent).toContain('▷')
+  })
+
+  it('counted rail aria-label includes item count and is pluralized', () => {
+    const { rerender } = render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={1} />)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand materials panel (1 item)')
+    rerender(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={3} />)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand materials panel (3 items)')
+  })
+
+  it('expanded view is unchanged when itemCount is provided', () => {
+    render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} itemCount={5} unreadCount={2} />)
+    expect(screen.getByText('Materials')).toBeTruthy()
+    expect(screen.getByText('New 2')).toBeTruthy()
+    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+  })
+
+  it('clicking the collapsed counted rail toggles expansion', () => {
+    let collapsed = true
+    const setCollapsed = vi.fn((next) => { collapsed = next })
+    const { rerender } = render(
+      <MaterialsPanelHeader collapsed={collapsed} onCollapsedChange={setCollapsed} itemCount={2} />
+    )
+    screen.getByRole('button').click()
+    expect(setCollapsed).toHaveBeenCalledWith(false)
+    rerender(<MaterialsPanelHeader collapsed={false} onCollapsedChange={setCollapsed} itemCount={2} />)
+    // No collapsed-label rendered when expanded
+    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+  })
 })
