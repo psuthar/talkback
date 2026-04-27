@@ -25,6 +25,7 @@ For each child: **PR merged to `main`**, Jira issue **Done**, **`mergeable_state
 | Starting ticket **N+1** before **N** merged + **Done** | Violates **Sequential close-out** | Wait for merge + Jira **Done**, then new `feat/<next>` from updated **`main`** |
 | **`run epic`** when `.epic-run/<EPIC>.json` already exists (non-complete) | State conflict | Use **`continue epic`**, or delete state file only if abandoning |
 | Polling **merge gate** too few times | Host “looping” warnings are not a signal to stop | **30s** interval, up to **40 min** per `.cursor/rules/full-auto-github-polling.mdc` |
+| Stopping mid-poll to ask user to say **`continue epic`** again | Breaks drain contract and can strand an in-flight ticket | Keep polling until terminal outcome (PASS+merge, HALT, or explicit user interruption) |
 | After user **squash-merges** (e.g. WARN override), stopping without **Jira Done** + **git cleanup** | User expects **`continue epic`** to finish close-out | Follow **User override: manual squash merge** (merge already done → reconcile only) |
 | Not transitioning the **epic issue** to **In Progress** at run start | Epic stays “To Do” while child work is actively running | Transition the epic to **In Progress** before executing the first child ticket (see **Start** algorithm) |
 | Not transitioning the **epic issue** to **Done** when all children complete | Epic stays “In Progress” even after full completion | Transition the epic to **Done** as part of **Finish** (see **Finish** section) |

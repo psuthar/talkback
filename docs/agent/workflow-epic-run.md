@@ -37,6 +37,12 @@ Automation HALTs when:
 - mergeability/gate polling does not resolve to required pass state in budget, or
 - Final Gate is WARN/BLOCK/missing/unreadable.
 
+Active polling continuity rule (mandatory):
+
+- While a ticket PR is in active gate polling (checks queued/in-progress or mergeable not yet terminal), continue polling; do not stop for checkpoint/progress convenience updates.
+- Do not require a user "continue epic" message to resume an in-flight poll loop.
+- Only stop polling on terminal outcomes: PASS and merged path, explicit HALT condition, or user interruption.
+
 On resume (`continue epic ...`), agent must re-read Jira children (`statusCategory != Done`) as source of truth and reconcile:
 
 - already Done: skip
