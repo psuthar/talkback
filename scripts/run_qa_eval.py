@@ -459,6 +459,10 @@ def write_run_artifacts(
 def aggregate_report(
     cases: list[dict[str, Any]],
     results: list[CaseResult],
+    *,
+    score_defaults: Mapping[str, Any] | None = None,
+    score_targets_by_case: Mapping[str, Mapping[str, Any]] | None = None,
+    failed_case_cap: int = 5,
 ) -> dict[str, Any]:
     case_map = {
         str(c.get("case_id")): c
@@ -478,8 +482,15 @@ def aggregate_report(
             "not_covered": 0,
             "other_or_missing": 0,
         },
+        "thresholds_evaluated": 0,
+        "weighted_correctness": None,
+        "overall_pass": None,
     }
     failed_case_ids: list[str] = []
+    per_case_threshold_pass: dict[str, bool | None] = {}
+    threshold_missing_case_ids: list[str] = []
+    weighted_num = 0.0
+    weighted_den = 0.0
 
     for res in results:
         expected_status = case_map.get(res.case_id, {}).get("expected_status")
@@ -497,10 +508,46 @@ def aggregate_report(
         if j.get("ok") is True and isinstance(j.get("verdict"), dict):
             totals["judge_ok"] += 1
             verdict = j["verdict"]
+            score_value = verdict.get("score_0_to_1")
             if verdict.get("is_correct") is True:
                 totals["correct_count"] += 1
             if verdict.get("hallucination") is True:
                 totals["hallucination_count"] += 1
+
+            score_cfg = (score_targets_by_case or {}).get(res.case_id)
+            if score_cfg is None:
+                per_case_threshold_pass[res.case_id] = None
+                threshold_missing_case_ids.append(res.case_id)
+                continue
+
+            correctness_min = score_cfg.get(
+                "correctness_min",
+                (score_defaults or {}).get("correctness_min"),
+            )
+            hallucination_max = score_cfg.get(
+                "hallucination_max",
+                (score_defaults or {}).get("hallucination_max"),
+            )
+            weight = score_cfg.get("weight", (score_defaults or {}).get("weight", 1.0))
+
+            if not isinstance(score_value, (int, float)) or not isinstance(
+                correctness_min, (int, float)
+            ) or not isinstance(hallucination_max, (int, float)):
+                per_case_threshold_pass[res.case_id] = None
+                threshold_missing_case_ids.append(res.case_id)
+                continue
+
+            hallucination_val = 1.0 if verdict.get("hallucination") is True else 0.0
+            threshold_pass = (
+                float(score_value) >= float(correctness_min)
+                and hallucination_val <= float(hallucination_max)
+            )
+            per_case_threshold_pass[res.case_id] = threshold_pass
+            totals["thresholds_evaluated"] += 1
+
+            if isinstance(weight, (int, float)) and float(weight) > 0:
+                weighted_num += float(score_value) * float(weight)
+                weighted_den += float(weight)
         else:
             totals["judge_error"] += 1
             failed_case_ids.append(res.case_id)
@@ -509,12 +556,25 @@ def aggregate_report(
     correctness_pct = (
         round((totals["correct_count"] / denom) * 100.0, 2) if denom > 0 else None
     )
+    if weighted_den > 0:
+        totals["weighted_correctness"] = round(weighted_num / weighted_den, 4)
+
+    evaluated = [
+        v for v in per_case_threshold_pass.values() if isinstance(v, bool)
+    ]
+    totals["overall_pass"] = all(evaluated) if evaluated else None
+    failed_threshold_case_ids = [k for k, v in per_case_threshold_pass.items() if v is False]
+
     return {
         "metrics": {
             **totals,
             "correctness_percentage": correctness_pct,
         },
         "failed_case_ids": failed_case_ids,
+        "failed_threshold_case_ids": failed_threshold_case_ids,
+        "failed_threshold_case_ids_capped": failed_threshold_case_ids[: max(1, failed_case_cap)],
+        "threshold_missing_case_ids": threshold_missing_case_ids,
+        "per_case_threshold_pass": per_case_threshold_pass,
     }
 
 
@@ -532,6 +592,10 @@ def write_report_artifact(
         "source_case_artifacts_glob": "cases/*.json",
         "metrics": report["metrics"],
         "failed_case_ids": report["failed_case_ids"],
+        "failed_threshold_case_ids": report["failed_threshold_case_ids"],
+        "failed_threshold_case_ids_capped": report["failed_threshold_case_ids_capped"],
+        "threshold_missing_case_ids": report["threshold_missing_case_ids"],
+        "per_case_threshold_pass": report["per_case_threshold_pass"],
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
     write_json(run_dir / "report.json", report_payload)
@@ -548,6 +612,10 @@ def render_terminal_report(report: dict[str, Any]) -> str:
         "Eval summary:\n"
         f"- correctness %: {correctness_text}\n"
         f"- hallucination count: {m['hallucination_count']}\n"
+        f"- weighted correctness: {m['weighted_correctness'] if m['weighted_correctness'] is not None else 'n/a'}\n"
+        f"- overall pass: {m['overall_pass'] if m['overall_pass'] is not None else 'n/a'}\n"
+        f"- thresholds evaluated: {m['thresholds_evaluated']}\n"
+        f"- threshold misses (top): {report['failed_threshold_case_ids_capped']}\n"
         f"- judge attempted: {m['judge_attempted']}\n"
         f"- judge ok: {m['judge_ok']}\n"
         f"- judge errors: {m['judge_error']}\n"
@@ -778,7 +846,28 @@ def main(argv: list[str] | None = None) -> int:
         judge_fn=_judge_fn if judge_enabled else None,
     )
 
-    report = aggregate_report(cases, results)
+    expected_scores_defaults: dict[str, Any] = {}
+    expected_scores_targets: dict[str, dict[str, Any]] = {}
+    try:
+        expected_scores_data = load_json(args.expected_scores.resolve())
+        defaults_obj = expected_scores_data.get("defaults")
+        if isinstance(defaults_obj, dict):
+            expected_scores_defaults = defaults_obj
+        case_targets = expected_scores_data.get("case_targets")
+        if isinstance(case_targets, list):
+            for item in case_targets:
+                if isinstance(item, dict) and isinstance(item.get("case_id"), str):
+                    expected_scores_targets[item["case_id"]] = item
+    except (OSError, json.JSONDecodeError):
+        expected_scores_defaults = {}
+        expected_scores_targets = {}
+
+    report = aggregate_report(
+        cases,
+        results,
+        score_defaults=expected_scores_defaults,
+        score_targets_by_case=expected_scores_targets,
+    )
     write_run_artifacts(
         run_dir,
         run_id=run_id,

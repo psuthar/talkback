@@ -199,7 +199,7 @@ class TestWriteRunArtifacts(unittest.TestCase):
 
 
 class TestAggregateReport(unittest.TestCase):
-    def test_aggregates_correctness_hallucination_and_breakdown(self) -> None:
+    def test_aggregates_thresholds_weighted_and_overall_pass(self) -> None:
         cases = [
             {"case_id": "FF-001", "expected_status": "answered"},
             {"case_id": "FF-002", "expected_status": "not_covered"},
@@ -241,7 +241,25 @@ class TestAggregateReport(unittest.TestCase):
                 judge={"ok": False, "error_code": "judge_invalid_json", "verdict": None},
             ),
         ]
-        report = aggregate_report(cases, results)
+        report = aggregate_report(
+            cases,
+            results,
+            score_defaults={"weight": 1.0, "correctness_min": 0.5, "hallucination_max": 0.5},
+            score_targets_by_case={
+                "FF-001": {
+                    "case_id": "FF-001",
+                    "weight": 2.0,
+                    "correctness_min": 0.85,
+                    "hallucination_max": 0.0,
+                },
+                "FF-002": {
+                    "case_id": "FF-002",
+                    "weight": 1.0,
+                    "correctness_min": 0.3,
+                    "hallucination_max": 0.0,
+                },
+            },
+        )
         m = report["metrics"]
         self.assertEqual(m["total_cases"], 3)
         self.assertEqual(m["judge_attempted"], 3)
@@ -253,6 +271,36 @@ class TestAggregateReport(unittest.TestCase):
         self.assertEqual(m["status_breakdown"]["answered"], 2)
         self.assertEqual(m["status_breakdown"]["not_covered"], 1)
         self.assertEqual(report["failed_case_ids"], ["FF-003"])
+        self.assertEqual(m["thresholds_evaluated"], 2)
+        self.assertAlmostEqual(m["weighted_correctness"], 0.6667, places=4)
+        self.assertFalse(m["overall_pass"])
+        self.assertEqual(report["per_case_threshold_pass"]["FF-001"], True)
+        self.assertEqual(report["per_case_threshold_pass"]["FF-002"], False)
+        self.assertEqual(report["threshold_missing_case_ids"], [])
+        self.assertEqual(report["failed_threshold_case_ids_capped"], ["FF-002"])
+
+    def test_missing_expected_scores_are_null_and_excluded(self) -> None:
+        cases = [{"case_id": "FF-010", "expected_status": "answered"}]
+        results = [
+            CaseResult(
+                case_id="FF-010",
+                fixture_id="f",
+                question="q",
+                judge={
+                    "ok": True,
+                    "verdict": {
+                        "is_correct": True,
+                        "hallucination": False,
+                        "score_0_to_1": 0.88,
+                        "reason": "ok",
+                    },
+                },
+            )
+        ]
+        report = aggregate_report(cases, results, score_defaults={}, score_targets_by_case={})
+        self.assertIsNone(report["per_case_threshold_pass"]["FF-010"])
+        self.assertEqual(report["threshold_missing_case_ids"], ["FF-010"])
+        self.assertIsNone(report["metrics"]["overall_pass"])
 
     def test_write_report_and_render_terminal(self) -> None:
         report = {
@@ -264,6 +312,9 @@ class TestAggregateReport(unittest.TestCase):
                 "correct_count": 1,
                 "hallucination_count": 0,
                 "correctness_percentage": 100.0,
+                "thresholds_evaluated": 0,
+                "weighted_correctness": None,
+                "overall_pass": None,
                 "status_breakdown": {
                     "answered": 1,
                     "not_covered": 0,
@@ -271,10 +322,16 @@ class TestAggregateReport(unittest.TestCase):
                 },
             },
             "failed_case_ids": [],
+            "failed_threshold_case_ids": [],
+            "failed_threshold_case_ids_capped": [],
+            "threshold_missing_case_ids": [],
+            "per_case_threshold_pass": {},
         }
         text = render_terminal_report(report)
         self.assertIn("correctness %: 100.0%", text)
         self.assertIn("hallucination count: 0", text)
+        self.assertIn("weighted correctness: n/a", text)
+        self.assertIn("overall pass: n/a", text)
 
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
@@ -288,6 +345,7 @@ class TestAggregateReport(unittest.TestCase):
             self.assertEqual(payload["run_id"], "r1")
             self.assertEqual(payload["metrics"]["correctness_percentage"], 100.0)
             self.assertEqual(payload["source_run_manifest"], "run_manifest.json")
+            self.assertIn("per_case_threshold_pass", payload)
 
 
 class TestCaseToArtifactOrdering(unittest.TestCase):
