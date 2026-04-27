@@ -38,6 +38,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.qa_fixture_inventory import load_inventory, validate_inventory  # noqa: E402
+from scripts.qa_eval_datasets import load_json  # noqa: E402
+from scripts.qa_eval_judge import (
+    DEFAULT_JUDGE_MODEL,
+    judge_case_with_retry,
+)  # noqa: E402
 
 # Deterministic paste/patch payloads aligned with smoke and e2e fixtures.
 FIXTURE_SETUP: dict[str, dict[str, Any]] = {
@@ -273,6 +278,7 @@ class CaseResult:
     skipped_reason: str | None = None
     request_url: str = ""
     duration_ms: float | None = None
+    judge: dict[str, Any] | None = None
 
 
 def ask_session(
@@ -297,6 +303,9 @@ def run_inventory_cases(
     session_for_fixture: Mapping[str, str],
     cases: list[dict[str, Any]],
     ask_fn: Callable[[str, str, str, str], tuple[int, str]] | None = None,
+    judge_contract_by_case: Mapping[str, dict[str, Any]] | None = None,
+    judge_fn: Callable[[dict[str, Any], dict[str, Any], str, int | None], dict[str, Any]]
+    | None = None,
 ) -> list[CaseResult]:
     _ask = ask_fn or ask_session
     results: list[CaseResult] = []
@@ -324,6 +333,43 @@ def run_inventory_cases(
         except OSError as e:
             res.error = str(e)
             res.http_status = None
+
+        if judge_fn is not None:
+            contract = (judge_contract_by_case or {}).get(res.case_id)
+            if contract is None:
+                res.judge = {
+                    "ok": False,
+                    "error_code": "judge_missing_case_contract",
+                    "error_message": f"no judge contract for case_id={res.case_id}",
+                    "attempts": 0,
+                    "verdict": None,
+                }
+            elif res.http_status not in (200, 201):
+                res.judge = {
+                    "ok": False,
+                    "error_code": "judge_skipped_due_to_ask_error",
+                    "error_message": f"ask did not return success status ({res.http_status})",
+                    "attempts": 0,
+                    "verdict": None,
+                }
+            else:
+                normalized = normalize_session_ask_response(res.parsed_json)
+                answer_text = normalized.get("answer_text")
+                if not isinstance(answer_text, str) or not answer_text.strip():
+                    res.judge = {
+                        "ok": False,
+                        "error_code": "judge_skipped_empty_answer",
+                        "error_message": "answer_text missing in parsed response",
+                        "attempts": 0,
+                        "verdict": None,
+                    }
+                else:
+                    res.judge = judge_fn(
+                        contract["case_contract"],
+                        contract["score_target"],
+                        answer_text,
+                        res.http_status,
+                    )
         res.duration_ms = (time.perf_counter() - t0) * 1000.0
         results.append(res)
     return results
@@ -363,6 +409,7 @@ def case_to_artifact(case: dict[str, Any], result: CaseResult) -> dict[str, Any]
                 ),
             ),
             ("normalized", normalize_session_ask_response(result.parsed_json)),
+            ("judge", result.judge),
         ]
     )
 
@@ -418,6 +465,37 @@ def ordered_fixture_ids(cases: list[dict[str, Any]]) -> list[str]:
     return list(seen.keys())
 
 
+def build_judge_contracts(
+    eval_cases_path: Path,
+    expected_scores_path: Path,
+) -> dict[str, dict[str, Any]]:
+    eval_data = load_json(eval_cases_path)
+    scores_data = load_json(expected_scores_path)
+
+    eval_cases = eval_data.get("cases")
+    score_targets = scores_data.get("case_targets")
+    if not isinstance(eval_cases, list) or not isinstance(score_targets, list):
+        raise ValueError("eval_cases and expected_scores must contain array fields")
+
+    eval_by_id: dict[str, dict[str, Any]] = {}
+    for c in eval_cases:
+        if isinstance(c, dict) and isinstance(c.get("case_id"), str):
+            eval_by_id[c["case_id"]] = c
+
+    scores_by_id: dict[str, dict[str, Any]] = {}
+    for t in score_targets:
+        if isinstance(t, dict) and isinstance(t.get("case_id"), str):
+            scores_by_id[t["case_id"]] = t
+
+    contracts: dict[str, dict[str, Any]] = {}
+    for case_id, case_contract in eval_by_id.items():
+        st = scores_by_id.get(case_id)
+        if st is None:
+            continue
+        contracts[case_id] = {"case_contract": case_contract, "score_target": st}
+    return contracts
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -448,6 +526,41 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Create sessions (and paste/patch) per fixture via API; requires auth cookie or login env",
     )
+    parser.add_argument(
+        "--eval-cases",
+        type=Path,
+        default=REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
+        help="Path to eval_cases JSON used for judge rubric",
+    )
+    parser.add_argument(
+        "--expected-scores",
+        type=Path,
+        default=REPO_ROOT / "eval" / "qa" / "expected_scores_v1.json",
+        help="Path to expected_scores JSON used for judge constraints",
+    )
+    parser.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="Disable per-case LLM judge invocation",
+    )
+    parser.add_argument(
+        "--judge-model",
+        type=str,
+        default=os.environ.get("QA_EVAL_JUDGE_MODEL", DEFAULT_JUDGE_MODEL),
+        help="OpenAI model for judge invocation",
+    )
+    parser.add_argument(
+        "--judge-max-attempts",
+        type=int,
+        default=2,
+        help="Max judge attempts for retryable errors",
+    )
+    parser.add_argument(
+        "--judge-timeout-seconds",
+        type=float,
+        default=45.0,
+        help="Timeout for one judge call",
+    )
     args = parser.parse_args(argv)
 
     inventory_path = args.inventory.resolve()
@@ -469,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
     base_url = default_base_url()
     auto_setup = bool(args.auto_setup)
     dry_run = bool(args.dry_run)
+    judge_enabled = not dry_run and not args.no_judge
 
     session_map: dict[str, str] = {}
     cookie = ""
@@ -523,11 +637,43 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 4
 
+    judge_contracts: dict[str, dict[str, Any]] = {}
+    if judge_enabled:
+        try:
+            judge_contracts = build_judge_contracts(
+                args.eval_cases.resolve(),
+                args.expected_scores.resolve(),
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            print(f"Failed to load judge contracts: {e}", file=sys.stderr)
+            return 5
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+
+    def _judge_fn(
+        case_contract: dict[str, Any],
+        score_target: dict[str, Any],
+        model_answer: str,
+        response_http_status: int | None,
+    ) -> dict[str, Any]:
+        return judge_case_with_retry(
+            case_contract=case_contract,
+            score_target=score_target,
+            model_answer=model_answer,
+            response_http_status=response_http_status,
+            api_key=api_key,
+            model=args.judge_model,
+            timeout_seconds=args.judge_timeout_seconds,
+            max_attempts=max(1, int(args.judge_max_attempts)),
+        )
+
     results = run_inventory_cases(
         base_url=base_url,
         cookie=cookie,
         session_for_fixture=session_map,
         cases=cases,
+        judge_contract_by_case=judge_contracts if judge_enabled else None,
+        judge_fn=_judge_fn if judge_enabled else None,
     )
     write_run_artifacts(
         run_dir,
