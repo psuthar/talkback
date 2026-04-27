@@ -154,6 +154,42 @@ class TestRunInventoryCases(unittest.TestCase):
         self.assertIsNotNone(results[0].judge)
         self.assertTrue(results[0].judge["ok"])
 
+    def test_retries_on_session_question_limit_with_new_session(self) -> None:
+        call_count = {"n": 0}
+
+        def mock_ask(
+            base_url: str, cookie: str, session_id: str, question_text: str
+        ) -> tuple[int, str]:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return (429, json.dumps({"error": "session question limit reached"}))
+            self.assertEqual(session_id, "s2")
+            return (
+                200,
+                json.dumps(
+                    {
+                        "question": {"id": "q", "question_text": question_text},
+                        "answer": {"answer_text": "ok", "citations": []},
+                    }
+                ),
+            )
+
+        def provision_session(fid: str) -> str:
+            self.assertEqual(fid, "fx")
+            return "s2"
+
+        cases = [{"case_id": "FF-001", "fixture_id": "fx", "question": "Q1"}]
+        results = run_inventory_cases(
+            base_url="http://localhost:8080",
+            cookie="x",
+            session_for_fixture={"fx": "s1"},
+            cases=cases,
+            ask_fn=mock_ask,
+            provision_session_fn=provision_session,
+        )
+        self.assertEqual(results[0].http_status, 200)
+        self.assertEqual(call_count["n"], 2)
+
 
 class TestWriteRunArtifacts(unittest.TestCase):
     def test_writes_manifest_and_case_files(self) -> None:
@@ -404,6 +440,23 @@ class TestJudgeContracts(unittest.TestCase):
         self.assertIn("FF-001", contracts)
         self.assertIn("case_contract", contracts["FF-001"])
         self.assertIn("score_target", contracts["FF-001"])
+
+    def test_build_contracts_includes_inventory_fallback_case(self) -> None:
+        contracts = build_judge_contracts(
+            _REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
+            _REPO_ROOT / "eval" / "qa" / "expected_scores_v1.json",
+            inventory_cases=[
+                {
+                    "case_id": "FF-025",
+                    "fixture_id": "no_content_not_covered_path",
+                    "question": "Q?",
+                    "expected_status": "answered",
+                    "expected_keywords": ["not_covered"],
+                }
+            ],
+        )
+        self.assertIn("FF-025", contracts)
+        self.assertIn("hallucination_constraints", contracts["FF-025"]["case_contract"])
 
 
 if __name__ == "__main__":

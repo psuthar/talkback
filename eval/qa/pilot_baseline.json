@@ -1,23 +1,34 @@
 {
-  "version": "1",
-  "description": "Pilot harness baseline recorded for SCRUM-137. Validates dataset tooling and runner dry-run path without calling SessionAsk or OpenAI.",
-  "recorded_at": "2026-04-23T12:00:00Z",
-  "repo_baseline_commit": "d315d05e4b451b1293e1dda136c80e6d2466878f",
+  "version": "2",
+  "description": "Live pilot baseline recorded for SCRUM-143. Captures end-to-end SessionAsk + judge + aggregate report metrics.",
+  "recorded_at": "2026-04-27T18:40:48Z",
+  "repo_baseline_commit": "dff9b5b12e34211a30ae431c16b667c91b4a8f12",
   "commands_executed": {
     "dataset_validation": "python3 scripts/qa_eval_datasets.py",
-    "runner_dry_run": "python3 scripts/run_qa_eval.py --dry-run --run-id pilot-baseline-scrum137 --out-dir <writable_dir>"
+    "runner_live": "python3 scripts/run_qa_eval.py --auto-setup --run-id scrum143-live-baseline-fix2"
   },
   "metrics": {
     "qa_eval_datasets_exit_code": 0,
     "fixture_fact_inventory_case_count": 26,
     "eval_cases_v1_case_count": 18,
-    "dry_run_manifest_case_count": 26,
-    "dry_run_mode": true,
-    "dry_run_skip_reason_per_case": "dry_run"
+    "run_id": "scrum143-live-baseline-fix2",
+    "judge_attempted": 26,
+    "judge_ok": 26,
+    "judge_error": 0,
+    "correctness_percentage": 88.46,
+    "hallucination_count": 0,
+    "weighted_correctness": 0.9034,
+    "overall_pass": false,
+    "thresholds_evaluated": 26,
+    "failed_threshold_case_ids": [
+      "FF-020",
+      "FF-021",
+      "FF-026"
+    ]
   },
   "limitations": [
-    "No live SessionAsk calls; no LLM usage in this baseline.",
-    "Case counts refer to fixture_fact_inventory.json as the default runner inventory; eval_cases_v1.json is an 18-case scoring subset aligned with FF-001–FF-018.",
-    "Re-run after changing eval JSON or runner defaults to refresh this file."
+    "Run artifacts under eval/qa/runs/ are gitignored; baseline metrics are captured here from report.json.",
+    "Live run quality depends on local auth/session setup, OpenAI availability, and external network conditions.",
+    "overall_pass is false for this baseline due to threshold misses on FF-020, FF-021, and FF-026."
   ]
 }

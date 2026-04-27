@@ -232,7 +232,10 @@ def auto_setup_sessions(
             paste_material(base_url, cookie, session_id, paste[0], paste[1])
         patch = spec.get("patch_session")
         if patch:
-            patch_session(base_url, cookie, session_id, patch)
+            patch_payload = dict(patch)
+            if isinstance(patch_payload.get("title"), str):
+                patch_payload["title"] = f"{patch_payload['title']} {run_id} {uuid4().hex[:8]}"
+            patch_session(base_url, cookie, session_id, patch_payload)
         mapping[fid] = session_id
     return mapping
 
@@ -303,6 +306,7 @@ def run_inventory_cases(
     session_for_fixture: Mapping[str, str],
     cases: list[dict[str, Any]],
     ask_fn: Callable[[str, str, str, str], tuple[int, str]] | None = None,
+    provision_session_fn: Callable[[str], str] | None = None,
     judge_contract_by_case: Mapping[str, dict[str, Any]] | None = None,
     judge_fn: Callable[[dict[str, Any], dict[str, Any], str, int | None], dict[str, Any]]
     | None = None,
@@ -323,6 +327,15 @@ def run_inventory_cases(
         t0 = time.perf_counter()
         try:
             status, text = _ask(base_url, cookie, sid, str(q))
+            if (
+                status == 429
+                and provision_session_fn is not None
+                and "session question limit reached" in (text or "").lower()
+            ):
+                # SessionAsk enforces per-session question cap; provision a fresh session and retry once.
+                sid = provision_session_fn(str(fid))
+                res.request_url = f"{base_url}/api/sessions/{sid}/ask"
+                status, text = _ask(base_url, cookie, sid, str(q))
             res.http_status = status
             res.raw_body = text
             try:
@@ -638,6 +651,8 @@ def ordered_fixture_ids(cases: list[dict[str, Any]]) -> list[str]:
 def build_judge_contracts(
     eval_cases_path: Path,
     expected_scores_path: Path,
+    *,
+    inventory_cases: list[dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, Any]]:
     eval_data = load_json(eval_cases_path)
     scores_data = load_json(expected_scores_path)
@@ -651,6 +666,23 @@ def build_judge_contracts(
     for c in eval_cases:
         if isinstance(c, dict) and isinstance(c.get("case_id"), str):
             eval_by_id[c["case_id"]] = c
+    if inventory_cases:
+        for c in inventory_cases:
+            if isinstance(c, dict) and isinstance(c.get("case_id"), str):
+                case_id = c["case_id"]
+                if case_id in eval_by_id:
+                    continue
+                eval_by_id[case_id] = {
+                    "case_id": case_id,
+                    "fixture_id": c.get("fixture_id"),
+                    "question": c.get("question"),
+                    "expected_status": c.get("expected_status"),
+                    "expected_keywords": c.get("expected_keywords"),
+                    "hallucination_constraints": {
+                        "answer_must_not_contain": [],
+                        "notes": "Fallback contract synthesized from fixture inventory.",
+                    },
+                }
 
     scores_by_id: dict[str, dict[str, Any]] = {}
     for t in score_targets:
@@ -813,6 +845,7 @@ def main(argv: list[str] | None = None) -> int:
             judge_contracts = build_judge_contracts(
                 args.eval_cases.resolve(),
                 args.expected_scores.resolve(),
+                inventory_cases=cases,
             )
         except (OSError, json.JSONDecodeError, ValueError) as e:
             print(f"Failed to load judge contracts: {e}", file=sys.stderr)
@@ -837,11 +870,19 @@ def main(argv: list[str] | None = None) -> int:
             max_attempts=max(1, int(args.judge_max_attempts)),
         )
 
+    def _provision_session_for_fixture(fixture_id: str) -> str:
+        if fixture_id not in FIXTURE_SETUP:
+            raise KeyError(f"unknown fixture_id for auto-setup: {fixture_id}")
+        session_id = auto_setup_sessions(base_url, cookie, [fixture_id], run_id)[fixture_id]
+        session_map[fixture_id] = session_id
+        return session_id
+
     results = run_inventory_cases(
         base_url=base_url,
         cookie=cookie,
         session_for_fixture=session_map,
         cases=cases,
+        provision_session_fn=_provision_session_for_fixture if auto_setup else None,
         judge_contract_by_case=judge_contracts if judge_enabled else None,
         judge_fn=_judge_fn if judge_enabled else None,
     )
