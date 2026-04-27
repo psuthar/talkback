@@ -8,10 +8,10 @@ Operational entrypoint for fixture-backed Q&A evaluation: inventory JSON, versio
 |------|---------|
 | `fixture_fact_inventory.json` | Full candidate case list (26+ cases) with source refs and expected keywords/status. |
 | `eval_cases_v1.json` | 18-case harness subset with hallucination constraints (aligned with FF-001–FF-018). |
-| `expected_scores_v1.json` | Per-case correctness/hallucination targets and weights. |
+| `expected_scores_v1.json` | Per-case correctness/hallucination targets and weights (FF-001–FF-026). |
 | `schemas/` | JSON Schema (Draft 2020-12) for `eval_cases` and `expected_scores`. |
 | `runs/` | Timestamped runner output (gitignored except `.gitkeep`). |
-| `pilot_baseline.json` | Recorded pilot metrics (dry-run + validation); see **Pilot baseline**. |
+| `pilot_baseline.json` | Recorded baseline snapshot; currently dry-run-only and pending live refresh. |
 
 ## Prerequisites
 
@@ -26,6 +26,7 @@ Operational entrypoint for fixture-backed Q&A evaluation: inventory JSON, versio
   - TalkBack API reachable (default `http://localhost:8080`).
   - Authenticated session (**`QA_EVAL_COOKIE`** or **`QA_EVAL_EMAIL`** + **`QA_EVAL_PASSWORD`**).
   - For real answers: working OpenAI (and DB) configuration as used by your environment.
+  - `OPENAI_API_KEY` required for judge invocations on non-dry runs.
 
 ## Environment variables
 
@@ -41,6 +42,7 @@ No env vars required for defaults. Optional CLI flags override paths (see `--hel
 | `QA_EVAL_COOKIE` | `Cookie` header value (e.g. `tb_login=<uuid>`). |
 | `QA_EVAL_EMAIL` / `QA_EVAL_PASSWORD` | Login via `/api/auth/login` if cookie unset. |
 | `QA_EVAL_SESSIONS_JSON` | JSON map `fixture_id` → session UUID when **not** using `--auto-setup`. |
+| `OPENAI_API_KEY` | Required for per-case judge scoring when `--no-judge` is not set. |
 
 ## Commands
 
@@ -89,6 +91,7 @@ Each run creates:
 
 - **`eval/qa/runs/<run_id>/run_manifest.json`** — `case_count`, `session_map`, `dry_run`, `base_url`, `cases_index` (pointers to case files).
 - **`eval/qa/runs/<run_id>/cases/<case_id>.json`** — request URL (if applicable), HTTP status, `raw_body_text`, `parsed_json`, **`normalized`** (`answer_text`, `citation_count`, etc.).
+- **`eval/qa/runs/<run_id>/report.json`** — run-level aggregate metrics and threshold diagnostics.
 
 Interpretation:
 
@@ -96,18 +99,43 @@ Interpretation:
 - **Live success**: `http_status` 200/201 and `parsed_json` with `question` / `answer` objects.
 - **Errors**: `error` or non-2xx status on `response`.
 
+`report.json` includes:
+
+- `metrics.correctness_percentage`
+- `metrics.hallucination_count`
+- `metrics.weighted_correctness`
+- `metrics.overall_pass`
+- `metrics.thresholds_evaluated`
+- `per_case_threshold_pass` map (`true` / `false` / `null`)
+- `failed_threshold_case_ids` and capped display subset
+- `threshold_missing_case_ids` for cases without target config
+
+## Live run with judge + aggregate report
+
+Minimum env:
+
+```bash
+export QA_EVAL_COOKIE='tb_login=...'
+export OPENAI_API_KEY='sk-...'
+python3 scripts/run_qa_eval.py --auto-setup
+```
+
+Live non-dry runs invoke the LLM judge per case (unless `--no-judge`), then aggregate
+judge outputs into correctness %, hallucination count, weighted correctness, and threshold
+pass/fail rollups in `report.json`.
+
 ## Pilot baseline
 
-`pilot_baseline.json` records one pilot pass: dataset validation exit code **0**, default inventory **26** cases, dry-run manifest **26** cases. It does **not** replace a full live eval with LLM scoring.
+`pilot_baseline.json` currently records a dry-run baseline (no SessionAsk calls, no judge scoring).
+It should be replaced by a live baseline once an end-to-end judged run is recorded.
 
 Refresh when you change default inventory size, eval JSON, or runner behavior.
 
 ## Known limitations
 
-- **Judge / aggregate scoring**: keyword and expected-score JSON are inputs; automated judging and rolled-up reports may live in follow-on tasks—use artifacts for manual or downstream tooling review.
 - **Dry-run** validates orchestration and disk output only.
 - **Live runs** depend on auth, session limits, indexing latency, and model availability.
-- **`eval_cases_v1`** (18 cases) is a subset of **`fixture_fact_inventory`**; the runner still iterates the **inventory** file by default unless you pass a different `--inventory`.
+- **`eval_cases_v1`** (18 cases) is a subset of **`fixture_fact_inventory`**; inventory-default runs may include cases beyond eval_cases, and those cases can still be scored if present in `expected_scores_v1.json`.
 
 ## Tests (CI)
 
