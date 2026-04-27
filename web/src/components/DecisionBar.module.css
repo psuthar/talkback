@@ -1,11 +1,18 @@
 .bar {
   flex: 0 0 auto;
-  border-top: 1px solid #c8e6c9;
   background-color: #f1f8e9;
   padding: 10px 20px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.barTop {
+  border-bottom: 1px solid #c8e6c9;
+}
+
+.barBottom {
+  border-top: 1px solid #c8e6c9;
 }
 
 .row {
