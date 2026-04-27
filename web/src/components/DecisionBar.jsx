@@ -16,10 +16,9 @@ const stanceLabel = (s) => {
 }
 
 /**
- * Always-visible bottom bar that lets a participant submit / edit their
- * stance and shows live counts of every stance plus a Pending count of
- * non-voters. Each count is a hover/keyboard target that opens a tooltip
- * listing the members in that bucket.
+ * Bar that lets a participant submit / edit their stance and shows live
+ * counts of every stance plus a Pending count of non-voters. Each count is a
+ * hover/keyboard target that opens a tooltip listing the members in that bucket.
  */
 export function DecisionBar({
   primaryDecision,
@@ -34,6 +33,7 @@ export function DecisionBar({
   stanceFeedback,
   submitStance,
   clearStance,
+  placement = 'bottom',
 }) {
   const [editing, setEditing] = useState(false)
 
@@ -73,9 +73,12 @@ export function DecisionBar({
     setEditing(false)
   }
 
+  const barClass =
+    placement === 'top' ? `${styles.bar} ${styles.barTop}` : `${styles.bar} ${styles.barBottom}`
+
   return (
     <section
-      className={styles.bar}
+      className={barClass}
       aria-label="Decision controls"
       data-testid="decision-bar"
     >
