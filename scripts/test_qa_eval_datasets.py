@@ -57,9 +57,25 @@ class TestCrossChecks(unittest.TestCase):
     def test_score_case_id_mismatch(self) -> None:
         eval_data = load_json(DEFAULT_EVAL_CASES)
         scores_data = load_json(DEFAULT_EXPECTED_SCORES)
-        scores_data["case_targets"] = scores_data["case_targets"][:-1]
+        # Remove one entry from the eval_cases prefix to ensure mismatch is still detected.
+        scores_data["case_targets"] = [
+            t for t in scores_data["case_targets"] if t.get("case_id") != "FF-010"
+        ]
         errs = cross_check_scores_vs_eval_cases(scores_data, eval_data)
         self.assertTrue(errs)
+
+    def test_score_case_id_extra_entries_allowed_after_eval_prefix(self) -> None:
+        eval_data = load_json(DEFAULT_EVAL_CASES)
+        scores_data = load_json(DEFAULT_EXPECTED_SCORES)
+        extra = {
+            "case_id": "FF-099",
+            "weight": 1.0,
+            "correctness_min": 0.8,
+            "hallucination_max": 0.2,
+        }
+        scores_data["case_targets"] = [*scores_data["case_targets"], extra]
+        errs = cross_check_scores_vs_eval_cases(scores_data, eval_data)
+        self.assertEqual(errs, [])
 
 
 class TestValidateBundleInventoryOptional(unittest.TestCase):

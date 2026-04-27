@@ -24,7 +24,7 @@
     "case_targets": {
       "type": "array",
       "minItems": 15,
-      "maxItems": 20,
+      "maxItems": 30,
       "items": {
         "type": "object",
         "additionalProperties": false,

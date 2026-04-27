@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "description": "Expected score targets for eval_cases_v1 (correctness floor and hallucination ceiling per case). Used by future judges/aggregators.",
+  "version": "1.0.1",
+  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-026.",
   "defaults": {
     "weight": 1.0,
     "correctness_min": 0.82,
@@ -116,6 +116,57 @@
       "weight": 1.0,
       "correctness_min": 0.78,
       "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-019",
+      "weight": 1.0,
+      "correctness_min": 0.72,
+      "hallucination_max": 0.1,
+      "notes": "Not-covered temporal detail should avoid hallucinated schedule."
+    },
+    {
+      "case_id": "FF-020",
+      "weight": 1.0,
+      "correctness_min": 0.85,
+      "hallucination_max": 0.15
+    },
+    {
+      "case_id": "FF-021",
+      "weight": 1.0,
+      "correctness_min": 0.86,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-022",
+      "weight": 1.0,
+      "correctness_min": 0.84,
+      "hallucination_max": 0.12
+    },
+    {
+      "case_id": "FF-023",
+      "weight": 1.0,
+      "correctness_min": 0.74,
+      "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-024",
+      "weight": 1.0,
+      "correctness_min": 0.74,
+      "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-025",
+      "weight": 1.1,
+      "correctness_min": 0.86,
+      "hallucination_max": 0.1,
+      "notes": "Deterministic empty-content behavior; slight weight boost."
+    },
+    {
+      "case_id": "FF-026",
+      "weight": 1.1,
+      "correctness_min": 0.84,
+      "hallucination_max": 0.1,
+      "notes": "Empty-content citation expectation; slight weight boost."
     }
   ]
 }
