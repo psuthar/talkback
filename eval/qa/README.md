@@ -126,8 +126,9 @@ pass/fail rollups in `report.json`.
 
 ## Pilot baseline
 
-`pilot_baseline.json` currently records a dry-run baseline (no SessionAsk calls, no judge scoring).
-It should be replaced by a live baseline once an end-to-end judged run is recorded.
+`pilot_baseline.json` now records a live judged baseline from `scrum143-live-baseline-fix2`
+with aggregate metrics from `report.json`. Re-run and refresh after material scorer/fixture
+changes.
 
 Refresh when you change default inventory size, eval JSON, or runner behavior.
 
