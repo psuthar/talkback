@@ -1,15 +1,22 @@
 {
-  "version": "1.0.0",
-  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001–FF-018.",
+  "version": "1.0.1",
+  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-026.",
   "cases": [
     {
       "case_id": "FF-001",
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "What happened to the Meridian proposal?",
       "expected_status": "answered",
-      "expected_keywords": ["meridian", "approved"],
+      "expected_keywords": [
+        "meridian",
+        "approved"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["rejected", "denied", "withdrawn"],
+        "answer_must_not_contain": [
+          "rejected",
+          "denied",
+          "withdrawn"
+        ],
         "notes": "Fixture states approval, not rejection."
       }
     },
@@ -18,9 +25,17 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "What is the APAC expansion budget in the fixture text?",
       "expected_status": "answered",
-      "expected_keywords": ["apac", "2.4m", "budget"],
+      "expected_keywords": [
+        "apac",
+        "2.4m",
+        "budget"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["1.2m", "3.0m", "europe"],
+        "answer_must_not_contain": [
+          "1.2m",
+          "3.0m",
+          "europe"
+        ],
         "notes": "Budget is 2.4M in fixture; avoid other program numbers."
       }
     },
@@ -29,9 +44,16 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "What churn target is described?",
       "expected_status": "answered",
-      "expected_keywords": ["churn", "below 6%"],
+      "expected_keywords": [
+        "churn",
+        "below 6%"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["above 10%", "8%", "europe"],
+        "answer_must_not_contain": [
+          "above 10%",
+          "8%",
+          "europe"
+        ],
         "notes": "Threshold is below 6%."
       }
     },
@@ -40,9 +62,17 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "Is the Meridian proposal approved according to the fixture?",
       "expected_status": "answered",
-      "expected_keywords": ["yes", "approved", "meridian"],
+      "expected_keywords": [
+        "yes",
+        "approved",
+        "meridian"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["not approved", "rejected", "no,"],
+        "answer_must_not_contain": [
+          "not approved",
+          "rejected",
+          "no,"
+        ],
         "notes": "Yes/no question; answer should affirm approval."
       }
     },
@@ -51,9 +81,16 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "Is the APAC budget stated as 2.4M?",
       "expected_status": "answered",
-      "expected_keywords": ["yes", "2.4m", "apac"],
+      "expected_keywords": [
+        "yes",
+        "2.4m",
+        "apac"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["1.2m", "no, it is 3.0"],
+        "answer_must_not_contain": [
+          "1.2m",
+          "no, it is 3.0"
+        ],
         "notes": "Numeric fact is 2.4M."
       }
     },
@@ -62,9 +99,17 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "Does the fixture say churn is below 6 percent?",
       "expected_status": "answered",
-      "expected_keywords": ["yes", "churn", "below 6%"],
+      "expected_keywords": [
+        "yes",
+        "churn",
+        "below 6%"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["above 6%", "no,", "8%"],
+        "answer_must_not_contain": [
+          "above 6%",
+          "no,",
+          "8%"
+        ],
         "notes": "Churn is below 6%."
       }
     },
@@ -73,9 +118,15 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "Which region's expansion is mentioned?",
       "expected_status": "answered",
-      "expected_keywords": ["apac"],
+      "expected_keywords": [
+        "apac"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["europe", "emea", "latam only"],
+        "answer_must_not_contain": [
+          "europe",
+          "emea",
+          "latam only"
+        ],
         "notes": "Only APAC expansion appears."
       }
     },
@@ -84,9 +135,18 @@
       "fixture_id": "smokeDocText_meridian_apac_churn",
       "question": "What two outcomes are described besides the proposal decision?",
       "expected_status": "answered",
-      "expected_keywords": ["apac", "2.4m", "churn", "below 6%"],
+      "expected_keywords": [
+        "apac",
+        "2.4m",
+        "churn",
+        "below 6%"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["project omega", "1.2m", "profitability"],
+        "answer_must_not_contain": [
+          "project omega",
+          "1.2m",
+          "profitability"
+        ],
         "notes": "Stick to APAC budget and churn from same fixture."
       }
     },
@@ -176,9 +236,17 @@
       "fixture_id": "qa_history_project_omega",
       "question": "What is the Project Omega budget in the QA history fixture?",
       "expected_status": "answered",
-      "expected_keywords": ["project omega", "1.2m", "budget"],
+      "expected_keywords": [
+        "project omega",
+        "1.2m",
+        "budget"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["2.4m", "meridian", "apac expansion budget"],
+        "answer_must_not_contain": [
+          "2.4m",
+          "meridian",
+          "apac expansion budget"
+        ],
         "notes": "Omega budget is 1.2M; avoid Meridian fixture leakage."
       }
     },
@@ -187,9 +255,17 @@
       "fixture_id": "qa_history_project_omega",
       "question": "Did the fixture indicate proceeding with Project Omega?",
       "expected_status": "answered",
-      "expected_keywords": ["yes", "proceed", "project omega"],
+      "expected_keywords": [
+        "yes",
+        "proceed",
+        "project omega"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["no,", "halted", "cancelled"],
+        "answer_must_not_contain": [
+          "no,",
+          "halted",
+          "cancelled"
+        ],
         "notes": "Fixture proceeds with Omega."
       }
     },
@@ -198,9 +274,16 @@
       "fixture_id": "qa_history_project_omega",
       "question": "Is the Project Omega budget 1.2M?",
       "expected_status": "answered",
-      "expected_keywords": ["yes", "1.2m"],
+      "expected_keywords": [
+        "yes",
+        "1.2m"
+      ],
       "hallucination_constraints": {
-        "answer_must_not_contain": ["2.4m", "no,", "3.0m"],
+        "answer_must_not_contain": [
+          "2.4m",
+          "no,",
+          "3.0m"
+        ],
         "notes": "Confirm 1.2M only."
       }
     },
@@ -231,6 +314,146 @@
         ],
         "notes": "Churn KPI is absent from Omega fixture."
       }
+    },
+    {
+      "case_id": "FF-019",
+      "fixture_id": "qa_history_project_omega",
+      "question": "What quarter is Project Omega scheduled for?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "q1",
+          "q2",
+          "q3",
+          "q4",
+          "first quarter",
+          "second quarter",
+          "third quarter",
+          "fourth quarter"
+        ],
+        "notes": "Timing/quarter detail is absent; naming one is hallucination."
+      }
+    },
+    {
+      "case_id": "FF-020",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What premise is set in the session update smoke test?",
+      "expected_status": "answered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "not available in the provided context",
+          "not available in the context",
+          "insufficient context"
+        ],
+        "notes": "Fixture explicitly sets the premise; abstaining indicates missed grounding."
+      },
+      "expected_keywords": [
+        "decide",
+        "apac expansion"
+      ]
+    },
+    {
+      "case_id": "FF-021",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What primary decision string is used in the APAC session update test?",
+      "expected_status": "answered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "not available in the provided context",
+          "1.2m",
+          "project omega"
+        ],
+        "notes": "Primary decision is APAC 2.4M approval in session update fixture."
+      },
+      "expected_keywords": [
+        "approve",
+        "2.4m",
+        "apac"
+      ]
+    },
+    {
+      "case_id": "FF-022",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Is the session update fixture budget value 2.4M?",
+      "expected_status": "answered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "no,",
+          "1.2m",
+          "project omega"
+        ],
+        "notes": "Closed-form check should confirm 2.4M in APAC session update fixture."
+      },
+      "expected_keywords": [
+        "yes",
+        "2.4m"
+      ]
+    },
+    {
+      "case_id": "FF-023",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Does the APAC session update fixture include churn data?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes, churn",
+          "below 6%",
+          "churn target is"
+        ],
+        "notes": "Churn metric is absent from this fixture; asserting one is leakage."
+      }
+    },
+    {
+      "case_id": "FF-024",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Who approved the APAC budget in the session update fixture?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "ceo",
+          "cfo",
+          "board",
+          "john ",
+          "jane "
+        ],
+        "notes": "Approver identity is not present in the fixture payload."
+      }
+    },
+    {
+      "case_id": "FF-025",
+      "fixture_id": "no_content_not_covered_path",
+      "question": "When there is no indexed content, what answer status should be returned?",
+      "expected_status": "answered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "answered",
+          "covered",
+          "sufficient context"
+        ],
+        "notes": "No-content path should return not_covered status semantics."
+      },
+      "expected_keywords": [
+        "not_covered"
+      ]
+    },
+    {
+      "case_id": "FF-026",
+      "fixture_id": "no_content_not_covered_path",
+      "question": "Does an empty-content ask path include citations?",
+      "expected_status": "answered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes, citations",
+          "includes citations",
+          "citation count is"
+        ],
+        "notes": "Deterministic empty-content response should have no citations."
+      },
+      "expected_keywords": [
+        "no",
+        "citations",
+        "empty"
+      ]
     }
   ]
 }

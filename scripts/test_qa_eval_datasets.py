@@ -64,7 +64,7 @@ class TestCrossChecks(unittest.TestCase):
         errs = cross_check_scores_vs_eval_cases(scores_data, eval_data)
         self.assertTrue(errs)
 
-    def test_score_case_id_extra_entries_allowed_after_eval_prefix(self) -> None:
+    def test_score_case_id_extra_entries_rejected(self) -> None:
         eval_data = load_json(DEFAULT_EVAL_CASES)
         scores_data = load_json(DEFAULT_EXPECTED_SCORES)
         extra = {
@@ -75,7 +75,7 @@ class TestCrossChecks(unittest.TestCase):
         }
         scores_data["case_targets"] = [*scores_data["case_targets"], extra]
         errs = cross_check_scores_vs_eval_cases(scores_data, eval_data)
-        self.assertEqual(errs, [])
+        self.assertTrue(errs)
 
 
 class TestValidateBundleInventoryOptional(unittest.TestCase):

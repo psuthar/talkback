@@ -442,6 +442,60 @@ class TestJudgeContracts(unittest.TestCase):
         self.assertIn("score_target", contracts["FF-001"])
 
     def test_build_contracts_includes_inventory_fallback_case(self) -> None:
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            eval_path = tmp_dir / "eval.json"
+            score_path = tmp_dir / "scores.json"
+            eval_path.write_text(
+                json.dumps({"version": "1.0.0", "description": "x", "cases": []}),
+                encoding="utf-8",
+            )
+            score_path.write_text(
+                json.dumps(
+                    {
+                        "version": "1.0.0",
+                        "description": "x",
+                        "defaults": {
+                            "weight": 1.0,
+                            "correctness_min": 0.8,
+                            "hallucination_max": 0.2,
+                        },
+                        "case_targets": [
+                            {
+                                "case_id": "FF-099",
+                                "weight": 1.0,
+                                "correctness_min": 0.8,
+                                "hallucination_max": 0.2,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            contracts = build_judge_contracts(
+                eval_path,
+                score_path,
+                inventory_cases=[
+                    {
+                        "case_id": "FF-099",
+                        "fixture_id": "no_content_not_covered_path",
+                        "question": "Q?",
+                        "expected_status": "answered",
+                        "expected_keywords": ["not_covered"],
+                    }
+                ],
+            )
+        self.assertIn("FF-099", contracts)
+        self.assertIn("hallucination_constraints", contracts["FF-099"]["case_contract"])
+        self.assertEqual(
+            contracts["FF-099"]["case_contract"]["hallucination_constraints"]["notes"],
+            "Fallback contract synthesized from fixture inventory.",
+        )
+
+    def test_build_contracts_prefers_explicit_eval_case_for_ff025(self) -> None:
         contracts = build_judge_contracts(
             _REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
             _REPO_ROOT / "eval" / "qa" / "expected_scores_v1.json",
@@ -449,14 +503,17 @@ class TestJudgeContracts(unittest.TestCase):
                 {
                     "case_id": "FF-025",
                     "fixture_id": "no_content_not_covered_path",
-                    "question": "Q?",
+                    "question": "tampered question",
                     "expected_status": "answered",
-                    "expected_keywords": ["not_covered"],
+                    "expected_keywords": ["tampered"],
                 }
             ],
         )
         self.assertIn("FF-025", contracts)
-        self.assertIn("hallucination_constraints", contracts["FF-025"]["case_contract"])
+        self.assertEqual(
+            contracts["FF-025"]["case_contract"]["question"],
+            "When there is no indexed content, what answer status should be returned?",
+        )
 
 
 if __name__ == "__main__":

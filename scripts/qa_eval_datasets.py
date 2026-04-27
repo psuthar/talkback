@@ -117,10 +117,10 @@ def cross_check_scores_vs_eval_cases(
             "expected_scores missing case_ids: " + ", ".join(missing)
         )
 
-    if eval_ids != score_ids[: len(eval_ids)]:
+    if score_ids != eval_ids:
         errors.append(
-            "expected_scores.case_targets must begin with eval_cases.cases order "
-            f"(eval prefix: {eval_ids}, scores head: {score_ids[:len(eval_ids)]})"
+            "expected_scores.case_targets must exactly match eval_cases.cases order "
+            f"(eval: {eval_ids}, scores: {score_ids})"
         )
 
     return errors
