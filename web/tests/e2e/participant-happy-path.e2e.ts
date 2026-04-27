@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   deleteUserViaAdmin,
+  dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
   pasteMaterial,
   uniqueEmail,
@@ -43,6 +44,7 @@ test(
     const params = new URLSearchParams({ session: session.id, mode: 'view' })
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
 
     // --- 2. Expand materials panel if collapsed ---
     const expandPanelBtn = page.getByRole('button', { name: 'Expand materials panel' })

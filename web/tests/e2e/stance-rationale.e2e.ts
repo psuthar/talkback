@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   deleteUserViaAdmin,
+  dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
   setSessionPrimaryDecision,
   uniqueEmail,
@@ -36,8 +37,9 @@ test(
     const params = new URLSearchParams({ session: session.id, mode: 'view' })
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
 
-    // DecisionBar is sticky at the bottom of the participant view — no toggle to expand
+    // DecisionBar sits at the top of the participant content — no toggle to expand
     const decisionBar = page.getByTestId('decision-bar')
     await expect(decisionBar).toBeVisible({ timeout: 10_000 })
 

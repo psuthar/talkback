@@ -1,4 +1,4 @@
-import type { BrowserContext, APIRequestContext, APIResponse } from '@playwright/test'
+import type { BrowserContext, APIRequestContext, APIResponse, Page } from '@playwright/test'
 import { request as playwrightApiRequest } from '@playwright/test'
 
 /** Backend API base URL. Default matches `go run ./cmd/api` (PORT=8080). CI may use 8081 via TALKBACK_API_BASE. */
@@ -224,4 +224,18 @@ export async function createUserAndLoginWithId(
   })
   await injectCookiesFromResponse(context, loginRes)
   return signupData.id as string
+}
+
+/**
+ * Close the first-join participant onboarding modal if it is shown (per-session localStorage).
+ * Call after navigating to a session in participant (view) mode before interacting with the page.
+ */
+export async function dismissParticipantOnboardingIfPresent(page: Page): Promise<void> {
+  const btn = page.getByTestId('participant-onboarding-dismiss')
+  try {
+    await btn.waitFor({ state: 'visible', timeout: 10_000 })
+    await btn.click()
+  } catch {
+    /* already dismissed or dialog not shown */
+  }
 }
