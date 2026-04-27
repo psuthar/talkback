@@ -18,30 +18,43 @@ function InlineSpinner() {
   return <span aria-hidden className={styles.inlineSpinner} />
 }
 
-/** Shared "Materials" header with chevron for creator and participant left panel */
-export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0 }) {
+/** Shared "Materials" header with chevron for creator and participant left panel.
+ *  When collapsed and itemCount is provided, renders a vertical rotated label
+ *  ("Materials (N)") so the rail announces what is behind it instead of showing
+ *  a bare chevron. itemCount is opt-in so existing call sites are unchanged. */
+export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0, itemCount = null }) {
+  const showCountedCollapsed = collapsed && itemCount != null
+  const collapsedAriaLabel = collapsed
+    ? `Expand materials panel${itemCount != null ? ` (${itemCount} item${itemCount !== 1 ? 's' : ''})` : ''}`
+    : 'Collapse materials panel'
   return (
     <div
       className={`materials-tree-header ${collapsed ? 'materials-tree-header-collapsed' : ''}`}
       style={{
         flexShrink: 0,
-        padding: collapsed ? '8px 4px' : '10px 12px',
+        padding: collapsed ? (showCountedCollapsed ? '14px 4px' : '8px 4px') : '10px 12px',
         borderBottom: '1px solid #e0e0e0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: collapsed ? 'center' : 'flex-start',
         gap: '6px',
         cursor: 'pointer',
-        ...(collapsed && { minHeight: '36px' }),
+        ...(collapsed && { minHeight: showCountedCollapsed ? '120px' : '36px' }),
       }}
       onClick={() => onCollapsedChange(!collapsed)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCollapsedChange(!collapsed); } }}
       role="button"
       tabIndex={0}
-      aria-label={collapsed ? 'Expand materials panel' : 'Collapse materials panel'}
+      aria-label={collapsedAriaLabel}
     >
-      <span className={styles.panelHeaderChevron} aria-hidden>{collapsed ? '▷' : '▼'}</span>
-      {collapsed && unreadCount > 0 && (
+      {showCountedCollapsed ? (
+        <span className={styles.panelCollapsedLabel} data-testid="materials-collapsed-label">
+          Materials ({itemCount})
+        </span>
+      ) : (
+        <span className={styles.panelHeaderChevron} aria-hidden>{collapsed ? '▷' : '▼'}</span>
+      )}
+      {collapsed && !showCountedCollapsed && unreadCount > 0 && (
         <span className={styles.panelHeaderBadgeCollapsed} title={`${unreadCount} new material${unreadCount !== 1 ? 's' : ''}`}>
           {unreadCount}
         </span>

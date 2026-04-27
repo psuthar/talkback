@@ -9,9 +9,13 @@ import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
+import {
+  STORAGE_KEY_MATERIALS_COLLAPSED,
+  getStoredMaterialsCollapsed,
+  setStoredMaterialsCollapsed,
+} from '../utils/participantStorage'
 import styles from './ParticipantMode.module.css'
 
-const STORAGE_KEY_MATERIALS_COLLAPSED = 'talkback.participant.materialsCollapsed'
 const STORAGE_KEY_VIDEO_STARTED = 'talkback.participant.videoStarted'
 const VIDEO_STARTED_THRESHOLD_S = 5
 
@@ -95,7 +99,7 @@ export function ParticipantMode({
   const useR2Primary = hasPrimaryR2Video && syntheticR2Video && (!resolvedFromSession || String(resolvedFromSession.id) === String(primarySourceId))
   const video = useR2Primary ? syntheticR2Video : (resolvedFromSession || primary)
 
-  const [materialsCollapsed, setMaterialsCollapsedState] = useState(true) // collapsed on initial load and refresh
+  const [materialsCollapsed, setMaterialsCollapsedState] = useState(false) // expanded by default on first visit; localStorage may override
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
@@ -237,12 +241,8 @@ export function ParticipantMode({
 
   const setMaterialsCollapsed = (value) => {
     setMaterialsCollapsedState(value)
-    if (hasSession?.session?.id) {
-      try {
-        localStorage.setItem(`${STORAGE_KEY_MATERIALS_COLLAPSED}.${currentSession.session.id}`, String(value))
-      } catch {
-        // ignore
-      }
+    if (currentSession?.session?.id) {
+      setStoredMaterialsCollapsed(currentSession.session.id, value)
     }
   }
 
@@ -253,14 +253,10 @@ export function ParticipantMode({
 
   useEffect(() => {
     const sid = currentSession?.session?.id
-    if (sid) {
-      try {
-        const stored = localStorage.getItem(`${STORAGE_KEY_MATERIALS_COLLAPSED}.${sid}`)
-        if (stored !== null) setMaterialsCollapsedState(stored === 'true')
-      } catch {
-        // ignore
-      }
-    }
+    if (!sid) return
+    const stored = getStoredMaterialsCollapsed(sid)
+    // First visit (no stored preference): default to expanded so participants discover materials.
+    setMaterialsCollapsedState(stored === null ? false : stored)
   }, [currentSession?.session?.id])
 
   // Decision Brief progress: load persisted "videoStarted" flag per session so it survives reloads
@@ -714,6 +710,11 @@ export function ParticipantMode({
             collapsed={materialsCollapsed}
             onCollapsedChange={setMaterialsCollapsed}
             unreadCount={Array.isArray(currentSession?.unread_material_ids) ? currentSession.unread_material_ids.length : 0}
+            itemCount={
+              (Array.isArray(currentSession?.video_sources) ? currentSession.video_sources.length : 0)
+              + (Array.isArray(currentSession?.materials) ? currentSession.materials.length : 0)
+              + (Array.isArray(currentSession?.links) ? currentSession.links.length : 0)
+            }
           />
           {!materialsCollapsed && (
             <>
