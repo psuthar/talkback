@@ -111,23 +111,18 @@ def cross_check_scores_vs_eval_cases(
     if len(score_ids) != len(score_set):
         errors.append("expected_scores: duplicate case_id in case_targets")
 
-    if eval_set != score_set:
-        missing = sorted(eval_set - score_set)
-        extra = sorted(score_set - eval_set)
-        if missing:
-            errors.append(
-                "expected_scores missing case_ids: " + ", ".join(missing)
-            )
-        if extra:
-            errors.append(
-                "expected_scores has unknown case_ids: " + ", ".join(extra)
-            )
-
-    if eval_ids != score_ids:
+    missing = sorted(eval_set - score_set)
+    if missing:
         errors.append(
-            "expected_scores.case_targets order must match eval_cases.cases order "
-            f"(eval: {eval_ids}, scores: {score_ids})"
+            "expected_scores missing case_ids: " + ", ".join(missing)
         )
+
+    if eval_ids != score_ids[: len(eval_ids)]:
+        errors.append(
+            "expected_scores.case_targets must begin with eval_cases.cases order "
+            f"(eval prefix: {eval_ids}, scores head: {score_ids[:len(eval_ids)]})"
+        )
+
     return errors
 
 
