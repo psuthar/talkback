@@ -22,6 +22,7 @@ from scripts.run_qa_eval import (
     ordered_fixture_ids,
     parse_sessions_json,
     run_inventory_cases,
+    build_judge_contracts,
     write_run_artifacts,
 )
 
@@ -101,6 +102,55 @@ class TestRunInventoryCases(unittest.TestCase):
         self.assertEqual(results[0].parsed_json["answer"]["answer_text"], "ok")
         self.assertEqual(results[1].skipped_reason, "no session mapped for fixture_id=missing")
 
+    def test_judge_hook_attaches_result(self) -> None:
+        def mock_ask(
+            base_url: str, cookie: str, session_id: str, question_text: str
+        ) -> tuple[int, str]:
+            return (
+                200,
+                json.dumps(
+                    {
+                        "question": {"id": "q", "question_text": question_text},
+                        "answer": {"answer_text": "Meridian approved", "citations": []},
+                    }
+                ),
+            )
+
+        def mock_judge(
+            case_contract: dict, score_target: dict, answer_text: str, http_status: int | None
+        ) -> dict:
+            return {
+                "ok": True,
+                "error_code": None,
+                "error_message": None,
+                "attempts": 1,
+                "verdict": {
+                    "is_correct": True,
+                    "hallucination": False,
+                    "score_0_to_1": 0.9,
+                    "reason": "ok",
+                },
+            }
+
+        contracts = {
+            "FF-001": {
+                "case_contract": {"case_id": "FF-001"},
+                "score_target": {"case_id": "FF-001"},
+            }
+        }
+        cases = [{"case_id": "FF-001", "fixture_id": "fx", "question": "Q1"}]
+        results = run_inventory_cases(
+            base_url="http://localhost:8080",
+            cookie="x",
+            session_for_fixture={"fx": "s1"},
+            cases=cases,
+            ask_fn=mock_ask,
+            judge_contract_by_case=contracts,
+            judge_fn=mock_judge,
+        )
+        self.assertIsNotNone(results[0].judge)
+        self.assertTrue(results[0].judge["ok"])
+
 
 class TestWriteRunArtifacts(unittest.TestCase):
     def test_writes_manifest_and_case_files(self) -> None:
@@ -142,6 +192,7 @@ class TestWriteRunArtifacts(unittest.TestCase):
             self.assertTrue(case_file.is_file())
             payload = json.loads(case_file.read_text())
             self.assertEqual(payload["normalized"]["answer_text"], "A")
+            self.assertIsNone(payload["judge"])
 
 
 class TestCaseToArtifactOrdering(unittest.TestCase):
@@ -166,6 +217,7 @@ class TestCaseToArtifactOrdering(unittest.TestCase):
                 "request",
                 "response",
                 "normalized",
+                "judge",
             ],
         )
 
@@ -188,6 +240,17 @@ class TestAutoSetupSessions(unittest.TestCase):
         mock_create.assert_called_once()
         mock_paste.assert_called_once()
         mock_patch.assert_called_once()
+
+
+class TestJudgeContracts(unittest.TestCase):
+    def test_build_contracts_contains_case(self) -> None:
+        contracts = build_judge_contracts(
+            _REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
+            _REPO_ROOT / "eval" / "qa" / "expected_scores_v1.json",
+        )
+        self.assertIn("FF-001", contracts)
+        self.assertIn("case_contract", contracts["FF-001"])
+        self.assertIn("score_target", contracts["FF-001"])
 
 
 if __name__ == "__main__":
