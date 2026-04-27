@@ -26,46 +26,101 @@ describe('DecisionBar', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('State A: renders the five stance buttons and a rationale input when no stance is submitted', () => {
+  it('State A: shows a "Choose stance…" trigger and rationale input when no stance is submitted', () => {
     render(<DecisionBar {...makeProps()} />)
+    const trigger = screen.getByTestId('stance-trigger-btn')
+    expect(trigger).toBeTruthy()
+    expect(trigger.textContent).toMatch(/choose stance/i)
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByTestId('stance-rationale-input')).toBeTruthy()
+    // Menu items not visible until trigger is clicked
+    expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
+    expect(screen.queryByTestId('decision-bar-submitted')).toBeNull()
+  })
+
+  it('opening the trigger reveals all five stance menu items', () => {
+    render(<DecisionBar {...makeProps()} />)
+    fireEvent.click(screen.getByTestId('stance-trigger-btn'))
     expect(screen.getByTestId('stance-btn-agree')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-disagree')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-conditional')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-abstain')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-need_more_info')).toBeTruthy()
-    expect(screen.getByTestId('stance-rationale-input')).toBeTruthy()
-    expect(screen.queryByTestId('decision-bar-submitted')).toBeNull()
+    expect(screen.getByTestId('stance-trigger-btn').getAttribute('aria-expanded')).toBe('true')
   })
 
-  it('clicking a stance button calls submitStance with that key', () => {
+  it('clicking a stance menu item calls submitStance with that key', () => {
     const submitStance = vi.fn()
     render(<DecisionBar {...makeProps({ submitStance })} />)
+    fireEvent.click(screen.getByTestId('stance-trigger-btn'))
     fireEvent.click(screen.getByTestId('stance-btn-agree'))
     expect(submitStance).toHaveBeenCalledWith('agree')
   })
 
-  it('State B: shows the submitted stance with a checkmark and an Edit toggle', () => {
+  it('selecting a stance closes the menu', () => {
+    render(<DecisionBar {...makeProps()} />)
+    fireEvent.click(screen.getByTestId('stance-trigger-btn'))
+    fireEvent.click(screen.getByTestId('stance-btn-agree'))
+    expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
+  })
+
+  it('Escape closes the menu', () => {
+    render(<DecisionBar {...makeProps()} />)
+    fireEvent.click(screen.getByTestId('stance-trigger-btn'))
+    expect(screen.getByTestId('stance-btn-agree')).toBeTruthy()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
+  })
+
+  it('State B: trigger shows the submitted stance with a check and a stance-edit-btn id', () => {
     render(<DecisionBar {...makeProps({
       myStance: { stance: 'agree', rationale: 'Strong fit' },
       stanceAggregate: { agree: 1, disagree: 0, conditional: 0, abstain: 0, need_more_info: 0 },
     })} />)
-    const submitted = screen.getByTestId('decision-bar-submitted')
-    expect(submitted.textContent).toContain('✓')
-    expect(submitted.textContent).toContain('Agree')
-    expect(submitted.textContent).toContain('Strong fit')
-    expect(screen.getByTestId('stance-edit-btn')).toBeTruthy()
-    // Stance buttons hidden when in submitted view
+    const trigger = screen.getByTestId('stance-edit-btn')
+    expect(trigger.textContent).toContain('✓')
+    expect(trigger.textContent).toContain('Agree')
+    // Rationale input remains available below the trigger
+    expect(screen.getByTestId('stance-rationale-input')).toBeTruthy()
+    // Menu starts closed
     expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
   })
 
-  it('clicking Edit ▾ flips submitted view back to State A controls', () => {
+  it('clicking the submitted trigger reopens the menu and exposes Clear', () => {
     render(<DecisionBar {...makeProps({
       myStance: { stance: 'disagree', rationale: 'Concerned' },
     })} />)
-    expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
     fireEvent.click(screen.getByTestId('stance-edit-btn'))
     expect(screen.getByTestId('stance-btn-agree')).toBeTruthy()
-    expect(screen.getByTestId('stance-cancel-edit-btn')).toBeTruthy()
+    expect(screen.getByTestId('stance-clear-btn')).toBeTruthy()
+  })
+
+  it('clicking Clear in the menu calls clearStance', () => {
+    const clearStance = vi.fn()
+    render(<DecisionBar {...makeProps({
+      myStance: { stance: 'disagree', rationale: 'Concerned' },
+      clearStance,
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-edit-btn'))
+    fireEvent.click(screen.getByTestId('stance-clear-btn'))
+    expect(clearStance).toHaveBeenCalled()
+  })
+
+  it('Save rationale only appears when rationale differs from saved and submits explicitly', () => {
+    const submitStance = vi.fn()
+    const props = makeProps({
+      myStance: { stance: 'agree', rationale: 'old' },
+      stanceRationale: 'old',
+      submitStance,
+    })
+    const { rerender } = render(<DecisionBar {...props} />)
+    expect(screen.queryByTestId('stance-save-rationale-btn')).toBeNull()
+    rerender(<DecisionBar {...props} stanceRationale="new text" />)
+    const saveBtn = screen.getByTestId('stance-save-rationale-btn')
+    expect(saveBtn).toBeTruthy()
+    fireEvent.click(saveBtn)
+    expect(submitStance).toHaveBeenCalledWith('agree')
   })
 
   it('OTHERS row renders all five stance counts plus a Pending count', () => {
@@ -87,7 +142,6 @@ describe('DecisionBar', () => {
     expect(screen.getByTestId('stance-count-conditional').textContent).toContain('1')
     expect(screen.getByTestId('stance-count-abstain').textContent).toContain('0')
     expect(screen.getByTestId('stance-count-need_more_info').textContent).toContain('1')
-    // Pending: 4 invited - 2 responded = 2
     expect(screen.getByTestId('stance-count-pending').textContent).toContain('2')
   })
 
@@ -118,8 +172,9 @@ describe('DecisionBar', () => {
   it('locks the form when decisionOutcome is set', () => {
     render(<DecisionBar {...makeProps({ decisionOutcome: 'Approved' })} />)
     expect(screen.getByTestId('decision-bar-locked')).toBeTruthy()
-    expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
-    expect(screen.queryByTestId('decision-bar-submitted')).toBeNull()
+    expect(screen.queryByTestId('stance-trigger-btn')).toBeNull()
+    expect(screen.queryByTestId('stance-edit-btn')).toBeNull()
+    expect(screen.queryByTestId('stance-rationale-input')).toBeNull()
   })
 
   it('shows feedback message when provided', () => {

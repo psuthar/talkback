@@ -43,6 +43,11 @@ test(
     const decisionBar = page.getByTestId('decision-bar')
     await expect(decisionBar).toBeVisible({ timeout: 10_000 })
 
+    // Open the stance dropdown first; the dropdown trigger is the only stance affordance
+    const trigger = page.getByTestId('stance-trigger-btn')
+    await expect(trigger).toBeVisible({ timeout: 5_000 })
+    await trigger.click()
+
     // Select a stance ("Agree" is a substring of "Disagree", so target by testid)
     const agreeBtn = page.getByTestId('stance-btn-agree')
     await expect(agreeBtn).toBeVisible({ timeout: 5_000 })
@@ -51,12 +56,11 @@ test(
     // Wait for stance to save (feedback disappears or updates)
     await page.waitForTimeout(1_000)
 
-    // After submitting, the bar shows the submitted view; click Edit ▾ to reveal the rationale input
+    // After submitting, the dropdown trigger morphs into the edit affordance
     const editBtn = page.getByTestId('stance-edit-btn')
     await expect(editBtn).toBeVisible({ timeout: 5_000 })
-    await editBtn.click()
 
-    // Type rationale text
+    // Rationale input remains available below the trigger
     const rationaleInput = page.getByTestId('stance-rationale-input')
     await expect(rationaleInput).toBeVisible({ timeout: 3_000 })
     await rationaleInput.fill('My rationale text')
