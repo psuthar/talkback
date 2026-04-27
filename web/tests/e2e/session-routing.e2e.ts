@@ -27,6 +27,7 @@ import {
   createUserAndLoginWithId,
   deleteSession,
   deleteUserViaAdmin,
+  dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
   pasteMaterial,
   uniqueEmail,
@@ -77,6 +78,7 @@ test('canonical /app/sessions/:id?mode=view deep link loads session for authenti
   // Navigate directly to canonical path — no legacy ?session= param.
   await page.goto(`/app/sessions/${session.id}?mode=view`)
   await page.waitForLoadState('networkidle')
+  await dismissParticipantOnboardingIfPresent(page)
 
   // The Q&A input is a reliable signal that the session loaded in participant view mode.
   await expect(page.getByTestId('question-input')).toBeVisible({ timeout: 15_000 })
@@ -120,6 +122,7 @@ test('legacy /?session=:id&mode=view redirects URL to canonical /app/sessions/:i
   // Navigate to the legacy query-param URL — app should show session and normalise URL.
   await page.goto(`/?session=${suiteSessionId}&mode=view`)
   await page.waitForLoadState('networkidle')
+  await dismissParticipantOnboardingIfPresent(page)
 
   // The session must load successfully.
   await expect(page.getByTestId('question-input')).toBeVisible({ timeout: 15_000 })
@@ -140,6 +143,7 @@ test('refreshing canonical session route keeps the user on the correct session',
     // Land on canonical URL.
     await page.goto(`/app/sessions/${session.id}?mode=view`)
     await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
     await expect(page.getByTestId('question-input')).toBeVisible({ timeout: 15_000 })
 
     // Hard-refresh the page.
@@ -284,6 +288,7 @@ test('skeleton loading state shown during participant session load (no raw error
     await expect(page.getByText('Unable to load session')).not.toBeVisible()
 
     // Eventually the session loads and skeleton disappears
+    await dismissParticipantOnboardingIfPresent(page)
     await expect(page.getByTestId('question-input')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByTestId('session-skeleton')).not.toBeVisible()
   } finally {
