@@ -456,6 +456,108 @@ def write_run_artifacts(
     write_json(run_dir / "run_manifest.json", manifest)
 
 
+def aggregate_report(
+    cases: list[dict[str, Any]],
+    results: list[CaseResult],
+) -> dict[str, Any]:
+    case_map = {
+        str(c.get("case_id")): c
+        for c in cases
+        if isinstance(c, dict) and isinstance(c.get("case_id"), str)
+    }
+
+    totals = {
+        "total_cases": len(results),
+        "judge_attempted": 0,
+        "judge_ok": 0,
+        "judge_error": 0,
+        "correct_count": 0,
+        "hallucination_count": 0,
+        "status_breakdown": {
+            "answered": 0,
+            "not_covered": 0,
+            "other_or_missing": 0,
+        },
+    }
+    failed_case_ids: list[str] = []
+
+    for res in results:
+        expected_status = case_map.get(res.case_id, {}).get("expected_status")
+        if expected_status == "answered":
+            totals["status_breakdown"]["answered"] += 1
+        elif expected_status == "not_covered":
+            totals["status_breakdown"]["not_covered"] += 1
+        else:
+            totals["status_breakdown"]["other_or_missing"] += 1
+
+        j = res.judge
+        if not isinstance(j, dict):
+            continue
+        totals["judge_attempted"] += 1
+        if j.get("ok") is True and isinstance(j.get("verdict"), dict):
+            totals["judge_ok"] += 1
+            verdict = j["verdict"]
+            if verdict.get("is_correct") is True:
+                totals["correct_count"] += 1
+            if verdict.get("hallucination") is True:
+                totals["hallucination_count"] += 1
+        else:
+            totals["judge_error"] += 1
+            failed_case_ids.append(res.case_id)
+
+    denom = totals["judge_ok"] if totals["judge_ok"] > 0 else 0
+    correctness_pct = (
+        round((totals["correct_count"] / denom) * 100.0, 2) if denom > 0 else None
+    )
+    return {
+        "metrics": {
+            **totals,
+            "correctness_percentage": correctness_pct,
+        },
+        "failed_case_ids": failed_case_ids,
+    }
+
+
+def write_report_artifact(
+    run_dir: Path,
+    *,
+    run_id: str,
+    inventory_path: Path,
+    report: dict[str, Any],
+) -> None:
+    report_payload = {
+        "run_id": run_id,
+        "inventory_path": _inventory_path_for_manifest(inventory_path),
+        "source_run_manifest": "run_manifest.json",
+        "source_case_artifacts_glob": "cases/*.json",
+        "metrics": report["metrics"],
+        "failed_case_ids": report["failed_case_ids"],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    write_json(run_dir / "report.json", report_payload)
+
+
+def render_terminal_report(report: dict[str, Any]) -> str:
+    m = report["metrics"]
+    correctness_text = (
+        f"{m['correctness_percentage']}%"
+        if m["correctness_percentage"] is not None
+        else "n/a"
+    )
+    return (
+        "Eval summary:\n"
+        f"- correctness %: {correctness_text}\n"
+        f"- hallucination count: {m['hallucination_count']}\n"
+        f"- judge attempted: {m['judge_attempted']}\n"
+        f"- judge ok: {m['judge_ok']}\n"
+        f"- judge errors: {m['judge_error']}\n"
+        "- status breakdown: "
+        f"answered={m['status_breakdown']['answered']}, "
+        f"not_covered={m['status_breakdown']['not_covered']}, "
+        f"other_or_missing={m['status_breakdown']['other_or_missing']}"
+    )
+
+
 def ordered_fixture_ids(cases: list[dict[str, Any]]) -> list[str]:
     seen: OrderedDict[str, None] = OrderedDict()
     for c in cases:
@@ -675,6 +777,8 @@ def main(argv: list[str] | None = None) -> int:
         judge_contract_by_case=judge_contracts if judge_enabled else None,
         judge_fn=_judge_fn if judge_enabled else None,
     )
+
+    report = aggregate_report(cases, results)
     write_run_artifacts(
         run_dir,
         run_id=run_id,
@@ -686,6 +790,13 @@ def main(argv: list[str] | None = None) -> int:
         cases=cases,
         results=results,
     )
+    write_report_artifact(
+        run_dir,
+        run_id=run_id,
+        inventory_path=inventory_path,
+        report=report,
+    )
+    print(render_terminal_report(report))
     print(f"Wrote eval run to {run_dir}")
     return 0
 

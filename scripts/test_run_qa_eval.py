@@ -16,13 +16,16 @@ if str(_REPO_ROOT) not in sys.path:
 
 from scripts.run_qa_eval import (
     CaseResult,
+    aggregate_report,
     auto_setup_sessions,
     case_to_artifact,
+    render_terminal_report,
     normalize_session_ask_response,
     ordered_fixture_ids,
     parse_sessions_json,
     run_inventory_cases,
     build_judge_contracts,
+    write_report_artifact,
     write_run_artifacts,
 )
 
@@ -193,6 +196,98 @@ class TestWriteRunArtifacts(unittest.TestCase):
             payload = json.loads(case_file.read_text())
             self.assertEqual(payload["normalized"]["answer_text"], "A")
             self.assertIsNone(payload["judge"])
+
+
+class TestAggregateReport(unittest.TestCase):
+    def test_aggregates_correctness_hallucination_and_breakdown(self) -> None:
+        cases = [
+            {"case_id": "FF-001", "expected_status": "answered"},
+            {"case_id": "FF-002", "expected_status": "not_covered"},
+            {"case_id": "FF-003", "expected_status": "answered"},
+        ]
+        results = [
+            CaseResult(
+                case_id="FF-001",
+                fixture_id="f1",
+                question="q1",
+                judge={
+                    "ok": True,
+                    "verdict": {
+                        "is_correct": True,
+                        "hallucination": False,
+                        "score_0_to_1": 0.9,
+                        "reason": "ok",
+                    },
+                },
+            ),
+            CaseResult(
+                case_id="FF-002",
+                fixture_id="f2",
+                question="q2",
+                judge={
+                    "ok": True,
+                    "verdict": {
+                        "is_correct": False,
+                        "hallucination": True,
+                        "score_0_to_1": 0.2,
+                        "reason": "hallucinated",
+                    },
+                },
+            ),
+            CaseResult(
+                case_id="FF-003",
+                fixture_id="f3",
+                question="q3",
+                judge={"ok": False, "error_code": "judge_invalid_json", "verdict": None},
+            ),
+        ]
+        report = aggregate_report(cases, results)
+        m = report["metrics"]
+        self.assertEqual(m["total_cases"], 3)
+        self.assertEqual(m["judge_attempted"], 3)
+        self.assertEqual(m["judge_ok"], 2)
+        self.assertEqual(m["judge_error"], 1)
+        self.assertEqual(m["correct_count"], 1)
+        self.assertEqual(m["hallucination_count"], 1)
+        self.assertEqual(m["correctness_percentage"], 50.0)
+        self.assertEqual(m["status_breakdown"]["answered"], 2)
+        self.assertEqual(m["status_breakdown"]["not_covered"], 1)
+        self.assertEqual(report["failed_case_ids"], ["FF-003"])
+
+    def test_write_report_and_render_terminal(self) -> None:
+        report = {
+            "metrics": {
+                "total_cases": 1,
+                "judge_attempted": 1,
+                "judge_ok": 1,
+                "judge_error": 0,
+                "correct_count": 1,
+                "hallucination_count": 0,
+                "correctness_percentage": 100.0,
+                "status_breakdown": {
+                    "answered": 1,
+                    "not_covered": 0,
+                    "other_or_missing": 0,
+                },
+            },
+            "failed_case_ids": [],
+        }
+        text = render_terminal_report(report)
+        self.assertIn("correctness %: 100.0%", text)
+        self.assertIn("hallucination count: 0", text)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            write_report_artifact(
+                run_dir,
+                run_id="r1",
+                inventory_path=_REPO_ROOT / "eval" / "qa" / "fixture_fact_inventory.json",
+                report=report,
+            )
+            payload = json.loads((run_dir / "report.json").read_text())
+            self.assertEqual(payload["run_id"], "r1")
+            self.assertEqual(payload["metrics"]["correctness_percentage"], 100.0)
+            self.assertEqual(payload["source_run_manifest"], "run_manifest.json")
 
 
 class TestCaseToArtifactOrdering(unittest.TestCase):
