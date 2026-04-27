@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
   STORAGE_KEY_MATERIALS_COLLAPSED,
+  STORAGE_KEY_PARTICIPANT_ONBOARDING_DISMISSED,
   getStoredMaterialsCollapsed,
   setStoredMaterialsCollapsed,
+  isParticipantOnboardingDismissed,
+  setParticipantOnboardingDismissed,
 } from '../utils/participantStorage'
 
 function makeMockStorage(initial = {}) {
@@ -67,5 +70,32 @@ describe('participantStorage', () => {
     const storage = makeMockStorage()
     setStoredMaterialsCollapsed('', true, storage)
     expect(Object.keys(storage._data)).toHaveLength(0)
+  })
+
+  describe('participant onboarding dismissed', () => {
+    it('returns false when not yet dismissed', () => {
+      const storage = makeMockStorage()
+      expect(isParticipantOnboardingDismissed('sess-1', storage)).toBe(false)
+    })
+
+    it('returns true when dismissed flag is stored', () => {
+      const storage = makeMockStorage({
+        [`${STORAGE_KEY_PARTICIPANT_ONBOARDING_DISMISSED}.sess-1`]: 'true',
+      })
+      expect(isParticipantOnboardingDismissed('sess-1', storage)).toBe(true)
+    })
+
+    it('isolates dismissal per session id', () => {
+      const storage = makeMockStorage()
+      setParticipantOnboardingDismissed('sess-A', storage)
+      expect(isParticipantOnboardingDismissed('sess-A', storage)).toBe(true)
+      expect(isParticipantOnboardingDismissed('sess-B', storage)).toBe(false)
+    })
+
+    it('does not persist when sessionId is missing', () => {
+      const storage = makeMockStorage()
+      setParticipantOnboardingDismissed('', storage)
+      expect(Object.keys(storage._data)).toHaveLength(0)
+    })
   })
 })

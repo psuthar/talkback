@@ -14,7 +14,10 @@ import {
   STORAGE_KEY_MATERIALS_COLLAPSED,
   getStoredMaterialsCollapsed,
   setStoredMaterialsCollapsed,
+  isParticipantOnboardingDismissed,
+  setParticipantOnboardingDismissed,
 } from '../utils/participantStorage'
+import { ParticipantOnboardingDialog } from '../components/ParticipantOnboardingDialog'
 import styles from './ParticipantMode.module.css'
 
 export function ParticipantMode({
@@ -101,6 +104,7 @@ export function ParticipantMode({
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
   const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
+  const [showParticipantOnboarding, setShowParticipantOnboarding] = useState(false)
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
@@ -253,6 +257,15 @@ export function ParticipantMode({
     const stored = getStoredMaterialsCollapsed(sid)
     // First visit (no stored preference): default to expanded so participants discover materials.
     setMaterialsCollapsedState(stored === null ? false : stored)
+  }, [currentSession?.session?.id])
+
+  useEffect(() => {
+    const sid = currentSession?.session?.id
+    if (!sid) {
+      setShowParticipantOnboarding(false)
+      return
+    }
+    setShowParticipantOnboarding(!isParticipantOnboardingDismissed(sid))
   }, [currentSession?.session?.id])
 
   // When primary video has transcript text but no segments, fetch session transcript (e.g. Zoom). Do not fetch for additional videos — they use their own transcript only.
@@ -496,8 +509,16 @@ export function ParticipantMode({
     ? 'participant-layout-grid materials-collapsed'
     : 'participant-layout-grid'
 
+  const dismissParticipantOnboarding = () => {
+    const sid = currentSession?.session?.id
+    setParticipantOnboardingDismissed(sid)
+    setShowParticipantOnboarding(false)
+  }
+
   return (
     <>
+      <ParticipantOnboardingDialog open={showParticipantOnboarding} onDismiss={dismissParticipantOnboarding} />
+
       <div className="participant-layout-topbar">
         <div className={styles.topbarInner}>
           <h2 className={styles.sessionTitle}>
