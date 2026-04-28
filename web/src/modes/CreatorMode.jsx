@@ -5,6 +5,7 @@ import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/Material
 import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
+import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
@@ -1430,29 +1431,13 @@ export function CreatorMode({
         />
       </div>
 
-      {/* Premise / Decision / Outcome: always visible like participant view */}
-      {currentSession?.session && (currentSession.session.premise || currentSession.session.primary_decision || currentSession.session.decision_outcome) && (
-        <div style={{
-          flexShrink: 0,
-          display: 'flex',
-          gap: '20px',
-          flexWrap: 'wrap',
-          padding: '4px 20px',
-          backgroundColor: '#f1f8e9',
-          borderBottom: '1px solid #c8e6c9',
-          fontSize: '13px',
-          color: '#333'
-        }}>
-          {currentSession.session.premise && (
-            <span><strong>Premise:</strong> {currentSession.session.premise}</span>
-          )}
-          {currentSession.session.primary_decision && (
-            <span><strong>Decision:</strong> {currentSession.session.primary_decision}</span>
-          )}
-          {currentSession.session.decision_outcome && (
-            <span><strong>Outcome:</strong> {currentSession.session.decision_outcome}</span>
-          )}
-        </div>
+      {/* Premise / Decision / Outcome — shared with participant view (SCRUM-187). */}
+      {currentSession?.session && (
+        <DecisionBriefHeader
+          premise={currentSession.session.premise}
+          decision={currentSession.session.primary_decision}
+          decisionOutcome={currentSession.session.decision_outcome}
+        />
       )}
 
       {/* Processing progression: flex-shrink 0, sits above grid */}

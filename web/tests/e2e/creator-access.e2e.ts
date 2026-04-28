@@ -5,6 +5,7 @@ import {
   deleteSession,
   deleteUserViaAdmin,
   loginAsAdmin,
+  setSessionPrimaryDecision,
   uniqueEmail,
 } from './fixtures'
 
@@ -82,4 +83,18 @@ test('creator opens session in edit mode, sees creator-only UI', async ({ page, 
     .locator('.creator-layout-topbar')
     .getByRole('button', { name: /show all sessions/i })
   await expect(inlineShowAllBtn).toHaveCount(0)
+
+  // --- SCRUM-187: setting primary_decision causes shared DecisionBriefHeader to render ---
+  // Pre-condition: brief header is absent before primary_decision is set (nothing to render).
+  await expect(page.getByTestId('decision-brief-header')).toHaveCount(0)
+
+  await setSessionPrimaryDecision(request, session.id, 'Should we hire candidate Z?')
+  await page.reload()
+  await page.waitForLoadState('networkidle')
+
+  const brief = page.getByTestId('decision-brief-header')
+  await expect(brief).toBeVisible({ timeout: 10_000 })
+  await expect(brief).toContainText('Decision')
+  await expect(brief).toContainText('Should we hire candidate Z?')
+  // Outcome row only renders when decision_outcome is also set; not asserted here.
 })
