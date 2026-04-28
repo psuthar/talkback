@@ -223,6 +223,11 @@ class ReadinessInput:
     blocker_messages: list[str] = field(default_factory=list)
     warning_messages: list[str] = field(default_factory=list)
     recommended_actions: list[str] = field(default_factory=list)
+    # SCRUM-197: failing E2E spec titles, threaded through from
+    # release_readiness_engine.ReadinessResult so consumers don't need to
+    # re-parse playwright-results.json to learn which spec failed.
+    critical_failed_titles: list[str] = field(default_factory=list)
+    non_critical_failed_titles: list[str] = field(default_factory=list)
     # True when report.json was successfully loaded and contributed blocker/warning strings.
     # False means required_actions may be incomplete (counts only, no strings).
     report_enriched: bool = False
@@ -480,12 +485,17 @@ def load_release_readiness(
     recommended: list[str] = []
     report_enriched = False
 
+    critical_failed_titles: list[str] = []
+    non_critical_failed_titles: list[str] = []
+
     if report_path and report_path.exists():
         try:
             report = json.loads(report_path.read_text(encoding="utf-8"))
             blocker_msgs = [str(b) for b in (report.get("blockers") or [])]
             warning_msgs = [str(w) for w in (report.get("warnings") or [])]
             recommended = [str(r) for r in (report.get("recommended_actions") or [])]
+            critical_failed_titles = [str(t) for t in (report.get("critical_failed_titles") or [])]
+            non_critical_failed_titles = [str(t) for t in (report.get("non_critical_failed_titles") or [])]
             report_enriched = True
         except Exception as exc:
             print(
@@ -508,6 +518,8 @@ def load_release_readiness(
         blocker_messages=blocker_msgs,
         warning_messages=warning_msgs,
         recommended_actions=recommended,
+        critical_failed_titles=critical_failed_titles,
+        non_critical_failed_titles=non_critical_failed_titles,
         report_enriched=report_enriched,
     )
 
@@ -546,6 +558,12 @@ def build_gate_json(
             "warnings": rr.warnings_count,
             "blockers": rr.blockers_count,
             "confidence": rr_conf,
+            # SCRUM-197: failing E2E spec titles. Empty arrays when no failures
+            # of that kind. Threaded from release-readiness/report.json so the
+            # gate summary tells reviewers which specs failed without a
+            # secondary artifact download.
+            "critical_failed_titles": list(rr.critical_failed_titles),
+            "non_critical_failed_titles": list(rr.non_critical_failed_titles),
         },
         "final_gate": {
             "status": gate_status,
