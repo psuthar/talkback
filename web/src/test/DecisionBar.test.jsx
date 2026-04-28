@@ -136,6 +136,19 @@ describe('DecisionBar', () => {
     expect(submitStance).toHaveBeenCalledWith('agree')
   })
 
+  it('uses a multiline rationale textarea and preserves line breaks in edit state', () => {
+    const setStanceRationale = vi.fn()
+    render(<DecisionBar {...makeProps({
+      myStance: { stance: 'agree', rationale: '' },
+      stanceRationale: '',
+      setStanceRationale,
+    })} />)
+    const rationaleInput = screen.getByTestId('stance-rationale-input')
+    expect(rationaleInput.tagName).toBe('TEXTAREA')
+    fireEvent.change(rationaleInput, { target: { value: 'line one\nline two' } })
+    expect(setStanceRationale).toHaveBeenCalledWith('line one\nline two')
+  })
+
   it('OTHERS row renders three stance counts plus a Pending count', () => {
     render(<DecisionBar {...makeProps({
       stanceAggregate: { agree: 6, disagree: 2, conditional: 1, abstain: 0, need_more_info: 1 },

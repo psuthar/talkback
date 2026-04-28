@@ -309,14 +309,14 @@ function StanceDropdown({
       )}
 
       <div className={styles.rationaleBlock}>
-        <input
-          type="text"
+        <textarea
           placeholder="Rationale (optional)"
           value={stanceRationale ?? ''}
           onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
           className={styles.rationaleInput}
           data-testid="stance-rationale-input"
           aria-label="Stance rationale"
+          rows={1}
         />
         {submitted && stanceRationale !== (myStance?.rationale ?? '') && (
           <button
