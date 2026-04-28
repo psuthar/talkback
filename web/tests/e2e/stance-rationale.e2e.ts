@@ -48,10 +48,10 @@ test(
     await expect(trigger).toBeVisible({ timeout: 5_000 })
     await trigger.click()
 
-    // Select a stance ("Agree" is a substring of "Disagree", so target by testid)
-    const agreeBtn = page.getByTestId('stance-btn-agree')
-    await expect(agreeBtn).toBeVisible({ timeout: 5_000 })
-    await agreeBtn.click()
+    // Select Need More Info (explicit bug regression target for SCRUM-164)
+    const needMoreInfoBtn = page.getByTestId('stance-btn-need_more_info')
+    await expect(needMoreInfoBtn).toBeVisible({ timeout: 5_000 })
+    await needMoreInfoBtn.click()
 
     // Wait for stance to save (feedback disappears or updates)
     await page.waitForTimeout(1_000)
@@ -60,9 +60,15 @@ test(
     const editBtn = page.getByTestId('stance-edit-btn')
     await expect(editBtn).toBeVisible({ timeout: 5_000 })
 
-    // Rationale input remains available below the trigger
+    // Rationale input remains available and aligned inline to the right of stance control
     const rationaleInput = page.getByTestId('stance-rationale-input')
     await expect(rationaleInput).toBeVisible({ timeout: 3_000 })
+    const triggerBox = await editBtn.boundingBox()
+    const rationaleBox = await rationaleInput.boundingBox()
+    expect(triggerBox && rationaleBox).toBeTruthy()
+    // same row (rough vertical alignment) and rationale starts to the right
+    expect(Math.abs((triggerBox?.y ?? 0) - (rationaleBox?.y ?? 0))).toBeLessThan(12)
+    expect((rationaleBox?.x ?? 0)).toBeGreaterThan((triggerBox?.x ?? 0))
     await rationaleInput.fill('My rationale text\nSecond line')
     await expect(rationaleInput).toHaveValue('My rationale text\nSecond line')
 
