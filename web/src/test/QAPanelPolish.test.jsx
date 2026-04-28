@@ -34,8 +34,8 @@ const baseProps = {
   voicePolishMode: null,
 }
 
-describe('QAPanel — typed-question polish (SCRUM-156)', () => {
-  it('renders the polish wand beside the Ask button when typed text is present', () => {
+describe('QAPanel — speech-only polish visibility (SCRUM-162)', () => {
+  it('does not render the polish wand in typed ask flow even when text + handlers exist', () => {
     const polishQuestionText = vi.fn()
     render(
       <QAPanel
@@ -44,35 +44,36 @@ describe('QAPanel — typed-question polish (SCRUM-156)', () => {
         polishQuestionText={polishQuestionText}
       />
     )
-    const polish = screen.getByTestId('polish-question-btn')
-    expect(polish).toBeTruthy()
-    expect(polish.getAttribute('aria-label')).toMatch(/polish/i)
-    expect(polish.disabled).toBe(false)
+    expect(screen.queryByTestId('polish-question-btn')).toBeNull()
   })
 
-  it('disables polish when there is no typed text and no voice text', () => {
+  it('still renders polish in voice-confirm mode and uses transcribed text gating', () => {
     const polishQuestionText = vi.fn()
     render(
       <QAPanel
         {...baseProps}
-        questionText=""
+        showVoiceConfirm
+        voiceTranscribedText="um voice text"
+        questionText="typed text ignored here"
         polishQuestionText={polishQuestionText}
       />
     )
-    expect(screen.getByTestId('polish-question-btn').disabled).toBe(true)
+    const polish = screen.getByTestId('polish-question-btn')
+    expect(polish.disabled).toBe(false)
+    fireEvent.click(polish)
+    expect(polishQuestionText).toHaveBeenCalledWith(true)
   })
 
-  it('clicking polish in the typed flow invokes the polish handler', () => {
+  it('does not render polish in typed flow when only legacy polishVoiceQuestion is provided', () => {
     const polishQuestionText = vi.fn()
     render(
       <QAPanel
         {...baseProps}
         questionText="hi um like"
-        polishQuestionText={polishQuestionText}
+        polishVoiceQuestion={polishQuestionText}
       />
     )
-    fireEvent.click(screen.getByTestId('polish-question-btn'))
-    expect(polishQuestionText).toHaveBeenCalledWith(true)
+    expect(screen.queryByTestId('polish-question-btn')).toBeNull()
   })
 
   it('polish in voice-confirm mode is enabled by voiceTranscribedText, not questionText', () => {
@@ -92,29 +93,12 @@ describe('QAPanel — typed-question polish (SCRUM-156)', () => {
     expect(polishQuestionText).toHaveBeenCalledWith(true)
   })
 
-  it('does not render polish in the typed flow when no polish handler is provided', () => {
-    render(<QAPanel {...baseProps} questionText="text" />)
-    expect(screen.queryByTestId('polish-question-btn')).toBeNull()
-  })
-
-  it('falls back to legacy polishVoiceQuestion when polishQuestionText is not passed', () => {
-    const polishVoiceQuestion = vi.fn()
-    render(
-      <QAPanel
-        {...baseProps}
-        questionText="text"
-        polishVoiceQuestion={polishVoiceQuestion}
-      />
-    )
-    fireEvent.click(screen.getByTestId('polish-question-btn'))
-    expect(polishVoiceQuestion).toHaveBeenCalledWith(true)
-  })
-
   it('shows a busy spinner while polishing in LLM mode', () => {
     render(
       <QAPanel
         {...baseProps}
-        questionText="text"
+        showVoiceConfirm
+        voiceTranscribedText="voice text"
         polishQuestionText={vi.fn()}
         voicePolishing
         voicePolishMode="llm"
@@ -126,7 +110,7 @@ describe('QAPanel — typed-question polish (SCRUM-156)', () => {
   })
 })
 
-describe('QAHistory inline reply — typed polish (SCRUM-156)', () => {
+describe('QAHistory inline reply — speech-only polish visibility (SCRUM-162)', () => {
   function renderReply(extra = {}) {
     const questions = [
       { id: 'q1', question_text: 'What is the plan?', created_at: '2024-01-01T00:00:00Z', asked_by: 'someone@x.com', answer: null },
@@ -163,19 +147,21 @@ describe('QAHistory inline reply — typed polish (SCRUM-156)', () => {
     )
   }
 
-  it('renders a polish button in the typed reply flow when polishQuestionText is provided', () => {
+  it('does not render polish in typed reply flow even when polish handlers are provided', () => {
     const polishQuestionText = vi.fn()
     renderReply({ polishQuestionText })
-    const polish = screen.getByTestId('polish-reply-btn')
-    expect(polish).toBeTruthy()
-    fireEvent.click(polish)
-    expect(polishQuestionText).toHaveBeenCalledWith(true)
+    expect(screen.queryByTestId('polish-reply-btn')).toBeNull()
   })
 
-  it('falls back to polishVoiceQuestion in the typed reply flow when polishQuestionText is missing', () => {
-    const polishVoiceQuestion = vi.fn()
-    renderReply({ polishVoiceQuestion, polishQuestionText: undefined })
-    fireEvent.click(screen.getByTestId('polish-reply-btn'))
-    expect(polishVoiceQuestion).toHaveBeenCalledWith(true)
+  it('renders polish in voice-confirm reply flow and invokes handler', () => {
+    const polishQuestionText = vi.fn()
+    renderReply({
+      showVoiceConfirm: true,
+      voiceTranscribedText: 'voice follow up',
+      polishQuestionText,
+    })
+    const polish = screen.getByTestId('polish-reply-btn')
+    fireEvent.click(polish)
+    expect(polishQuestionText).toHaveBeenCalledWith(true)
   })
 })

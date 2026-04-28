@@ -112,15 +112,6 @@ export function QAPanel({
             </div>
           ) : (
             <div className={styles.askActions}>
-              {polishHandler && !replyingToQuestionId && (
-                <PolishButton
-                  onPolish={polishHandler}
-                  disabled={!canPolish}
-                  busy={voicePolishing && voicePolishMode === 'llm'}
-                  className={styles.polishBtn}
-                  data-testid="polish-question-btn"
-                />
-              )}
               <button
                 data-testid="ask-button"
                 type="button"
