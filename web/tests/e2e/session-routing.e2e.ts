@@ -320,6 +320,7 @@ test('creator header participant link uses canonical /app/sessions/:id path', as
     // This anchor is rendered only for authenticated creators who have an open session.
     const participantLink = page.getByRole('link', { name: /view as participant/i })
     await expect(participantLink).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('app-auth-cluster')).toHaveCount(0)
 
     // The href must use the canonical /app/sessions/ prefix — not the legacy ?session= format.
     const href = await participantLink.getAttribute('href')

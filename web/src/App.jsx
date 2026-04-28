@@ -18,6 +18,7 @@ import {
   isLikelySessionId,
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
+import { shouldShowAppAuthCluster, shouldShowCreatorParticipantCta } from './headerVisibility'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -2751,6 +2752,16 @@ function App() {
   const canCreateSessions = !authUser || authUser.global_role !== 'participant'
   // Render participant view when session mode is participant, URL is view, or user role is participant (so ?mode=edit never shows edit UI)
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view' || authUser?.global_role === 'participant'
+  const showCreatorParticipantCta = shouldShowCreatorParticipantCta({
+    hasValidSession,
+    participantUrl,
+    sessionUserMode,
+  })
+  const showAppAuthCluster = shouldShowAppAuthCluster({
+    isParticipantMode,
+    hasValidSession,
+    showCreatorParticipantCta,
+  })
 
   // Shared logout: used by the App header button and the ParticipantSessionMenu so both
   // entry points clear the same state.
@@ -3241,7 +3252,7 @@ function App() {
               Hidden when the participant shell is mounted with a valid session — ParticipantSessionMenu provides
               parity (identity, sessions, debug, logout, optional Admin link). The Admin /
               creator-tools header still renders below for those paths. */}
-          {!(isParticipantMode && hasValidSession) && (
+          {showAppAuthCluster && (
             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }} data-testid="app-auth-cluster">
               <span style={{ fontSize: '13px', color: '#555', display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', lineHeight: 1.35 }}>
                 Logged in as {authUser.display_name || authUser.email}
@@ -3283,7 +3294,7 @@ function App() {
               </label>
             </div>
           )}
-          {hasValidSession && participantUrl && sessionUserMode === 'creator' && (
+          {showCreatorParticipantCta && (
             <a
               href={participantUrl}
               target="_blank"
