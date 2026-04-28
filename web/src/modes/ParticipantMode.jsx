@@ -60,6 +60,7 @@ export function ParticipantMode({
   confirmVoiceQuestion,
   cancelVoiceReview,
   polishVoiceQuestion,
+  polishQuestionText,
   voicePolishing,
   voicePolishMode,
   refetchSession,
@@ -748,6 +749,7 @@ export function ParticipantMode({
             confirmVoiceQuestion={confirmVoiceQuestion}
             cancelVoiceReview={cancelVoiceReview}
             polishVoiceQuestion={polishVoiceQuestion}
+            polishQuestionText={polishQuestionText}
             voicePolishing={voicePolishing}
             voicePolishMode={voicePolishMode}
           />

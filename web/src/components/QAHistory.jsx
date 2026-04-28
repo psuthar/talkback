@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import styles from './QAHistory.module.css'
 import { MicIcon } from './icons/MicIcon'
+import { PolishButton } from './PolishButton'
 
 const ANSWER_STATUS_LABELS = {
   answered: 'Answered',
@@ -84,6 +85,7 @@ function InlineReplyForm({
   confirmVoiceQuestion,
   cancelVoiceReview,
   polishVoiceQuestion,
+  polishQuestionText,
   voicePolishing,
   voicePolishMode,
   askQuestionFeedback
@@ -92,6 +94,12 @@ function InlineReplyForm({
   useEffect(() => {
     textareaRef.current?.focus()
   }, [])
+
+  // Same single-source invariant as the main ask flow: voice confirm uses the
+  // transcribed buffer, the typed reply uses questionText.
+  const polishHandler = polishQuestionText || polishVoiceQuestion
+  const polishSourceText = showVoiceConfirm ? voiceTranscribedText : questionText
+  const canPolish = !!polishHandler && !!polishSourceText?.trim() && !loading && !voicePolishing
 
   return (
     <div className={styles.replyForm}>
@@ -134,6 +142,15 @@ function InlineReplyForm({
                 className={styles.replyFormTextarea}
               />
               <div className={styles.replyFormActions}>
+                {polishHandler && (
+                  <PolishButton
+                    onPolish={polishHandler}
+                    disabled={!canPolish}
+                    busy={voicePolishing && voicePolishMode === 'llm'}
+                    className={styles.replyFormPolishBtn}
+                    data-testid="polish-reply-btn"
+                  />
+                )}
                 <button
                   type="button"
                   onClick={askSessionQuestion}
@@ -162,16 +179,15 @@ function InlineReplyForm({
                 className={styles.replyFormVoiceTextarea}
               />
               <div className={styles.replyFormVoiceActions}>
-                {polishVoiceQuestion && (
-                  <button
-                    type="button"
-                    onClick={() => polishVoiceQuestion(true)}
-                    disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
-                    title="AI polish"
+                {polishHandler && (
+                  <PolishButton
+                    onPolish={polishHandler}
+                    disabled={!canPolish}
+                    busy={voicePolishing && voicePolishMode === 'llm'}
                     className={styles.replyFormPolishBtn}
-                  >
-                    {voicePolishing && voicePolishMode === 'llm' ? <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden /> : 'Polish'}
-                  </button>
+                    shortLabel="Polish"
+                    data-testid="polish-reply-btn"
+                  />
                 )}
                 <button type="button" onClick={confirmVoiceQuestion} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.replyFormConfirmBtn}>
                   Confirm & Submit
@@ -415,6 +431,7 @@ export function QAHistory({
   confirmVoiceQuestion,
   cancelVoiceReview,
   polishVoiceQuestion,
+  polishQuestionText,
   voicePolishing,
   voicePolishMode,
   askQuestionFeedback
@@ -504,6 +521,7 @@ export function QAHistory({
           confirmVoiceQuestion: confirmVoiceQuestion || (() => {}),
           cancelVoiceReview: cancelVoiceReview || (() => {}),
           polishVoiceQuestion: polishVoiceQuestion || (() => {}),
+          polishQuestionText: polishQuestionText || polishVoiceQuestion || null,
           voicePolishing: !!voicePolishing,
           voicePolishMode: voicePolishMode || '',
           askQuestionFeedback: askQuestionFeedback || {}
