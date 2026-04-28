@@ -8,6 +8,7 @@ import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
 import { OrchestrationRecCard } from '../components/OrchestrationRecCard'
 import { OrchestrationRecGroup } from '../components/OrchestrationRecGroup'
+import { OrchestrationPanelHeader } from '../components/OrchestrationPanelHeader'
 import orchestrationActionsStyles from '../components/OrchestrationRecActions.module.css'
 import {
   groupRecommendations,
@@ -2014,18 +2015,11 @@ export function CreatorMode({
           {!rightPanelCollapsed && (
             <div className="creator-qa-scroll">
               <div data-testid="orchestration-panel" style={{ margin: '10px 12px', padding: '10px', border: '1px solid #e3e3e3', borderRadius: '6px', backgroundColor: '#fafafa' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
-                  <strong style={{ fontSize: '13px' }}>AI Suggested Next Actions</strong>
-                  <button
-                    data-testid="orchestration-refresh-btn"
-                    type="button"
-                    onClick={() => loadOrchestrationRecommendations(currentSession?.session?.id, { sync: true })}
-                    disabled={orchestrationLoading || !currentSession?.session?.id}
-                    style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}
-                  >
-                    {orchestrationLoading ? 'Refreshing…' : 'Refresh'}
-                  </button>
-                </div>
+                <OrchestrationPanelHeader
+                  loading={orchestrationLoading}
+                  disabled={orchestrationLoading || !currentSession?.session?.id}
+                  onRefresh={() => loadOrchestrationRecommendations(currentSession?.session?.id, { sync: true })}
+                />
                 {orchestrationFeedback?.message && (
                   <div data-testid="orchestration-feedback" className={orchestrationFeedback.type} style={{ marginBottom: '8px', fontSize: '12px' }}>
                     {orchestrationFeedback.message}
