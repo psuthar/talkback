@@ -123,14 +123,18 @@ test('orchestration panel renders and refresh triggers sync', async ({ page, con
   await expect(emptyState).toContainText('Add transcript or materials, then collect participant questions', { timeout: 10_000 })
 
   // Click refresh — should call sync endpoint.
+  // SCRUM-195: refresh is now an icon-only button labeled by aria-label.
   const refreshBtn = page.getByTestId('orchestration-refresh-btn')
   await expect(refreshBtn).toBeVisible()
+  expect(await refreshBtn.getAttribute('aria-label')).toBe('Refresh suggestions')
   await refreshBtn.click()
 
   // Wait for the sync call to be intercepted.
   await expect.poll(() => syncCalled, { timeout: 10_000 }).toBe(true)
-  // Refresh button returns to ready state.
-  await expect(refreshBtn).toHaveText('Refresh', { timeout: 5_000 })
+  // Refresh button returns to ready state — the spinner-on-loading is gone and
+  // the arrow icon is back. The icon is testid'd as orchestration-refresh-icon.
+  await expect(page.getByTestId('orchestration-refresh-icon')).toBeVisible({ timeout: 5_000 })
+  await expect(page.getByTestId('orchestration-refresh-spinner')).toHaveCount(0)
 
   // Teardown
   await loginAsAdmin(request)
