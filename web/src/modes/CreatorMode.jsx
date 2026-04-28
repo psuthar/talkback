@@ -7,6 +7,7 @@ import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
 import { OrchestrationRecCard } from '../components/OrchestrationRecCard'
+import orchestrationActionsStyles from '../components/OrchestrationRecActions.module.css'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
@@ -2048,13 +2049,13 @@ export function CreatorMode({
                                   {recordOutcomeError}
                                 </div>
                               ) : null}
-                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+                              <div style={{ marginTop: '6px' }} className={orchestrationActionsStyles.actions}>
                                 <button
                                   data-testid={`orchestration-save-outcome-${rec.id}`}
                                   type="button"
                                   disabled={actioning}
                                   onClick={() => saveDecisionOutcomeFromOrchestration(currentSession?.session?.id, rec, recordOutcomeText)}
-                                  style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}
+                                  className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnPrimary} ${orchestrationActionsStyles.btnPrimary_decision_readiness}`}
                                 >
                                   {actioning ? '…' : 'Save outcome'}
                                 </button>
@@ -2065,7 +2066,7 @@ export function CreatorMode({
                                     setRecordOutcomeRecId(null)
                                     setRecordOutcomeError('')
                                   }}
-                                  style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#e0e0e0', color: '#333' }}
+                                  className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnGhost}`}
                                 >
                                   Cancel
                                 </button>

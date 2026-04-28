@@ -160,3 +160,66 @@ describe('OrchestrationRecActions — guards', () => {
     expect(container.firstChild).toBeNull()
   })
 })
+
+describe('OrchestrationRecActions — primary vs ghost styling (SCRUM-192)', () => {
+  it('Approve draft is primary (review_draft_answer accent); Dismiss draft is ghost-danger', () => {
+    render(<OrchestrationRecActions rec={makeRec()} {...makeHandlers()} />)
+    const approve = screen.getByTestId('orchestration-approve-rec-1')
+    expect(approve.className).toMatch(/btnPrimary/)
+    expect(approve.className).toMatch(/btnPrimary_review_draft_answer/)
+    const dismissDraft = screen.getByTestId('orchestration-dismiss-draft-rec-1')
+    expect(dismissDraft.className).toMatch(/btnGhostDanger/)
+    expect(dismissDraft.className).not.toMatch(/btnPrimary/)
+  })
+
+  it('Generate draft is primary (unanswered_question accent); Mark complete and Not relevant are ghost', () => {
+    render(
+      <OrchestrationRecActions
+        rec={makeRec({ recommendation_type: 'unanswered_question' })}
+        {...makeHandlers()}
+      />
+    )
+    const generate = screen.getByTestId('orchestration-generate-rec-1')
+    expect(generate.className).toMatch(/btnPrimary_unanswered_question/)
+    const markComplete = screen.getByTestId('orchestration-mark-complete-rec-1')
+    expect(markComplete.className).toMatch(/btnGhost/)
+    expect(markComplete.className).not.toMatch(/btnPrimary/)
+    const notRelevant = screen.getByTestId('orchestration-not-relevant-rec-1')
+    expect(notRelevant.className).toMatch(/btnGhost/)
+    expect(notRelevant.className).not.toMatch(/btnPrimary/)
+  })
+
+  it('Record outcome is primary (decision_readiness accent)', () => {
+    render(
+      <OrchestrationRecActions
+        rec={makeRec({ recommendation_type: 'decision_readiness' })}
+        decisionReadinessComplete
+        {...makeHandlers()}
+      />
+    )
+    const recordOutcome = screen.getByTestId('orchestration-record-outcome-rec-1')
+    expect(recordOutcome.className).toMatch(/btnPrimary_decision_readiness/)
+  })
+
+  it('the decision_readiness Dismiss (when inputs incomplete) is ghost, not danger', () => {
+    render(
+      <OrchestrationRecActions
+        rec={makeRec({ recommendation_type: 'decision_readiness' })}
+        decisionReadinessComplete={false}
+        {...makeHandlers()}
+      />
+    )
+    const dismiss = screen.getByTestId('orchestration-dismiss-rec-1')
+    expect(dismiss.className).toMatch(/btnGhost/)
+    expect(dismiss.className).not.toMatch(/btnGhostDanger/)
+    expect(dismiss.className).not.toMatch(/btnPrimary/)
+  })
+
+  it('disabled primary button is still primary-shaped (CSS handles the dimmed look)', () => {
+    render(<OrchestrationRecActions rec={makeRec()} actioning {...makeHandlers()} />)
+    const approve = screen.getByTestId('orchestration-approve-rec-1')
+    expect(approve.disabled).toBe(true)
+    // Class is still applied; .btn:disabled in the module dims it via opacity.
+    expect(approve.className).toMatch(/btnPrimary_review_draft_answer/)
+  })
+})
