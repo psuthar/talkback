@@ -2751,6 +2751,22 @@ function App() {
   const canCreateSessions = !authUser || authUser.global_role !== 'participant'
   // Render participant view when session mode is participant, URL is view, or user role is participant (so ?mode=edit never shows edit UI)
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view' || authUser?.global_role === 'participant'
+
+  // Shared logout: used by the App header button and the ParticipantSessionMenu so both
+  // entry points clear the same state.
+  const logoutCurrentUser = async () => {
+    try {
+      await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
+    } catch (_) { /* ignore */ }
+    setAuthUser(null)
+    setCurrentSession(null)
+    setViewMode('session')
+    setSessionUserMode(null)
+    setCurrentUser('')
+    setSessionSelectFeedback({ type: '', message: '' })
+    window.history.replaceState(null, '', '/')
+    setUrlKey(k => k + 1)
+  }
   // Use session from URL so participant tab can connect to WebSocket before openSession() completes
   const urlSessionId = navForUrl.sessionId
   const effectiveSessionId = sessionId || (urlMode === 'view' && urlSessionId ? urlSessionId : null)
@@ -3221,59 +3237,52 @@ function App() {
             justifyContent: 'flex-end',
           }}
         >
-          {/* Log out / Admin / Debug: one alignment group (SCRUM-79). View as Participant stays separate (larger CTA). */}
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <span style={{ fontSize: '13px', color: '#555', display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', lineHeight: 1.35 }}>
-              Logged in as {authUser.display_name || authUser.email}
-              {authUser?.id && (
-                <>
-                  {' '}
-                  (id:{' '}
-                  <code style={{ fontSize: '12px', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace' }}>{authUser.id}</code>
-                  )
-                </>
+          {/* Log out / Admin / Debug: one alignment group (SCRUM-79). View as Participant stays separate (larger CTA).
+              Hidden when the participant shell is mounted with a valid session — ParticipantSessionMenu provides
+              parity (identity, sessions, debug, logout, optional Admin link). The Admin /
+              creator-tools header still renders below for those paths. */}
+          {!(isParticipantMode && hasValidSession) && (
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }} data-testid="app-auth-cluster">
+              <span style={{ fontSize: '13px', color: '#555', display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', lineHeight: 1.35 }}>
+                Logged in as {authUser.display_name || authUser.email}
+                {authUser?.id && (
+                  <>
+                    {' '}
+                    (id:{' '}
+                    <code style={{ fontSize: '12px', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace' }}>{authUser.id}</code>
+                    )
+                  </>
+                )}
+                {authUser.global_role === 'admin' && (
+                  <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={logoutCurrentUser}
+                style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555', lineHeight: 1.25 }}
+              >
+                Log out
+              </button>
+              {authUser?.global_role === 'admin' && (
+                showAdminView ? (
+                  <a href="?" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Back to app</a>
+                ) : (
+                  <a href="?mode=admin" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Admin</a>
+                )
               )}
-              {authUser.global_role === 'admin' && (
-                <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
-              )}
-            </span>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/auth/logout`, { method: 'POST', credentials: 'include' })
-                } catch (_) { /* ignore */ }
-                setAuthUser(null)
-                setCurrentSession(null)
-                setViewMode('session')
-                setSessionUserMode(null)
-                setCurrentUser('')
-                setSessionSelectFeedback({ type: '', message: '' })
-                window.history.replaceState(null, '', '/')
-                setUrlKey(k => k + 1)
-              }}
-              style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555', lineHeight: 1.25 }}
-            >
-              Log out
-            </button>
-            {authUser?.global_role === 'admin' && (
-              showAdminView ? (
-                <a href="?" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Back to app</a>
-              ) : (
-                <a href="?mode=admin" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Admin</a>
-              )
-            )}
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer', userSelect: 'none', lineHeight: 1.25 }}>
-              <input
-                type="checkbox"
-                checked={debugMode}
-                onChange={(e) => setDebugMode(e.target.checked)}
-                style={{ width: '16px', height: '16px', cursor: 'pointer', flexShrink: 0 }}
-                aria-label="Show debug panel"
-              />
-              <span>Debug</span>
-            </label>
-          </div>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer', userSelect: 'none', lineHeight: 1.25 }}>
+                <input
+                  type="checkbox"
+                  checked={debugMode}
+                  onChange={(e) => setDebugMode(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer', flexShrink: 0 }}
+                  aria-label="Show debug panel"
+                />
+                <span>Debug</span>
+              </label>
+            </div>
+          )}
           {hasValidSession && participantUrl && sessionUserMode === 'creator' && (
             <a
               href={participantUrl}
@@ -4195,6 +4204,9 @@ function App() {
               polishQuestionText={polishQuestionText}
               voicePolishing={voicePolishing}
               voicePolishMode={voicePolishMode}
+              onLogout={logoutCurrentUser}
+              debugMode={debugMode}
+              setDebugMode={setDebugMode}
               refetchSession={refetchSession}
               markMaterialsSeen={markMaterialsSeen}
               replyingToQuestionId={replyingToQuestionId}
