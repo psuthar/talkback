@@ -6,6 +6,7 @@ import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
+import { DecisionBar } from '../components/DecisionBar'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
@@ -289,7 +290,6 @@ export function CreatorMode({
   const [contextSaving, setContextSaving] = useState(false)
   const [contextFeedback, setContextFeedback] = useState({ type: '', message: '' })
   const [stanceData, setStanceData] = useState(null)
-  const [stancePanelExpanded, setStancePanelExpanded] = useState(false)
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
@@ -1440,6 +1440,25 @@ export function CreatorMode({
         />
       )}
 
+      {/* Stance picker + others' counts — shared with participant view (SCRUM-188). */}
+      {currentSession?.session && (
+        <DecisionBar
+          placement="top"
+          primaryDecision={currentSession.session.primary_decision}
+          decisionOutcome={currentSession.session.decision_outcome}
+          myStance={stanceData?.my_stance}
+          stanceAggregate={stanceData?.aggregate}
+          stanceResponses={stanceData?.responses}
+          sessionInvitations={sessionInvitations}
+          stanceRationale={stanceRationale}
+          setStanceRationale={setStanceRationale}
+          stanceSubmitting={stanceSubmitting}
+          stanceFeedback={stanceFeedback}
+          submitStance={submitStance}
+          clearStance={clearStance}
+        />
+      )}
+
       {/* Processing progression: flex-shrink 0, sits above grid */}
       {showPanel && (() => {
         const runningStates = ['queued', 'fetching', 'downloading', 'parsing', 'chunking', 'embedding']
@@ -1615,127 +1634,7 @@ export function CreatorMode({
           {!leftPanelCollapsed && (
             <div className="creator-left-scroll">
 
-              {/* Decisions: at top so creator can see/capture stance first */}
-              {currentSession?.session?.primary_decision && (
-                <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                  <button type="button" onClick={() => setStancePanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={stancePanelExpanded}>
-                    <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{stancePanelExpanded ? '▼' : '▷'}</span>
-                    {' '}Decisions ({stanceData?.aggregate?.total ?? 0})
-                  </button>
-                  {stancePanelExpanded && (
-                    <div style={{ marginTop: '8px' }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '6px' }}>Your decision</div>
-                      {currentSession.session.decision_outcome ? (
-                        <p style={{ margin: 0, fontSize: '12px', color: '#888', fontStyle: 'italic' }}>Outcome recorded — stances are locked.</p>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
-                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                              {['agree', 'disagree', 'conditional', 'abstain', 'need_more_info'].map((s) => {
-                                const label = s === 'need_more_info' ? 'Need More Info' : s.charAt(0).toUpperCase() + s.slice(1)
-                                const bg = s === 'agree' ? 'var(--color-success-bg)' : s === 'disagree' ? '#ffebee' : s === 'conditional' ? '#fff3e0' : s === 'abstain' ? '#eceff1' : 'var(--color-primary-bg)'
-                                const border = s === 'agree' ? 'var(--color-success-light)' : s === 'disagree' ? '#e57373' : s === 'conditional' ? '#ffb74d' : s === 'abstain' ? '#90a4ae' : '#64b5f6'
-                                const textColor = s === 'agree' ? 'var(--color-success)' : s === 'disagree' ? 'var(--color-danger-dark)' : s === 'conditional' ? '#e65100' : s === 'abstain' ? '#546e7a' : 'var(--color-primary-dark)'
-                                const myStance = stanceData?.my_stance
-                                return (
-                                  <button
-                                    key={s}
-                                    type="button"
-                                    onClick={() => submitStance(s)}
-                                    disabled={stanceSubmitting}
-                                    style={{
-                                      padding: '4px 10px',
-                                      fontSize: '12px',
-                                      borderRadius: '6px',
-                                      border: myStance?.stance === s ? `2px solid ${border}` : `1px solid ${border}`,
-                                      backgroundColor: bg,
-                                      color: textColor,
-                                      fontWeight: myStance?.stance === s ? 700 : 500,
-                                      cursor: stanceSubmitting ? 'default' : 'pointer',
-                                      margin: 0
-                                    }}
-                                  >
-                                    {label}
-                                  </button>
-                                )
-                              })}
-                            </div>
-                            {(stanceData?.my_stance?.stance || stanceRationale?.trim()) && (
-                              <button
-                                type="button"
-                                onClick={clearStance}
-                                disabled={stanceSubmitting}
-                                style={{
-                                  marginLeft: 'auto',
-                                  padding: '4px 10px',
-                                  fontSize: '12px',
-                                  borderRadius: '6px',
-                                  border: '1px solid #9e9e9e',
-                                  backgroundColor: '#fff',
-                                  color: '#616161',
-                                  fontWeight: 500,
-                                  cursor: stanceSubmitting ? 'default' : 'pointer'
-                                }}
-                              >
-                                Clear
-                              </button>
-                            )}
-                          </div>
-                          <input
-                            type="text"
-                            placeholder="Rationale (optional)"
-                            value={stanceRationale}
-                            onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-                            style={{ width: '100%', padding: '4px 8px', fontSize: '12px', border: '1px solid #e0e0e0', borderRadius: '4px', boxSizing: 'border-box', marginBottom: '4px' }}
-                          />
-                          {stanceData?.my_stance?.stance && stanceRationale !== (stanceData?.my_stance?.rationale ?? '') && (
-                            <button
-                              type="button"
-                              data-testid="save-rationale-btn"
-                              onClick={() => submitStance(stanceData.my_stance.stance)}
-                              disabled={stanceSubmitting}
-                              style={{ padding: '3px 10px', fontSize: '12px', borderRadius: '4px', border: '1px solid var(--color-primary)', backgroundColor: 'var(--color-primary-bg)', color: 'var(--color-primary)', cursor: stanceSubmitting ? 'default' : 'pointer', marginBottom: '4px' }}
-                            >
-                              {stanceSubmitting ? 'Saving…' : 'Save rationale'}
-                            </button>
-                          )}
-                          {stanceFeedback.message && (
-                            <p style={{ margin: 0, fontSize: '12px', color: stanceFeedback.type === 'error' ? 'var(--color-danger-dark)' : 'var(--color-success)' }}>{stanceFeedback.message}</p>
-                          )}
-                        </>
-                      )}
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginTop: '10px', marginBottom: '4px' }}>Members&apos; decisions</div>
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                        {[
-                          ['Agree', stanceData?.aggregate?.agree ?? 0, 'var(--color-success)', 'var(--color-success-bg)'],
-                          ['Disagree', stanceData?.aggregate?.disagree ?? 0, 'var(--color-danger-dark)', '#ffebee'],
-                          ['Conditional', stanceData?.aggregate?.conditional ?? 0, '#e65100', '#fff3e0'],
-                          ['Abstain', stanceData?.aggregate?.abstain ?? 0, '#546e7a', '#eceff1'],
-                          ['Need More Info', stanceData?.aggregate?.need_more_info ?? 0, 'var(--color-primary-dark)', 'var(--color-primary-bg)']
-                        ].map(([label, count, color, bg]) => (
-                          <span key={label} style={{ padding: '2px 8px', borderRadius: '10px', fontSize: '12px', fontWeight: count > 0 ? 700 : 400, color: count > 0 ? color : '#999', backgroundColor: count > 0 ? bg : '#f5f5f5', border: `1px solid ${count > 0 ? color : '#e0e0e0'}` }}>
-                            {label}: {count}
-                          </span>
-                        ))}
-                      </div>
-                      {(stanceData?.responses?.length > 0) ? (
-                        <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {stanceData.responses.map((r) => (
-                            <div key={r.id} style={{ padding: '4px 8px', backgroundColor: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '3px', fontSize: '12px' }}>
-                              <span style={{ fontWeight: 600 }}>{r.user_email}</span>
-                              {' — '}
-                              <span style={{ textTransform: 'capitalize' }}>{(r.stance || '').replace(/_/g, ' ')}</span>
-                              {r.rationale && r.rationale.trim() && <span style={{ color: '#666', marginLeft: '4px' }}>&quot;{r.rationale.trim().length > 60 ? r.rationale.trim().slice(0, 60) + '…' : r.rationale.trim()}&quot;</span>}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p style={{ margin: 0, fontSize: '12px', color: '#888' }}>No responses yet.</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* SCRUM-188: legacy "Decisions" sidebar block removed; stance entry + counts now live in the top DecisionBar. */}
 
               {/* Context: Premise, Decision, Outcome */}
               <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>

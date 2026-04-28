@@ -97,4 +97,29 @@ test('creator opens session in edit mode, sees creator-only UI', async ({ page, 
   await expect(brief).toContainText('Decision')
   await expect(brief).toContainText('Should we hire candidate Z?')
   // Outcome row only renders when decision_outcome is also set; not asserted here.
+
+  // --- SCRUM-188: shared DecisionBar renders at the top of the creator view ---
+  const decisionBar = page.getByTestId('decision-bar')
+  await expect(decisionBar).toBeVisible({ timeout: 10_000 })
+
+  const stanceTrigger = page.getByTestId('stance-trigger-btn')
+  await expect(stanceTrigger).toBeVisible({ timeout: 5_000 })
+
+  // Reduced 3-option stance set (matches participant): conditional + abstain are no longer submittable from the UI.
+  await stanceTrigger.click()
+  await expect(page.getByTestId('stance-menu')).toBeVisible({ timeout: 3_000 })
+  await expect(page.getByTestId('stance-btn-agree')).toBeVisible()
+  await expect(page.getByTestId('stance-btn-disagree')).toBeVisible()
+  await expect(page.getByTestId('stance-btn-need_more_info')).toBeVisible()
+  await expect(page.locator('[data-testid="stance-btn-conditional"]')).toHaveCount(0)
+  await expect(page.locator('[data-testid="stance-btn-abstain"]')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // --- SCRUM-188: legacy sidebar "Decisions" collapsible is removed ---
+  const sidebarDecisions = page
+    .locator('.creator-left-scroll')
+    .getByRole('button', { name: /^Decisions \(\d+\)$/ })
+  await expect(sidebarDecisions).toHaveCount(0)
+  // The legacy inline rationale + save-rationale button (data-testid="save-rationale-btn") is gone too.
+  await expect(page.getByTestId('save-rationale-btn')).toHaveCount(0)
 })
