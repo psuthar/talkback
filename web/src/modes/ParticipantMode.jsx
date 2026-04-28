@@ -18,6 +18,7 @@ import {
   setParticipantOnboardingDismissed,
 } from '../utils/participantStorage'
 import { ParticipantOnboardingDialog } from '../components/ParticipantOnboardingDialog'
+import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import styles from './ParticipantMode.module.css'
 
 export function ParticipantMode({
@@ -70,6 +71,9 @@ export function ParticipantMode({
   currentAskerName,
   onCitationClick,
   onClearSession,
+  onLogout,
+  debugMode = false,
+  setDebugMode,
   stanceVersion = 0,
   sessionUpdatedVersion = 0,
   sessionInvitations = []
@@ -536,15 +540,13 @@ export function ParticipantMode({
             {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
           </span>
         </div>
-        {onClearSession && (
-          <button
-            type="button"
-            onClick={onClearSession}
-            style={{ backgroundColor: 'var(--color-primary)', color: 'white', padding: '8px 16px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500 }}
-          >
-            Show All Sessions
-          </button>
-        )}
+        <ParticipantSessionMenu
+          authUser={authUser}
+          onShowAllSessions={onClearSession}
+          onLogout={onLogout}
+          debugMode={debugMode}
+          setDebugMode={setDebugMode}
+        />
       </div>
 
       <DecisionBriefHeader
