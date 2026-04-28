@@ -215,6 +215,10 @@ function StanceDropdown({
     triggerRef.current?.focus()
     await onClear?.()
   }
+  const handleCancelEdit = () => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
 
   const triggerLabel = submitted ? `✓ ${stanceLabel(myStance.stance)}` : 'Choose stance…'
   const triggerAriaLabel = submitted
@@ -225,7 +229,7 @@ function StanceDropdown({
 
   return (
     <div className={styles.dropdownBlock}>
-      <div className={styles.triggerRow}>
+      <div className={styles.triggerRow} data-testid={submitted ? 'decision-bar-submitted' : undefined}>
         <button
           ref={triggerRef}
           type="button"
@@ -274,18 +278,32 @@ function StanceDropdown({
             )
           })}
           {submitted && (
-            <li role="none">
-              <button
-                role="menuitem"
-                type="button"
-                data-testid="stance-clear-btn"
-                onClick={handleClear}
-                disabled={stanceSubmitting}
-                className={styles.menuItemClear}
-              >
-                Clear stance
-              </button>
-            </li>
+            <>
+              <li role="none">
+                <button
+                  role="menuitem"
+                  type="button"
+                  data-testid="stance-clear-btn"
+                  onClick={handleClear}
+                  disabled={stanceSubmitting}
+                  className={styles.menuItemClear}
+                >
+                  Clear stance
+                </button>
+              </li>
+              <li role="none">
+                <button
+                  role="menuitem"
+                  type="button"
+                  data-testid="stance-cancel-edit-btn"
+                  onClick={handleCancelEdit}
+                  disabled={stanceSubmitting}
+                  className={styles.menuItem}
+                >
+                  Cancel
+                </button>
+              </li>
+            </>
           )}
         </ul>
       )}

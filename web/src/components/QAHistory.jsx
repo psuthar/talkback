@@ -142,15 +142,6 @@ function InlineReplyForm({
                 className={styles.replyFormTextarea}
               />
               <div className={styles.replyFormActions}>
-                {polishHandler && (
-                  <PolishButton
-                    onPolish={polishHandler}
-                    disabled={!canPolish}
-                    busy={voicePolishing && voicePolishMode === 'llm'}
-                    className={styles.replyFormPolishBtn}
-                    data-testid="polish-reply-btn"
-                  />
-                )}
                 <button
                   type="button"
                   onClick={askSessionQuestion}

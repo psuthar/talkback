@@ -85,6 +85,7 @@ describe('DecisionBar', () => {
     expect(screen.getByTestId('stance-rationale-input')).toBeTruthy()
     // Menu starts closed
     expect(screen.queryByTestId('stance-btn-agree')).toBeNull()
+    expect(screen.getByTestId('decision-bar-submitted')).toBeTruthy()
   })
 
   it('clicking the submitted trigger reopens the menu and exposes Clear', () => {
@@ -105,6 +106,18 @@ describe('DecisionBar', () => {
     fireEvent.click(screen.getByTestId('stance-edit-btn'))
     fireEvent.click(screen.getByTestId('stance-clear-btn'))
     expect(clearStance).toHaveBeenCalled()
+  })
+
+  it('cancel edit menu item closes menu without clearing stance', () => {
+    const clearStance = vi.fn()
+    render(<DecisionBar {...makeProps({
+      myStance: { stance: 'disagree', rationale: 'Concerned' },
+      clearStance,
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-edit-btn'))
+    fireEvent.click(screen.getByTestId('stance-cancel-edit-btn'))
+    expect(screen.queryByTestId('stance-menu')).toBeNull()
+    expect(clearStance).not.toHaveBeenCalled()
   })
 
   it('Save rationale only appears when rationale differs from saved and submits explicitly', () => {
