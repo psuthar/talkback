@@ -5,6 +5,7 @@ import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/Material
 import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
+import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
@@ -2081,44 +2082,22 @@ export function CreatorMode({
                               </div>
                             </div>
                           )}
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {isDraftReview && (
-                              <>
-                                <button data-testid={`orchestration-approve-${rec.id}`} type="button" disabled={actioning} onClick={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
-                                  {actioning ? '…' : 'Approve draft'}
-                                </button>
-                                <button data-testid={`orchestration-dismiss-draft-${rec.id}`} type="button" disabled={actioning} onClick={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#ef9a9a' }}>
-                                  Dismiss draft
-                                </button>
-                              </>
-                            )}
-                            {isUnanswered && (
-                              <button data-testid={`orchestration-generate-${rec.id}`} type="button" disabled={actioning} onClick={() => generateDraftForRecommendation(currentSession?.session?.id, rec)} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
-                                Generate draft
-                              </button>
-                            )}
-                            {decisionReadinessComplete && !outcomeFormOpen && (
-                              <button
-                                data-testid={`orchestration-record-outcome-${rec.id}`}
-                                type="button"
-                                disabled={actioning}
-                                onClick={() => {
-                                  setRecordOutcomeRecId(rec.id)
-                                  setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
-                                  setRecordOutcomeError('')
-                                }}
-                                style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: 'var(--color-success-bg-hover)', color: '#1b5e20' }}
-                              >
-                                Record outcome
-                              </button>
-                            )}
-                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')} style={{ margin: 0, padding: '4px 8px', fontSize: '12px' }}>
-                              Mark complete
-                            </button>
-                            <button type="button" disabled={actioning} onClick={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')} style={{ margin: 0, padding: '4px 8px', fontSize: '12px', backgroundColor: '#e0e0e0', color: '#333' }}>
-                              Dismiss
-                            </button>
-                          </div>
+                          <OrchestrationRecActions
+                            rec={rec}
+                            actioning={actioning}
+                            outcomeFormOpen={outcomeFormOpen}
+                            decisionReadinessComplete={decisionReadinessComplete}
+                            onApproveDraft={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
+                            onDismissDraft={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
+                            onGenerateDraft={() => generateDraftForRecommendation(currentSession?.session?.id, rec)}
+                            onRecordOutcome={() => {
+                              setRecordOutcomeRecId(rec.id)
+                              setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
+                              setRecordOutcomeError('')
+                            }}
+                            onMarkComplete={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')}
+                            onDismiss={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')}
+                          />
                         </div>
                       )
                     })}
