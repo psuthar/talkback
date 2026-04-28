@@ -15,9 +15,9 @@ import styles from './OrchestrationRecCard.module.css'
  * Children render below the summary / suggested-action block (typically the
  * inline outcome form and the action-button row).
  *
- * The per-card uppercase recommendation_type label is preserved here. It will
- * be removed in SCRUM-193 once recommendations are grouped by type and the
- * group header carries the label.
+ * The per-card uppercase recommendation_type label was removed in SCRUM-193
+ * because the group header now carries the label. Only the status pill remains
+ * in the header row, and only for terminal statuses.
  */
 
 const TERMINAL_STATUSES = new Set(['approved', 'dismissed', 'completed'])
@@ -39,19 +39,16 @@ export function OrchestrationRecCard({ rec, children }) {
       data-rec-type={recType || 'unknown'}
       className={`${styles.card} ${accentClass}`}
     >
-      <div className={styles.header}>
-        <span className={styles.typeLabel}>
-          {String(recType || '').replaceAll('_', ' ')}
-        </span>
-        {showStatusPill && (
+      {showStatusPill && (
+        <div className={styles.header}>
           <span
             data-testid={`orchestration-status-${rec.id}`}
             className={`${styles.statusPill} ${statusPillClass}`}
           >
             {status}
           </span>
-        )}
-      </div>
+        </div>
+      )}
       <div className={styles.summary}>{rec.summary}</div>
       {rec.suggested_action && (
         <div className={styles.suggestedAction}>{rec.suggested_action}</div>

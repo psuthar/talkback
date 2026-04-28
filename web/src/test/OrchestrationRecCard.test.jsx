@@ -14,7 +14,7 @@ function makeRec(overrides = {}) {
 }
 
 describe('OrchestrationRecCard — visual chrome (SCRUM-191)', () => {
-  it('renders the summary, suggested_action, and uppercase type label', () => {
+  it('renders the summary, suggested_action, and children', () => {
     render(
       <OrchestrationRecCard rec={makeRec()}>
         <div data-testid="children-marker" />
@@ -23,8 +23,9 @@ describe('OrchestrationRecCard — visual chrome (SCRUM-191)', () => {
     expect(screen.getByTestId('orchestration-rec-rec-1')).toBeTruthy()
     expect(screen.getByText('Review the draft answer')).toBeTruthy()
     expect(screen.getByText('Approve, dismiss, or rework the generated draft.')).toBeTruthy()
-    // Uppercase type label is preserved (will be removed in SCRUM-193 once grouped)
-    expect(screen.getByText('review draft answer')).toBeTruthy()
+    // SCRUM-193: per-card uppercase type label removed because the group header
+    // now carries it.
+    expect(screen.queryByText('review draft answer')).toBeNull()
     // Children render below the chrome
     expect(screen.getByTestId('children-marker')).toBeTruthy()
   })

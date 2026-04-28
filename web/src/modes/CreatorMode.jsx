@@ -7,7 +7,14 @@ import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
 import { OrchestrationRecCard } from '../components/OrchestrationRecCard'
+import { OrchestrationRecGroup } from '../components/OrchestrationRecGroup'
 import orchestrationActionsStyles from '../components/OrchestrationRecActions.module.css'
+import {
+  groupRecommendations,
+  getOrderedGroupTypes,
+  getDefaultExpandedType,
+  shouldRenderUngrouped,
+} from '../utils/orchestrationGrouping'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
@@ -253,6 +260,9 @@ export function CreatorMode({
   const [orchestrationLoading, setOrchestrationLoading] = useState(false)
   const [orchestrationFeedback, setOrchestrationFeedback] = useState({ type: '', message: '' })
   const [orchestrationActioningId, setOrchestrationActioningId] = useState(null)
+  /** SCRUM-193: per-group expansion overrides keyed by recommendation_type. Empty
+   * object means "use defaults" (highest-priority type expanded, others collapsed). */
+  const [orchestrationGroupExpansions, setOrchestrationGroupExpansions] = useState({})
   /** SCRUM-21: inline record-outcome UI for decision_readiness / inputs_complete */
   const [recordOutcomeRecId, setRecordOutcomeRecId] = useState(null)
   const [recordOutcomeText, setRecordOutcomeText] = useState('')
@@ -2025,75 +2035,103 @@ export function CreatorMode({
                   <div data-testid="orchestration-empty" style={{ fontSize: '12px', color: '#666' }}>
                     {getOrchestrationEmptyStateMessage(currentSession, questions)}
                   </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {orchestrationRecommendations.map((rec) => {
-                      const decisionReadinessComplete = isDecisionReadinessInputsComplete(rec)
-                      const actioning = orchestrationActioningId === rec.id
-                      const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
-                      return (
-                        <OrchestrationRecCard key={rec.id} rec={rec}>
-                          {outcomeFormOpen && (
-                            <div style={{ width: '100%', marginBottom: '8px' }}>
-                              <textarea
-                                data-testid={`orchestration-outcome-input-${rec.id}`}
-                                value={recordOutcomeText}
-                                onChange={(e) => setRecordOutcomeText(e.target.value)}
-                                rows={3}
-                                placeholder="Decision outcome"
-                                disabled={actioning}
-                                style={{ width: '100%', boxSizing: 'border-box', fontSize: '12px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
-                              />
-                              {recordOutcomeError ? (
-                                <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '12px', color: 'var(--color-danger-dark)' }}>
-                                  {recordOutcomeError}
-                                </div>
-                              ) : null}
-                              <div style={{ marginTop: '6px' }} className={orchestrationActionsStyles.actions}>
-                                <button
-                                  data-testid={`orchestration-save-outcome-${rec.id}`}
-                                  type="button"
-                                  disabled={actioning}
-                                  onClick={() => saveDecisionOutcomeFromOrchestration(currentSession?.session?.id, rec, recordOutcomeText)}
-                                  className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnPrimary} ${orchestrationActionsStyles.btnPrimary_decision_readiness}`}
-                                >
-                                  {actioning ? '…' : 'Save outcome'}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={actioning}
-                                  onClick={() => {
-                                    setRecordOutcomeRecId(null)
-                                    setRecordOutcomeError('')
-                                  }}
-                                  className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnGhost}`}
-                                >
-                                  Cancel
-                                </button>
+                ) : (() => {
+                  const groups = groupRecommendations(orchestrationRecommendations)
+                  const orderedTypes = getOrderedGroupTypes(groups)
+                  const defaultExpandedType = getDefaultExpandedType(orderedTypes)
+                  const isGroupExpanded = (type) =>
+                    Object.prototype.hasOwnProperty.call(orchestrationGroupExpansions, type)
+                      ? orchestrationGroupExpansions[type]
+                      : type === defaultExpandedType
+                  const renderCard = (rec) => {
+                    const decisionReadinessComplete = isDecisionReadinessInputsComplete(rec)
+                    const actioning = orchestrationActioningId === rec.id
+                    const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
+                    return (
+                      <OrchestrationRecCard key={rec.id} rec={rec}>
+                        {outcomeFormOpen && (
+                          <div style={{ width: '100%', marginBottom: '8px' }}>
+                            <textarea
+                              data-testid={`orchestration-outcome-input-${rec.id}`}
+                              value={recordOutcomeText}
+                              onChange={(e) => setRecordOutcomeText(e.target.value)}
+                              rows={3}
+                              placeholder="Decision outcome"
+                              disabled={actioning}
+                              style={{ width: '100%', boxSizing: 'border-box', fontSize: '12px', padding: '6px', borderRadius: '4px', border: '1px solid #ccc', resize: 'vertical' }}
+                            />
+                            {recordOutcomeError ? (
+                              <div data-testid={`orchestration-outcome-error-${rec.id}`} style={{ marginTop: '4px', fontSize: '12px', color: 'var(--color-danger-dark)' }}>
+                                {recordOutcomeError}
                               </div>
+                            ) : null}
+                            <div style={{ marginTop: '6px' }} className={orchestrationActionsStyles.actions}>
+                              <button
+                                data-testid={`orchestration-save-outcome-${rec.id}`}
+                                type="button"
+                                disabled={actioning}
+                                onClick={() => saveDecisionOutcomeFromOrchestration(currentSession?.session?.id, rec, recordOutcomeText)}
+                                className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnPrimary} ${orchestrationActionsStyles.btnPrimary_decision_readiness}`}
+                              >
+                                {actioning ? '…' : 'Save outcome'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={actioning}
+                                onClick={() => {
+                                  setRecordOutcomeRecId(null)
+                                  setRecordOutcomeError('')
+                                }}
+                                className={`${orchestrationActionsStyles.btn} ${orchestrationActionsStyles.btnGhost}`}
+                              >
+                                Cancel
+                              </button>
                             </div>
-                          )}
-                          <OrchestrationRecActions
-                            rec={rec}
-                            actioning={actioning}
-                            outcomeFormOpen={outcomeFormOpen}
-                            decisionReadinessComplete={decisionReadinessComplete}
-                            onApproveDraft={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
-                            onDismissDraft={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
-                            onGenerateDraft={() => generateDraftForRecommendation(currentSession?.session?.id, rec)}
-                            onRecordOutcome={() => {
-                              setRecordOutcomeRecId(rec.id)
-                              setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
-                              setRecordOutcomeError('')
-                            }}
-                            onMarkComplete={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')}
-                            onDismiss={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')}
-                          />
-                        </OrchestrationRecCard>
-                      )
-                    })}
-                  </div>
-                )}
+                          </div>
+                        )}
+                        <OrchestrationRecActions
+                          rec={rec}
+                          actioning={actioning}
+                          outcomeFormOpen={outcomeFormOpen}
+                          decisionReadinessComplete={decisionReadinessComplete}
+                          onApproveDraft={() => approveDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
+                          onDismissDraft={() => dismissDraftAnswerFromRecommendation(currentSession?.session?.id, rec)}
+                          onGenerateDraft={() => generateDraftForRecommendation(currentSession?.session?.id, rec)}
+                          onRecordOutcome={() => {
+                            setRecordOutcomeRecId(rec.id)
+                            setRecordOutcomeText(currentSession?.session?.decision_outcome ?? '')
+                            setRecordOutcomeError('')
+                          }}
+                          onMarkComplete={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')}
+                          onDismiss={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')}
+                        />
+                      </OrchestrationRecCard>
+                    )
+                  }
+                  return (
+                    <div data-testid="orchestration-groups" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {orderedTypes.map((type) => {
+                        const recsInGroup = groups[type] || []
+                        // Single decision_readiness stays first-class — never behind a header.
+                        if (shouldRenderUngrouped(type, recsInGroup)) {
+                          return renderCard(recsInGroup[0])
+                        }
+                        const expanded = isGroupExpanded(type)
+                        return (
+                          <OrchestrationRecGroup
+                            key={type}
+                            type={type}
+                            count={recsInGroup.length}
+                            expanded={expanded}
+                            onToggle={() => setOrchestrationGroupExpansions((prev) => ({ ...prev, [type]: !expanded }))}
+                          >
+                            {recsInGroup.map(renderCard)}
+                          </OrchestrationRecGroup>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
                 {/* SCRUM-22: Audit trail — collapsed by default, lazy-loaded on first open */}
                 <div style={{ marginTop: '10px', borderTop: '1px solid #e3e3e3', paddingTop: '8px' }}>
                   <button
