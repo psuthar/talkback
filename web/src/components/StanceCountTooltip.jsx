@@ -1,76 +1,90 @@
 import { useEffect, useRef, useState } from 'react'
 import styles from './DecisionBar.module.css'
 
-const HOVER_IN_MS = 150
-const HOVER_OUT_MS = 300
-
+/**
+ * StanceCountTooltip — click-only popover that lists the members in a stance bucket.
+ *
+ * Controlled or uncontrolled:
+ * - Controlled: pass `isOpen` (boolean) and `onToggle(stance)` so a parent (typically
+ *   DecisionBar) can enforce a single-open invariant across multiple tooltips.
+ * - Uncontrolled: omit both; the component manages its own open state.
+ *
+ * Hover / focus no longer open the tooltip — this is required for touch users and
+ * keyboard users. Escape and outside-click close it. The chip carries a small
+ * chevron (▾) when there are members so the affordance is visible without hover.
+ */
 export function StanceCountTooltip({
   stance,
   label,
   count,
   members,
-  hoverInMs = HOVER_IN_MS,
-  hoverOutMs = HOVER_OUT_MS,
+  isOpen,
+  onToggle,
 }) {
-  const [open, setOpen] = useState(false)
-  const [pinned, setPinned] = useState(false)
-  const enterTimer = useRef(null)
-  const leaveTimer = useRef(null)
+  const controlled = typeof isOpen === 'boolean'
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlled ? isOpen : internalOpen
 
-  const clearTimers = () => {
-    if (enterTimer.current) { clearTimeout(enterTimer.current); enterTimer.current = null }
-    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null }
-  }
+  const wrapRef = useRef(null)
+  const buttonRef = useRef(null)
 
-  useEffect(() => () => clearTimers(), [])
-
-  const handleEnter = () => {
-    if (pinned) return
-    if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null }
-    if (open) return
-    enterTimer.current = setTimeout(() => { setOpen(true) }, hoverInMs)
-  }
-
-  const handleLeave = () => {
-    if (pinned) return
-    if (enterTimer.current) { clearTimeout(enterTimer.current); enterTimer.current = null }
-    if (!open) return
-    leaveTimer.current = setTimeout(() => { setOpen(false) }, hoverOutMs)
-  }
-
-  const handleClick = () => {
-    clearTimers()
-    if (pinned) {
-      setPinned(false)
-      setOpen(false)
+  const setOpen = (next) => {
+    if (controlled) {
+      onToggle?.(next ? stance : null)
     } else {
-      setPinned(true)
-      setOpen(true)
+      setInternalOpen(next)
+      onToggle?.(next ? stance : null)
     }
   }
 
+  useEffect(() => {
+    if (!open) return
+
+    const handlePointerDown = (event) => {
+      if (wrapRef.current && wrapRef.current.contains(event.target)) return
+      setOpen(false)
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        setOpen(false)
+        buttonRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   const safeMembers = Array.isArray(members) ? members : []
+  const hasMembers = safeMembers.length > 0
+
+  const handleClick = () => {
+    setOpen(!open)
+  }
 
   return (
-    <span
-      className={styles.countWrap}
-      onMouseEnter={handleEnter}
-      onMouseLeave={handleLeave}
-      onFocus={handleEnter}
-      onBlur={handleLeave}
-    >
+    <span ref={wrapRef} className={styles.countWrap}>
       <button
+        ref={buttonRef}
         type="button"
         onClick={handleClick}
-        className={`${styles.countChip} ${styles[`stance_${stance}`] || ''} ${pinned ? styles.countPinned : ''}`}
+        className={`${styles.countChip} ${styles[`stance_${stance}`] || ''} ${open ? styles.countPinned : ''}`}
         data-testid={`stance-count-${stance}`}
-        data-pinned={pinned ? 'true' : 'false'}
+        data-pinned={open ? 'true' : 'false'}
         aria-haspopup="true"
         aria-expanded={open}
-        aria-label={`${label}: ${count}${safeMembers.length > 0 ? ', click to view members' : ''}`}
+        aria-label={`${label}: ${count}${hasMembers ? ', tap to view members' : ''}`}
       >
         <span className={styles.countLabel}>{label}</span>
         <span className={styles.countNum}>{count}</span>
+        {hasMembers && (
+          <span aria-hidden="true" className={styles.countChevron}>▾</span>
+        )}
       </button>
       {open && (
         <div
@@ -82,7 +96,7 @@ export function StanceCountTooltip({
           <div className={styles.tooltipHeader}>
             {label} ({count})
           </div>
-          {safeMembers.length === 0 ? (
+          {!hasMembers ? (
             <div className={styles.tooltipEmpty}>—</div>
           ) : (
             <ul className={styles.tooltipList}>
