@@ -4157,7 +4157,9 @@ function App() {
                 const mode = authUser?.global_role === 'participant' ? 'view' : 'edit'
                 window.history.replaceState(null, '', `/?mode=${mode}${apiSuffix}`)
               }}
+              onLogout={logoutCurrentUser}
               debugMode={debugMode}
+              setDebugMode={setDebugMode}
             />
           ) : (
             <div className="participant-layout-root">

@@ -57,4 +57,29 @@ test('creator opens session in edit mode, sees creator-only UI', async ({ page, 
   // --- Assert: Members collapsible button (invite UI) is present ---
   const membersBtn = page.getByRole('button', { name: /members/i })
   await expect(membersBtn).toBeVisible({ timeout: 10_000 })
+
+  // --- SCRUM-186: creator topbar shows participant-style title + Creator badge + Session menu trigger ---
+  const creatorBadge = page.locator('.creator-layout-topbar').getByText('Creator', { exact: true })
+  await expect(creatorBadge).toBeVisible({ timeout: 10_000 })
+
+  const menuTrigger = page.getByTestId('participant-session-menu-btn')
+  await expect(menuTrigger).toBeVisible({ timeout: 10_000 })
+  expect(await menuTrigger.getAttribute('aria-label')).toBe('Session menu')
+
+  // --- SCRUM-186: opening the menu reveals identity + Show all sessions + debug + logout ---
+  await menuTrigger.click()
+  const menu = page.getByTestId('participant-session-menu')
+  await expect(menu).toBeVisible({ timeout: 3_000 })
+  await expect(menu).toContainText(email)
+  await expect(page.getByTestId('menu-show-all-sessions')).toBeVisible()
+  await expect(page.getByTestId('menu-debug-toggle')).toBeVisible()
+  await expect(page.getByTestId('menu-logout')).toBeVisible()
+
+  // --- SCRUM-186: legacy red "Show All Sessions" inline button no longer rendered inside the topbar ---
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('participant-session-menu')).toHaveCount(0)
+  const inlineShowAllBtn = page
+    .locator('.creator-layout-topbar')
+    .getByRole('button', { name: /show all sessions/i })
+  await expect(inlineShowAllBtn).toHaveCount(0)
 })

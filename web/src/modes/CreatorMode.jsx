@@ -4,10 +4,12 @@ import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
+import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 import { SessionSkeleton } from '../components/SessionSkeleton'
+import topbarStyles from './ParticipantMode.module.css'
 
 const PROCESSING_STEPS = ['Fetch', 'Download', 'Parse', 'Chunk', 'Embed', 'Ready', 'Preparing playback…']
 const PROGRESSION_TICK_MS = 200 // Advance displayed step at most one per tick
@@ -215,7 +217,9 @@ export function CreatorMode({
   setLastInvitationDraft,
   setPrimaryVideoSource,
   onClearSession,
-  debugMode = false
+  onLogout,
+  debugMode = false,
+  setDebugMode,
 }) {
   const [materialUploading, setMaterialUploading] = useState(false)
   const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
@@ -1400,28 +1404,30 @@ export function CreatorMode({
 
   return (
     <>
-      {/* Topbar */}
+      {/* Topbar — mirrors ParticipantMode topbar (SCRUM-186). */}
       <div className="creator-layout-topbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+        <div className={topbarStyles.topbarInner}>
           {currentSession?.session && (
             <>
-              <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--color-success)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <h2 className={topbarStyles.sessionTitle}>
                 {currentSession.session.title}
-                <span style={{ fontWeight: 'normal', fontSize: '0.85rem', color: '#666', marginLeft: '8px' }}>(ID: {currentSession.session.id})</span>
               </h2>
-              <span style={{ fontSize: '12px', color: currentSession.session.status === 'open' ? 'var(--color-success)' : '#999', fontWeight: 'bold', flexShrink: 0 }}>
-                {currentSession.session.status}
+              <span
+                className={topbarStyles.roleBadge}
+                style={{ backgroundColor: 'var(--color-success)' }}
+              >
+                Creator
               </span>
             </>
           )}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          {onClearSession && (
-            <button type="button" onClick={onClearSession} style={{ backgroundColor: 'var(--color-danger)', color: 'white', padding: '6px 12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', margin: 0 }}>
-              Show All Sessions
-            </button>
-          )}
-        </div>
+        <ParticipantSessionMenu
+          authUser={authUser}
+          onShowAllSessions={onClearSession}
+          onLogout={onLogout}
+          debugMode={debugMode}
+          setDebugMode={setDebugMode}
+        />
       </div>
 
       {/* Premise / Decision / Outcome: always visible like participant view */}
