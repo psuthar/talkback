@@ -63,7 +63,8 @@ test(
     // Rationale input remains available below the trigger
     const rationaleInput = page.getByTestId('stance-rationale-input')
     await expect(rationaleInput).toBeVisible({ timeout: 3_000 })
-    await rationaleInput.fill('My rationale text')
+    await rationaleInput.fill('My rationale text\nSecond line')
+    await expect(rationaleInput).toHaveValue('My rationale text\nSecond line')
 
     // "Save rationale" button should appear (rationale differs from saved)
     const saveBtn = page.getByTestId('stance-save-rationale-btn')

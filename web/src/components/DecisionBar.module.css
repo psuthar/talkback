@@ -129,11 +129,18 @@
 }
 
 .rationaleInput {
-  flex: 1 1 240px;
-  padding: 5px 8px;
-  font-size: 12px;
+  flex: 1 1 260px;
+  min-width: 180px;
+  padding: 7px 10px;
+  line-height: 1.3;
+  min-height: 34px;
+  max-height: 120px;
+  resize: vertical;
+  font-size: 13px;
   border: 1px solid #cfd8dc;
   border-radius: 4px;
+  font-family: inherit;
+  box-sizing: border-box;
 }
 
 .saveRationaleBtn {
@@ -438,7 +445,7 @@
 
 .rationaleBlock {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
   width: 100%;
