@@ -2,15 +2,16 @@ package utils
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 func TestExtractFirstJSONObject(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   string
-		valid  bool // whether want should parse as JSON
+		name  string
+		input string
+		want  string
+		valid bool // whether want should parse as JSON
 	}{
 		{
 			name:  "plain json only",
@@ -48,8 +49,8 @@ func TestExtractFirstJSONObject(t *testing.T) {
 				if err := json.Unmarshal([]byte(got), &q); err != nil {
 					t.Errorf("extracted JSON should be valid: %v", err)
 				}
-		}
-	})
+			}
+		})
 	}
 }
 
@@ -73,4 +74,43 @@ func TestAppendedTextAfterJSONIsHandled(t *testing.T) {
 	if len(q.Citations) != 1 || q.Citations[0].ChunkID != "c1" {
 		t.Errorf("parsed response should have one citation with chunk_id c1, got %d citations", len(q.Citations))
 	}
+}
+
+func TestBuildIdentityContextSection_ParticipantAsker(t *testing.T) {
+	asker := "invitee@example.com"
+	role := "participant"
+	creator := "creator@example.com"
+	section := buildIdentityContextSection(SessionContext{
+		AskerEmail:          &asker,
+		AskerRole:           &role,
+		SessionCreatorEmail: &creator,
+	})
+	if section == "" {
+		t.Fatal("expected identity context section to be present")
+	}
+	if !containsAll(section,
+		"ASKER IDENTITY CONTEXT",
+		"Current asker email: invitee@example.com",
+		"Current asker role in session: participant",
+		"Session creator email: creator@example.com",
+		"Do not describe the asker as the creator unless the asker identity explicitly matches the session creator email.",
+	) {
+		t.Fatalf("identity section missing expected participant guidance:\n%s", section)
+	}
+}
+
+func TestBuildIdentityContextSection_EmptyWhenNoIdentityFields(t *testing.T) {
+	section := buildIdentityContextSection(SessionContext{})
+	if section != "" {
+		t.Fatalf("expected empty identity section, got: %q", section)
+	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, p := range parts {
+		if !strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
 }

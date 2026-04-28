@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/psuthar/talkback/internal/models"
 	"github.com/openai/openai-go/shared"
+	"github.com/psuthar/talkback/internal/models"
 )
 
 // QAResponse represents the structured response from the LLM
@@ -33,8 +33,11 @@ type PriorQAPair struct {
 
 // SessionContext carries decision-intelligence fields from the session into the LLM prompt.
 type SessionContext struct {
-	Premise         *string
-	PrimaryDecision *string
+	Premise             *string
+	PrimaryDecision     *string
+	AskerEmail          *string
+	AskerRole           *string
+	SessionCreatorEmail *string
 }
 
 // extractFirstJSONObject returns the first complete JSON object (from first '{' to matching '}').
@@ -197,7 +200,7 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 		decisionSection.WriteString("Frame your answers within this decision context where relevant.")
 	}
 
-	systemPrompt := basePrompt + decisionSection.String() + priorQASection.String() + jsonFormatSection
+	systemPrompt := basePrompt + decisionSection.String() + buildIdentityContextSection(sessionCtx) + priorQASection.String() + jsonFormatSection
 
 	// Build user prompt with chunk IDs clearly listed
 	var chunkIDs []string
@@ -343,6 +346,28 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 	}
 
 	return &qaResponse, chunks, nil
+}
+
+func buildIdentityContextSection(sessionCtx SessionContext) string {
+	if (sessionCtx.AskerEmail == nil || strings.TrimSpace(*sessionCtx.AskerEmail) == "") &&
+		(sessionCtx.AskerRole == nil || strings.TrimSpace(*sessionCtx.AskerRole) == "") &&
+		(sessionCtx.SessionCreatorEmail == nil || strings.TrimSpace(*sessionCtx.SessionCreatorEmail) == "") {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\nASKER IDENTITY CONTEXT:\n")
+	if sessionCtx.AskerEmail != nil && strings.TrimSpace(*sessionCtx.AskerEmail) != "" {
+		b.WriteString(fmt.Sprintf("Current asker email: %s\n", strings.TrimSpace(*sessionCtx.AskerEmail)))
+	}
+	if sessionCtx.AskerRole != nil && strings.TrimSpace(*sessionCtx.AskerRole) != "" {
+		b.WriteString(fmt.Sprintf("Current asker role in session: %s\n", strings.TrimSpace(*sessionCtx.AskerRole)))
+	}
+	if sessionCtx.SessionCreatorEmail != nil && strings.TrimSpace(*sessionCtx.SessionCreatorEmail) != "" {
+		b.WriteString(fmt.Sprintf("Session creator email: %s\n", strings.TrimSpace(*sessionCtx.SessionCreatorEmail)))
+	}
+	b.WriteString("Interpret identity/access questions from the current asker's perspective. Do not describe the asker as the creator unless the asker identity explicitly matches the session creator email.")
+	return b.String()
 }
 
 // ConvertQAResponseToAnswer converts QAResponse to models.Answer
