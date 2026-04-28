@@ -247,6 +247,28 @@ function StanceDropdown({
         {!submitted && (
           <span className={styles.triggerHelper}>You haven&rsquo;t submitted a stance yet</span>
         )}
+        <div className={styles.rationaleBlock}>
+          <textarea
+            placeholder="Rationale (optional)"
+            value={stanceRationale ?? ''}
+            onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
+            className={styles.rationaleInput}
+            data-testid="stance-rationale-input"
+            aria-label="Stance rationale"
+            rows={1}
+          />
+          {submitted && stanceRationale !== (myStance?.rationale ?? '') && (
+            <button
+              type="button"
+              data-testid="stance-save-rationale-btn"
+              onClick={() => onSubmit?.(myStance.stance)}
+              disabled={stanceSubmitting}
+              className={styles.saveRationaleBtn}
+            >
+              {stanceSubmitting ? 'Saving…' : 'Save rationale'}
+            </button>
+          )}
+        </div>
       </div>
 
       {open && (
@@ -307,29 +329,6 @@ function StanceDropdown({
           )}
         </ul>
       )}
-
-      <div className={styles.rationaleBlock}>
-        <textarea
-          placeholder="Rationale (optional)"
-          value={stanceRationale ?? ''}
-          onChange={(e) => setStanceRationale(e.target.value.slice(0, 500))}
-          className={styles.rationaleInput}
-          data-testid="stance-rationale-input"
-          aria-label="Stance rationale"
-          rows={1}
-        />
-        {submitted && stanceRationale !== (myStance?.rationale ?? '') && (
-          <button
-            type="button"
-            data-testid="stance-save-rationale-btn"
-            onClick={() => onSubmit?.(myStance.stance)}
-            disabled={stanceSubmitting}
-            className={styles.saveRationaleBtn}
-          >
-            {stanceSubmitting ? 'Saving…' : 'Save rationale'}
-          </button>
-        )}
-      </div>
     </div>
   )
 }

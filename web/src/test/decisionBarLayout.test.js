@@ -19,19 +19,24 @@ function hasDecl(ruleBody, prop, value) {
 }
 
 describe('DecisionBar rationale layout contract (SCRUM-163)', () => {
-  it('keeps rationale block aligned with stance controls and wraps on constrained widths', () => {
-    const rationaleBlock = getRuleBody(css, '.rationaleBlock')
-    expect(rationaleBlock).toBeTruthy()
-    expect(hasDecl(rationaleBlock, 'display', 'flex')).toBe(true)
-    expect(hasDecl(rationaleBlock, 'align-items', 'flex-start')).toBe(true)
-    expect(hasDecl(rationaleBlock, 'flex-wrap', 'wrap')).toBe(true)
+  it('keeps trigger and rationale on one row by default', () => {
+    const triggerRow = getRuleBody(css, '.triggerRow')
+    expect(triggerRow).toBeTruthy()
+    expect(hasDecl(triggerRow, 'display', 'flex')).toBe(true)
+    expect(hasDecl(triggerRow, 'flex-wrap', 'nowrap')).toBe(true)
+    expect(hasDecl(triggerRow, 'min-width', '0')).toBe(true)
   })
 
-  it('uses a textarea footprint that aligns with stance control height and shrinks before wrapping', () => {
+  it('uses a rationale footprint that truncates width before wrapping and keeps multiline support', () => {
+    const rationaleBlock = getRuleBody(css, '.rationaleBlock')
     const rationaleInput = getRuleBody(css, '.rationaleInput')
+    expect(rationaleBlock).toBeTruthy()
+    expect(hasDecl(rationaleBlock, 'flex', '1 1 auto')).toBe(true)
+    expect(hasDecl(rationaleBlock, 'min-width', '0')).toBe(true)
     expect(rationaleInput).toBeTruthy()
-    expect(hasDecl(rationaleInput, 'flex', '1 1 260px')).toBe(true)
-    expect(hasDecl(rationaleInput, 'min-width', '180px')).toBe(true)
+    expect(hasDecl(rationaleInput, 'flex', '1 1 220px')).toBe(true)
+    expect(hasDecl(rationaleInput, 'min-width', '120px')).toBe(true)
+    expect(hasDecl(rationaleInput, 'max-width', '360px')).toBe(true)
     expect(hasDecl(rationaleInput, 'min-height', '34px')).toBe(true)
     expect(hasDecl(rationaleInput, 'resize', 'vertical')).toBe(true)
   })
