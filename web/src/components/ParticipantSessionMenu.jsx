@@ -20,6 +20,7 @@ import styles from './ParticipantSessionMenu.module.css'
 export function ParticipantSessionMenu({
   authUser,
   onShowAllSessions,
+  participantViewHref,
   onLogout,
   debugMode,
   setDebugMode,
@@ -117,6 +118,20 @@ export function ParticipantSessionMenu({
             >
               Show all sessions
             </button>
+          )}
+
+          {participantViewHref && (
+            <a
+              role="menuitem"
+              href={participantViewHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="menu-view-as-participant"
+              onClick={() => setOpen(false)}
+              className={`${styles.menuItem} ${styles.menuItemLink}`}
+            >
+              View as Participant
+            </a>
           )}
 
           {isAdmin && (

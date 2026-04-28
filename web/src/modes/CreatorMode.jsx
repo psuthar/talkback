@@ -1439,6 +1439,7 @@ export function CreatorMode({
         <ParticipantSessionMenu
           authUser={authUser}
           onShowAllSessions={onClearSession}
+          participantViewHref={participantUrl}
           onLogout={onLogout}
           debugMode={debugMode}
           setDebugMode={setDebugMode}

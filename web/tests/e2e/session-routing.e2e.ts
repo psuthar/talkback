@@ -298,12 +298,11 @@ test('skeleton loading state shown during participant session load (no raw error
   }
 })
 
-// ─── Test 7: Creator header "View as Participant" link uses canonical route ────
-// Validates Flow 5: newly generated share/session links land on the canonical route.
-// The "View as Participant" anchor rendered in the creator header must use
+// ─── Test 7: Creator session menu "View as Participant" link uses canonical route ────
+// Validates Flow 5: creator context-switch action is inside the session menu and uses
 // /app/sessions/:id?mode=view, not the legacy /?session=:id&mode=view format.
 
-test('creator header participant link uses canonical /app/sessions/:id path', async ({ page, context, request }) => {
+test('creator menu participant link uses canonical /app/sessions/:id path', async ({ page, context, request }) => {
   const email = uniqueEmail('routing-share-link')
   const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Share Link Creator')
   const session = await createSession(request, 'E2E Share Link Routing Session')
@@ -316,11 +315,15 @@ test('creator header participant link uses canonical /app/sessions/:id path', as
     // Wait for creator UI to be ready — "Add content" button is the reliable signal.
     await expect(page.getByRole('button', { name: /add content/i })).toBeVisible({ timeout: 20_000 })
 
-    // Locate the "View as Participant" header link.
-    // This anchor is rendered only for authenticated creators who have an open session.
-    const participantLink = page.getByRole('link', { name: /view as participant/i })
-    await expect(participantLink).toBeVisible({ timeout: 10_000 })
+    // Top-right auth cluster is hidden in creator session mode.
     await expect(page.getByTestId('app-auth-cluster')).toHaveCount(0)
+    // "View as Participant" should be exposed via session menu, not a standalone top-level link.
+    await expect(page.getByRole('link', { name: /^view as participant$/i })).toHaveCount(0)
+
+    // Open creator session menu, then verify the participant-view link.
+    await page.getByTestId('participant-session-menu-btn').click()
+    const participantLink = page.getByTestId('menu-view-as-participant')
+    await expect(participantLink).toBeVisible({ timeout: 10_000 })
 
     // The href must use the canonical /app/sessions/ prefix — not the legacy ?session= format.
     const href = await participantLink.getAttribute('href')

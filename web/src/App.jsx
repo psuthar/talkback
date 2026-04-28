@@ -18,7 +18,7 @@ import {
   isLikelySessionId,
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
-import { shouldShowAppAuthCluster, shouldShowCreatorParticipantCta } from './headerVisibility'
+import { shouldShowAppAuthCluster } from './headerVisibility'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -2734,11 +2734,7 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [apiBaseUrl, effectiveParticipantRefForQuestions])
 
-  // Build participant URL for upper right corner link (include api so it works in new window/refresh)
   const sessionId = currentSession?.session?.id || currentSession?.id
-  const participantUrl = sessionId
-    ? buildCanonicalSessionUrl(sessionId, { mode: 'view', ...(apiBaseUrl ? { api: apiBaseUrl } : {}) })
-    : null
   const hasValidSession = currentSession && sessionId
 
   // Check URL mode as fallback to determine if we're in participant mode
@@ -2752,15 +2748,10 @@ function App() {
   const canCreateSessions = !authUser || authUser.global_role !== 'participant'
   // Render participant view when session mode is participant, URL is view, or user role is participant (so ?mode=edit never shows edit UI)
   const isParticipantMode = sessionUserMode === 'participant' || urlMode === 'view' || authUser?.global_role === 'participant'
-  const showCreatorParticipantCta = shouldShowCreatorParticipantCta({
-    hasValidSession,
-    participantUrl,
-    sessionUserMode,
-  })
   const showAppAuthCluster = shouldShowAppAuthCluster({
     isParticipantMode,
     hasValidSession,
-    showCreatorParticipantCta,
+    sessionUserMode,
   })
 
   // Shared logout: used by the App header button and the ParticipantSessionMenu so both
@@ -3248,10 +3239,9 @@ function App() {
             justifyContent: 'flex-end',
           }}
         >
-          {/* Log out / Admin / Debug: one alignment group (SCRUM-79). View as Participant stays separate (larger CTA).
-              Hidden when the participant shell is mounted with a valid session — ParticipantSessionMenu provides
-              parity (identity, sessions, debug, logout, optional Admin link). The Admin /
-              creator-tools header still renders below for those paths. */}
+          {/* Log out / Admin / Debug alignment group (SCRUM-79).
+              Hidden when participant or creator session shells are mounted with a valid session —
+              ParticipantSessionMenu handles those actions in the topbar menu for those modes. */}
           {showAppAuthCluster && (
             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }} data-testid="app-auth-cluster">
               <span style={{ fontSize: '13px', color: '#555', display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', lineHeight: 1.35 }}>
@@ -3293,40 +3283,6 @@ function App() {
                 <span>Debug</span>
               </label>
             </div>
-          )}
-          {showCreatorParticipantCta && (
-            <a
-              href={participantUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                padding: '8px 16px',
-                backgroundColor: 'var(--color-success-mid)',
-                color: 'white',
-                textDecoration: 'none',
-                borderRadius: '4px',
-                fontSize: '14px',
-                fontWeight: '600',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s',
-                whiteSpace: 'nowrap',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#45a049'
-                e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.15)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = 'var(--color-success-mid)'
-                e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,0,0,0.1)'
-              }}
-            >
-              <span style={{ fontSize: '16px' }}>👁️</span>
-              <span>View as Participant</span>
-              <span style={{ fontSize: '12px', opacity: 0.9 }}>↗</span>
-            </a>
           )}
         </div>
       </div>

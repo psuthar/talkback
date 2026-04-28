@@ -143,4 +143,12 @@ describe('ParticipantSessionMenu', () => {
     fireEvent.click(screen.getByTestId('participant-session-menu-btn'))
     expect(screen.queryByTestId('menu-logout')).toBeNull()
   })
+
+  it('renders View as Participant link when participantViewHref is provided', () => {
+    renderMenu({ participantViewHref: '/app/sessions/abc?mode=view' })
+    fireEvent.click(screen.getByTestId('participant-session-menu-btn'))
+    const link = screen.getByTestId('menu-view-as-participant')
+    expect(link.getAttribute('href')).toBe('/app/sessions/abc?mode=view')
+    expect(link.textContent).toContain('View as Participant')
+  })
 })

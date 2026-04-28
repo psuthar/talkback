@@ -1,21 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { shouldShowAppAuthCluster, shouldShowCreatorParticipantCta } from '../headerVisibility'
+import { shouldShowAppAuthCluster } from '../headerVisibility'
 
-describe('creator top-right header visibility (SCRUM-198)', () => {
-  it('shows view-as-participant CTA in creator mode with active session', () => {
-    const visible = shouldShowCreatorParticipantCta({
-      hasValidSession: true,
-      participantUrl: '/app/sessions/abc?mode=view',
-      sessionUserMode: 'creator',
-    })
-    expect(visible).toBe(true)
-  })
-
-  it('hides auth/debug/admin cluster in creator mode when CTA is shown', () => {
+describe('top-right header visibility (SCRUM-198, SCRUM-199)', () => {
+  it('hides auth/debug/admin cluster in creator mode with active session', () => {
     const showCluster = shouldShowAppAuthCluster({
       isParticipantMode: false,
       hasValidSession: true,
-      showCreatorParticipantCta: true,
+      sessionUserMode: 'creator',
     })
     expect(showCluster).toBe(false)
   })
@@ -24,8 +15,17 @@ describe('creator top-right header visibility (SCRUM-198)', () => {
     const showCluster = shouldShowAppAuthCluster({
       isParticipantMode: true,
       hasValidSession: true,
-      showCreatorParticipantCta: false,
+      sessionUserMode: 'participant',
     })
     expect(showCluster).toBe(false)
+  })
+
+  it('shows auth cluster when no session is active', () => {
+    const showCluster = shouldShowAppAuthCluster({
+      isParticipantMode: false,
+      hasValidSession: false,
+      sessionUserMode: null,
+    })
+    expect(showCluster).toBe(true)
   })
 })
