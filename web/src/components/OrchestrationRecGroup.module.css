@@ -8,11 +8,19 @@
   gap: 6px;
 }
 
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .header {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: left;
   padding: 4px 6px;
   background: transparent;
@@ -70,4 +78,65 @@
   flex-direction: column;
   gap: 6px;
   padding-left: 6px;
+}
+
+/* SCRUM-194: bulk dismiss affordance + inline confirmation row. */
+
+.bulkBtn {
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid #cfd8dc;
+  background: #fff;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+  flex: 0 0 auto;
+}
+
+.bulkBtn:hover:not(:disabled) {
+  background: #eceff1;
+  color: #263238;
+}
+
+.bulkBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.bulkBtnTrigger {
+  /* Trigger: subtle so it doesn't compete with primary actions on cards */
+  color: var(--color-text-muted);
+}
+
+.bulkBtnConfirm {
+  background: var(--color-danger-dark);
+  color: #fff;
+  border-color: var(--color-danger-dark);
+}
+
+.bulkBtnConfirm:hover:not(:disabled) {
+  background: #b71c1c;
+  border-color: #b71c1c;
+  color: #fff;
+}
+
+.bulkBtnCancel {
+  /* Same shape as trigger */
+}
+
+.bulkConfirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bulkConfirmPrompt {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-weight: 600;
 }

@@ -2117,6 +2117,19 @@ export function CreatorMode({
                           return renderCard(recsInGroup[0])
                         }
                         const expanded = isGroupExpanded(type)
+                        // SCRUM-194: bulk dismiss is offered for review_draft_answer and
+                        // unanswered_question only. decision_readiness always needs attention,
+                        // and unknown types fall through with no bulk action.
+                        const supportsBulkDismiss = type === 'review_draft_answer' || type === 'unanswered_question'
+                        const bulkDismiss = supportsBulkDismiss
+                          ? () => {
+                              const sessionId = currentSession?.session?.id
+                              if (!sessionId) return
+                              for (const r of recsInGroup) {
+                                if (r?.id != null) updateRecommendationStatus(sessionId, r.id, 'dismissed')
+                              }
+                            }
+                          : undefined
                         return (
                           <OrchestrationRecGroup
                             key={type}
@@ -2124,6 +2137,7 @@ export function CreatorMode({
                             count={recsInGroup.length}
                             expanded={expanded}
                             onToggle={() => setOrchestrationGroupExpansions((prev) => ({ ...prev, [type]: !expanded }))}
+                            onBulkDismiss={bulkDismiss}
                           >
                             {recsInGroup.map(renderCard)}
                           </OrchestrationRecGroup>

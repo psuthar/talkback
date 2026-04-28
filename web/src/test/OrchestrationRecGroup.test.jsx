@@ -89,3 +89,62 @@ describe('OrchestrationRecGroup — collapse / expand', () => {
     expect(toggle.getAttribute('type')).toBe('button')
   })
 })
+
+describe('OrchestrationRecGroup — bulk dismiss (SCRUM-194)', () => {
+  it('does not render the bulk dismiss button when onBulkDismiss is omitted', () => {
+    renderGroup()
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-review_draft_answer')).toBeNull()
+  })
+
+  it('does not render the bulk dismiss button when count is 0 even if onBulkDismiss is provided', () => {
+    renderGroup({ count: 0, onBulkDismiss: vi.fn() })
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-review_draft_answer')).toBeNull()
+  })
+
+  it('renders "Dismiss all (N)" trigger when onBulkDismiss is provided and count > 0', () => {
+    renderGroup({ onBulkDismiss: vi.fn() })
+    const trigger = screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer')
+    expect(trigger.textContent).toContain('Dismiss all (3)')
+  })
+
+  it('clicking the trigger reveals an inline confirmation row, not an immediate dismiss', () => {
+    const onBulkDismiss = vi.fn()
+    renderGroup({ onBulkDismiss })
+    fireEvent.click(screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer'))
+    expect(onBulkDismiss).not.toHaveBeenCalled()
+    expect(screen.getByTestId('orchestration-bulk-dismiss-confirm-row-review_draft_answer')).toBeTruthy()
+    expect(screen.getByText('Dismiss all (3)?')).toBeTruthy()
+    expect(screen.getByTestId('orchestration-bulk-dismiss-confirm-review_draft_answer')).toBeTruthy()
+    expect(screen.getByTestId('orchestration-bulk-dismiss-cancel-review_draft_answer')).toBeTruthy()
+    // Original trigger is replaced while confirming
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-review_draft_answer')).toBeNull()
+  })
+
+  it('confirming invokes onBulkDismiss exactly once and exits confirmation mode', () => {
+    const onBulkDismiss = vi.fn()
+    renderGroup({ onBulkDismiss })
+    fireEvent.click(screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer'))
+    fireEvent.click(screen.getByTestId('orchestration-bulk-dismiss-confirm-review_draft_answer'))
+    expect(onBulkDismiss).toHaveBeenCalledTimes(1)
+    // After confirm, the trigger is back (count is still 3 in the prop)
+    expect(screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer')).toBeTruthy()
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-confirm-row-review_draft_answer')).toBeNull()
+  })
+
+  it('cancelling exits confirmation mode without invoking onBulkDismiss', () => {
+    const onBulkDismiss = vi.fn()
+    renderGroup({ onBulkDismiss })
+    fireEvent.click(screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer'))
+    fireEvent.click(screen.getByTestId('orchestration-bulk-dismiss-cancel-review_draft_answer'))
+    expect(onBulkDismiss).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-confirm-row-review_draft_answer')).toBeNull()
+    expect(screen.getByTestId('orchestration-bulk-dismiss-review_draft_answer')).toBeTruthy()
+  })
+
+  it('absent on decision_readiness when parent does not pass onBulkDismiss (policy enforcement)', () => {
+    // The component itself doesn't enforce the per-type policy — the parent does.
+    // This test documents the contract: when omitted, no bulk button renders.
+    renderGroup({ type: 'decision_readiness' })
+    expect(screen.queryByTestId('orchestration-bulk-dismiss-decision_readiness')).toBeNull()
+  })
+})
