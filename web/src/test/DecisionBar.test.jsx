@@ -181,4 +181,21 @@ describe('DecisionBar', () => {
     render(<DecisionBar {...makeProps({ stanceFeedback: { type: 'success', message: 'Position recorded' } })} />)
     expect(screen.getByTestId('decision-bar-feedback').textContent).toBe('Position recorded')
   })
+
+  it('only one Others stance popover may be open at a time', () => {
+    render(<DecisionBar {...makeProps({
+      stanceAggregate: { agree: 1, disagree: 1, conditional: 0, abstain: 0, need_more_info: 0 },
+      stanceResponses: [
+        { id: 'r1', user_email: 'a@x.com', stance: 'agree' },
+        { id: 'r2', user_email: 'b@x.com', stance: 'disagree' },
+      ],
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-count-agree'))
+    expect(screen.getByTestId('stance-tooltip-agree')).toBeTruthy()
+    expect(screen.queryByTestId('stance-tooltip-disagree')).toBeNull()
+    // Opening a different chip closes the previous one
+    fireEvent.click(screen.getByTestId('stance-count-disagree'))
+    expect(screen.queryByTestId('stance-tooltip-agree')).toBeNull()
+    expect(screen.getByTestId('stance-tooltip-disagree')).toBeTruthy()
+  })
 })

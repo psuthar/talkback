@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { StanceCountTooltip } from './StanceCountTooltip'
 import styles from './DecisionBar.module.css'
 
@@ -35,6 +35,11 @@ export function DecisionBar({
   clearStance,
   placement = 'bottom',
 }) {
+  const [openStanceKey, setOpenStanceKey] = useState(null)
+  const handleStanceToggle = useCallback((nextKey) => {
+    setOpenStanceKey(nextKey)
+  }, [])
+
   if (!primaryDecision) return null
 
   const hasOutcome = !!(decisionOutcome && String(decisionOutcome).trim())
@@ -98,6 +103,8 @@ export function DecisionBar({
                 label={d.label}
                 count={Number(stanceAggregate?.[d.key] ?? 0)}
                 members={byStance[d.key]}
+                isOpen={openStanceKey === d.key}
+                onToggle={handleStanceToggle}
               />
             ))}
             <StanceCountTooltip
@@ -106,6 +113,8 @@ export function DecisionBar({
               label="Pending"
               count={pendingMembers.length}
               members={pendingMembers}
+              isOpen={openStanceKey === 'pending'}
+              onToggle={handleStanceToggle}
             />
           </div>
         </div>
