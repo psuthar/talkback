@@ -5,14 +5,19 @@ import styles from './DecisionBar.module.css'
 const STANCE_DEFS = [
   { key: 'agree', label: 'Agree' },
   { key: 'disagree', label: 'Disagree' },
-  { key: 'conditional', label: 'Conditional' },
-  { key: 'abstain', label: 'Abstain' },
   { key: 'need_more_info', label: 'Need More Info' },
 ]
 
+const LEGACY_STANCE_LABELS = {
+  conditional: 'Other (Conditional)',
+  abstain: 'Other (Abstain)',
+}
+
 const stanceLabel = (s) => {
   const found = STANCE_DEFS.find((d) => d.key === s)
-  return found ? found.label : (s || '').replace(/_/g, ' ')
+  if (found) return found.label
+  if (s && LEGACY_STANCE_LABELS[s]) return LEGACY_STANCE_LABELS[s]
+  return s ? `Other (${String(s).replace(/_/g, ' ')})` : 'Other'
 }
 
 /**
@@ -46,7 +51,7 @@ export function DecisionBar({
   const responses = Array.isArray(stanceResponses) ? stanceResponses : []
   const invitations = Array.isArray(sessionInvitations) ? sessionInvitations : []
 
-  const byStance = { agree: [], disagree: [], conditional: [], abstain: [], need_more_info: [] }
+  const byStance = { agree: [], disagree: [], need_more_info: [] }
   for (const r of responses) {
     if (r && byStance[r.stance]) byStance[r.stance].push(r)
   }
