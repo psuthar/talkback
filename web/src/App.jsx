@@ -2631,8 +2631,14 @@ function App() {
     // Questions will be refreshed by submitSessionQuestion
   }
 
-  const polishVoiceQuestion = async (useLLM = false) => {
-    const text = voiceTranscribedText.trim()
+  // Polish the active question text. The source is determined by which buffer the
+  // user is currently editing — voice-confirm mode reads voiceTranscribedText,
+  // otherwise it reads questionText. The polished result is written back to the
+  // matching setter so the wrong buffer is never overwritten.
+  const polishQuestionText = async (useLLM = false) => {
+    const fromVoice = showVoiceConfirm
+    const sourceText = fromVoice ? voiceTranscribedText : questionText
+    const text = (sourceText ?? '').trim()
     if (!text || !currentSession?.session?.id) return
     setVoicePolishing(true)
     setVoicePolishMode(useLLM ? 'llm' : 'rules')
@@ -2651,7 +2657,11 @@ function App() {
       }
       const data = await response.json()
       const polished = (data && data.polished_text != null) ? String(data.polished_text).trim() : text
-      setVoiceTranscribedText(polished)
+      if (fromVoice) {
+        setVoiceTranscribedText(polished)
+      } else {
+        setQuestionText(polished)
+      }
       setVoiceFeedback({ type: 'success', message: useLLM ? 'Polished with AI.' : 'Cleaned up fillers and repetition.' })
     } catch (err) {
       setVoiceFeedback({ type: 'error', message: `Clean up failed: ${err.message}` })
@@ -2660,6 +2670,9 @@ function App() {
       setVoicePolishMode(null)
     }
   }
+
+  // Backward-compatible alias kept for callers that haven't been renamed yet.
+  const polishVoiceQuestion = polishQuestionText
 
   const effectiveParticipantRefForQuestions = participantRef || authUser?.email || null
 
@@ -4179,6 +4192,7 @@ function App() {
               confirmVoiceQuestion={confirmVoiceQuestion}
               cancelVoiceReview={cancelVoiceReview}
               polishVoiceQuestion={polishVoiceQuestion}
+              polishQuestionText={polishQuestionText}
               voicePolishing={voicePolishing}
               voicePolishMode={voicePolishMode}
               refetchSession={refetchSession}

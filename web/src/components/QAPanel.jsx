@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import styles from './QAPanel.module.css'
 import { QAHistory } from './QAHistory'
 import { MicIcon } from './icons/MicIcon'
+import { PolishButton } from './PolishButton'
 
 export function QAPanel({
   questions,
@@ -29,9 +30,15 @@ export function QAPanel({
   confirmVoiceQuestion,
   cancelVoiceReview,
   polishVoiceQuestion,
+  polishQuestionText,
   voicePolishing,
   voicePolishMode
 }) {
+  // Single defined source for polish: voice confirm uses the transcribed buffer,
+  // otherwise the typed question text. Same invariant as App.polishQuestionText.
+  const polishHandler = polishQuestionText || polishVoiceQuestion
+  const polishSourceText = showVoiceConfirm ? voiceTranscribedText : questionText
+  const canPolish = !!polishHandler && !!polishSourceText?.trim() && !loading && !voicePolishing
   const [isProcessing, setIsProcessing] = useState(false)
 
   useEffect(() => {
@@ -82,26 +89,14 @@ export function QAPanel({
           />
           {showVoiceConfirm && !replyingToQuestionId ? (
             <div className={styles.voiceConfirmActions}>
-              {polishVoiceQuestion && (
-                <button
-                  type="button"
-                  onClick={() => polishVoiceQuestion(true)}
-                  disabled={!voiceTranscribedText?.trim() || loading || voicePolishing}
-                  title="AI polish"
+              {polishHandler && (
+                <PolishButton
+                  onPolish={polishHandler}
+                  disabled={!canPolish}
+                  busy={voicePolishing && voicePolishMode === 'llm'}
                   className={styles.polishBtn}
-                  style={{
-                    background: voicePolishing && voicePolishMode === 'llm' ? 'var(--color-primary-bg)' : 'rgba(255,255,255,0.9)',
-                    cursor: (!voiceTranscribedText?.trim() || loading || voicePolishing) ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {voicePolishing && voicePolishMode === 'llm' ? (
-                    <span className="spinner" style={{ width: 12, height: 12 }} aria-hidden />
-                  ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false" style={{ display: 'block' }}>
-                      <path d="M12 1l2.753 8.247L23 12l-8.247 2.753L12 23l-2.753-8.247L1 12l8.247-2.753z" />
-                    </svg>
-                  )}
-                </button>
+                  data-testid="polish-question-btn"
+                />
               )}
               <button type="button" onClick={handleConfirmVoice} disabled={!voiceTranscribedText?.trim() || loading || voicePolishing} className={styles.voiceConfirmSubmit}>
                 Confirm & Submit
@@ -116,15 +111,26 @@ export function QAPanel({
               </button>
             </div>
           ) : (
-            <button
-              data-testid="ask-button"
-              type="button"
-              onClick={handleAsk}
-              disabled={!questionText?.trim() || loading}
-              className={styles.askBtn}
-            >
-              Ask
-            </button>
+            <div className={styles.askActions}>
+              {polishHandler && !replyingToQuestionId && (
+                <PolishButton
+                  onPolish={polishHandler}
+                  disabled={!canPolish}
+                  busy={voicePolishing && voicePolishMode === 'llm'}
+                  className={styles.polishBtn}
+                  data-testid="polish-question-btn"
+                />
+              )}
+              <button
+                data-testid="ask-button"
+                type="button"
+                onClick={handleAsk}
+                disabled={!questionText?.trim() || loading}
+                className={styles.askBtn}
+              >
+                Ask
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -178,6 +184,7 @@ export function QAPanel({
           confirmVoiceQuestion={confirmVoiceQuestion}
           cancelVoiceReview={cancelVoiceReview}
           polishVoiceQuestion={polishVoiceQuestion}
+          polishQuestionText={polishQuestionText}
           voicePolishing={voicePolishing}
           voicePolishMode={voicePolishMode}
           askQuestionFeedback={askQuestionFeedback}
