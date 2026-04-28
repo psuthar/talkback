@@ -2037,12 +2037,24 @@ export function CreatorMode({
                     Object.prototype.hasOwnProperty.call(orchestrationGroupExpansions, type)
                       ? orchestrationGroupExpansions[type]
                       : type === defaultExpandedType
-                  const renderCard = (rec) => {
+                  const renderCard = (rec, options = {}) => {
                     const decisionReadinessComplete = isDecisionReadinessInputsComplete(rec)
                     const actioning = orchestrationActioningId === rec.id
                     const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
+                    // SCRUM-196: cards collapse to summary by default. Two exceptions:
+                    // 1) the single-item decision_readiness rendered ungrouped (expandable=false,
+                    //    always expanded — its inline outcome textarea must stay first-class)
+                    // 2) when the inline outcome form is open on this card (force expanded so
+                    //    the user can finish editing without the card collapsing under them)
+                    const expandable = options.expandable !== false
+                    const defaultExpanded = options.defaultExpanded === true || outcomeFormOpen
                     return (
-                      <OrchestrationRecCard key={rec.id} rec={rec}>
+                      <OrchestrationRecCard
+                        key={rec.id}
+                        rec={rec}
+                        expandable={expandable}
+                        defaultExpanded={defaultExpanded}
+                      >
                         {outcomeFormOpen && (
                           <div style={{ width: '100%', marginBottom: '8px' }}>
                             <textarea
@@ -2106,9 +2118,10 @@ export function CreatorMode({
                     <div data-testid="orchestration-groups" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       {orderedTypes.map((type) => {
                         const recsInGroup = groups[type] || []
-                        // Single decision_readiness stays first-class — never behind a header.
+                        // Single decision_readiness stays first-class — never behind a header
+                        // and not collapsible. The inline outcome textarea must stay visible.
                         if (shouldRenderUngrouped(type, recsInGroup)) {
-                          return renderCard(recsInGroup[0])
+                          return renderCard(recsInGroup[0], { expandable: false })
                         }
                         const expanded = isGroupExpanded(type)
                         // SCRUM-194: bulk dismiss is offered for review_draft_answer and
