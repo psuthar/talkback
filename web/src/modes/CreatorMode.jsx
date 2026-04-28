@@ -6,6 +6,7 @@ import { DocumentViewer } from '../components/DocumentViewer'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
+import { OrchestrationRecCard } from '../components/OrchestrationRecCard'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
 import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
@@ -2026,22 +2027,11 @@ export function CreatorMode({
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {orchestrationRecommendations.map((rec) => {
-                      const isDraftReview = rec.recommendation_type === 'review_draft_answer'
-                      const isUnanswered = rec.recommendation_type === 'unanswered_question'
                       const decisionReadinessComplete = isDecisionReadinessInputsComplete(rec)
                       const actioning = orchestrationActioningId === rec.id
                       const outcomeFormOpen = recordOutcomeRecId != null && String(recordOutcomeRecId) === String(rec.id)
-                      let cardBg = '#fff'
-                      if (isDraftReview) cardBg = '#fff8e1'
-                      else if (decisionReadinessComplete) cardBg = 'var(--color-success-bg)'
                       return (
-                        <div key={rec.id} data-testid={`orchestration-rec-${rec.id}`} style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '6px', backgroundColor: cardBg }}>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '4px', fontSize: '12px' }}>
-                            <span style={{ fontWeight: 700, textTransform: 'uppercase', color: '#555' }}>{String(rec.recommendation_type || '').replaceAll('_', ' ')}</span>
-                            <span data-testid={`orchestration-status-${rec.id}`} style={{ padding: '1px 6px', borderRadius: '10px', background: 'var(--color-primary-bg)', color: 'var(--color-primary-dark)', fontWeight: 600 }}>{rec.status}</span>
-                          </div>
-                          <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px', color: '#222' }}>{rec.summary}</div>
-                          {rec.suggested_action && <div style={{ fontSize: '12px', color: '#444', marginBottom: '6px' }}>{rec.suggested_action}</div>}
+                        <OrchestrationRecCard key={rec.id} rec={rec}>
                           {outcomeFormOpen && (
                             <div style={{ width: '100%', marginBottom: '8px' }}>
                               <textarea
@@ -2098,7 +2088,7 @@ export function CreatorMode({
                             onMarkComplete={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'completed')}
                             onDismiss={() => updateRecommendationStatus(currentSession?.session?.id, rec.id, 'dismissed')}
                           />
-                        </div>
+                        </OrchestrationRecCard>
                       )
                     })}
                   </div>

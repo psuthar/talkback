@@ -1,0 +1,63 @@
+/* SCRUM-191: card chrome for the creator's "AI Suggested Next Actions" panel.
+ * Replaces the previous yellow / green tinted backgrounds and the always-on
+ * `new` status pill with a 3px left-border accent per recommendation_type.
+ * Card body is white at all times; the per-type signal lives entirely in the
+ * left border. The status pill is rendered only for terminal statuses
+ * (approved / dismissed / completed) — the default `new` state shows nothing.
+ */
+
+.card {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-left-width: 3px;
+  border-radius: 6px;
+  background-color: #fff;
+}
+
+/* Per-type accent. Three accents total. The amber for review_draft_answer is a
+ * local literal because the palette has no global warning token; the hue
+ * matches existing usages in DecisionBar.module.css (.stanceBtn_conditional). */
+.card_review_draft_answer { border-left-color: #e65100; }
+.card_decision_readiness  { border-left-color: var(--color-success); }
+.card_unanswered_question { border-left-color: var(--color-primary); }
+.card_unknown             { border-left-color: #cfd8dc; }
+
+.header {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.typeLabel {
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* Status pill — only rendered for terminal statuses. Color follows the status,
+ * not the recommendation_type. */
+.statusPill {
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.statusPill_approved  { background: var(--color-success-bg); color: var(--color-success); }
+.statusPill_completed { background: var(--color-primary-bg); color: var(--color-primary-dark); }
+.statusPill_dismissed { background: #eceff1; color: #455a64; }
+
+.summary {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #222;
+}
+
+.suggestedAction {
+  font-size: 12px;
+  color: #444;
+  margin-bottom: 6px;
+}
