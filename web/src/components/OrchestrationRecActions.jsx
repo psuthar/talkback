@@ -1,3 +1,5 @@
+import styles from './OrchestrationRecActions.module.css'
+
 /**
  * OrchestrationRecActions — renders the action-button row for a single
  * recommendation card in the creator's "AI Suggested Next Actions" panel.
@@ -11,10 +13,11 @@
  * - decision_readiness without inputs_complete: Dismiss only (nothing else is actionable)
  * - any unknown recommendation_type: Mark complete + Dismiss (safe fallback)
  *
- * The "Approve draft" and "Dismiss draft" handlers themselves call
- * `updateRecommendationStatus(..., 'approved' | 'dismissed')` internally, so the
- * row clears as a side effect of the primary action — no separate Mark complete
- * is needed on those cards.
+ * Visual hierarchy (SCRUM-192):
+ * - The primary action per type renders as a filled-accent button matching the
+ *   left-border accent (amber for review, green for decision, blue for unanswered).
+ * - Secondary actions render as ghost / ghost-danger so the primary click target
+ *   is obvious at a glance.
  */
 export function OrchestrationRecActions({
   rec,
@@ -38,17 +41,12 @@ export function OrchestrationRecActions({
   const isDecisionReadiness = recommendationType === 'decision_readiness'
   const isUnknownType = !isDraftReview && !isUnanswered && !isDecisionReadiness
 
-  const baseBtnStyle = { margin: 0, padding: '4px 8px', fontSize: '12px' }
-  const dismissStyle = { ...baseBtnStyle, backgroundColor: '#e0e0e0', color: '#333' }
-  const dismissDraftStyle = { ...baseBtnStyle, backgroundColor: '#ef9a9a' }
-  const recordOutcomeStyle = {
-    ...baseBtnStyle,
-    backgroundColor: 'var(--color-success-bg-hover)',
-    color: '#1b5e20',
-  }
+  const primaryClass = (type) => `${styles.btn} ${styles.btnPrimary} ${styles[`btnPrimary_${type}`] || ''}`
+  const ghost = `${styles.btn} ${styles.btnGhost}`
+  const ghostDanger = `${styles.btn} ${styles.btnGhostDanger}`
 
   return (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+    <div className={styles.actions}>
       {isDraftReview && (
         <>
           <button
@@ -56,7 +54,7 @@ export function OrchestrationRecActions({
             type="button"
             disabled={actioning}
             onClick={onApproveDraft}
-            style={baseBtnStyle}
+            className={primaryClass('review_draft_answer')}
           >
             {actioning ? '…' : 'Approve draft'}
           </button>
@@ -65,7 +63,7 @@ export function OrchestrationRecActions({
             type="button"
             disabled={actioning}
             onClick={onDismissDraft}
-            style={dismissDraftStyle}
+            className={ghostDanger}
           >
             Dismiss draft
           </button>
@@ -79,7 +77,7 @@ export function OrchestrationRecActions({
             type="button"
             disabled={actioning}
             onClick={onGenerateDraft}
-            style={baseBtnStyle}
+            className={primaryClass('unanswered_question')}
           >
             Generate draft
           </button>
@@ -88,7 +86,7 @@ export function OrchestrationRecActions({
             type="button"
             disabled={actioning}
             onClick={onMarkComplete}
-            style={baseBtnStyle}
+            className={ghost}
           >
             Mark complete
           </button>
@@ -97,7 +95,7 @@ export function OrchestrationRecActions({
             type="button"
             disabled={actioning}
             onClick={onDismiss}
-            style={dismissStyle}
+            className={ghost}
           >
             Not relevant
           </button>
@@ -110,7 +108,7 @@ export function OrchestrationRecActions({
           type="button"
           disabled={actioning}
           onClick={onRecordOutcome}
-          style={recordOutcomeStyle}
+          className={primaryClass('decision_readiness')}
         >
           Record outcome
         </button>
@@ -122,7 +120,7 @@ export function OrchestrationRecActions({
           type="button"
           disabled={actioning}
           onClick={onDismiss}
-          style={dismissStyle}
+          className={ghost}
         >
           Dismiss
         </button>
@@ -130,10 +128,10 @@ export function OrchestrationRecActions({
 
       {isUnknownType && (
         <>
-          <button type="button" disabled={actioning} onClick={onMarkComplete} style={baseBtnStyle}>
+          <button type="button" disabled={actioning} onClick={onMarkComplete} className={ghost}>
             Mark complete
           </button>
-          <button type="button" disabled={actioning} onClick={onDismiss} style={dismissStyle}>
+          <button type="button" disabled={actioning} onClick={onDismiss} className={ghost}>
             Dismiss
           </button>
         </>
