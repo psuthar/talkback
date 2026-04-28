@@ -20,8 +20,8 @@ import (
 
 // SessionAskRequest body for POST /api/sessions/:id/ask
 type SessionAskRequest struct {
-	QuestionText    string  `json:"question_text"`
-	AskedVia        string  `json:"asked_via"`         // "text" | "voice"
+	QuestionText     string  `json:"question_text"`
+	AskedVia         string  `json:"asked_via"`                    // "text" | "voice"
 	ParentQuestionID *string `json:"parent_question_id,omitempty"` // optional; reply in thread
 }
 
@@ -202,8 +202,8 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":          "session question limit reached",
-			"max_questions":  auth.Config.MaxQuestionsPerSession,
+			"error":         "session question limit reached",
+			"max_questions": auth.Config.MaxQuestionsPerSession,
 		})
 		return
 	}
@@ -218,13 +218,13 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	question := &models.Question{
-		ID:                uuid.New(),
-		ArtifactID:        artifactID,
-		SessionID:         sessionID,
-		ParentQuestionID:  parentQuestionID,
-		AskedBy:           askedByPtr,
-		QuestionText:      req.QuestionText,
-		QuestionSource:    models.QuestionSourceText,
+		ID:               uuid.New(),
+		ArtifactID:       artifactID,
+		SessionID:        sessionID,
+		ParentQuestionID: parentQuestionID,
+		AskedBy:          askedByPtr,
+		QuestionText:     req.QuestionText,
+		QuestionSource:   models.QuestionSourceText,
 	}
 	if err := h.DB.CreateQuestion(ctx, question); err != nil {
 		log.Printf("SessionAsk CreateQuestion: %v", err)
@@ -253,10 +253,7 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 	priorQuestions, priorAnswers, _ := h.DB.GetQuestionsBySessionID(ctx, sessionID, 10)
 	priorQA = append(priorQA, buildPriorQA(priorQuestions, priorAnswers, question.ID)...)
 
-	sessionCtx := utils.SessionContext{
-		Premise:         session.Premise,
-		PrimaryDecision: session.PrimaryDecision,
-	}
+	sessionCtx := buildAskSessionContext(session, askedByPtr)
 	qaResponse, _, err := utils.GenerateAnswer(ctx, req.QuestionText, chunks, session.Title, sessionCtx, priorQA)
 	if emptyChunkMessage != "" && qaResponse != nil {
 		qaResponse.AnswerText = emptyChunkMessage
@@ -317,6 +314,23 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		},
 		Answer: h.sessionAskAnswerFromModelWithContext(ctx, sessionID, answer),
 	})
+}
+
+func buildAskSessionContext(session *models.Session, askedBy *string) utils.SessionContext {
+	ctx := utils.SessionContext{
+		Premise:             session.Premise,
+		PrimaryDecision:     session.PrimaryDecision,
+		AskerEmail:          askedBy,
+		SessionCreatorEmail: session.CreatedBy,
+	}
+	if askedBy != nil && strings.TrimSpace(*askedBy) != "" {
+		role := "participant"
+		if session.CreatedBy != nil && strings.EqualFold(strings.TrimSpace(*askedBy), strings.TrimSpace(*session.CreatedBy)) {
+			role = "creator"
+		}
+		ctx.AskerRole = &role
+	}
+	return ctx
 }
 
 // traceAskLookup logs the question and retrieved chunks (including link content) when ASK_TRACE=1.
