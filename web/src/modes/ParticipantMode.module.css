@@ -3,7 +3,8 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -11,6 +12,20 @@
   margin: 0;
   font-size: 18px;
   color: var(--color-success);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roleBadge {
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 /* Shared panel section wrapper (decisions + members in sidebar) */

@@ -529,14 +529,12 @@ export function ParticipantMode({
           <h2 className={styles.sessionTitle}>
             {currentSession.session.title}
           </h2>
-          <span style={{
-            backgroundColor: currentSession.session.created_by === authUser?.email ? 'var(--color-success)' : '#757575',
-            color: 'white',
-            padding: '4px 12px',
-            borderRadius: '4px',
-            fontWeight: 'bold',
-            fontSize: '14px'
-          }}>
+          <span
+            className={styles.roleBadge}
+            style={{
+              backgroundColor: currentSession.session.created_by === authUser?.email ? 'var(--color-success)' : '#757575',
+            }}
+          >
             {currentSession.session.created_by === authUser?.email ? 'Creator' : 'Participant'}
           </span>
         </div>
