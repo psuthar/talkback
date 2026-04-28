@@ -182,6 +182,9 @@ test('orchestration panel: approve draft calls confirm + approved status update'
   // Recommendation card visible.
   await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
 
+  // SCRUM-196: cards collapse to summary by default. Expand to reveal the action row.
+  await page.getByTestId(`orchestration-rec-toggle-${recId}`).click()
+
   // Click Approve draft.
   await page.getByTestId(`orchestration-approve-${recId}`).click()
 
@@ -235,6 +238,9 @@ test('orchestration panel: dismiss draft calls delete draft-answer + dismissed s
   await waitForPanel(page)
   await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
 
+  // SCRUM-196: expand the card before clicking the action.
+  await page.getByTestId(`orchestration-rec-toggle-${recId}`).click()
+
   await page.getByTestId(`orchestration-dismiss-draft-${recId}`).click()
 
   await expect.poll(() => deleteCalled, { timeout: 10_000 }).toBe(true)
@@ -278,6 +284,9 @@ test('orchestration panel: generate draft calls POST draft-answers with question
   await navigateToCreatorSession(page, session.id)
   await waitForPanel(page)
   await expect(page.getByTestId(`orchestration-rec-${recId}`)).toBeVisible({ timeout: 10_000 })
+
+  // SCRUM-196: expand the card before clicking the action.
+  await page.getByTestId(`orchestration-rec-toggle-${recId}`).click()
 
   await page.getByTestId(`orchestration-generate-${recId}`).click()
 

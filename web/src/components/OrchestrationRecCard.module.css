@@ -52,12 +52,69 @@
 .summary {
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 4px;
   color: #222;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .suggestedAction {
   font-size: 12px;
   color: #444;
   margin-bottom: 6px;
+}
+
+/* SCRUM-196: progressive disclosure. The trigger row is a button so Enter
+ * and Space activate it natively; aria-expanded / aria-controls are wired
+ * in the JSX. Card body slides in below the row when expanded. */
+.triggerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.triggerRow:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.triggerRow:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  border-color: var(--color-primary);
+}
+
+.chevron {
+  display: inline-block;
+  width: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  transition: transform 0.15s ease-out;
+  flex: 0 0 auto;
+}
+
+.chevronExpanded {
+  transform: rotate(90deg);
+}
+
+.staticHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
 }
