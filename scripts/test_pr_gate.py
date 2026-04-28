@@ -66,6 +66,8 @@ def _make_rr(
     blocker_msgs: list | None = None,
     warning_msgs: list | None = None,
     recommended: list | None = None,
+    critical_failed_titles: list | None = None,
+    non_critical_failed_titles: list | None = None,
 ) -> ReadinessInput:
     return ReadinessInput(
         status=status,
@@ -75,6 +77,8 @@ def _make_rr(
         blocker_messages=blocker_msgs or [],
         warning_messages=warning_msgs or [],
         recommended_actions=recommended or [],
+        critical_failed_titles=critical_failed_titles or [],
+        non_critical_failed_titles=non_critical_failed_titles or [],
     )
 
 
@@ -1041,6 +1045,77 @@ class TestRun(unittest.TestCase):
             })
             result, _ = run(rp, rrp, rep, tdp / "out")
             self.assertTrue(result["report_enriched"])
+
+
+class FailingE2ETitlesPlumbingTests(unittest.TestCase):
+    """SCRUM-197: failing E2E spec titles flow from release-readiness/report.json
+    into ReadinessInput and onward into pr-gate-summary.json so consumers don't
+    have to download a second artifact to learn which spec failed."""
+
+    def _write(self, dir_: Path, name: str, payload: dict) -> Path:
+        p = dir_ / name
+        p.write_text(json.dumps(payload), encoding="utf-8")
+        return p
+
+    def test_load_release_readiness_threads_failed_titles_from_report(self):
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            summary_path = self._write(tdp, "release-readiness.json", {
+                "outcome": "WARN", "score": 75, "warnings": 1, "blockers": 0,
+            })
+            report_path = self._write(tdp, "report.json", {
+                "blockers": [],
+                "warnings": ["Non-critical E2E failures: 1 — orchestration panel renders and refresh triggers sync"],
+                "recommended_actions": [],
+                "critical_failed_titles": [],
+                "non_critical_failed_titles": ["orchestration panel renders and refresh triggers sync"],
+            })
+            rr = load_release_readiness(summary_path, report_path)
+            self.assertEqual(
+                rr.non_critical_failed_titles,
+                ["orchestration panel renders and refresh triggers sync"],
+            )
+            self.assertEqual(rr.critical_failed_titles, [])
+            self.assertTrue(rr.report_enriched)
+
+    def test_build_gate_json_surfaces_failed_titles_in_release_readiness_section(self):
+        rr = _make_rr(
+            status="WARN",
+            score=75.0,
+            warnings=1,
+            non_critical_failed_titles=["orchestration panel renders and refresh triggers sync"],
+        )
+        risk = _make_risk()
+        gate_json = build_gate_json(risk, rr, "WARN", STANDARD_ACTIONS)
+        section = gate_json["release_readiness"]
+        self.assertIn("non_critical_failed_titles", section)
+        self.assertIn("critical_failed_titles", section)
+        self.assertEqual(
+            section["non_critical_failed_titles"],
+            ["orchestration panel renders and refresh triggers sync"],
+        )
+        self.assertEqual(section["critical_failed_titles"], [])
+
+    def test_build_gate_json_emits_empty_lists_when_no_failures(self):
+        rr = _make_rr(status="PASS", score=100.0)
+        risk = _make_risk()
+        gate_json = build_gate_json(risk, rr, "PASS", STANDARD_ACTIONS)
+        self.assertEqual(gate_json["release_readiness"]["critical_failed_titles"], [])
+        self.assertEqual(gate_json["release_readiness"]["non_critical_failed_titles"], [])
+
+    def test_load_release_readiness_handles_missing_failed_titles_keys(self):
+        # Backward compat: older report.json files won't have the new keys.
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            summary_path = self._write(tdp, "release-readiness.json", {
+                "outcome": "PASS", "score": 100, "warnings": 0, "blockers": 0,
+            })
+            report_path = self._write(tdp, "report.json", {
+                "blockers": [], "warnings": [], "recommended_actions": [],
+            })
+            rr = load_release_readiness(summary_path, report_path)
+            self.assertEqual(rr.critical_failed_titles, [])
+            self.assertEqual(rr.non_critical_failed_titles, [])
 
 
 if __name__ == "__main__":

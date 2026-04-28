@@ -29,6 +29,11 @@ class ReadinessResult:
     # Explains when the final outcome differs from what score alone would produce.
     # Empty when score-only and final outcome agree (e.g. score < warn_threshold → BLOCK).
     outcome_overrides: list[str] = field(default_factory=list)
+    # SCRUM-197: failing E2E spec titles, surfaced so reviewers and the agent
+    # can see which specs failed without re-parsing playwright-results.json.
+    # Always present; empty lists when no failures of that kind.
+    critical_failed_titles: list[str] = field(default_factory=list)
+    non_critical_failed_titles: list[str] = field(default_factory=list)
     timestamp_utc: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -129,6 +134,28 @@ def merge_validations(smoke: Optional[dict], e2e: Optional[dict], config: dict) 
                 out[k] = True
 
     return out
+
+
+# Maximum number of failing spec titles to inline into the human-readable
+# warning / blocker string. Anything above this is summarized as "+N more".
+# The full untruncated list is always available in the structured fields.
+_MAX_INLINE_E2E_TITLES = 3
+
+
+def _format_e2e_failure_message(label: str, titles: list[str]) -> str:
+    """SCRUM-197: build a human-readable failure message that includes the
+    failing spec titles. The structured `*_failed_titles` fields on
+    ReadinessResult carry the full list; this helper exists only for the
+    `warnings` / `blockers` strings that show up in the report summary.
+    """
+    if not titles:
+        return f"{label}: 0"
+    count = len(titles)
+    inlined = titles[:_MAX_INLINE_E2E_TITLES]
+    suffix = ""
+    if count > _MAX_INLINE_E2E_TITLES:
+        suffix = f"; +{count - _MAX_INLINE_E2E_TITLES} more"
+    return f"{label}: {count} — " + "; ".join(inlined) + suffix
 
 
 def _classify_e2e_failures(e2e: Optional[dict], critical_patterns: list[str]) -> tuple[list[str], list[str], int]:
@@ -301,13 +328,16 @@ def compute_readiness(
             failed_checks.append("smoke_failed")
     smoke_failed = any(x == "smoke_failed" for x in failed_checks) or any("Smoke tests did not pass" in b for b in blockers)
 
-    # Hard rule: critical E2E blocks
+    # Hard rule: critical E2E blocks. SCRUM-197: surface failing spec titles in
+    # the human-readable warning/blocker text and keep the structured arrays so
+    # downstream consumers (pr_gate.py, the agent) don't have to re-parse
+    # playwright-results.json to learn which spec actually failed.
     critical_titles, non_critical_titles, retries = _classify_e2e_failures(e2e, crit_patterns)
     if critical_titles:
-        blockers.append(f"Critical E2E failures: {len(critical_titles)}")
+        blockers.append(_format_e2e_failure_message("Critical E2E failures", critical_titles))
         failed_checks.append("e2e_critical")
     if non_critical_titles:
-        warnings.append(f"Non-critical E2E failures: {len(non_critical_titles)}")
+        warnings.append(_format_e2e_failure_message("Non-critical E2E failures", non_critical_titles))
         score -= float(penalties.get("non_critical_e2e_failure", 15))
         failed_checks.append("e2e_non_critical")
     if retries > 0:
@@ -478,5 +508,7 @@ def compute_readiness(
         recommended_actions=recommended,
         remediation_items=remediation_items,
         outcome_overrides=outcome_overrides,
+        critical_failed_titles=list(critical_titles),
+        non_critical_failed_titles=list(non_critical_titles),
     )
 

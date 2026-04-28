@@ -367,6 +367,101 @@ class PRRiskIntegrationTests(unittest.TestCase):
         self.assertNotIn("pr_risk_block", res.failed_checks)
 
 
+class FailingE2ETitlesSurfacedTests(unittest.TestCase):
+    """SCRUM-197: failing E2E spec titles must reach the report so reviewers
+    can identify the failing spec without re-parsing playwright-results.json."""
+
+    def test_non_critical_failed_titles_populated_and_warning_string_includes_first_titles(self):
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=["internal/handlers/session_materials.go"],
+            smoke=smoke_passed(),
+            e2e=e2e_failed_with_failures([{"title": "orchestration panel renders and refresh triggers sync"}]),
+            coverage={"line_percent": 50, "baseline_percent": 51},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        self.assertEqual(res.non_critical_failed_titles, ["orchestration panel renders and refresh triggers sync"])
+        self.assertEqual(res.critical_failed_titles, [])
+        # Warning string must include the failing spec title, not just the count.
+        warning_text = "\n".join(res.warnings)
+        self.assertIn("orchestration panel renders and refresh triggers sync", warning_text)
+        self.assertIn("Non-critical E2E failures: 1", warning_text)
+
+    def test_critical_failed_titles_populated_and_blocker_string_includes_first_titles(self):
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=["internal/handlers/session_materials.go"],
+            smoke=smoke_passed(),
+            e2e=e2e_failed_with_failures([{"title": "login flow regression"}]),
+            coverage={"line_percent": 50, "baseline_percent": 51},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        self.assertEqual(res.critical_failed_titles, ["login flow regression"])
+        self.assertEqual(res.non_critical_failed_titles, [])
+        blocker_text = "\n".join(res.blockers)
+        self.assertIn("login flow regression", blocker_text)
+        self.assertIn("Critical E2E failures: 1", blocker_text)
+
+    def test_failed_titles_lists_empty_when_no_e2e_failures(self):
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=["internal/handlers/session_materials.go"],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 51},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        self.assertEqual(res.critical_failed_titles, [])
+        self.assertEqual(res.non_critical_failed_titles, [])
+
+    def test_warning_string_truncates_inline_titles_after_three(self):
+        # Five non-critical failures should inline the first three and summarize the rest.
+        failures = [
+            {"title": f"spec-{i}"}
+            for i in range(5)
+        ]
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=["internal/handlers/session_materials.go"],
+            smoke=smoke_passed(),
+            e2e=e2e_failed_with_failures(failures, failed_count=5),
+            coverage={"line_percent": 50, "baseline_percent": 51},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        warning_text = "\n".join(res.warnings)
+        # First three titles inlined
+        self.assertIn("spec-0", warning_text)
+        self.assertIn("spec-1", warning_text)
+        self.assertIn("spec-2", warning_text)
+        # Remaining summarized as "+N more"
+        self.assertIn("+2 more", warning_text)
+        # The structured field carries the FULL list (no truncation)
+        self.assertEqual(len(res.non_critical_failed_titles), 5)
+
+    def test_failed_titles_serialized_in_asdict(self):
+        # The dataclass conversion (used by release_readiness.py to write report.json)
+        # must include the new fields with empty defaults when absent.
+        from dataclasses import asdict as _asdict
+        res = compute_readiness(
+            config=BASE_CONFIG,
+            changed_files=[],
+            smoke=smoke_passed(),
+            e2e=e2e_passed(),
+            coverage={"line_percent": 50, "baseline_percent": 50},
+            prod_health={"ok": True},
+            migration_validated_cli=False,
+        )
+        payload = _asdict(res)
+        self.assertIn("critical_failed_titles", payload)
+        self.assertIn("non_critical_failed_titles", payload)
+        self.assertEqual(payload["critical_failed_titles"], [])
+        self.assertEqual(payload["non_critical_failed_titles"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
 
