@@ -182,6 +182,33 @@ describe('DecisionBar', () => {
     expect(screen.getByTestId('decision-bar-feedback').textContent).toBe('Position recorded')
   })
 
+  it('ArrowDown moves focus through stance menu items and wraps; ArrowUp goes back', () => {
+    render(<DecisionBar {...makeProps()} />)
+    fireEvent.click(screen.getByTestId('stance-trigger-btn'))
+    const items = [
+      screen.getByTestId('stance-btn-agree'),
+      screen.getByTestId('stance-btn-disagree'),
+      screen.getByTestId('stance-btn-conditional'),
+      screen.getByTestId('stance-btn-abstain'),
+      screen.getByTestId('stance-btn-need_more_info'),
+    ]
+    // The first item is auto-focused on open
+    expect(document.activeElement).toBe(items[0])
+    const menu = screen.getByTestId('stance-menu')
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(document.activeElement).toBe(items[items.length - 1])
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    // Wraps from last back to first
+    expect(document.activeElement).toBe(items[0])
+    fireEvent.keyDown(menu, { key: 'ArrowUp' })
+    // Wraps from first back to last
+    expect(document.activeElement).toBe(items[items.length - 1])
+    fireEvent.keyDown(menu, { key: 'Home' })
+    expect(document.activeElement).toBe(items[0])
+  })
+
   it('only one Others stance popover may be open at a time', () => {
     render(<DecisionBar {...makeProps({
       stanceAggregate: { agree: 1, disagree: 1, conditional: 0, abstain: 0, need_more_info: 0 },
