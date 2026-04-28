@@ -39,14 +39,14 @@ describe('DecisionBar', () => {
     expect(screen.queryByTestId('decision-bar-submitted')).toBeNull()
   })
 
-  it('opening the trigger reveals all five stance menu items', () => {
+  it('opening the trigger reveals only the three supported stance menu items', () => {
     render(<DecisionBar {...makeProps()} />)
     fireEvent.click(screen.getByTestId('stance-trigger-btn'))
     expect(screen.getByTestId('stance-btn-agree')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-disagree')).toBeTruthy()
-    expect(screen.getByTestId('stance-btn-conditional')).toBeTruthy()
-    expect(screen.getByTestId('stance-btn-abstain')).toBeTruthy()
     expect(screen.getByTestId('stance-btn-need_more_info')).toBeTruthy()
+    expect(screen.queryByTestId('stance-btn-conditional')).toBeNull()
+    expect(screen.queryByTestId('stance-btn-abstain')).toBeNull()
     expect(screen.getByTestId('stance-trigger-btn').getAttribute('aria-expanded')).toBe('true')
   })
 
@@ -123,7 +123,7 @@ describe('DecisionBar', () => {
     expect(submitStance).toHaveBeenCalledWith('agree')
   })
 
-  it('OTHERS row renders all five stance counts plus a Pending count', () => {
+  it('OTHERS row renders three stance counts plus a Pending count', () => {
     render(<DecisionBar {...makeProps({
       stanceAggregate: { agree: 6, disagree: 2, conditional: 1, abstain: 0, need_more_info: 1 },
       stanceResponses: [
@@ -139,10 +139,10 @@ describe('DecisionBar', () => {
     })} />)
     expect(screen.getByTestId('stance-count-agree').textContent).toContain('6')
     expect(screen.getByTestId('stance-count-disagree').textContent).toContain('2')
-    expect(screen.getByTestId('stance-count-conditional').textContent).toContain('1')
-    expect(screen.getByTestId('stance-count-abstain').textContent).toContain('0')
     expect(screen.getByTestId('stance-count-need_more_info').textContent).toContain('1')
     expect(screen.getByTestId('stance-count-pending').textContent).toContain('2')
+    expect(screen.queryByTestId('stance-count-conditional')).toBeNull()
+    expect(screen.queryByTestId('stance-count-abstain')).toBeNull()
   })
 
   it('Pending tooltip lists members who have not yet voted', () => {
@@ -188,8 +188,6 @@ describe('DecisionBar', () => {
     const items = [
       screen.getByTestId('stance-btn-agree'),
       screen.getByTestId('stance-btn-disagree'),
-      screen.getByTestId('stance-btn-conditional'),
-      screen.getByTestId('stance-btn-abstain'),
       screen.getByTestId('stance-btn-need_more_info'),
     ]
     // The first item is auto-focused on open
@@ -207,6 +205,15 @@ describe('DecisionBar', () => {
     expect(document.activeElement).toBe(items[items.length - 1])
     fireEvent.keyDown(menu, { key: 'Home' })
     expect(document.activeElement).toBe(items[0])
+  })
+
+  it('renders a clear fallback label for legacy submitted stances', () => {
+    render(<DecisionBar {...makeProps({
+      myStance: { stance: 'conditional', rationale: 'legacy data' },
+      stanceRationale: 'legacy data',
+    })} />)
+    const trigger = screen.getByTestId('stance-edit-btn')
+    expect(trigger.textContent).toContain('Other (Conditional)')
   })
 
   it('only one Others stance popover may be open at a time', () => {
