@@ -1,0 +1,73 @@
+/* SCRUM-193: collapsible group container for the creator's "AI Suggested Next
+ * Actions" panel. One group per recommendation_type. The header carries the
+ * count and a chevron; clicking or pressing Enter/Space toggles the body. */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.header:hover {
+  background: #eceff1;
+}
+
+.header:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  border-color: var(--color-primary);
+}
+
+.chevron {
+  display: inline-block;
+  width: 10px;
+  text-align: center;
+  font-size: 10px;
+  transition: transform 0.15s ease-out;
+  color: var(--color-text-muted);
+}
+
+.chevronExpanded {
+  transform: rotate(90deg);
+}
+
+.label {
+  flex: 1 1 auto;
+}
+
+.count {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #eceff1;
+  color: #455a64;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 6px;
+}
