@@ -6,6 +6,7 @@ import {
   deleteUserViaAdmin,
   dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
+  setSessionPrimaryDecision,
   uniqueEmail,
   API_BASE,
 } from './fixtures'
@@ -60,5 +61,15 @@ test(
     const body = await res.json()
     expect(body?.invitation?.invited_role).toBe('decision_maker')
     expect(body?.invitation?.invited_email).toBe(invited.toLowerCase())
+
+    // Close-decision CTA is gated by readiness: until at least one DM accepts AND votes,
+    // ready_to_close is false and the button must not appear (server-side enforces auth as
+    // a backstop; the comprehensive happy-path closeout flow is covered by SCRUM-206).
+    await setSessionPrimaryDecision(request, session.id, 'Should we ship Decision Maker?')
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
+    await expect(page.getByTestId('decision-brief-header')).toBeVisible({ timeout: 10_000 })
+    await expect(page.getByTestId('close-decision-btn')).toHaveCount(0)
   }
 )

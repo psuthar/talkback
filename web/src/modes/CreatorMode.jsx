@@ -1417,6 +1417,32 @@ export function CreatorMode({
           decision={currentSession.session.primary_decision}
           decisionOutcome={currentSession.session.decision_outcome}
           readiness={stanceData?.readiness}
+          onCloseDecision={async (outcomeText) => {
+            const sid = currentSession?.session?.id
+            if (!sid || apiBaseUrl == null) return { ok: false, error: 'Session not loaded' }
+            const base = (apiBaseUrl || '').replace(/\/$/, '')
+            try {
+              const res = await fetch(`${base}/api/sessions/${sid}`, {
+                method: 'PATCH',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ decision_outcome: outcomeText })
+              })
+              if (!res.ok) {
+                let msg = `HTTP ${res.status}`
+                try {
+                  const j = await res.json()
+                  if (j?.error) msg = j.error
+                } catch { /* ignore */ }
+                return { ok: false, error: msg }
+              }
+              if (refetchSession) await refetchSession()
+              await fetchStances()
+              return { ok: true }
+            } catch (err) {
+              return { ok: false, error: err?.message || 'Network error' }
+            }
+          }}
         />
       )}
 
