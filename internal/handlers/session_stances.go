@@ -19,6 +19,7 @@ type stancesResponse struct {
 	Aggregate *models.StanceAggregate          `json:"aggregate"`
 	MyStance  *models.DecisionStance           `json:"my_stance,omitempty"`
 	Responses []*models.DecisionStanceWithUser `json:"responses,omitempty"` // creator only
+	Readiness *models.DecisionMakerReadiness   `json:"readiness"`
 }
 
 // SessionSubmitStance handles POST /api/sessions/{id}/stance
@@ -97,6 +98,12 @@ func (h *Handlers) SessionSubmitStance(w http.ResponseWriter, r *http.Request) {
 		agg = &models.StanceAggregate{}
 	}
 
+	readiness, err := h.DB.GetDecisionMakerReadiness(ctx, sessionID)
+	if err != nil {
+		log.Printf("SessionSubmitStance GetDecisionMakerReadiness: %v", err)
+		readiness = &models.DecisionMakerReadiness{}
+	}
+
 	if h.Hub != nil {
 		h.Hub.BroadcastStanceUpdated(sessionID, agg)
 	}
@@ -106,6 +113,7 @@ func (h *Handlers) SessionSubmitStance(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stancesResponse{
 		Aggregate: agg,
 		MyStance:  saved,
+		Readiness: readiness,
 	})
 }
 
@@ -147,10 +155,17 @@ func (h *Handlers) SessionGetStances(w http.ResponseWriter, r *http.Request) {
 		log.Printf("SessionGetStances GetStanceByUserAndSession: %v", err)
 	}
 
+	readiness, err := h.DB.GetDecisionMakerReadiness(ctx, sessionID)
+	if err != nil {
+		log.Printf("SessionGetStances GetDecisionMakerReadiness: %v", err)
+		readiness = &models.DecisionMakerReadiness{}
+	}
+
 	resp := stancesResponse{
 		Aggregate: agg,
 		MyStance:  myStance,
 		Responses: []*models.DecisionStanceWithUser{}, // always set so client gets an array
+		Readiness: readiness,
 	}
 
 	// Provide individual responses (with submitter email) to all authenticated users viewing the session
@@ -205,6 +220,11 @@ func (h *Handlers) SessionDeleteStance(w http.ResponseWriter, r *http.Request) {
 	if agg == nil {
 		agg = &models.StanceAggregate{}
 	}
+	readiness, err := h.DB.GetDecisionMakerReadiness(ctx, sessionID)
+	if err != nil {
+		log.Printf("SessionDeleteStance GetDecisionMakerReadiness: %v", err)
+		readiness = &models.DecisionMakerReadiness{}
+	}
 	if h.Hub != nil {
 		h.Hub.BroadcastStanceUpdated(sessionID, agg)
 	}
@@ -213,5 +233,6 @@ func (h *Handlers) SessionDeleteStance(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(stancesResponse{
 		Aggregate: agg,
 		MyStance:  nil,
+		Readiness: readiness,
 	})
 }

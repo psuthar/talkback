@@ -15,7 +15,7 @@ type SessionMembership struct {
 	ID               uuid.UUID  `json:"id"`
 	SessionID        uuid.UUID  `json:"session_id"`
 	UserID           uuid.UUID  `json:"user_id"`
-	Role             string     `json:"role"` // participant | creator
+	Role             string     `json:"role"` // participant | creator | decision_maker
 	InvitedByUserID  *uuid.UUID `json:"invited_by_user_id,omitempty"`
 	JoinedAt         string     `json:"joined_at"` // timestamptz
 	CreatedAt        string     `json:"created_at"`

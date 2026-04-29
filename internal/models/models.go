@@ -680,3 +680,12 @@ type StanceAggregate struct {
 	NeedMoreInfo int `json:"need_more_info"`
 	Total        int `json:"total"`
 }
+
+// DecisionMakerReadiness reports vote-readiness of the Decision Maker role on a session.
+// ReadyToClose is true only when there is at least one Decision Maker, all Decision Makers
+// have submitted a stance, a primary_decision is set, and decision_outcome is not yet set.
+type DecisionMakerReadiness struct {
+	DecisionMakerTotal int  `json:"decision_maker_total"`
+	DecisionMakerVoted int  `json:"decision_maker_voted"`
+	ReadyToClose       bool `json:"ready_to_close"`
+}
