@@ -18,6 +18,7 @@ import {
 } from '../utils/orchestrationGrouping'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { roleLabel } from '../utils/roleLabels'
+import { MemberRowActions } from '../components/MemberRowActions'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
@@ -90,61 +91,6 @@ function relativeTime(isoString) {
   if (hr < 24) return `${hr} hr ago`
   const day = Math.floor(hr / 24)
   return `${day} day${day !== 1 ? 's' : ''} ago`
-}
-
-function InvitationActionButton({ apiBaseUrl, invitationId, action, onDone }) {
-  const [loading, setLoading] = useState(false)
-  const base = (apiBaseUrl || '').replace(/\/$/, '')
-  const url = `${base}/api/invitations/${invitationId}/${action}`
-  const label = action === 'resend' ? 'Resend' : 'Revoke'
-  const handleClick = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(url, { method: 'POST', credentials: 'include' })
-      if (res.ok && typeof onDone === 'function') {
-        if (action === 'resend') {
-          const data = await res.json().catch(() => ({}))
-          onDone(data)
-        } else {
-          onDone()
-        }
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-  return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginRight: '8px', padding: '2px 8px', fontSize: '12px' }}>
-      {loading ? '…' : label}
-    </button>
-  )
-}
-
-function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError }) {
-  const [loading, setLoading] = useState(false)
-  const base = (apiBaseUrl || '').replace(/\/$/, '')
-  const handleClick = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${base}/api/invitations/${invitationId}/link`, { method: 'GET', credentials: 'include' })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.accept_url) {
-        await navigator.clipboard.writeText(data.accept_url)
-        if (typeof onCopied === 'function') onCopied()
-      } else {
-        if (typeof onError === 'function') onError(data.error || 'Failed to get link')
-      }
-    } catch (_) {
-      if (typeof onError === 'function') onError('Failed to get link')
-    } finally {
-      setLoading(false)
-    }
-  }
-  return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '12px' }}>
-      {loading ? '…' : 'Copy link'}
-    </button>
-  )
 }
 
 export function CreatorMode({
@@ -1710,13 +1656,24 @@ export function CreatorMode({
                                   <td style={{ padding: '4px 6px' }}>{inv.status}</td>
                                   {typeof fetchSessionInvitations === 'function' && (
                                     <td style={{ padding: '4px 6px' }}>
-                                      {inv.status === 'pending' && (
-                                        <>
-                                          <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="resend" onDone={(data) => { if (data?.invitation) { if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation); if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'New link ready.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000) } } fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id) }} />
-                                          <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="revoke" onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)} />
-                                          <CopyInvitationLinkButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} onCopied={() => { if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'Copied.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000) } }} onError={(msg) => { if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed' }) }} />
-                                        </>
-                                      )}
+                                      <MemberRowActions
+                                        invitation={inv}
+                                        apiBaseUrl={apiBaseUrl}
+                                        currentUserEmail={authUser?.email}
+                                        onFeedback={(fb) => {
+                                          if (typeof setInviteFeedback === 'function') {
+                                            setInviteFeedback(fb)
+                                            const ttl = fb?.type === 'success' ? 3000 : 6000
+                                            setTimeout(() => setInviteFeedback({ type: '', message: '' }), ttl)
+                                          }
+                                        }}
+                                        onChanged={(data) => {
+                                          if (data?.invitation && typeof setLastInvitationDraft === 'function') {
+                                            setLastInvitationDraft(data.invitation)
+                                          }
+                                          fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
+                                        }}
+                                      />
                                     </td>
                                   )}
                                 </tr>
