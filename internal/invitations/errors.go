@@ -12,6 +12,6 @@ var (
 	ErrAlreadyMember    = errors.New("user is already a member of this session")
 	ErrAccountExists    = errors.New("account already exists for this email; use sign-in flow")
 	ErrNoAccount        = errors.New("no account for this email; use register-and-accept flow")
-	ErrInvalidRole      = errors.New("invalid role; must be participant or creator")
+	ErrInvalidRole      = errors.New("invalid role; must be participant, creator, or decision_maker")
 	ErrUnauthorized     = errors.New("not authorized to perform this action on the invitation")
 )

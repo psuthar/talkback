@@ -23,6 +23,25 @@ func TestNormalizeEmail(t *testing.T) {
 	}
 }
 
+func TestIsValidRole(t *testing.T) {
+	cases := []struct {
+		role Role
+		want bool
+	}{
+		{RoleParticipant, true},
+		{RoleCreator, true},
+		{RoleDecisionMaker, true},
+		{Role(""), false},
+		{Role("admin"), false},
+		{Role("Decision_Maker"), false},
+	}
+	for _, c := range cases {
+		if got := IsValidRole(c.role); got != c.want {
+			t.Errorf("IsValidRole(%q) = %v, want %v", c.role, got, c.want)
+		}
+	}
+}
+
 func TestExpiryHours(t *testing.T) {
 	// Default when zero
 	s := &Service{Config: Config{ExpiryHours: 0}}
