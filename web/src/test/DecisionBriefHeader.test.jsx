@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 
 describe('DecisionBriefHeader', () => {
@@ -110,5 +110,122 @@ describe('DecisionBriefHeader', () => {
       />
     )
     expect(screen.queryByTestId('decision-readiness')).toBeNull()
+  })
+
+  it('hides the Close decision action when no callback is supplied (participant view)', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+      />
+    )
+    expect(screen.queryByTestId('close-decision-btn')).toBeNull()
+  })
+
+  it('hides the Close decision action when readiness is not yet ready', () => {
+    const cb = vi.fn()
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 1, ready_to_close: false }}
+        onCloseDecision={cb}
+      />
+    )
+    expect(screen.queryByTestId('close-decision-btn')).toBeNull()
+  })
+
+  it('shows the Close decision action only when callback is supplied AND readiness is ready', () => {
+    const cb = vi.fn()
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+        onCloseDecision={cb}
+      />
+    )
+    expect(screen.getByTestId('close-decision-btn')).toBeTruthy()
+  })
+
+  it('hides the Close decision action once decisionOutcome is recorded', () => {
+    const cb = vi.fn()
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        decisionOutcome="Approved"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: false }}
+        onCloseDecision={cb}
+      />
+    )
+    expect(screen.queryByTestId('close-decision-btn')).toBeNull()
+  })
+
+  it('inline form submits the entered outcome via the callback and clears on success', async () => {
+    const cb = vi.fn().mockResolvedValue({ ok: true })
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+        onCloseDecision={cb}
+      />
+    )
+    fireEvent.click(screen.getByTestId('close-decision-btn'))
+    const input = screen.getByTestId('close-decision-input')
+    fireEvent.change(input, { target: { value: '   Approved by board   ' } })
+    fireEvent.click(screen.getByTestId('close-decision-confirm'))
+    await waitFor(() => expect(cb).toHaveBeenCalledTimes(1))
+    expect(cb).toHaveBeenCalledWith('Approved by board')
+    // After success, the form returns to the collapsed CTA.
+    await waitFor(() => expect(screen.queryByTestId('close-decision-form')).toBeNull())
+    expect(screen.getByTestId('close-decision-btn')).toBeTruthy()
+  })
+
+  it('inline form surfaces errors returned by the callback and keeps the form open', async () => {
+    const cb = vi.fn().mockResolvedValue({ ok: false, error: 'forbidden' })
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+        onCloseDecision={cb}
+      />
+    )
+    fireEvent.click(screen.getByTestId('close-decision-btn'))
+    fireEvent.change(screen.getByTestId('close-decision-input'), { target: { value: 'Approved' } })
+    fireEvent.click(screen.getByTestId('close-decision-confirm'))
+    await waitFor(() => expect(screen.getByTestId('close-decision-error').textContent).toContain('forbidden'))
+    expect(screen.getByTestId('close-decision-form')).toBeTruthy()
+  })
+
+  it('inline form rejects empty submissions without calling the callback', () => {
+    const cb = vi.fn()
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+        onCloseDecision={cb}
+      />
+    )
+    fireEvent.click(screen.getByTestId('close-decision-btn'))
+    // Submit button is disabled when the input is empty/whitespace.
+    expect(screen.getByTestId('close-decision-confirm').disabled).toBe(true)
+    fireEvent.change(screen.getByTestId('close-decision-input'), { target: { value: '   ' } })
+    expect(screen.getByTestId('close-decision-confirm').disabled).toBe(true)
+    expect(cb).not.toHaveBeenCalled()
+  })
+
+  it('Cancel returns the inline form to the collapsed CTA without calling the callback', () => {
+    const cb = vi.fn()
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+        onCloseDecision={cb}
+      />
+    )
+    fireEvent.click(screen.getByTestId('close-decision-btn'))
+    fireEvent.change(screen.getByTestId('close-decision-input'), { target: { value: 'Some text' } })
+    fireEvent.click(screen.getByTestId('close-decision-cancel'))
+    expect(screen.queryByTestId('close-decision-form')).toBeNull()
+    expect(screen.getByTestId('close-decision-btn')).toBeTruthy()
+    expect(cb).not.toHaveBeenCalled()
   })
 })

@@ -63,3 +63,77 @@
   font-weight: 600;
   color: #1b5e20;
 }
+
+.closeDecisionWrap {
+  flex: 1 1 auto;
+}
+
+.closeDecisionBtn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background-color: #2e7d32;
+  color: #fff;
+  border: 1px solid #1b5e20;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.closeDecisionBtn:hover {
+  background-color: #1b5e20;
+}
+
+.closeDecisionForm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 480px;
+}
+
+.closeDecisionInput {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid #c8e6c9;
+  border-radius: 4px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.closeDecisionActions {
+  display: flex;
+  gap: 6px;
+}
+
+.closeDecisionConfirm {
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background-color: #2e7d32;
+  color: #fff;
+  border: 1px solid #1b5e20;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.closeDecisionConfirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.closeDecisionCancel {
+  padding: 4px 12px;
+  font-size: 13px;
+  background-color: #fff;
+  color: #555;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.closeDecisionError {
+  margin: 0;
+  color: #b00020;
+  font-size: 12px;
+}
