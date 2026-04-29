@@ -56,8 +56,8 @@ func (h *Handlers) CreateInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := invitations.Role(req.Role)
-	if role != invitations.RoleParticipant && role != invitations.RoleCreator {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be participant or creator"})
+	if !invitations.IsValidRole(role) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be participant, creator, or decision_maker"})
 		return
 	}
 	isAlreadyMember := func(sid uuid.UUID, e string) bool {

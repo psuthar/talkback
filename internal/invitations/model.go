@@ -10,9 +10,19 @@ import (
 type Role string
 
 const (
-	RoleParticipant Role = "participant"
-	RoleCreator     Role = "creator"
+	RoleParticipant   Role = "participant"
+	RoleCreator       Role = "creator"
+	RoleDecisionMaker Role = "decision_maker"
 )
+
+// IsValidRole reports whether r is a known session-scoped role.
+func IsValidRole(r Role) bool {
+	switch r {
+	case RoleParticipant, RoleCreator, RoleDecisionMaker:
+		return true
+	}
+	return false
+}
 
 // Status is the invitation lifecycle state.
 type Status string

@@ -56,7 +56,7 @@ func (s *Service) Create(ctx context.Context, sessionID, inviterUserID uuid.UUID
 	if invitedEmail == "" {
 		return nil, ErrInvalidRole
 	}
-	if role != RoleParticipant && role != RoleCreator {
+	if !IsValidRole(role) {
 		return nil, ErrInvalidRole
 	}
 	if isAlreadyMember(sessionID, invitedEmail) {
