@@ -154,6 +154,11 @@
   cursor: pointer;
 }
 
+.saveRationaleBtn:hover:not(:disabled) {
+  background-color: #dde7fb;
+  border-color: var(--color-primary-dark);
+}
+
 .submittedBlock {
   display: flex;
   align-items: center;
@@ -175,6 +180,13 @@
 .stancePill_abstain { background-color: #eceff1; color: #546e7a; }
 .stancePill_need_more_info { background-color: var(--color-primary-bg); color: var(--color-primary-dark); }
 
+/* Hover darkens each submitted-pill variant rather than letting the global
+ * button:hover paint solid blue over the colored pill. */
+.stancePill_disagree:hover:not(:disabled) { background-color: #fdd5dc; }
+.stancePill_conditional:hover:not(:disabled) { background-color: #ffe7c2; }
+.stancePill_abstain:hover:not(:disabled) { background-color: #d6dde0; }
+.stancePill_need_more_info:hover:not(:disabled) { background-color: #dde7fb; }
+
 .submittedRationale {
   font-size: 13px;
   color: #333;
@@ -190,6 +202,11 @@
   color: var(--color-primary);
   cursor: pointer;
   font-weight: 500;
+}
+
+.editBtn:hover:not(:disabled) {
+  background-color: var(--color-primary-bg);
+  border-color: var(--color-primary-dark);
 }
 
 .countsRow {
@@ -217,6 +234,11 @@
   cursor: pointer;
 }
 
+.countChip:hover:not(:disabled) {
+  background-color: #eceff1;
+  border-color: #b0bec5;
+}
+
 .countChip:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
@@ -226,6 +248,11 @@
   border-color: var(--color-primary);
   background-color: var(--color-primary-bg);
   color: var(--color-primary-dark);
+}
+
+.countPinned:hover:not(:disabled) {
+  background-color: #dde7fb;
+  border-color: var(--color-primary);
 }
 
 .countLabel {
@@ -333,6 +360,15 @@
   min-width: 160px;
 }
 
+/* The global `button:hover` rule in index.css paints solid primary-dark over
+ * every <button>. Override per-variant so the trigger darkens the *current*
+ * background instead of slamming a blue fill that hides the label.
+ */
+.trigger:hover:not(:disabled) {
+  background-color: #eceff1;
+  border-color: #b0bec5;
+}
+
 .trigger:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -347,6 +383,11 @@
   background-color: var(--color-primary-bg);
   border-color: var(--color-primary);
   color: var(--color-primary-dark);
+}
+
+.triggerEmpty:hover:not(:disabled) {
+  background-color: #dde7fb;
+  border-color: var(--color-primary);
 }
 
 .triggerSubmitted {
