@@ -50,3 +50,16 @@
   font-size: 13px;
   font-weight: 600;
 }
+
+.readinessText {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.readinessTextReady {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1b5e20;
+}

@@ -17,6 +17,7 @@ import {
   shouldRenderUngrouped,
 } from '../utils/orchestrationGrouping'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
+import { roleLabel } from '../utils/roleLabels'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
@@ -1415,6 +1416,7 @@ export function CreatorMode({
           premise={currentSession.session.premise}
           decision={currentSession.session.primary_decision}
           decisionOutcome={currentSession.session.decision_outcome}
+          readiness={stanceData?.readiness}
         />
       )}
 
@@ -1651,9 +1653,10 @@ export function CreatorMode({
                     <div style={{ marginTop: '8px' }}>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
                         <input type="email" value={inviteEmail ?? ''} onChange={e => setInviteEmail?.(e.target.value)} placeholder="user@example.com" style={{ flex: '1', minWidth: '120px', padding: '4px 8px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }} />
-                        <select value={inviteRole ?? 'participant'} onChange={e => setInviteRole?.(e.target.value)} style={{ padding: '4px 6px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }}>
+                        <select aria-label="Invite role" value={inviteRole ?? 'participant'} onChange={e => setInviteRole?.(e.target.value)} style={{ padding: '4px 6px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }}>
                           <option value="participant">Participant</option>
                           <option value="creator">Creator</option>
+                          <option value="decision_maker">Decision Maker</option>
                         </select>
                         <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading} style={{ padding: '4px 10px', fontSize: '12px', margin: 0 }}>
                           {inviteLoading ? '…' : 'Invite'}
@@ -1677,7 +1680,7 @@ export function CreatorMode({
                               {sessionInvitations.map((inv) => (
                                 <tr key={inv.id} style={{ borderBottom: '1px solid #eee' }}>
                                   <td style={{ padding: '4px 6px' }}>{inv.invited_email}</td>
-                                  <td style={{ padding: '4px 6px' }}>{inv.invited_role || 'participant'}</td>
+                                  <td style={{ padding: '4px 6px' }}>{roleLabel(inv.invited_role)}</td>
                                   <td style={{ padding: '4px 6px' }}>{inv.status}</td>
                                   {typeof fetchSessionInvitations === 'function' && (
                                     <td style={{ padding: '4px 6px' }}>
