@@ -130,3 +130,43 @@ func (db *DB) DeleteStance(ctx context.Context, sessionID, userID uuid.UUID) err
 	_, err := db.Pool.Exec(ctx, `DELETE FROM decision_stances WHERE session_id = $1 AND user_id = $2`, sessionID, userID)
 	return err
 }
+
+// GetDecisionMakerReadiness reports total/voted Decision Makers on a session and whether the
+// session is ready for closeout. ReadyToClose is true iff there is at least one Decision Maker,
+// every Decision Maker has submitted a stance, primary_decision is set, and decision_outcome
+// is not yet set. Sessions with zero Decision Makers always report ReadyToClose=false (the
+// decision-maker readiness gate does not apply, but the field surface stays uniform).
+func (db *DB) GetDecisionMakerReadiness(ctx context.Context, sessionID uuid.UUID) (*models.DecisionMakerReadiness, error) {
+	const query = `
+		WITH dms AS (
+			SELECT user_id FROM session_memberships WHERE session_id = $1 AND role = 'decision_maker'
+		),
+		voted AS (
+			SELECT COUNT(*)::int AS c
+			FROM dms
+			JOIN decision_stances ds ON ds.session_id = $1 AND ds.user_id = dms.user_id
+		),
+		ctx AS (
+			SELECT
+				COALESCE(NULLIF(primary_decision, ''), '') AS pd,
+				COALESCE(NULLIF(decision_outcome, ''), '') AS doc
+			FROM sessions WHERE id = $1
+		)
+		SELECT
+			(SELECT COUNT(*)::int FROM dms) AS total,
+			(SELECT c FROM voted) AS voted,
+			(SELECT pd FROM ctx) AS primary_decision,
+			(SELECT doc FROM ctx) AS decision_outcome
+	`
+	var total, voted int
+	var primaryDecision, decisionOutcome string
+	if err := db.Pool.QueryRow(ctx, query, sessionID).Scan(&total, &voted, &primaryDecision, &decisionOutcome); err != nil {
+		return nil, fmt.Errorf("GetDecisionMakerReadiness: %w", err)
+	}
+	ready := total > 0 && voted == total && primaryDecision != "" && decisionOutcome == ""
+	return &models.DecisionMakerReadiness{
+		DecisionMakerTotal: total,
+		DecisionMakerVoted: voted,
+		ReadyToClose:       ready,
+	}, nil
+}
