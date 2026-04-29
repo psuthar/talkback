@@ -203,6 +203,20 @@ func (h *SessionHub) BroadcastStanceUpdated(sessionID uuid.UUID, aggregate *mode
 	}
 }
 
+// BroadcastMembershipRoleUpdated notifies clients that a member's session-scoped role changed.
+// Clients should refetch session/members to pick up the new role.
+func (h *SessionHub) BroadcastMembershipRoleUpdated(sessionID, userID uuid.UUID, role string) {
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "membership_role_updated",
+		Data: map[string]string{
+			"session_id": sessionID.String(),
+			"user_id":    userID.String(),
+			"role":       role,
+		},
+	}
+}
+
 // HandleWebSocket handles WebSocket connections for session updates
 func (h *Handlers) HandleWebSocket(hub *SessionHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

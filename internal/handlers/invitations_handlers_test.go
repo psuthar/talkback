@@ -289,6 +289,76 @@ func TestCreateSessionMembership_DecisionMakerRole(t *testing.T) {
 	require.NoError(t, h.DB.CreateSessionMembership(ctx, session.ID, member.ID, "decision_maker", &owner.ID))
 }
 
+// TestListInvitations_IncludesAcceptedByUserID verifies that after an invitation is
+// accepted, the list response surfaces the new accepted_by_user_id field with the
+// correct user UUID. Pending rows must report a nil/null value.
+func TestListInvitations_IncludesAcceptedByUserID(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersWithInvitations(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	inviteeEmail := "acceptedby+listing@smoke.test"
+	_, ls, sess, _ := seedInvitationContext(t, h, inviteeEmail, "acceptedby")
+
+	// Create the invitee user and a login session so they can accept.
+	invitee := &models.User{
+		ID:          uuid.New(),
+		Email:       inviteeEmail,
+		DisplayName: "Accepted By Listing",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleParticipant,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, invitee))
+	inviteeLS := &models.LoginSession{
+		ID:        uuid.New(),
+		UserID:    invitee.ID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, inviteeLS))
+
+	// Look up invitation ID from the creator's list view.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+	listReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+	listReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	listW := httptest.NewRecorder()
+	h.RequireAuth(h.ListInvitations)(listW, listReq)
+	require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+	var listResp map[string]any
+	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
+	pendingList, _ := listResp["invitations"].([]any)
+	require.Len(t, pendingList, 1)
+	pendingInv := pendingList[0].(map[string]any)
+	// Pending invite -> accepted_by_user_id must be nil/absent.
+	assert.Nil(t, pendingInv["accepted_by_user_id"], "pending invitation must report no accepter")
+	invIDStr, _ := pendingInv["id"].(string)
+	require.NotEmpty(t, invIDStr)
+
+	// Invitee accepts via /api/invitations/:id/accept.
+	acceptReq := httptest.NewRequest(http.MethodPost, "/api/invitations/"+invIDStr+"/accept", nil)
+	acceptReq.URL.Path = "/api/invitations/" + invIDStr + "/accept"
+	acceptReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: inviteeLS.ID.String()})
+	acceptW := httptest.NewRecorder()
+	h.RequireAuth(h.AcceptInvitationByID)(acceptW, acceptReq)
+	require.Equal(t, http.StatusOK, acceptW.Code, acceptW.Body.String())
+
+	// Re-list and assert the accepted row reports the correct accepted_by_user_id.
+	listReq2 := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+	listReq2.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+	listReq2.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	listW2 := httptest.NewRecorder()
+	h.RequireAuth(h.ListInvitations)(listW2, listReq2)
+	require.Equal(t, http.StatusOK, listW2.Code, listW2.Body.String())
+	var listResp2 map[string]any
+	require.NoError(t, json.NewDecoder(listW2.Body).Decode(&listResp2))
+	acceptedList, _ := listResp2["invitations"].([]any)
+	require.Len(t, acceptedList, 1)
+	acceptedInv := acceptedList[0].(map[string]any)
+	assert.Equal(t, "accepted", acceptedInv["status"])
+	assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"], "accepted_by_user_id must be the invitee's user id")
+}
+
 func TestResolveInvitation_NoToken_BadRequest(t *testing.T) {
 	t.Parallel()
 	h, cleanup := setupTestHandlersWithInvitations(t)

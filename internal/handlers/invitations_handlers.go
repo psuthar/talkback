@@ -132,15 +132,21 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		if u, _ := h.DB.GetUserByID(ctx, inv.InviterUserID); u != nil {
 			inviterName = u.DisplayName
 		}
+		var acceptedByUserID *string
+		if inv.AcceptedByUserID != nil {
+			s := inv.AcceptedByUserID.String()
+			acceptedByUserID = &s
+		}
 		items = append(items, map[string]interface{}{
-			"id":            inv.ID.String(),
-			"invited_email": inv.InvitedEmailNormalized,
-			"invited_role":  string(inv.InvitedRole),
-			"status":        string(inv.Status),
-			"inviter_name":  inviterName,
-			"expires_at":    inv.ExpiresAt,
-			"accepted_at":   inv.AcceptedAt,
-			"created_at":    inv.CreatedAt,
+			"id":                  inv.ID.String(),
+			"invited_email":       inv.InvitedEmailNormalized,
+			"invited_role":        string(inv.InvitedRole),
+			"status":              string(inv.Status),
+			"inviter_name":        inviterName,
+			"expires_at":          inv.ExpiresAt,
+			"accepted_at":         inv.AcceptedAt,
+			"accepted_by_user_id": acceptedByUserID,
+			"created_at":          inv.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"invitations": items})
