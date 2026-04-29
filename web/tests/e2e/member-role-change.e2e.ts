@@ -6,6 +6,7 @@ import {
   createUserAndLoginWithId,
   deleteSession,
   deleteUserViaAdmin,
+  dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
   setSessionPrimaryDecision,
   uniqueEmail,
@@ -89,8 +90,32 @@ test(
     expect(stancePayload?.readiness?.decision_maker_voted).toBe(1)
     expect(stancePayload?.readiness?.ready_to_close).toBe(true)
 
+    // SCRUM-217: drive the creator UI and assert the displayed role flipped to
+    // the new role. Before the fix the listing API returned the original
+    // invited_role and this assertion would fail because the cell still read
+    // "Participant".
+    await page.goto(`/?session=${session.id}&mode=edit`)
+    await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
+
+    const membersBtn = page.getByRole('button', { name: /^members/i }).first()
+    await expect(membersBtn).toBeVisible({ timeout: 20_000 })
+    if ((await membersBtn.getAttribute('aria-expanded')) !== 'true') {
+      await membersBtn.click()
+    }
+
+    // Locate the participant's row by their email and read the Role cell.
+    const row = page.locator('tr', { hasText: participantEmail.toLowerCase() })
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    await expect(row.locator('td').nth(1)).toHaveText('Decision Maker')
+
+    // Open the row's action menu and assert Decision Maker is the disabled / ✓ item.
+    await row.getByTestId('member-row-actions-trigger').click()
+    const dmItem = page.getByTestId('member-action-role-decision_maker')
+    await expect(dmItem).toBeDisabled()
+    await expect(dmItem).toContainText('✓')
+
     await participantReq.dispose()
-    void page // keep the browser fixture so afterAll cleanup runs identically
   }
 )
 
