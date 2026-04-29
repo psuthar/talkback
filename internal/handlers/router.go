@@ -337,6 +337,12 @@ func (h *Handlers) ApiSessionsRouterWithInvite(w http.ResponseWriter, r *http.Re
 		h.RequireAuth(h.UpdateSessionStatus)(w, r)
 		return
 	}
+	// /api/sessions/:id/memberships/:userId (PATCH) — change role on accepted member
+	if (r.Method == http.MethodPatch || r.Method == http.MethodPut) &&
+		len(parts) == 5 && parts[0] == "api" && parts[1] == "sessions" && parts[3] == "memberships" {
+		h.RequireAuth(h.UpdateSessionMembership)(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/invitations") {
 		if r.Method == http.MethodPost {
 			h.RequireAuth(h.CreateInvitation)(w, r)

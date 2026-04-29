@@ -13,8 +13,9 @@ const pendingInv = (overrides = {}) => ({
 const acceptedInv = (overrides = {}) => ({
   id: 'inv-2',
   invited_email: 'george@foo.com',
-  invited_role: 'creator',
+  invited_role: 'participant',
   status: 'accepted',
+  accepted_by_user_id: 'user-george',
   ...overrides,
 })
 
@@ -156,9 +157,141 @@ describe('MemberRowActions', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders nothing for accepted rows (SCRUM-213 introduces the accepted menu)', () => {
-    const { container } = render(<MemberRowActions invitation={acceptedInv()} apiBaseUrl="http://api" />)
-    expect(container.firstChild).toBeNull()
+  it('accepted rows expose three Set as <role> items in the role enum order', () => {
+    render(<MemberRowActions invitation={acceptedInv()} apiBaseUrl="http://api" onChangeRole={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    const menu = screen.getByTestId('member-row-menu')
+    const items = menu.querySelectorAll('[role="menuitem"]')
+    expect(items.length).toBe(3)
+    expect(items[0].getAttribute('data-testid')).toBe('member-action-role-participant')
+    expect(items[1].getAttribute('data-testid')).toBe('member-action-role-creator')
+    expect(items[2].getAttribute('data-testid')).toBe('member-action-role-decision_maker')
+  })
+
+  it("accepted row marks the current role as disabled with the ✓ glyph", () => {
+    render(<MemberRowActions invitation={acceptedInv({ invited_role: 'creator' })} apiBaseUrl="http://api" onChangeRole={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    const current = screen.getByTestId('member-action-role-creator')
+    expect(current.disabled).toBe(true)
+    expect(current.getAttribute('aria-disabled')).toBe('true')
+    expect(current.getAttribute('data-selected')).toBe('true')
+    expect(current.textContent).toContain('✓')
+    // The other items are not disabled.
+    expect(screen.getByTestId('member-action-role-participant').disabled).toBe(false)
+    expect(screen.getByTestId('member-action-role-decision_maker').disabled).toBe(false)
+  })
+
+  it('participant → decision_maker fires onChangeRole immediately (no confirm)', async () => {
+    const onChangeRole = vi.fn().mockResolvedValue({ ok: true })
+    const onFeedback = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'participant' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onFeedback={onFeedback}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-decision_maker'))
+    await waitFor(() => expect(onChangeRole).toHaveBeenCalledTimes(1))
+    expect(onChangeRole).toHaveBeenCalledWith('user-george', 'decision_maker')
+    await waitFor(() =>
+      expect(onFeedback).toHaveBeenCalledWith({ type: 'success', message: 'Role updated to Decision Maker.' })
+    )
+    // No confirm step was shown.
+    expect(screen.queryByTestId('member-row-role-confirm')).toBeNull()
+  })
+
+  it('demoting a creator to participant requires inline confirm', async () => {
+    const onChangeRole = vi.fn().mockResolvedValue({ ok: true })
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'creator' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-participant'))
+    expect(screen.getByTestId('member-row-role-confirm')).toBeTruthy()
+    expect(onChangeRole).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTestId('member-action-role-confirm'))
+    await waitFor(() => expect(onChangeRole).toHaveBeenCalledTimes(1))
+    expect(onChangeRole).toHaveBeenCalledWith('user-george', 'participant')
+  })
+
+  it('demote-creator confirm Cancel returns to the menu without calling onChangeRole', () => {
+    const onChangeRole = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'creator' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-participant'))
+    fireEvent.click(screen.getByTestId('member-action-role-cancel'))
+    expect(screen.queryByTestId('member-row-role-confirm')).toBeNull()
+    expect(screen.getByTestId('member-row-menu')).toBeTruthy()
+    expect(onChangeRole).not.toHaveBeenCalled()
+  })
+
+  it('demoting creator → decision_maker fires immediately (only ↓participant requires confirm)', async () => {
+    const onChangeRole = vi.fn().mockResolvedValue({ ok: true })
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'creator' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-decision_maker'))
+    await waitFor(() => expect(onChangeRole).toHaveBeenCalledTimes(1))
+    expect(onChangeRole).toHaveBeenCalledWith('user-george', 'decision_maker')
+    expect(screen.queryByTestId('member-row-role-confirm')).toBeNull()
+  })
+
+  it('surfaces a server error returned by onChangeRole', async () => {
+    const onChangeRole = vi.fn().mockResolvedValue({ ok: false, error: 'session must keep at least one creator' })
+    const onFeedback = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'participant' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onFeedback={onFeedback}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-creator'))
+    await waitFor(() =>
+      expect(onFeedback).toHaveBeenCalledWith({
+        type: 'error',
+        message: 'session must keep at least one creator',
+      })
+    )
+  })
+
+  it('accepted row with no accepted_by_user_id surfaces a friendly error rather than calling onChangeRole', async () => {
+    const onChangeRole = vi.fn()
+    const onFeedback = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ accepted_by_user_id: null })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onFeedback={onFeedback}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-decision_maker'))
+    await waitFor(() =>
+      expect(onFeedback).toHaveBeenCalledWith({ type: 'error', message: 'Cannot change role: missing user id.' })
+    )
+    expect(onChangeRole).not.toHaveBeenCalled()
   })
 
   it('Escape closes the menu and returns focus to the trigger', () => {

@@ -1,31 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import styles from './MemberRowActions.module.css'
+import { ROLE_VALUES, roleLabel, ROLE_PARTICIPANT, ROLE_CREATOR } from '../utils/roleLabels'
 
 // MemberRowActions renders a single per-row dropdown trigger for the creator's
-// Members panel. Pending invitations expose Resend / Copy link / Revoke (with
-// inline confirm for Revoke). Accepted-row variants are introduced in
-// SCRUM-213 — this component is the host for that menu.
+// Members panel. Pending rows expose Resend / Copy link / Revoke (with inline
+// confirm for Revoke). Accepted rows expose Set as <role> for each session
+// role, with the current role disabled and marked, and an inline confirm only
+// when demoting a creator to participant.
 export function MemberRowActions({
   invitation,
   apiBaseUrl,
   currentUserEmail,
   onFeedback,
   onChanged,
+  onChangeRole,
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [confirmRevoke, setConfirmRevoke] = useState(false)
+  // mode: 'menu' | 'revokeConfirm' | 'demoteCreatorConfirm'
+  const [mode, setMode] = useState('menu')
+  const [pendingRole, setPendingRole] = useState(null)
   const triggerRef = useRef(null)
   const menuRef = useRef(null)
 
   const status = invitation?.status
+  const currentRole = invitation?.invited_role || ROLE_PARTICIPANT
+  const targetUserId = invitation?.accepted_by_user_id || null
   const invitedEmail = (invitation?.invited_email || '').toLowerCase()
   const isSelfRow =
     !!currentUserEmail && invitedEmail === currentUserEmail.toLowerCase()
 
   const close = useCallback(() => {
     setOpen(false)
-    setConfirmRevoke(false)
+    setMode('menu')
+    setPendingRole(null)
   }, [])
 
   useEffect(() => {
@@ -53,10 +61,10 @@ export function MemberRowActions({
   }, [open, close])
 
   useEffect(() => {
-    if (!open || !menuRef.current) return
+    if (!open || mode !== 'menu' || !menuRef.current) return
     const items = menuRef.current.querySelectorAll('[role="menuitem"]:not([disabled])')
     items[0]?.focus()
-  }, [open])
+  }, [open, mode])
 
   const handleMenuKeyDown = (event) => {
     if (!menuRef.current) return
@@ -149,11 +157,45 @@ export function MemberRowActions({
     }
   }
 
-  if (isSelfRow) return null
+  const fireRoleChange = async (newRole) => {
+    if (busy || !targetUserId) {
+      if (!targetUserId) {
+        onFeedback?.({ type: 'error', message: 'Cannot change role: missing user id.' })
+      }
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await onChangeRole?.(targetUserId, newRole)
+      if (result && result.ok === false) {
+        onFeedback?.({ type: 'error', message: result.error || 'Failed to update role' })
+      } else {
+        onFeedback?.({ type: 'success', message: `Role updated to ${roleLabel(newRole)}.` })
+        onChanged?.()
+      }
+    } finally {
+      setBusy(false)
+      close()
+    }
+  }
 
-  // Today the menu only carries pending-invite actions; SCRUM-213 will branch
-  // here to render accepted-row role-change items.
-  if (status !== 'pending') return null
+  const handleRoleSelect = (newRole) => {
+    if (newRole === currentRole) return
+    // Inline confirm only when demoting a creator to participant. Promotions
+    // (participant → decision_maker, etc.) and Decision Maker swaps fire
+    // immediately.
+    if (currentRole === ROLE_CREATOR && newRole === ROLE_PARTICIPANT) {
+      setPendingRole(newRole)
+      setMode('demoteCreatorConfirm')
+      return
+    }
+    fireRoleChange(newRole)
+  }
+
+  if (isSelfRow) return null
+  if (status !== 'pending' && status !== 'accepted') return null
+
+  const isPending = status === 'pending'
 
   return (
     <div className={styles.wrap} data-testid="member-row-actions" data-invitation-id={invitation.id}>
@@ -166,14 +208,15 @@ export function MemberRowActions({
         aria-label="Member actions"
         onClick={() => {
           setOpen((v) => !v)
-          setConfirmRevoke(false)
+          setMode('menu')
+          setPendingRole(null)
         }}
         disabled={busy}
         className={styles.trigger}
       >
         ⋯
       </button>
-      {open && !confirmRevoke && (
+      {open && mode === 'menu' && isPending && (
         <ul
           ref={menuRef}
           role="menu"
@@ -211,7 +254,7 @@ export function MemberRowActions({
               role="menuitem"
               type="button"
               data-testid="member-action-revoke"
-              onClick={() => setConfirmRevoke(true)}
+              onClick={() => setMode('revokeConfirm')}
               disabled={busy}
               className={styles.menuItemDanger}
             >
@@ -220,7 +263,38 @@ export function MemberRowActions({
           </li>
         </ul>
       )}
-      {open && confirmRevoke && (
+      {open && mode === 'menu' && !isPending && (
+        <ul
+          ref={menuRef}
+          role="menu"
+          aria-label="Member actions"
+          className={styles.menu}
+          data-testid="member-row-menu"
+          onKeyDown={handleMenuKeyDown}
+        >
+          {ROLE_VALUES.map((role) => {
+            const isCurrent = role === currentRole
+            return (
+              <li role="none" key={role}>
+                <button
+                  role="menuitem"
+                  type="button"
+                  data-testid={`member-action-role-${role}`}
+                  data-selected={isCurrent ? 'true' : 'false'}
+                  onClick={() => handleRoleSelect(role)}
+                  disabled={busy || isCurrent}
+                  aria-disabled={isCurrent ? 'true' : 'false'}
+                  className={styles.menuItem}
+                >
+                  <span aria-hidden="true" className={styles.menuItemMark}>{isCurrent ? '✓' : ''}</span>
+                  <span>Set as {roleLabel(role)}</span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {open && mode === 'revokeConfirm' && (
         <div
           ref={menuRef}
           className={styles.menu}
@@ -246,7 +320,46 @@ export function MemberRowActions({
               <button
                 type="button"
                 data-testid="member-action-revoke-cancel"
-                onClick={() => setConfirmRevoke(false)}
+                onClick={() => setMode('menu')}
+                disabled={busy}
+                className={styles.confirmCancel}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {open && mode === 'demoteCreatorConfirm' && pendingRole && (
+        <div
+          ref={menuRef}
+          className={styles.menu}
+          data-testid="member-row-role-confirm"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') close()
+          }}
+        >
+          <div className={styles.confirmBlock}>
+            <span>
+              Change {invitation.invited_email}'s role to {roleLabel(pendingRole)}? They will lose creator permissions.
+            </span>
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                data-testid="member-action-role-confirm"
+                onClick={() => fireRoleChange(pendingRole)}
+                disabled={busy}
+                className={styles.confirmDanger}
+              >
+                {busy ? 'Updating…' : 'Change role'}
+              </button>
+              <button
+                type="button"
+                data-testid="member-action-role-cancel"
+                onClick={() => {
+                  setMode('menu')
+                  setPendingRole(null)
+                }}
                 disabled={busy}
                 className={styles.confirmCancel}
               >

@@ -1672,6 +1672,31 @@ export function CreatorMode({
                                             setLastInvitationDraft(data.invitation)
                                           }
                                           fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)
+                                          if (refetchSession) refetchSession()
+                                        }}
+                                        onChangeRole={async (userId, newRole) => {
+                                          const sid = currentSession?.session?.id ?? currentSession?.id
+                                          if (!sid || apiBaseUrl == null) return { ok: false, error: 'Session not loaded' }
+                                          const base = (apiBaseUrl || '').replace(/\/$/, '')
+                                          try {
+                                            const res = await fetch(`${base}/api/sessions/${sid}/memberships/${userId}`, {
+                                              method: 'PATCH',
+                                              credentials: 'include',
+                                              headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ role: newRole }),
+                                            })
+                                            if (!res.ok) {
+                                              let msg = `HTTP ${res.status}`
+                                              try {
+                                                const j = await res.json()
+                                                if (j?.error) msg = j.error
+                                              } catch { /* ignore */ }
+                                              return { ok: false, error: msg }
+                                            }
+                                            return { ok: true }
+                                          } catch (err) {
+                                            return { ok: false, error: err?.message || 'Network error' }
+                                          }
                                         }}
                                       />
                                     </td>
