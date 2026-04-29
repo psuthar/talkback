@@ -229,3 +229,90 @@ func TestUpdateSessionMembership_NoOpSameRoleSucceeds(t *testing.T) {
 	w := patchMembership(t, h, sess.ID, target.ID, map[string]string{"role": "participant"}, &creatorLS.ID)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
+
+// TestUpdateSessionMembership_UnauthenticatedReturns401 verifies the RequireAuth wrapper
+// blocks anonymous PATCH attempts on the membership role endpoint.
+func TestUpdateSessionMembership_UnauthenticatedReturns401(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, _, target, sess := seedMembershipScenario(t, h, "noauth", "participant")
+	// No login session cookie -> RequireAuth must short-circuit with 401.
+	w := patchMembership(t, h, sess.ID, target.ID, map[string]string{"role": "decision_maker"}, nil)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// TestUpdateSessionMembership_InvalidSessionIDPath verifies a non-UUID session id
+// in the path is rejected at parseSessionMembershipPath with a 400.
+func TestUpdateSessionMembership_InvalidSessionIDPath(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, creatorLS, _, _ := seedMembershipScenario(t, h, "badsess", "participant")
+	body, _ := json.Marshal(map[string]string{"role": "creator"})
+	url := "/api/sessions/not-a-uuid/memberships/" + uuid.New().String()
+	req := httptest.NewRequest(http.MethodPatch, url, bytes.NewReader(body))
+	req.URL.Path = url
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
+	w := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateSessionMembership)(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp["error"], "session id")
+}
+
+// TestUpdateSessionMembership_InvalidUserIDPath verifies a non-UUID user id
+// in the path is rejected with a 400 (distinct error from invalid session id).
+func TestUpdateSessionMembership_InvalidUserIDPath(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	_, creatorLS, _, sess := seedMembershipScenario(t, h, "baduser", "participant")
+	body, _ := json.Marshal(map[string]string{"role": "creator"})
+	url := "/api/sessions/" + sess.ID.String() + "/memberships/not-a-uuid"
+	req := httptest.NewRequest(http.MethodPatch, url, bytes.NewReader(body))
+	req.URL.Path = url
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
+	w := httptest.NewRecorder()
+	h.RequireAuth(h.UpdateSessionMembership)(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Contains(t, resp["error"], "user id")
+}
+
+// TestUpdateSessionMembership_StanceSurvivesCreatorDemotion is the parallel regression
+// to TestUpdateSessionMembership_StanceSurvivesDemotion: a creator-role member with a
+// stance gets demoted to participant. The stance row must persist (role/stance decoupling).
+func TestUpdateSessionMembership_StanceSurvivesCreatorDemotion(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	// Seed with target as 'creator' so the actor isn't the only creator (no last-creator block).
+	_, creatorLS, target, sess := seedMembershipScenario(t, h, "stance-creator-demote", "creator")
+	pd := "Approve the change?"
+	require.NoError(t, h.DB.UpdateSessionContext(ctx, sess.ID, nil, &pd, nil))
+	rationale := "Strong support."
+	stance, err := h.DB.CreateOrUpdateStance(ctx, sess.ID, target.ID, "agree", &rationale)
+	require.NoError(t, err)
+	require.NotNil(t, stance)
+
+	// Demote creator -> participant (still leaves the original actor as a creator).
+	w := patchMembership(t, h, sess.ID, target.ID, map[string]string{"role": "participant"}, &creatorLS.ID)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	survived, err := h.DB.GetStanceByUserAndSession(ctx, sess.ID, target.ID)
+	require.NoError(t, err)
+	require.NotNil(t, survived)
+	assert.Equal(t, "agree", survived.Stance)
+}
