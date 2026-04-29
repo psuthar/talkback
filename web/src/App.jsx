@@ -10,6 +10,7 @@ import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { SessionSkeleton } from './components/SessionSkeleton'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { isValidEmailFormat } from './utils/inviteMailto'
+import { roleLabel } from './utils/roleLabels'
 import {
   parseSessionNavigationFromLocation,
   parseSessionIdFromPathname,
@@ -3430,7 +3431,7 @@ function App() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: '600' }}>{inv.session_title || 'Untitled session'}</div>
                         <div style={{ fontSize: '12px', color: '#666' }}>
-                          Invited by {inv.inviter_name || '—'} · {inv.invited_role || 'participant'}
+                          Invited by {inv.inviter_name || '—'} · {roleLabel(inv.invited_role)}
                           {inv.created_at && (
                             <span style={{ marginLeft: '6px', color: '#888' }}>
                               · Sent {new Date(inv.created_at).toLocaleString()}
@@ -4038,9 +4039,10 @@ function App() {
                     placeholder="user@example.com"
                     style={{ flex: '1', minWidth: '180px', padding: '6px 10px', fontSize: '13px' }}
                   />
-                  <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
+                  <select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} style={{ padding: '6px 10px', fontSize: '13px' }}>
                     <option value="participant">Participant</option>
                     <option value="creator">Creator</option>
+                    <option value="decision_maker">Decision Maker</option>
                   </select>
                   <button type="button" onClick={inviteUserToSession} disabled={!inviteEmail?.trim() || !isValidEmailFormat(inviteEmail?.trim()) || inviteLoading}>
                     {inviteLoading ? 'Sending…' : 'Invite'}

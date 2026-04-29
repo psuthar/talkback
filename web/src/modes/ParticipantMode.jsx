@@ -118,6 +118,7 @@ export function ParticipantMode({
   const [stanceRationale, setStanceRationale] = useState('')
   const [stanceSubmitting, setStanceSubmitting] = useState(false)
   const [stanceFeedback, setStanceFeedback] = useState({ type: '', message: '' })
+  const [stanceReadiness, setStanceReadiness] = useState(null)
 
   const fetchMyStance = useCallback(async () => {
     if (!currentSession?.session?.id || apiBaseUrl == null) return
@@ -128,6 +129,7 @@ export function ParticipantMode({
       const data = await res.json()
       setMyStance(data.my_stance ?? null)
       setStanceAggregate(data.aggregate ?? null)
+      setStanceReadiness(data.readiness ?? null)
       // Populate rationale from server so the text field shows what the user previously typed (participant view)
       if (data.my_stance?.rationale != null) {
         setStanceRationale(typeof data.my_stance.rationale === 'string' ? data.my_stance.rationale : '')
@@ -177,6 +179,7 @@ export function ParticipantMode({
       const data = await res.json()
       setMyStance(data.my_stance ?? null)
       setStanceAggregate(data.aggregate ?? null)
+      if (data.readiness !== undefined) setStanceReadiness(data.readiness ?? null)
       setStanceFeedback({ type: 'success', message: 'Position recorded' })
       fetchMyStance() // refetch to get updated responses list
     } catch (err) {
@@ -212,6 +215,7 @@ export function ParticipantMode({
       setMyStance(null)
       const data = await res.json()
       setStanceAggregate(data.aggregate ?? null)
+      if (data.readiness !== undefined) setStanceReadiness(data.readiness ?? null)
       setStanceFeedback({ type: 'success', message: 'Decision cleared' })
       fetchMyStance()
     } catch (err) {
@@ -551,6 +555,7 @@ export function ParticipantMode({
         premise={currentSession.session.premise}
         decision={currentSession.session.primary_decision}
         decisionOutcome={currentSession.session.decision_outcome}
+        readiness={stanceReadiness}
       />
 
       <DecisionBar

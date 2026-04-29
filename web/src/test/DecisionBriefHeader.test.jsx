@@ -53,4 +53,62 @@ describe('DecisionBriefHeader', () => {
     )
     expect(container.firstChild).toBeNull()
   })
+
+  it('renders a "no Decision Makers assigned" hint when readiness has total=0', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Should we extend an offer?"
+        readiness={{ decision_maker_total: 0, decision_maker_voted: 0, ready_to_close: false }}
+      />
+    )
+    const node = screen.getByTestId('decision-readiness')
+    expect(node.textContent).toBe('No Decision Makers assigned')
+    expect(node.getAttribute('data-ready')).toBe('false')
+  })
+
+  it('renders partial-vote readiness when some Decision Makers have voted', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 3, decision_maker_voted: 1, ready_to_close: false }}
+      />
+    )
+    const node = screen.getByTestId('decision-readiness')
+    expect(node.textContent).toBe('1/3 Decision Makers submitted')
+    expect(node.getAttribute('data-ready')).toBe('false')
+  })
+
+  it('flags ready-to-close when every Decision Maker has voted', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: true }}
+      />
+    )
+    const node = screen.getByTestId('decision-readiness')
+    expect(node.textContent).toBe('2/2 Decision Makers submitted — ready to close')
+    expect(node.getAttribute('data-ready')).toBe('true')
+  })
+
+  it('hides readiness once decisionOutcome is recorded — outcome row carries the signal', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        decisionOutcome="Approved"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 2, ready_to_close: false }}
+      />
+    )
+    expect(screen.queryByTestId('decision-readiness')).toBeNull()
+    expect(screen.getByTestId('decision-outcome-badge').textContent).toContain('Approved')
+  })
+
+  it('hides readiness when no decision question is set', () => {
+    render(
+      <DecisionBriefHeader
+        premise="Premise text"
+        readiness={{ decision_maker_total: 2, decision_maker_voted: 1, ready_to_close: false }}
+      />
+    )
+    expect(screen.queryByTestId('decision-readiness')).toBeNull()
+  })
 })
