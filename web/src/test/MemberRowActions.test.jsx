@@ -397,4 +397,46 @@ describe('MemberRowActions', () => {
       })
     )
   })
+
+  // SCRUM-217 regression: after onChangeRole resolves successfully, the parent
+  // is expected to refetch and re-render the row with the updated invited_role.
+  // The menu's ✓-marked / disabled item must follow the new role on re-render —
+  // before the fix the listing API returned the stale invited_role and this
+  // test would fail because Participant remained the disabled current role.
+  it('after a successful role change, re-rendering with the new role moves ✓ to the new menu item', async () => {
+    const onChangeRole = vi.fn().mockResolvedValue({ ok: true })
+    const onChanged = vi.fn()
+    const { rerender } = render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'participant' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    // Pre-change: Participant is the disabled / ✓ item; Creator is enabled.
+    expect(screen.getByTestId('member-action-role-participant').disabled).toBe(true)
+    expect(screen.getByTestId('member-action-role-participant').textContent).toContain('✓')
+    expect(screen.getByTestId('member-action-role-creator').disabled).toBe(false)
+
+    fireEvent.click(screen.getByTestId('member-action-role-creator'))
+    await waitFor(() => expect(onChangeRole).toHaveBeenCalledWith('user-george', 'creator'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalled())
+
+    // Simulate the parent's refetch + re-render with the new invited_role.
+    rerender(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'creator' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onChanged={onChanged}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    // Post-change: Creator is now the disabled / ✓ item; Participant is enabled.
+    expect(screen.getByTestId('member-action-role-creator').disabled).toBe(true)
+    expect(screen.getByTestId('member-action-role-creator').textContent).toContain('✓')
+    expect(screen.getByTestId('member-action-role-participant').disabled).toBe(false)
+  })
 })
