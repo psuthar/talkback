@@ -4,6 +4,7 @@ import {
   createSession,
   deleteSession,
   deleteUserViaAdmin,
+  dismissParticipantOnboardingIfPresent,
   loginAsAdmin,
   uniqueEmail,
   API_BASE,
@@ -29,12 +30,20 @@ test(
     const session = await createSession(request, 'Decision Maker Role E2E Session')
     seededSessionId = session.id
 
-    const params = new URLSearchParams({ session: session.id, mode: 'view' })
+    // Creator (edit) mode is where the canonical Members panel + invite role select live.
+    const params = new URLSearchParams({ session: session.id, mode: 'edit' })
     await page.goto(`/?${params.toString()}`)
     await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
+
+    // Expand the Members panel — the role select renders inside its expanded body.
+    const membersBtn = page.getByRole('button', { name: /^members/i }).first()
+    await expect(membersBtn).toBeVisible({ timeout: 20_000 })
+    if ((await membersBtn.getAttribute('aria-expanded')) !== 'true') {
+      await membersBtn.click()
+    }
 
     // The creator's invite role dropdown must include the Decision Maker option.
-    // Both invite surfaces (CreatorMode members panel, App-level fallback) carry the same aria-label.
     const roleSelect = page.getByLabel('Invite role').first()
     await expect(roleSelect).toBeVisible({ timeout: 10_000 })
     const optionValues = await roleSelect.evaluate((el: HTMLSelectElement) =>
