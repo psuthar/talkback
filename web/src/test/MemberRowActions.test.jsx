@@ -318,4 +318,83 @@ describe('MemberRowActions', () => {
       expect(onFeedback).toHaveBeenCalledWith({ type: 'error', message: 'oops' })
     )
   })
+
+  it('renders nothing for the self row even when the membership is accepted', () => {
+    const { container } = render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_email: 'me@foo.com' })}
+        apiBaseUrl="http://api"
+        currentUserEmail="me@foo.com"
+        onChangeRole={vi.fn()}
+      />
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('ArrowDown / ArrowUp wrap focus across the accepted-row menu items', () => {
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'participant' })}
+        apiBaseUrl="http://api"
+        onChangeRole={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    const menu = screen.getByTestId('member-row-menu')
+    // First non-disabled item auto-focuses on open. Current role 'participant'
+    // is disabled, so 'creator' is the first focusable item.
+    const creator = screen.getByTestId('member-action-role-creator')
+    const dm = screen.getByTestId('member-action-role-decision_maker')
+    expect(document.activeElement).toBe(creator)
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(dm)
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    // Wraps back to the first focusable item.
+    expect(document.activeElement).toBe(creator)
+    fireEvent.keyDown(menu, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(dm)
+  })
+
+  it('clicking outside the menu closes it without invoking onChangeRole', () => {
+    const onChangeRole = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'participant' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    expect(screen.getByTestId('member-row-menu')).toBeTruthy()
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(screen.queryByTestId('member-row-menu')).toBeNull()
+    expect(onChangeRole).not.toHaveBeenCalled()
+  })
+
+  it('surfaces last-creator 409 wording when demoting the only creator to participant', async () => {
+    const onChangeRole = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: 'session must keep at least one creator' })
+    const onFeedback = vi.fn()
+    render(
+      <MemberRowActions
+        invitation={acceptedInv({ invited_role: 'creator' })}
+        apiBaseUrl="http://api"
+        onChangeRole={onChangeRole}
+        onFeedback={onFeedback}
+      />
+    )
+    fireEvent.click(screen.getByTestId('member-row-actions-trigger'))
+    fireEvent.click(screen.getByTestId('member-action-role-participant'))
+    // Demoting a creator routes through the inline confirm.
+    fireEvent.click(screen.getByTestId('member-action-role-confirm'))
+    await waitFor(() =>
+      expect(onFeedback).toHaveBeenCalledWith({
+        type: 'error',
+        message: 'session must keep at least one creator',
+      })
+    )
+  })
 })
