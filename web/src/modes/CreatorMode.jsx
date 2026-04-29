@@ -18,7 +18,7 @@ import {
 } from '../utils/orchestrationGrouping'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
-import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from '../utils/inviteMailto'
+import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 import { SessionSkeleton } from '../components/SessionSkeleton'
@@ -142,43 +142,6 @@ function CopyInvitationLinkButton({ apiBaseUrl, invitationId, onCopied, onError 
   return (
     <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '12px' }}>
       {loading ? '…' : 'Copy link'}
-    </button>
-  )
-}
-
-function OpenEmailDraftButton({ apiBaseUrl, invitationId, invitation, sessionTitle, inviterEmail, inviterDisplayName, onError }) {
-  const [loading, setLoading] = useState(false)
-  const base = (apiBaseUrl || '').replace(/\/$/, '')
-  const handleClick = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`${base}/api/invitations/${invitationId}/link`, { method: 'GET', credentials: 'include' })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.accept_url) {
-        const draft = {
-          invited_email: invitation?.invited_email,
-          accept_url: data.accept_url,
-          session_title: sessionTitle || 'a session',
-          inviter_email: inviterEmail,
-          inviter_name: inviterDisplayName,
-          expires_at: invitation?.expires_at
-        }
-        const mailtoUrl = buildInviteMailto(draft)
-        if (mailtoUrl) {
-          try { window.location.href = mailtoUrl } catch (_) { /* mailto may be blocked */ }
-        }
-      } else {
-        if (typeof onError === 'function') onError(data.error || 'Failed to get link')
-      }
-    } catch (_) {
-      if (typeof onError === 'function') onError('Failed to get link')
-    } finally {
-      setLoading(false)
-    }
-  }
-  return (
-    <button type="button" onClick={handleClick} disabled={loading} style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '12px' }}>
-      {loading ? '…' : 'Open email draft'}
     </button>
   )
 }
@@ -1723,7 +1686,6 @@ export function CreatorMode({
                                           <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="resend" onDone={(data) => { if (data?.invitation) { if (typeof setLastInvitationDraft === 'function') setLastInvitationDraft(data.invitation); if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'New link ready.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 6000) } } fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id) }} />
                                           <InvitationActionButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} action="revoke" onDone={() => fetchSessionInvitations(currentSession?.session?.id ?? currentSession?.id)} />
                                           <CopyInvitationLinkButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} onCopied={() => { if (typeof setInviteFeedback === 'function') { setInviteFeedback({ type: 'success', message: 'Copied.' }); setTimeout(() => setInviteFeedback({ type: '', message: '' }), 2000) } }} onError={(msg) => { if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed' }) }} />
-                                          <OpenEmailDraftButton apiBaseUrl={apiBaseUrl} invitationId={inv.id} invitation={{ invited_email: inv.invited_email, expires_at: inv.expires_at }} sessionTitle={currentSession?.session?.title} inviterEmail={currentSession?.session?.created_by} inviterDisplayName={currentSession?.created_by_display_name} onError={(msg) => { if (typeof setInviteFeedback === 'function') setInviteFeedback({ type: 'error', message: msg || 'Failed' }) }} />
                                         </>
                                       )}
                                     </td>

@@ -9,7 +9,7 @@ import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { SessionSkeleton } from './components/SessionSkeleton'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
-import { buildInviteMailto, buildInviteMessageBody, isValidEmailFormat } from './utils/inviteMailto'
+import { isValidEmailFormat } from './utils/inviteMailto'
 import {
   parseSessionNavigationFromLocation,
   parseSessionIdFromPathname,
@@ -2190,7 +2190,7 @@ function App() {
         setInviteEmail('')
         const inv = data?.invitation
         setLastInvitationDraft(inv || null)
-        setInviteFeedback({ type: 'success', message: 'Invitation created. Use "Open email draft" in the Invitations table to open in your email app.' })
+        setInviteFeedback({ type: 'success', message: 'Invitation created. Use "Copy link" in the Invitations table to share the accept URL.' })
         setTimeout(() => setInviteFeedback({ type: '', message: '' }), 5000)
         fetchSessionInvitations(currentSession.session.id)
       } else if (response.status === 409) {
