@@ -90,11 +90,16 @@ async function uploadFile(page, filePath: string) {
   ])
   await fileChooser.setFiles(filePath)
 
-  // Wait for the upload HTTP response
+  // Wait for the upload HTTP response. SCRUM-218: 90 s (not 30 s) so cold-start
+  // CI runners can clear text extraction + slide derivation without timing out.
+  // The DOCX-first run was consistently hitting 30001ms before; production
+  // timing under contention can spike to ~60s, so we leave generous headroom.
+  // A real upload-pipeline regression would still surface as a much-larger
+  // latency spike that exceeds 90s.
   await page.waitForResponse(
     (res) =>
       res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 30_000 }
+    { timeout: 90_000 }
   )
 
   // Wait briefly for the session refetch to update the tree
