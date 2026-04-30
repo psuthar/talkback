@@ -108,3 +108,88 @@ func TestDeleteUser_NoUserIsIdempotent(t *testing.T) {
 	// Brand-new uuid that has no users row.
 	require.NoError(t, db.DeleteUser(ctx, uuid.New()), "deleting a non-existent user must be idempotent")
 }
+
+// TestUserCanAccessSession_SCRUM228_MatrixCoverage pins the SCRUM-228 contract:
+// access flows entirely through session_memberships now that creator
+// memberships are universal (SCRUM-226) and orphan creators are anonymised
+// (SCRUM-229). The legacy email-match fallback that previously short-circuited
+// access by string-comparing session.CreatedBy to user.Email is gone.
+func TestUserCanAccessSession_SCRUM228_MatrixCoverage(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	creatorEmail := "scrum228-creator-" + uuid.New().String() + "@example.com"
+	creator := createTestUser(t, db, creatorEmail, models.GlobalRoleCreator)
+	sess := createSessionWithCreator(t, db, "SCRUM-228 access matrix", creatorEmail)
+
+	// Original creator has a creator membership thanks to SCRUM-226's
+	// transactional CreateSession; UserCanAccessSession must return true.
+	t.Run("original_creator_with_membership_returns_true", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, creator)
+		require.NoError(t, err)
+		require.True(t, ok, "creator-by-membership must access their own session")
+	})
+
+	// Plain participant member.
+	plainEmail := "scrum228-plain-" + uuid.New().String() + "@example.com"
+	plain := createTestUser(t, db, plainEmail, models.GlobalRoleParticipant)
+	require.NoError(t, db.CreateSessionMembership(ctx, sess.ID, plain.ID, "participant", &creator.ID))
+	t.Run("participant_member_returns_true", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, plain)
+		require.NoError(t, err)
+		require.True(t, ok, "participant member must access the session")
+	})
+
+	// Decision-maker member.
+	dmEmail := "scrum228-dm-" + uuid.New().String() + "@example.com"
+	dm := createTestUser(t, db, dmEmail, models.GlobalRoleParticipant)
+	require.NoError(t, db.CreateSessionMembership(ctx, sess.ID, dm.ID, "decision_maker", &creator.ID))
+	t.Run("decision_maker_member_returns_true", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, dm)
+		require.NoError(t, err)
+		require.True(t, ok, "decision_maker member must access the session")
+	})
+
+	// Outsider with no membership.
+	outsiderEmail := "scrum228-outsider-" + uuid.New().String() + "@example.com"
+	outsider := createTestUser(t, db, outsiderEmail, models.GlobalRoleCreator)
+	t.Run("non_member_returns_false", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, outsider)
+		require.NoError(t, err)
+		require.False(t, ok, "non-member must not access the session")
+	})
+
+	// Global admin who is not a member of this session: admin gets no free
+	// pass at the read-gate layer (handler-level admin shortcuts apply
+	// elsewhere). This pins behaviour parity with pre-SCRUM-228 — the email
+	// fallback never granted admin access either.
+	adminEmail := "scrum228-admin-" + uuid.New().String() + "@example.com"
+	admin := createTestUser(t, db, adminEmail, models.GlobalRoleAdmin)
+	t.Run("global_admin_non_member_returns_false", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, admin)
+		require.NoError(t, err)
+		require.False(t, ok, "global admin without a membership must rely on handler-level admin checks, not this read gate")
+	})
+
+	// Nil user is rejected.
+	t.Run("nil_user_returns_false", func(t *testing.T) {
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, nil)
+		require.NoError(t, err)
+		require.False(t, ok, "nil user must not access any session")
+	})
+
+	// Pretend an attacker spoofs an old-style email-only access path: even if
+	// session.CreatedBy still carries the original email after a backfill drift,
+	// access is decided purely on session_memberships. We forcibly NULL out
+	// created_by here (mirroring SCRUM-229's anonymise-on-delete behaviour) and
+	// confirm the existing creator membership still grants access.
+	t.Run("anonymised_created_by_does_not_change_member_access", func(t *testing.T) {
+		_, err := db.Pool.Exec(ctx, `UPDATE sessions SET created_by = NULL WHERE id = $1`, sess.ID)
+		require.NoError(t, err)
+		ok, err := db.UserCanAccessSession(ctx, sess.ID, creator)
+		require.NoError(t, err)
+		require.True(t, ok, "creator with a membership row keeps access even when created_by is NULL")
+	})
+}
