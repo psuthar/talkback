@@ -83,7 +83,7 @@ test(
     const readiness = page.getByTestId('decision-readiness')
     await expect(readiness).toBeVisible({ timeout: 15_000 })
     await expect(readiness).toHaveAttribute('data-ready', 'true')
-    await expect(readiness).toHaveText(/1\/1 Decision Makers submitted/)
+    await expect(readiness).toHaveText(/All decision makers submitted — ready to close/)
 
     // Close-decision CTA appears for the creator.
     const closeBtn = page.getByTestId('close-decision-btn')
