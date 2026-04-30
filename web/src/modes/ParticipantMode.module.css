@@ -55,6 +55,20 @@
   color: var(--color-success);
 }
 
+/*
+ * SCRUM-230: explicit hover/focus override. The global `button:hover` rule in
+ * web/src/index.css paints solid var(--color-primary-dark) over every <button>;
+ * without this override the Members toggle gets a saturated blue background
+ * that hides the green label. Mirrors the .creator-collapsible-btn pattern in
+ * index.css so participant-mode and creator-mode toggles look identical.
+ */
+.collapsibleBtn:hover,
+.collapsibleBtn:focus,
+.collapsibleBtn:focus-visible {
+  background: none;
+  color: var(--color-primary-dark);
+}
+
 .panelChevron {
   font-size: 12px;
   color: var(--color-text-secondary);
