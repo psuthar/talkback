@@ -57,6 +57,14 @@
   color: var(--color-text-secondary);
 }
 
+.readinessHint {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+  opacity: 0.85;
+}
+
 .readinessTextReady {
   flex: 1 1 auto;
   font-size: 13px;

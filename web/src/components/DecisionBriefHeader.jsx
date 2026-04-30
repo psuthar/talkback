@@ -5,9 +5,9 @@ function readinessCopy(readiness) {
   if (!readiness) return null
   const total = Number(readiness.decision_maker_total) || 0
   const voted = Number(readiness.decision_maker_voted) || 0
-  if (total === 0) return 'No Decision Makers assigned'
-  const base = `${voted}/${total} Decision Makers submitted`
-  return readiness.ready_to_close ? `${base} — ready to close` : base
+  if (total === 0) return 'Decision makers — none assigned'
+  if (readiness.ready_to_close) return 'All decision makers submitted — ready to close'
+  return `Decision makers — ${voted} of ${total} submitted`
 }
 
 // CloseDecisionAction renders an inline closeout CTA when the parent provides
@@ -109,10 +109,19 @@ export function DecisionBriefHeader({ premise, decision, decisionOutcome, readin
   const hasPremise = !!(premise && String(premise).trim())
   const hasDecision = !!(decision && String(decision).trim())
   const hasOutcome = !!(decisionOutcome && String(decisionOutcome).trim())
-  // Readiness only renders when there's a decision question to vote on AND the outcome
-  // is not yet recorded — once the decision is closed, the outcome row carries the signal.
-  const showReadiness = !!readiness && hasDecision && !hasOutcome
+  // The decision-maker readiness row narrowly answers "can we close this yet?" —
+  // it complements the lower DecisionBar's "Others" tally rather than duplicating it.
+  // Render rules:
+  //   - There is a decision question to vote on AND no outcome yet.
+  //   - The zero-decision-maker state is a configuration nudge useful only to whoever
+  //     can act on it; viewers without a close-decision callback (i.e. non-creators)
+  //     don't see it.
+  const viewerIsCreator = !!onCloseDecision
+  const total = Number(readiness?.decision_maker_total) || 0
+  const showReadiness =
+    !!readiness && hasDecision && !hasOutcome && (total > 0 || viewerIsCreator)
   const readinessText = showReadiness ? readinessCopy(readiness) : null
+  const isReadinessHint = showReadiness && total === 0
   // The close-decision action only appears when the caller (creator) has provided a callback,
   // a decision question is open, and readiness reports ready_to_close=true.
   const showCloseAction = !!onCloseDecision && hasDecision && !hasOutcome && !!readiness?.ready_to_close
@@ -143,11 +152,18 @@ export function DecisionBriefHeader({ premise, decision, decisionOutcome, readin
         )}
         {showReadiness && readinessText && (
           <div className={styles.briefRow}>
-            <span className={styles.briefLabel}>Votes</span>
+            <span className={styles.briefLabel}>Decision makers</span>
             <span
-              className={readiness.ready_to_close ? styles.readinessTextReady : styles.readinessText}
+              className={
+                readiness.ready_to_close
+                  ? styles.readinessTextReady
+                  : isReadinessHint
+                    ? styles.readinessHint
+                    : styles.readinessText
+              }
               data-testid="decision-readiness"
               data-ready={readiness.ready_to_close ? 'true' : 'false'}
+              data-empty={isReadinessHint ? 'true' : 'false'}
             >
               {readinessText}
             </span>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { StanceCountTooltip } from './StanceCountTooltip'
+import { ROLE_DECISION_MAKER } from '../utils/roleLabels'
 import styles from './DecisionBar.module.css'
 
 const STANCE_DEFS = [
@@ -51,9 +52,25 @@ export function DecisionBar({
   const responses = Array.isArray(stanceResponses) ? stanceResponses : []
   const invitations = Array.isArray(sessionInvitations) ? sessionInvitations : []
 
+  // Build the set of decision-maker emails from invitations so each tooltip member
+  // can carry an is_decision_maker flag — this is what surfaces the DM chip in
+  // StanceCountTooltip without changing the lower-level component's data shape.
+  const dmEmails = new Set(
+    invitations
+      .filter((inv) => inv?.invited_role === ROLE_DECISION_MAKER)
+      .map((inv) => (typeof inv?.invited_email === 'string' ? inv.invited_email.trim().toLowerCase() : ''))
+      .filter(Boolean)
+  )
+  const isDecisionMaker = (email) => {
+    const lower = typeof email === 'string' ? email.trim().toLowerCase() : ''
+    return !!lower && dmEmails.has(lower)
+  }
+
   const byStance = { agree: [], disagree: [], need_more_info: [] }
   for (const r of responses) {
-    if (r && byStance[r.stance]) byStance[r.stance].push(r)
+    if (r && byStance[r.stance]) {
+      byStance[r.stance].push({ ...r, is_decision_maker: isDecisionMaker(r.user_email) })
+    }
   }
 
   const respondedEmails = new Set(
@@ -66,7 +83,11 @@ export function DecisionBar({
       const email = typeof inv?.invited_email === 'string' ? inv.invited_email.trim().toLowerCase() : ''
       return email && !respondedEmails.has(email)
     })
-    .map((inv) => ({ id: inv.id, user_email: inv.invited_email }))
+    .map((inv) => ({
+      id: inv.id,
+      user_email: inv.invited_email,
+      is_decision_maker: isDecisionMaker(inv.invited_email),
+    }))
 
   const barClass =
     placement === 'top' ? `${styles.bar} ${styles.barTop}` : `${styles.bar} ${styles.barBottom}`

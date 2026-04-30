@@ -107,6 +107,35 @@ describe('StanceCountTooltip (click-only)', () => {
     expect(screen.getByTestId('stance-tooltip-agree').textContent).toContain('Unknown')
   })
 
+  it('renders a DM badge next to members flagged as decision makers', () => {
+    render(<StanceCountTooltip
+      {...baseProps}
+      members={[
+        { id: '1', user_email: 'alice@example.com', is_decision_maker: true },
+        { id: '2', user_email: 'bob@example.com', is_decision_maker: false },
+        { id: '3', user_email: 'carol@example.com' },
+      ]}
+    />)
+    fireEvent.click(screen.getByTestId('stance-count-agree'))
+    const badges = screen.getAllByTestId('stance-tooltip-dm-badge')
+    expect(badges).toHaveLength(1)
+    expect(badges[0].textContent).toBe('DM')
+    expect(badges[0].getAttribute('aria-label')).toBe('Decision maker')
+  })
+
+  it('omits the DM badge when no member carries the flag', () => {
+    render(<StanceCountTooltip
+      {...baseProps}
+      members={[
+        { id: '1', user_email: 'alice@example.com' },
+        { id: '2', user_email: 'bob@example.com', is_decision_maker: false },
+      ]}
+      count={2}
+    />)
+    fireEvent.click(screen.getByTestId('stance-count-agree'))
+    expect(screen.queryByTestId('stance-tooltip-dm-badge')).toBeNull()
+  })
+
   describe('controlled mode', () => {
     it('respects external isOpen prop and does not maintain internal state', () => {
       const { rerender } = render(
