@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -143,10 +144,43 @@ func (db *DB) ListUsers(ctx context.Context) ([]*models.User, error) {
 	return out, rows.Err()
 }
 
-// DeleteUser deletes a user by ID. Cascades to password_credentials, login_sessions, session_invitations.
+// DeleteUser deletes a user by ID. Foreign-key cascades remove the user's
+// password_credentials, login_sessions, session_invitations, and
+// session_memberships rows.
+//
+// SCRUM-229: this function also anonymises sessions.created_by for any
+// sessions the deleted user owns, in the same transaction. sessions.created_by
+// is a TEXT email column with no foreign key to users(id), so without this
+// step a user-delete would leave behind sessions whose created_by points to a
+// non-existent users row — the orphan-creator state that previously required
+// the email-match fallback in UserCanAccessSession (SCRUM-228). Other members
+// of those sessions keep their session_memberships rows and access; the
+// session simply has no creator email until ownership is reassigned.
 func (db *DB) DeleteUser(ctx context.Context, userID uuid.UUID) error {
-	_, err := db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
-	return err
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var email string
+	if err := tx.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Already deleted — nothing to do. Treat as idempotent.
+			return nil
+		}
+		return fmt.Errorf("lookup user for delete: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE sessions SET created_by = NULL, updated_at = now() WHERE created_by = $1`, email); err != nil {
+		return fmt.Errorf("anonymise sessions.created_by: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+
+	return tx.Commit(ctx)
 }
 
 // CreatePasswordCredential inserts a password credential for the user.
