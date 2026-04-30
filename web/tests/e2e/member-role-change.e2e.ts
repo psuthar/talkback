@@ -240,6 +240,69 @@ test(
 )
 
 test(
+  'promoted creator can PATCH session premise/decision/outcome (SCRUM-227)',
+  async ({ context, page, request }) => {
+    const originalCreatorEmail = uniqueEmail('scrum227-original')
+    const originalCreatorId = await createUserAndLoginWithId(context, request, originalCreatorEmail, 'SmokePass123!', 'SCRUM227 Original')
+
+    const localSession = await createSession(request, 'SCRUM-227 Editor Matrix E2E')
+
+    // Sign up and accept as a separate participant.
+    const promoteeEmail = uniqueEmail('scrum227-promotee')
+    const promoteeReq = await playwrightApiRequest.newContext()
+    const signupRes = await promoteeReq.post(`${API_BASE}/api/auth/signup`, {
+      data: { email: promoteeEmail, password: 'SmokePass123!', display_name: 'SCRUM227 Promotee' },
+    })
+    expect(signupRes.ok()).toBe(true)
+    const signupData = await signupRes.json()
+    const promoteeId = signupData.id as string
+    await promoteeReq.post(`${API_BASE}/api/auth/login`, {
+      data: { email: promoteeEmail, password: 'SmokePass123!' },
+    })
+
+    const inv = await createInvitation(request, localSession.id, promoteeEmail, 'participant')
+    const tokenQs = inv.accept_url.includes('?') ? inv.accept_url.split('?')[1] : ''
+    const token = new URLSearchParams(tokenQs).get('token')
+    const accept = await promoteeReq.post(`${API_BASE}/api/invitations/accept`, { data: { token } })
+    expect(accept.ok()).toBe(true)
+
+    // Pre-promotion: promotee tries to PATCH premise — must 403 (still a participant).
+    const preRes = await promoteeReq.patch(`${API_BASE}/api/sessions/${localSession.id}`, {
+      data: { premise: 'attempt by participant' },
+    })
+    expect(preRes.status()).toBe(403)
+
+    // Original creator promotes the participant to creator.
+    const patchRoleRes = await request.patch(
+      `${API_BASE}/api/sessions/${localSession.id}/memberships/${promoteeId}`,
+      { data: { role: 'creator' } }
+    )
+    expect(patchRoleRes.status()).toBe(200)
+
+    // Post-promotion: promotee can now PATCH premise/decision/outcome successfully.
+    const postRes = await promoteeReq.patch(`${API_BASE}/api/sessions/${localSession.id}`, {
+      data: {
+        premise: 'edited by promoted creator',
+        primary_decision: 'shipped via SCRUM-227',
+        decision_outcome: 'approved',
+      },
+    })
+    expect(postRes.status()).toBe(200)
+    const postBody = await postRes.json()
+    expect(postBody?.premise).toBe('edited by promoted creator')
+    expect(postBody?.primary_decision).toBe('shipped via SCRUM-227')
+    expect(postBody?.decision_outcome).toBe('approved')
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, localSession.id)
+    await deleteUserViaAdmin(request, originalCreatorId)
+    await deleteUserViaAdmin(request, promoteeId)
+    await promoteeReq.dispose()
+  }
+)
+
+test(
   'a non-creator membership-role PATCH is rejected with 403',
   async ({ request }) => {
     // Fresh creator/session/intruder so this test is independent of the happy path.

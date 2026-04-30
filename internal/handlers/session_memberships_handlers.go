@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/invitations"
-	"github.com/psuthar/talkback/internal/models"
 )
 
 // updateMembershipRequest is the body for PATCH /api/sessions/:id/memberships/:userId.
@@ -52,12 +51,16 @@ func (h *Handlers) UpdateSessionMembership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Creator-or-admin gate, mirroring UpdateSessionStatus.
-	if user.GlobalRole != models.GlobalRoleAdmin {
-		if session.CreatedBy == nil || *session.CreatedBy != user.Email {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can change member roles"})
-			return
-		}
+	// SCRUM-227: editor authority is granted by global admin OR per-session
+	// session_memberships.role='creator', mirroring UpdateSessionStatus.
+	canEdit, err := h.userIsSessionEditor(ctx, sessionID, user)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check authorization"})
+		return
+	}
+	if !canEdit {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can change member roles"})
+		return
 	}
 
 	var req updateMembershipRequest

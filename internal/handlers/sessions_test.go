@@ -1239,3 +1239,106 @@ func TestDeleteSession(t *testing.T) {
 func intPtr(i int) *int {
 	return &i
 }
+
+// TestUpdateSessionStatus_SCRUM227_EditorMatrix pins the SCRUM-227 contract:
+// editor authority is granted by global Admin OR session_memberships.role=
+// 'creator' — including users promoted to creator via PATCH (not just the
+// original by-email creator). decision_maker and plain participant must 403.
+func TestUpdateSessionStatus_SCRUM227_EditorMatrix(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	type principal struct {
+		user      *models.User
+		loginID   uuid.UUID
+		expectOK  bool
+		labelHint string
+	}
+
+	makeUser := func(t *testing.T, email string, role models.GlobalRole) *principal {
+		t.Helper()
+		u := &models.User{
+			ID:          uuid.New(),
+			Email:       email,
+			DisplayName: email,
+			Status:      models.UserStatusActive,
+			GlobalRole:  role,
+		}
+		require.NoError(t, h.DB.CreateUser(ctx, u))
+		ls := &models.LoginSession{
+			ID:        uuid.New(),
+			UserID:    u.ID,
+			CreatedAt: time.Now(),
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		require.NoError(t, h.DB.CreateLoginSession(ctx, ls))
+		return &principal{user: u, loginID: ls.ID}
+	}
+
+	// Original creator (gets a creator membership automatically per SCRUM-226).
+	original := makeUser(t, "scrum227-original-"+uuid.New().String()+"@test", models.GlobalRoleCreator)
+	original.labelHint = "original_creator"
+	original.expectOK = true
+
+	sess := &models.Session{
+		ID:        uuid.New(),
+		Title:     "SCRUM-227 Editor Matrix",
+		CreatedBy: &original.user.Email,
+		Status:    models.SessionStatusOpen,
+	}
+	require.NoError(t, h.DB.CreateSession(ctx, sess))
+
+	// Promoted creator: starts as a participant via session_memberships, then
+	// gets PATCHed to creator. Same path as the Members-panel "Set as Creator".
+	promoted := makeUser(t, "scrum227-promoted-"+uuid.New().String()+"@test", models.GlobalRoleParticipant)
+	promoted.labelHint = "promoted_creator"
+	promoted.expectOK = true
+	require.NoError(t, h.DB.CreateSessionMembership(ctx, sess.ID, promoted.user.ID, "participant", &original.user.ID))
+	require.NoError(t, h.DB.UpdateSessionMembershipRole(ctx, sess.ID, promoted.user.ID, "creator"))
+
+	dm := makeUser(t, "scrum227-dm-"+uuid.New().String()+"@test", models.GlobalRoleParticipant)
+	dm.labelHint = "decision_maker"
+	dm.expectOK = false
+	require.NoError(t, h.DB.CreateSessionMembership(ctx, sess.ID, dm.user.ID, "decision_maker", &original.user.ID))
+
+	plain := makeUser(t, "scrum227-plain-"+uuid.New().String()+"@test", models.GlobalRoleParticipant)
+	plain.labelHint = "participant"
+	plain.expectOK = false
+	require.NoError(t, h.DB.CreateSessionMembership(ctx, sess.ID, plain.user.ID, "participant", &original.user.ID))
+
+	// Outsider: not a member of the session, not an admin.
+	outsider := makeUser(t, "scrum227-outsider-"+uuid.New().String()+"@test", models.GlobalRoleCreator)
+	outsider.labelHint = "outsider_creator_role"
+	outsider.expectOK = false
+
+	// Global admin: not a member of the session, but has admin role.
+	admin := makeUser(t, "scrum227-admin-"+uuid.New().String()+"@test", models.GlobalRoleAdmin)
+	admin.labelHint = "global_admin"
+	admin.expectOK = true
+
+	cases := []*principal{original, promoted, dm, plain, outsider, admin}
+	for _, c := range cases {
+		c := c
+		t.Run(c.labelHint, func(t *testing.T) {
+			premise := "edited by " + c.labelHint
+			body, _ := json.Marshal(map[string]any{"premise": premise})
+			req := httptest.NewRequest(http.MethodPatch, "/sessions/"+sess.ID.String(), bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: c.loginID.String()})
+			w := httptest.NewRecorder()
+			h.RequireAuth(h.UpdateSessionStatus)(w, req)
+
+			if c.expectOK {
+				assert.Equal(t, http.StatusOK, w.Code, "expected %s to be allowed; body=%s", c.labelHint, w.Body.String())
+				updated, err := h.DB.GetSession(ctx, sess.ID)
+				require.NoError(t, err)
+				require.NotNil(t, updated.Premise)
+				assert.Equal(t, premise, *updated.Premise)
+			} else {
+				assert.Equal(t, http.StatusForbidden, w.Code, "expected %s to be forbidden; body=%s", c.labelHint, w.Body.String())
+			}
+		})
+	}
+}
