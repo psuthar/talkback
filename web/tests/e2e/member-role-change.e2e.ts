@@ -204,6 +204,9 @@ test(
     const localSession = await createSession(request, 'Creator Self Listing E2E Session')
 
     // Listing endpoint must include the creator with role='creator', status='accepted'.
+    // member_count semantics (off-by-one fix) are pinned in the Go unit tests
+    // (TestListSessionsWithRolesForUser_*); this E2E focuses on the listing +
+    // UI rendering since they are the user-visible regression.
     const listingRes = await request.get(`${API_BASE}/api/sessions/${localSession.id}/invitations`)
     expect(listingRes.ok()).toBe(true)
     const listing = await listingRes.json()
@@ -213,14 +216,6 @@ test(
     expect(creatorRow).toBeDefined()
     expect(creatorRow?.invited_role).toBe('creator')
     expect(creatorRow?.status).toBe('accepted')
-
-    // member_count on Session Selection cards should include the creator (off-by-one regression check).
-    const sessionsRes = await request.get(`${API_BASE}/api/sessions`)
-    expect(sessionsRes.ok()).toBe(true)
-    const sessions: Array<{ id?: string; member_count?: number }> = await sessionsRes.json()
-    const ownedRow = sessions.find((s) => s?.id === localSession.id)
-    expect(ownedRow).toBeDefined()
-    expect(ownedRow?.member_count).toBeGreaterThanOrEqual(1)
 
     // Drive the UI: creator opens their own session and sees themselves in the Members panel.
     await page.goto(`/?session=${localSession.id}&mode=edit`)
