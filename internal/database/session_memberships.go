@@ -226,17 +226,27 @@ func (db *DB) GetSessionMembership(ctx context.Context, sessionID, userID uuid.U
 	return m, nil
 }
 
-// UserCanAccessSession returns true if user is session creator (by email) or has session_memberships row.
+// UserCanAccessSession returns true if the user has a session_memberships row
+// for the session. SCRUM-226 made every session creator a first-class member
+// (transactional creator-membership insert plus the 000042 backfill), and
+// SCRUM-229 anonymises sessions.created_by on user-delete plus a 000043
+// backfill so no production session points its created_by email at a non-
+// existent users row. With those two invariants in place, session_memberships
+// is the single authoritative source for "can this user access this session"
+// — SCRUM-228 drops the previous email-match fallback that read
+// session.CreatedBy.
+//
+// Note on admins: this gate intentionally has no admin shortcut. Pre-SCRUM-228
+// behaviour was identical — the old fallback only matched session.CreatedBy ==
+// user.Email, never a global admin role — so this change does not regress
+// admin access. Handler-level write gates (e.g. userIsSessionEditor in
+// session_authz.go and the explicit GlobalRoleAdmin checks in handlers like
+// UpdateSessionStatus and UpdateSessionMembership) continue to grant admins
+// privileged access where appropriate; UserCanAccessSession remains the
+// per-membership read gate.
 func (db *DB) UserCanAccessSession(ctx context.Context, sessionID uuid.UUID, user *models.User) (bool, error) {
 	if user == nil {
 		return false, nil
-	}
-	session, err := db.GetSession(ctx, sessionID)
-	if err != nil || session == nil {
-		return false, err
-	}
-	if session.CreatedBy != nil && *session.CreatedBy == user.Email {
-		return true, nil
 	}
 	return db.UserIsSessionMember(ctx, sessionID, user.ID)
 }
