@@ -83,6 +83,38 @@ func (db *DB) UserIsSessionMember(ctx context.Context, sessionID, userID uuid.UU
 	return true, nil
 }
 
+// CountMembersBySessionIDs returns a map of session_id -> total session_memberships
+// rows for that session, for the given session IDs. Sessions with no memberships are
+// absent from the result; callers should treat absent as zero. One batched aggregate
+// covered by the existing session_memberships(session_id) index. Used by
+// ListSessionsWithRolesForUser to populate SessionListRow.MemberCount in one
+// round-trip regardless of list size (SCRUM-221).
+func (db *DB) CountMembersBySessionIDs(ctx context.Context, sessionIDs []uuid.UUID) (map[uuid.UUID]int, error) {
+	out := make(map[uuid.UUID]int, len(sessionIDs))
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT session_id, COUNT(*)::int
+		FROM session_memberships
+		WHERE session_id = ANY($1)
+		GROUP BY session_id
+	`, sessionIDs)
+	if err != nil {
+		return nil, fmt.Errorf("count members by session ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sid uuid.UUID
+		var n int
+		if err := rows.Scan(&sid, &n); err != nil {
+			return nil, fmt.Errorf("scan member count: %w", err)
+		}
+		out[sid] = n
+	}
+	return out, rows.Err()
+}
+
 // ListSessionIDsForUser returns session IDs where the user is a member (session_memberships).
 func (db *DB) ListSessionIDsForUser(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := db.Pool.Query(ctx, `SELECT session_id FROM session_memberships WHERE user_id = $1`, userID)

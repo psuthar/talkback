@@ -4,15 +4,24 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 )
 
 // SessionListRow is one session plus the current user's role for it (GET /api/sessions and MCP list_sessions).
+//
+// MemberCount is the number of session_memberships rows for this session at fetch
+// time. CreatedByDisplayName is the display_name of the user whose email matches
+// session.created_by, or nil if no users row matches (legacy email-string field).
+// Both fields are populated by the post-switch enrichment in
+// ListSessionsWithRolesForUser; see SCRUM-221.
 type SessionListRow struct {
-	Session *models.Session `json:"session"`
-	MyRole  string          `json:"my_role"` // "creator" | "participant" | "admin"
+	Session              *models.Session `json:"session"`
+	MyRole               string          `json:"my_role"` // "creator" | "participant" | "admin"
+	MemberCount          int             `json:"member_count"`
+	CreatedByDisplayName *string         `json:"created_by_display_name,omitempty"`
 }
 
 // ListSessionsWithRolesForUser returns all sessions the user may access, with my_role per session.
@@ -76,6 +85,48 @@ func (db *DB) ListSessionsWithRolesForUser(ctx context.Context, user *models.Use
 	if out == nil {
 		out = []SessionListRow{}
 	}
+
+	// Enrich with member counts and creator display names. Two batched queries
+	// regardless of list size; applies uniformly across all three role branches
+	// above so admin / participant / creator-default all receive the new fields.
+	if len(out) > 0 {
+		sessionIDs := make([]uuid.UUID, 0, len(out))
+		emailSet := make(map[string]struct{})
+		for _, row := range out {
+			if row.Session == nil {
+				continue
+			}
+			sessionIDs = append(sessionIDs, row.Session.ID)
+			if row.Session.CreatedBy != nil && *row.Session.CreatedBy != "" {
+				emailSet[strings.ToLower(*row.Session.CreatedBy)] = struct{}{}
+			}
+		}
+		counts, err := db.CountMembersBySessionIDs(ctx, sessionIDs)
+		if err != nil {
+			return nil, fmt.Errorf("enrich list: count members: %w", err)
+		}
+		emails := make([]string, 0, len(emailSet))
+		for e := range emailSet {
+			emails = append(emails, e)
+		}
+		names, err := db.GetDisplayNamesByEmails(ctx, emails)
+		if err != nil {
+			return nil, fmt.Errorf("enrich list: display names: %w", err)
+		}
+		for i := range out {
+			if out[i].Session == nil {
+				continue
+			}
+			out[i].MemberCount = counts[out[i].Session.ID]
+			if out[i].Session.CreatedBy != nil && *out[i].Session.CreatedBy != "" {
+				if name, ok := names[strings.ToLower(*out[i].Session.CreatedBy)]; ok && name != "" {
+					n := name
+					out[i].CreatedByDisplayName = &n
+				}
+			}
+		}
+	}
+
 	return out, nil
 }
 

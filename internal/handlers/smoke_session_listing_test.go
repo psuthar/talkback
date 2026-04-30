@@ -97,3 +97,108 @@ func TestSmoke_SessionListing_Pagination(t *testing.T) {
 	all := makeReq("")
 	assert.Len(t, all, 3, "unpaginated list should return all 3 sessions")
 }
+
+// TestSmoke_SessionListing_MemberCountAndCreatorDisplayName verifies the wire
+// shape added by SCRUM-221: each row carries `member_count` and
+// `created_by_display_name`. Also exercises the missing-display-name path
+// (sessions whose `created_by` email has no matching users row).
+func TestSmoke_SessionListing_MemberCountAndCreatorDisplayName(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	creatorEmail := "shape-creator-" + uuid.New().String() + "@smoke.test"
+	creator := &models.User{
+		ID:          uuid.New(),
+		Email:       creatorEmail,
+		DisplayName: "Shape Creator",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleCreator,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, creator))
+
+	loginSession := &models.LoginSession{
+		ID:        uuid.New(),
+		UserID:    creator.ID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, loginSession))
+	cookieValue := loginSession.ID.String()
+
+	// Owned session (display_name should resolve) with two extra members.
+	owned := &models.Session{
+		ID:        uuid.New(),
+		Title:     "Owned with members",
+		CreatedBy: &creatorEmail,
+		Status:    models.SessionStatusOpen,
+	}
+	require.NoError(t, h.DB.CreateSession(ctx, owned))
+	for i := 0; i < 2; i++ {
+		memberEmail := "member-" + uuid.New().String() + "@smoke.test"
+		m := &models.User{ID: uuid.New(), Email: memberEmail, DisplayName: "M", Status: models.UserStatusActive, GlobalRole: models.GlobalRoleCreator}
+		require.NoError(t, h.DB.CreateUser(ctx, m))
+		require.NoError(t, h.DB.CreateSessionMembership(ctx, owned.ID, m.ID, "participant", nil))
+	}
+
+	// Decode response.
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: cookieValue})
+	w := httptest.NewRecorder()
+	h.RequireAuth(h.ListSessions)(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Parse as a generic []map so we lock the JSON keys (member_count,
+	// created_by_display_name) regardless of the Go struct field names.
+	var rows []map[string]any
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&rows))
+	require.Len(t, rows, 1)
+	row := rows[0]
+	mc, ok := row["member_count"]
+	require.True(t, ok, "response row must include member_count")
+	assert.Equal(t, float64(2), mc, "owned session should report 2 members")
+	dn, ok := row["created_by_display_name"]
+	require.True(t, ok, "response row must include created_by_display_name (or null)")
+	assert.Equal(t, "Shape Creator", dn)
+
+	// Missing-display-name path: bring in a session whose created_by has no
+	// matching users row, and view it as a global admin.
+	orphanEmail := "orphan-" + uuid.New().String() + "@smoke.test"
+	orphan := &models.Session{
+		ID:        uuid.New(),
+		Title:     "Orphan creator",
+		CreatedBy: &orphanEmail,
+		Status:    models.SessionStatusOpen,
+	}
+	require.NoError(t, h.DB.CreateSession(ctx, orphan))
+
+	adminEmail := "admin-" + uuid.New().String() + "@smoke.test"
+	admin := &models.User{ID: uuid.New(), Email: adminEmail, DisplayName: "A", Status: models.UserStatusActive, GlobalRole: models.GlobalRoleAdmin}
+	require.NoError(t, h.DB.CreateUser(ctx, admin))
+	adminSession := &models.LoginSession{ID: uuid.New(), UserID: admin.ID, CreatedAt: time.Now(), ExpiresAt: time.Now().Add(24 * time.Hour)}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, adminSession))
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	req2.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: adminSession.ID.String()})
+	w2 := httptest.NewRecorder()
+	h.RequireAuth(h.ListSessions)(w2, req2)
+	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+	var adminRows []map[string]any
+	require.NoError(t, json.NewDecoder(w2.Body).Decode(&adminRows))
+	var orphanFound bool
+	for _, r := range adminRows {
+		sess, _ := r["session"].(map[string]any)
+		if sess == nil {
+			continue
+		}
+		if cb, _ := sess["created_by"].(string); cb == orphanEmail {
+			orphanFound = true
+			// created_by_display_name is omitempty -> absent when nil.
+			_, hasDN := r["created_by_display_name"]
+			assert.False(t, hasDN, "orphan creator should have no display_name in response")
+			assert.Equal(t, float64(0), r["member_count"], "orphan session has zero memberships")
+		}
+	}
+	require.True(t, orphanFound, "admin should see orphan-created session")
+}
