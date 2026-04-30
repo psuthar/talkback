@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -55,6 +56,39 @@ func (db *DB) getUserBy(ctx context.Context, where string, arg interface{}) (*mo
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 	return u, nil
+}
+
+// GetDisplayNamesByEmails returns a map of lowercased email -> display_name for the
+// given email addresses. Inputs are matched case-insensitively (lower(email) on
+// both sides). Emails with no matching user are absent from the result. Used by
+// ListSessionsWithRolesForUser to resolve the legacy email-keyed
+// sessions.created_by field in a single batched query (SCRUM-221).
+func (db *DB) GetDisplayNamesByEmails(ctx context.Context, emails []string) (map[string]string, error) {
+	out := make(map[string]string, len(emails))
+	if len(emails) == 0 {
+		return out, nil
+	}
+	lowered := make([]string, 0, len(emails))
+	for _, e := range emails {
+		lowered = append(lowered, strings.ToLower(e))
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT lower(email), display_name
+		FROM users
+		WHERE lower(email) = ANY($1)
+	`, lowered)
+	if err != nil {
+		return nil, fmt.Errorf("get display names by emails: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var email, name string
+		if err := rows.Scan(&email, &name); err != nil {
+			return nil, fmt.Errorf("scan display name: %w", err)
+		}
+		out[email] = name
+	}
+	return out, rows.Err()
 }
 
 // UpdateUserLastLoginAt sets last_login_at to now() for the user.
