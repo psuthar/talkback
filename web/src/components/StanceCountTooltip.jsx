@@ -102,7 +102,16 @@ export function StanceCountTooltip({
             <ul className={styles.tooltipList}>
               {safeMembers.map((m, i) => (
                 <li key={(m.id ?? m.user_email ?? '') + ':' + i} className={styles.tooltipItem}>
-                  {m.user_email || 'Unknown'}
+                  <span className={styles.tooltipItemEmail}>{m.user_email || 'Unknown'}</span>
+                  {m.is_decision_maker && (
+                    <span
+                      className={styles.dmBadge}
+                      aria-label="Decision maker"
+                      data-testid="stance-tooltip-dm-badge"
+                    >
+                      DM
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

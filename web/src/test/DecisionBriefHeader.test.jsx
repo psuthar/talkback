@@ -54,19 +54,42 @@ describe('DecisionBriefHeader', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders a "no Decision Makers assigned" hint when readiness has total=0', () => {
+  it('hides the readiness row from non-creators when no decision makers are assigned', () => {
     render(
       <DecisionBriefHeader
         decision="Should we extend an offer?"
         readiness={{ decision_maker_total: 0, decision_maker_voted: 0, ready_to_close: false }}
       />
     )
-    const node = screen.getByTestId('decision-readiness')
-    expect(node.textContent).toBe('No Decision Makers assigned')
-    expect(node.getAttribute('data-ready')).toBe('false')
+    expect(screen.queryByTestId('decision-readiness')).toBeNull()
   })
 
-  it('renders partial-vote readiness when some Decision Makers have voted', () => {
+  it('shows a muted "none assigned" hint to creators when no decision makers are assigned', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Should we extend an offer?"
+        readiness={{ decision_maker_total: 0, decision_maker_voted: 0, ready_to_close: false }}
+        onCloseDecision={() => {}}
+      />
+    )
+    const node = screen.getByTestId('decision-readiness')
+    expect(node.textContent).toBe('Decision makers — none assigned')
+    expect(node.getAttribute('data-ready')).toBe('false')
+    expect(node.getAttribute('data-empty')).toBe('true')
+  })
+
+  it('uses the "Decision makers" label on the readiness row', () => {
+    render(
+      <DecisionBriefHeader
+        decision="Pick X"
+        readiness={{ decision_maker_total: 3, decision_maker_voted: 1, ready_to_close: false }}
+      />
+    )
+    expect(screen.getByText('Decision makers')).toBeTruthy()
+    expect(screen.queryByText('Votes')).toBeNull()
+  })
+
+  it('renders role-first partial-vote readiness when some Decision Makers have voted', () => {
     render(
       <DecisionBriefHeader
         decision="Pick X"
@@ -74,11 +97,12 @@ describe('DecisionBriefHeader', () => {
       />
     )
     const node = screen.getByTestId('decision-readiness')
-    expect(node.textContent).toBe('1/3 Decision Makers submitted')
+    expect(node.textContent).toBe('Decision makers — 1 of 3 submitted')
     expect(node.getAttribute('data-ready')).toBe('false')
+    expect(node.getAttribute('data-empty')).toBe('false')
   })
 
-  it('flags ready-to-close when every Decision Maker has voted', () => {
+  it('flags ready-to-close with role-first copy when every Decision Maker has voted', () => {
     render(
       <DecisionBriefHeader
         decision="Pick X"
@@ -86,7 +110,7 @@ describe('DecisionBriefHeader', () => {
       />
     )
     const node = screen.getByTestId('decision-readiness')
-    expect(node.textContent).toBe('2/2 Decision Makers submitted — ready to close')
+    expect(node.textContent).toBe('All decision makers submitted — ready to close')
     expect(node.getAttribute('data-ready')).toBe('true')
   })
 

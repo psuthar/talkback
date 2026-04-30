@@ -242,6 +242,56 @@ describe('DecisionBar', () => {
     expect(trigger.textContent).toContain('Other (Conditional)')
   })
 
+  it('threads decision-maker role from invitations into stance tooltips (voted DM)', () => {
+    render(<DecisionBar {...makeProps({
+      stanceAggregate: { agree: 1, disagree: 0, conditional: 0, abstain: 0, need_more_info: 0 },
+      stanceResponses: [
+        { id: 'r1', user_email: 'dm@x.com', stance: 'agree' },
+        { id: 'r2', user_email: 'plain@x.com', stance: 'agree' },
+      ],
+      sessionInvitations: [
+        { id: 'i1', invited_email: 'dm@x.com', invited_role: 'decision_maker', status: 'accepted' },
+        { id: 'i2', invited_email: 'plain@x.com', invited_role: 'participant', status: 'accepted' },
+      ],
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-count-agree'))
+    const tooltip = screen.getByTestId('stance-tooltip-agree')
+    expect(tooltip.textContent).toContain('dm@x.com')
+    expect(tooltip.textContent).toContain('plain@x.com')
+    const badges = screen.getAllByTestId('stance-tooltip-dm-badge')
+    expect(badges).toHaveLength(1)
+  })
+
+  it('threads decision-maker role into the Pending tooltip', () => {
+    render(<DecisionBar {...makeProps({
+      stanceResponses: [],
+      sessionInvitations: [
+        { id: 'i1', invited_email: 'dm@x.com', invited_role: 'decision_maker', status: 'pending' },
+        { id: 'i2', invited_email: 'plain@x.com', invited_role: 'participant', status: 'pending' },
+      ],
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-count-pending'))
+    const tooltip = screen.getByTestId('stance-tooltip-pending')
+    expect(tooltip.textContent).toContain('dm@x.com')
+    expect(tooltip.textContent).toContain('plain@x.com')
+    const badges = screen.getAllByTestId('stance-tooltip-dm-badge')
+    expect(badges).toHaveLength(1)
+  })
+
+  it('matches DM emails case-insensitively when threading role into tooltips', () => {
+    render(<DecisionBar {...makeProps({
+      stanceAggregate: { agree: 1, disagree: 0, conditional: 0, abstain: 0, need_more_info: 0 },
+      stanceResponses: [
+        { id: 'r1', user_email: 'DM@X.com', stance: 'agree' },
+      ],
+      sessionInvitations: [
+        { id: 'i1', invited_email: 'dm@x.com', invited_role: 'decision_maker', status: 'accepted' },
+      ],
+    })} />)
+    fireEvent.click(screen.getByTestId('stance-count-agree'))
+    expect(screen.getAllByTestId('stance-tooltip-dm-badge')).toHaveLength(1)
+  })
+
   it('only one Others stance popover may be open at a time', () => {
     render(<DecisionBar {...makeProps({
       stanceAggregate: { agree: 1, disagree: 1, conditional: 0, abstain: 0, need_more_info: 0 },
