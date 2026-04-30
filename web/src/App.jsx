@@ -3570,6 +3570,31 @@ function App() {
                         {mySessions.map((item) => {
                           const session = item.session || item
                           const myRole = item.my_role || (session.created_by === authUser?.email ? 'creator' : 'participant')
+                          const memberCount = typeof item.member_count === 'number' ? item.member_count : 0
+                          const memberSegment = memberCount > 0
+                            ? (memberCount === 1 ? '1 member' : `${memberCount} members`)
+                            : null
+                          // Creator label: viewer-is-creator -> "you"; else display_name; else local-part of created_by; else "a removed user".
+                          let creatorLabel
+                          let creatorTitle = ''
+                          const creatorEmail = session.created_by ? String(session.created_by) : ''
+                          const viewerEmail = authUser?.email ? String(authUser.email) : ''
+                          if (creatorEmail && viewerEmail && creatorEmail.toLowerCase() === viewerEmail.toLowerCase()) {
+                            creatorLabel = 'you'
+                          } else if (item.created_by_display_name) {
+                            creatorLabel = item.created_by_display_name
+                            creatorTitle = item.created_by_display_name
+                          } else if (creatorEmail) {
+                            const local = creatorEmail.split('@')[0]
+                            creatorLabel = local
+                            creatorTitle = local
+                          } else {
+                            creatorLabel = 'a removed user'
+                          }
+                          const TRUNCATE_AT = 24
+                          const displayedCreator = creatorLabel.length > TRUNCATE_AT
+                            ? creatorLabel.slice(0, TRUNCATE_AT - 1) + '…'
+                            : creatorLabel
                           return (
                             <div
                               key={session.id}
@@ -3605,9 +3630,12 @@ function App() {
                               <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px' }}>
                                 ID: <code style={{ fontSize: '12px' }}>{session.id}</code>
                               </div>
-                              <div style={{ fontSize: '12px', color: '#666' }}>
+                              <div style={{ fontSize: '12px', color: '#666' }} data-testid="session-card-meta">
                                 Status: <span style={{ color: session.status === 'open' ? 'var(--color-success-mid)' : '#999', fontWeight: 'bold' }}>{session.status}</span>
                                 {session.updated_at && ` · Updated ${new Date(session.updated_at).toLocaleDateString()}`}
+                                {memberSegment && ` · ${memberSegment}`}
+                                {' · Created by '}
+                                <span title={creatorTitle && creatorTitle !== displayedCreator ? creatorTitle : undefined} data-testid="session-card-creator">{displayedCreator}</span>
                               </div>
                               {canCreateSessions && (myRole === 'creator' || myRole === 'admin') && (
                                 <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
