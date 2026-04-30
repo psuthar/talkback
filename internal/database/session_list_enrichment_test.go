@@ -15,7 +15,7 @@ import (
 // member_count + created_by_display_name fields populated after the three-branch
 // switch.
 
-func TestListSessionsWithRolesForUser_MemberCount_Zero(t *testing.T) {
+func TestListSessionsWithRolesForUser_MemberCount_CreatorOnly(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	defer test.TruncateTables(t, db.Pool)
@@ -28,7 +28,9 @@ func TestListSessionsWithRolesForUser_MemberCount_Zero(t *testing.T) {
 	out, err := db.ListSessionsWithRolesForUser(ctx, creator)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
-	require.Equal(t, 0, out[0].MemberCount, "expected zero memberships")
+	// SCRUM-226: db.CreateSession also inserts the creator's membership, so a
+	// "no other invitees" session has a member_count of 1, not 0.
+	require.Equal(t, 1, out[0].MemberCount, "expected creator-only membership count of 1")
 }
 
 func TestListSessionsWithRolesForUser_MemberCount_Multi(t *testing.T) {
@@ -50,7 +52,8 @@ func TestListSessionsWithRolesForUser_MemberCount_Multi(t *testing.T) {
 	out, err := db.ListSessionsWithRolesForUser(ctx, creator)
 	require.NoError(t, err)
 	require.Len(t, out, 1)
-	require.Equal(t, 3, out[0].MemberCount, "expected three memberships")
+	// SCRUM-226: creator membership is implicit, so 3 invited + 1 creator = 4.
+	require.Equal(t, 4, out[0].MemberCount, "expected three invited members plus the creator")
 }
 
 func TestListSessionsWithRolesForUser_CreatorDisplayName_Resolved(t *testing.T) {
@@ -119,7 +122,8 @@ func TestListSessionsWithRolesForUser_ViewerIsCreator_Enrichment(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	require.Equal(t, "creator", out[0].MyRole)
-	require.Equal(t, 2, out[0].MemberCount)
+	// SCRUM-226: 2 invited members + 1 creator = 3.
+	require.Equal(t, 3, out[0].MemberCount)
 	require.NotNil(t, out[0].CreatedByDisplayName)
 	require.Equal(t, "Bob Boss", *out[0].CreatedByDisplayName)
 }

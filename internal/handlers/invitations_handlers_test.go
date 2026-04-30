@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,8 +329,7 @@ func TestListInvitations_IncludesAcceptedByUserID(t *testing.T) {
 	var listResp map[string]any
 	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 	pendingList, _ := listResp["invitations"].([]any)
-	require.Len(t, pendingList, 1)
-	pendingInv := pendingList[0].(map[string]any)
+	pendingInv := findInvitationByEmail(t, pendingList, inviteeEmail)
 	// Pending invite -> accepted_by_user_id must be nil/absent.
 	assert.Nil(t, pendingInv["accepted_by_user_id"], "pending invitation must report no accepter")
 	invIDStr, _ := pendingInv["id"].(string)
@@ -353,10 +353,57 @@ func TestListInvitations_IncludesAcceptedByUserID(t *testing.T) {
 	var listResp2 map[string]any
 	require.NoError(t, json.NewDecoder(listW2.Body).Decode(&listResp2))
 	acceptedList, _ := listResp2["invitations"].([]any)
-	require.Len(t, acceptedList, 1)
-	acceptedInv := acceptedList[0].(map[string]any)
+	acceptedInv := findInvitationByEmail(t, acceptedList, inviteeEmail)
 	assert.Equal(t, "accepted", acceptedInv["status"])
 	assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"], "accepted_by_user_id must be the invitee's user id")
+}
+
+// TestListInvitations_IncludesCreator pins the SCRUM-226 contract: the
+// Members listing surfaces the session creator alongside invitees, even
+// though the creator has no session_invitations row. The synthetic row is
+// sourced from session_memberships and carries the creator's email,
+// role='creator', and status='accepted'.
+func TestListInvitations_IncludesCreator(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersWithInvitations(t)
+	defer cleanup()
+
+	inviteeEmail := "invitee-creator-listing@smoke.test"
+	creator, ls, sess, _ := seedInvitationContext(t, h, inviteeEmail, "creatorlisting")
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+	listReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+	listReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	listW := httptest.NewRecorder()
+	h.RequireAuth(h.ListInvitations)(listW, listReq)
+	require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+	var listResp map[string]any
+	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
+	list, _ := listResp["invitations"].([]any)
+
+	creatorRow := findInvitationByEmail(t, list, creator.Email)
+	assert.Equal(t, "accepted", creatorRow["status"], "synthetic creator row must be marked accepted")
+	assert.Equal(t, "creator", creatorRow["invited_role"])
+	assert.Equal(t, creator.ID.String(), creatorRow["accepted_by_user_id"], "synthetic creator row must reference the creator's user id")
+}
+
+// findInvitationByEmail returns the listing row whose invited_email matches the
+// supplied address (case-insensitive). The Members listing now includes a
+// synthetic row for the session creator (SCRUM-226), so tests that previously
+// indexed list[0] must look up by email instead.
+func findInvitationByEmail(t *testing.T, list []any, email string) map[string]any {
+	t.Helper()
+	for _, item := range list {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if got, _ := row["invited_email"].(string); strings.EqualFold(got, email) {
+			return row
+		}
+	}
+	t.Fatalf("invitation for %q not found in listing of %d items", email, len(list))
+	return nil
 }
 
 // TestListInvitations_RoleReflectsMembershipAfterPATCH originally covered
@@ -402,8 +449,7 @@ func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 	var listResp map[string]any
 	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 	pending, _ := listResp["invitations"].([]any)
-	require.Len(t, pending, 1)
-	pendingInv := pending[0].(map[string]any)
+	pendingInv := findInvitationByEmail(t, pending, inviteeEmail)
 	assert.Equal(t, "participant", pendingInv["invited_role"])
 	invIDStr, _ := pendingInv["id"].(string)
 	require.NotEmpty(t, invIDStr)
@@ -437,8 +483,7 @@ func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 		var listResp map[string]any
 		require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 		accepted, _ := listResp["invitations"].([]any)
-		require.Len(t, accepted, 1)
-		acceptedInv := accepted[0].(map[string]any)
+		acceptedInv := findInvitationByEmail(t, accepted, inviteeEmail)
 		assert.Equal(t, "accepted", acceptedInv["status"])
 		assert.Equal(t, targetRole, acceptedInv["invited_role"], "ListInvitations must reflect the post-PATCH role on accepted rows for target=%s", targetRole)
 		assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"])
@@ -494,8 +539,8 @@ func TestListInvitations_AcceptedRowReflectsLiveMembershipRoleEvenIfInvitedRoleS
 	var listResp map[string]any
 	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 	pending := listResp["invitations"].([]any)
-	require.Len(t, pending, 1)
-	invIDStr := pending[0].(map[string]any)["id"].(string)
+	invIDStr, _ := findInvitationByEmail(t, pending, inviteeEmail)["id"].(string)
+	require.NotEmpty(t, invIDStr)
 
 	acceptReq := httptest.NewRequest(http.MethodPost, "/api/invitations/"+invIDStr+"/accept", nil)
 	acceptReq.URL.Path = "/api/invitations/" + invIDStr + "/accept"
@@ -535,8 +580,7 @@ func TestListInvitations_AcceptedRowReflectsLiveMembershipRoleEvenIfInvitedRoleS
 	var listResp2 map[string]any
 	require.NoError(t, json.NewDecoder(listW2.Body).Decode(&listResp2))
 	accepted := listResp2["invitations"].([]any)
-	require.Len(t, accepted, 1)
-	acceptedInv := accepted[0].(map[string]any)
+	acceptedInv := findInvitationByEmail(t, accepted, inviteeEmail)
 	assert.Equal(t, "creator", acceptedInv["invited_role"], "listing must source role from memberships, not from session_invitations.invited_role")
 }
 

@@ -54,9 +54,10 @@ func seedMembershipScenario(
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
+	// SCRUM-226: db.CreateSession now also inserts the creator's session_memberships
+	// row (role='creator') in the same transaction, so the last-creator guardrail
+	// has a row to read without an explicit CreateSessionMembership call here.
 	require.NoError(t, h.DB.CreateSession(ctx, sess))
-	// Self-membership for the creator so the last-creator guardrail has a row to read.
-	require.NoError(t, h.DB.CreateSessionMembership(ctx, sess.ID, creator.ID, "creator", nil))
 
 	target = &models.User{
 		ID:          uuid.New(),

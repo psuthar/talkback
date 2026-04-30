@@ -157,7 +157,9 @@ func TestSmoke_SessionListing_MemberCountAndCreatorDisplayName(t *testing.T) {
 	row := rows[0]
 	mc, ok := row["member_count"]
 	require.True(t, ok, "response row must include member_count")
-	assert.Equal(t, float64(2), mc, "owned session should report 2 members")
+	// SCRUM-226: db.CreateSession also inserts the creator's session_memberships
+	// row, so the owned session counts 2 invited members + 1 creator = 3.
+	assert.Equal(t, float64(3), mc, "owned session should report 2 invited + 1 creator = 3 members")
 	dn, ok := row["created_by_display_name"]
 	require.True(t, ok, "response row must include created_by_display_name (or null)")
 	assert.Equal(t, "Shape Creator", dn)

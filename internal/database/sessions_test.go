@@ -46,6 +46,42 @@ func TestCreateSession(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotZero(t, session.CreatedAt)
 	})
+
+	t.Run("SCRUM-226: inserts a creator membership when created_by matches a user", func(t *testing.T) {
+		creatorEmail := "scrum226-creator-" + uuid.New().String() + "@example.com"
+		creator := createTestUser(t, db, creatorEmail, models.GlobalRoleCreator)
+		session := &models.Session{
+			ID:        uuid.New(),
+			Title:     "SCRUM-226 Session",
+			CreatedBy: &creatorEmail,
+			Status:    models.SessionStatusOpen,
+		}
+		require.NoError(t, db.CreateSession(ctx, session))
+
+		m, err := db.GetSessionMembership(ctx, session.ID, creator.ID)
+		require.NoError(t, err)
+		require.NotNil(t, m, "creator must have a session_memberships row after CreateSession")
+		assert.Equal(t, "creator", m.Role, "creator membership role must be 'creator'")
+	})
+
+	t.Run("SCRUM-226: does not insert a membership when created_by has no matching user", func(t *testing.T) {
+		// Imported sessions whose creator does not yet have a users row should
+		// still be created — just without the membership invariant. The legacy
+		// email-match access path keeps them functional.
+		orphanEmail := "orphan-" + uuid.New().String() + "@example.com"
+		session := &models.Session{
+			ID:        uuid.New(),
+			Title:     "Orphan Creator Session",
+			CreatedBy: &orphanEmail,
+			Status:    models.SessionStatusOpen,
+		}
+		require.NoError(t, db.CreateSession(ctx, session))
+
+		// No memberships should exist for this session.
+		members, err := db.GetSessionMemberships(ctx, session.ID)
+		require.NoError(t, err)
+		assert.Empty(t, members, "orphan-creator session must have no memberships")
+	})
 }
 
 func TestGetSession(t *testing.T) {

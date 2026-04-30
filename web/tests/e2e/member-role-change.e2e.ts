@@ -196,6 +196,55 @@ test(
 )
 
 test(
+  'creator is listed in Members panel of a freshly created session and member_count includes them (SCRUM-226)',
+  async ({ context, page, request }) => {
+    const creatorEmail = uniqueEmail('creator-self-listing')
+    const localCreatorId = await createUserAndLoginWithId(context, request, creatorEmail, 'SmokePass123!', 'Self Listing Creator')
+
+    const localSession = await createSession(request, 'Creator Self Listing E2E Session')
+
+    // Listing endpoint must include the creator with role='creator', status='accepted'.
+    const listingRes = await request.get(`${API_BASE}/api/sessions/${localSession.id}/invitations`)
+    expect(listingRes.ok()).toBe(true)
+    const listing = await listingRes.json()
+    const rows: Array<{ invited_email?: string; invited_role?: string; status?: string }> =
+      listing?.invitations || []
+    const creatorRow = rows.find((row) => (row?.invited_email || '').toLowerCase() === creatorEmail.toLowerCase())
+    expect(creatorRow).toBeDefined()
+    expect(creatorRow?.invited_role).toBe('creator')
+    expect(creatorRow?.status).toBe('accepted')
+
+    // member_count on Session Selection cards should include the creator (off-by-one regression check).
+    const sessionsRes = await request.get(`${API_BASE}/api/sessions`)
+    expect(sessionsRes.ok()).toBe(true)
+    const sessions: Array<{ id?: string; member_count?: number }> = await sessionsRes.json()
+    const ownedRow = sessions.find((s) => s?.id === localSession.id)
+    expect(ownedRow).toBeDefined()
+    expect(ownedRow?.member_count).toBeGreaterThanOrEqual(1)
+
+    // Drive the UI: creator opens their own session and sees themselves in the Members panel.
+    await page.goto(`/?session=${localSession.id}&mode=edit`)
+    await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
+
+    const membersBtn = page.getByRole('button', { name: /^members/i }).first()
+    await expect(membersBtn).toBeVisible({ timeout: 20_000 })
+    if ((await membersBtn.getAttribute('aria-expanded')) !== 'true') {
+      await membersBtn.click()
+    }
+
+    const creatorRowLocator = page.locator('tr', { hasText: creatorEmail.toLowerCase() })
+    await expect(creatorRowLocator).toBeVisible({ timeout: 10_000 })
+    await expect(creatorRowLocator.locator('td').nth(1)).toHaveText('Creator')
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, localSession.id)
+    await deleteUserViaAdmin(request, localCreatorId)
+  }
+)
+
+test(
   'a non-creator membership-role PATCH is rejected with 403',
   async ({ request }) => {
     // Fresh creator/session/intruder so this test is independent of the happy path.
