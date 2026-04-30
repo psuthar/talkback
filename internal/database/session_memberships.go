@@ -137,11 +137,11 @@ func (db *DB) ListSessionIDsForUser(ctx context.Context, userID uuid.UUID) ([]uu
 // membership. Wraps the last-creator guardrail and the UPDATE in a single
 // transaction so two concurrent demotions cannot both pass the count check.
 //
-// Also updates the matching accepted session_invitations.invited_role row
-// inside the same transaction so the invitations listing endpoint serves the
-// live role (SCRUM-217). If the member joined without an invitation (e.g. the
-// session creator's auto-membership), the invitations update is a 0-row no-op
-// and is not an error.
+// session_invitations.invited_role is intentionally NOT touched here — that
+// column is an immutable snapshot of the role at invitation time. The
+// invitations listing endpoint (SCRUM-225) overlays the live membership role
+// onto accepted rows when serving the response, so role changes show up in
+// the Members panel without a dual-write.
 //
 // Returns:
 //   - ErrMembershipNotFound if no membership row matches (session, user).
@@ -200,18 +200,6 @@ func (db *DB) UpdateSessionMembershipRole(ctx context.Context, sessionID, userID
 	}
 	if cmd.RowsAffected() == 0 {
 		return ErrMembershipNotFound
-	}
-
-	// SCRUM-217: keep session_invitations.invited_role aligned with the live
-	// membership role for accepted rows. Touching status='accepted' only so
-	// any pending or revoked invitation history (e.g. an old invite to the
-	// same email at a different role) is left intact. 0 rows is fine.
-	if _, err := tx.Exec(ctx, `
-		UPDATE session_invitations
-		SET invited_role = $1, updated_at = now()
-		WHERE session_id = $2 AND accepted_by_user_id = $3 AND status = 'accepted'
-	`, newRole, sessionID, userID); err != nil {
-		return fmt.Errorf("update accepted invitation role: %w", err)
 	}
 
 	return tx.Commit(ctx)

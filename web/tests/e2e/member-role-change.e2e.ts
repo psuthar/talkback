@@ -120,6 +120,82 @@ test(
 )
 
 test(
+  'creator promotes a participant to creator; Members panel reflects new role on refetch (SCRUM-225)',
+  async ({ context, page, request }) => {
+    const creatorEmail = uniqueEmail('role-creator-promote')
+    const localCreatorId = await createUserAndLoginWithId(context, request, creatorEmail, 'SmokePass123!', 'Creator Promotion Creator')
+
+    const localSession = await createSession(request, 'Creator Promotion E2E Session')
+    await setSessionPrimaryDecision(request, localSession.id, 'Promote a participant to creator?')
+
+    const promoteeEmail = uniqueEmail('role-creator-promotee')
+    const promoteeReq = await playwrightApiRequest.newContext()
+    const signupRes = await promoteeReq.post(`${API_BASE}/api/auth/signup`, {
+      data: { email: promoteeEmail, password: 'SmokePass123!', display_name: 'Promotee' },
+    })
+    expect(signupRes.ok()).toBe(true)
+    const signupData = await signupRes.json()
+    const promoteeId = signupData.id as string
+    await promoteeReq.post(`${API_BASE}/api/auth/login`, {
+      data: { email: promoteeEmail, password: 'SmokePass123!' },
+    })
+
+    const inv = await createInvitation(request, localSession.id, promoteeEmail, 'participant')
+    const tokenQs = inv.accept_url.includes('?') ? inv.accept_url.split('?')[1] : ''
+    const token = new URLSearchParams(tokenQs).get('token')
+    const accept = await promoteeReq.post(`${API_BASE}/api/invitations/accept`, { data: { token } })
+    expect(accept.ok()).toBe(true)
+
+    // Creator PATCHes the membership to creator. This is the path that the bug
+    // ticket reported as silently broken because the listing was sourced from
+    // session_invitations.invited_role rather than session_memberships.role.
+    const patchRes = await request.patch(`${API_BASE}/api/sessions/${localSession.id}/memberships/${promoteeId}`, {
+      data: { role: 'creator' },
+    })
+    expect(patchRes.status()).toBe(200)
+    const patchBody = await patchRes.json()
+    expect(patchBody?.membership?.role).toBe('creator')
+
+    // The listing endpoint must reflect 'creator' on the accepted row immediately.
+    const listingRes = await request.get(`${API_BASE}/api/sessions/${localSession.id}/invitations`)
+    expect(listingRes.ok()).toBe(true)
+    const listing = await listingRes.json()
+    const acceptedRow = (listing?.invitations || []).find((row: { invited_email?: string }) =>
+      (row?.invited_email || '').toLowerCase() === promoteeEmail.toLowerCase()
+    )
+    expect(acceptedRow?.invited_role).toBe('creator')
+
+    // Drive the creator UI and confirm the Role cell + the menu's ✓ item moved to Creator.
+    await page.goto(`/?session=${localSession.id}&mode=edit`)
+    await page.waitForLoadState('networkidle')
+    await dismissParticipantOnboardingIfPresent(page)
+
+    const membersBtn = page.getByRole('button', { name: /^members/i }).first()
+    await expect(membersBtn).toBeVisible({ timeout: 20_000 })
+    if ((await membersBtn.getAttribute('aria-expanded')) !== 'true') {
+      await membersBtn.click()
+    }
+
+    const row = page.locator('tr', { hasText: promoteeEmail.toLowerCase() })
+    await expect(row).toBeVisible({ timeout: 10_000 })
+    await expect(row.locator('td').nth(1)).toHaveText('Creator')
+
+    await row.getByTestId('member-row-actions-trigger').click()
+    const creatorItem = page.getByTestId('member-action-role-creator')
+    await expect(creatorItem).toBeDisabled()
+    await expect(creatorItem).toContainText('✓')
+
+    // Cleanup local seed (this test owns its own session/users).
+    await loginAsAdmin(request)
+    await deleteSession(request, localSession.id)
+    await deleteUserViaAdmin(request, localCreatorId)
+    await deleteUserViaAdmin(request, promoteeId)
+
+    await promoteeReq.dispose()
+  }
+)
+
+test(
   'a non-creator membership-role PATCH is rejected with 403',
   async ({ request }) => {
     // Fresh creator/session/intruder so this test is independent of the happy path.
