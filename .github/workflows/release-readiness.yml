@@ -187,9 +187,37 @@ jobs:
           echo "Frontend did not start within 15s" >&2
           exit 1
 
-      - name: Install LibreOffice and poppler-utils (for PPTX conversion)
+      - name: Install LibreOffice, unoconv, and poppler-utils (for PPTX conversion)
         if: steps.changed.outputs.pptx == 'true'
-        run: sudo apt-get install -y --no-install-recommends libreoffice poppler-utils
+        run: sudo apt-get install -y --no-install-recommends libreoffice unoconv poppler-utils
+
+      - name: Start unoconv listener (persistent LibreOffice for fast PPTX conversion)
+        # SCRUM-219: starting `unoconv --listener` once at the top of the job lets
+        # subsequent `unoconv -f pdf <file>` calls reuse a long-lived LibreOffice
+        # process, dropping per-call cost from ~8-10s (fresh soffice) to ~0.5-1s.
+        # The Go server's slides_converter.go picks up `unoconv` automatically via
+        # PATH (useUnoconv() / unoconvCmd()), so no env vars need to be set here.
+        # If the listener fails to start, this step does NOT fail the job — the
+        # Go path falls back to direct soffice --headless and tests still pass,
+        # just at the slower per-call cost.
+        if: steps.changed.outputs.pptx == 'true'
+        continue-on-error: true
+        run: |
+          nohup unoconv --listener > unoconv-listener.log 2>&1 &
+          LPID=$!
+          echo $LPID > unoconv-listener.pid
+          echo "unoconv listener launched (pid=$LPID)"
+          # Wait for the underlying soffice --accept socket to bind. Up to 20s
+          # covers cold-start on a fresh runner; if it doesn't come up the Go
+          # fallback handles conversions.
+          for i in $(seq 1 20); do
+            if pgrep -f "soffice.*--accept" > /dev/null 2>&1; then
+              echo "unoconv listener ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "unoconv listener did not bind UNO socket within 20s; Go server will fall back to direct soffice." >&2
 
       - name: Start API server (background)
         env:
