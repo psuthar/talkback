@@ -321,9 +321,13 @@ func (h *Handlers) CreateSessionAnswer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("CreateAnswer userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can add an answer", http.StatusForbidden)
 		return
 	}
@@ -420,9 +424,13 @@ func (h *Handlers) UpdateAnswerConfirmed(w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("ConfirmAnswer userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can confirm an answer", http.StatusForbidden)
 		return
 	}
@@ -506,9 +514,13 @@ func (h *Handlers) TranscribeSessionAnswerVoice(w http.ResponseWriter, r *http.R
 		http.Error(w, fmt.Sprintf("Session not found: %v", err), http.StatusNotFound)
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("VoiceAnswer userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can provide an answer", http.StatusForbidden)
 		return
 	}

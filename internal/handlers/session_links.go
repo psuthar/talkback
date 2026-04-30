@@ -44,9 +44,13 @@ func (h *Handlers) AddSessionLink(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("AddSessionLink userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can add links", http.StatusForbidden)
 		return
 	}
@@ -184,9 +188,13 @@ func (h *Handlers) DeleteSessionLink(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("DeleteSessionLink userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can delete links", http.StatusForbidden)
 		return
 	}

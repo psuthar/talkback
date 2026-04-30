@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -57,9 +58,13 @@ func (h *Handlers) requireCreatorOrAdminForSession(w http.ResponseWriter, r *htt
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return nil, nil, false
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("requireCreatorOrAdminForSession userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return nil, nil, false
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can access orchestration recommendations", http.StatusForbidden)
 		return nil, nil, false
 	}

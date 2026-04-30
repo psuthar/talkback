@@ -60,9 +60,13 @@ func (h *Handlers) CreateOrchestrationDraftAnswer(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Session not found"})
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(ctx, sessionID, user)
+	if err != nil {
+		log.Printf("orchestration_draft userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can create a draft answer", http.StatusForbidden)
 		return
 	}
@@ -152,9 +156,13 @@ func (h *Handlers) DeleteOrchestrationDraftAnswer(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Session not found"})
 		return
 	}
-	isCreator := session.CreatedBy != nil && *session.CreatedBy == user.Email
-	isAdmin := user.GlobalRole == models.GlobalRoleAdmin
-	if !isCreator && !isAdmin {
+	canEdit, err := h.userIsSessionEditor(ctx, sessionID, user)
+	if err != nil {
+		log.Printf("orchestration_draft delete userIsSessionEditor: %v", err)
+		http.Error(w, "Failed to check authorization", http.StatusInternalServerError)
+		return
+	}
+	if !canEdit {
 		http.Error(w, "Only the session creator or an admin can delete a draft answer", http.StatusForbidden)
 		return
 	}

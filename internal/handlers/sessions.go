@@ -1042,12 +1042,18 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only creator or admin can update session
-	if user.GlobalRole != models.GlobalRoleAdmin {
-		if session.CreatedBy == nil || *session.CreatedBy != user.Email {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can update this session"})
-			return
-		}
+	// SCRUM-227: editor authority is granted by global admin OR per-session
+	// session_memberships.role='creator' — including promoted creators, not
+	// only the original by-email creator.
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("UpdateSessionStatus userIsSessionEditor: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check authorization"})
+		return
+	}
+	if !canEdit {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can update this session"})
+		return
 	}
 
 	// Parse request body
