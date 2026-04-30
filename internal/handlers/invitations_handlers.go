@@ -126,6 +126,23 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list invitations"})
 		return
 	}
+	// SCRUM-225: for accepted invitations, source `invited_role` from
+	// session_memberships.role so the Members panel always reflects the live
+	// role after PATCH /api/sessions/:id/memberships/:userId. The
+	// session_invitations.invited_role column remains an immutable snapshot
+	// of the role at invitation time and is only used for pending/revoked
+	// rows where there is no membership yet. This eliminates the dual-write
+	// previously needed for SCRUM-217 and prevents the same class of bug
+	// from recurring per role.
+	memberships, err := h.DB.GetSessionMemberships(ctx, sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list memberships"})
+		return
+	}
+	liveRoleByUserID := make(map[uuid.UUID]string, len(memberships))
+	for _, m := range memberships {
+		liveRoleByUserID[m.UserID] = m.Role
+	}
 	items := make([]map[string]interface{}, 0, len(list))
 	for _, inv := range list {
 		inviterName := ""
@@ -137,10 +154,16 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 			s := inv.AcceptedByUserID.String()
 			acceptedByUserID = &s
 		}
+		role := string(inv.InvitedRole)
+		if inv.AcceptedByUserID != nil {
+			if liveRole, ok := liveRoleByUserID[*inv.AcceptedByUserID]; ok {
+				role = liveRole
+			}
+		}
 		items = append(items, map[string]interface{}{
 			"id":                  inv.ID.String(),
 			"invited_email":       inv.InvitedEmailNormalized,
-			"invited_role":        string(inv.InvitedRole),
+			"invited_role":        role,
 			"status":              string(inv.Status),
 			"inviter_name":        inviterName,
 			"expires_at":          inv.ExpiresAt,

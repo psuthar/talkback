@@ -359,11 +359,13 @@ func TestListInvitations_IncludesAcceptedByUserID(t *testing.T) {
 	assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"], "accepted_by_user_id must be the invitee's user id")
 }
 
-// TestListInvitations_RoleReflectsMembershipAfterPATCH covers SCRUM-217:
-// after a creator PATCHes a member's role via /api/sessions/:id/memberships/:userId,
-// the listing endpoint must serve the live role on the matching accepted row.
-// Before the fix, session_invitations.invited_role kept the at-invite value
-// and the Members panel rendered a stale label.
+// TestListInvitations_RoleReflectsMembershipAfterPATCH originally covered
+// SCRUM-217 (decision_maker promotion). SCRUM-225 generalises the contract:
+// the listing endpoint must reflect the live session_memberships.role on the
+// matching accepted row regardless of which target role is chosen, including
+// 'creator' which was the regression that motivated SCRUM-225. The test now
+// walks participant -> decision_maker -> creator and asserts the listing
+// follows each PATCH.
 func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 	t.Parallel()
 	h, cleanup := setupTestHandlersWithInvitations(t)
@@ -414,8 +416,96 @@ func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 	h.RequireAuth(h.AcceptInvitationByID)(acceptW, acceptReq)
 	require.Equal(t, http.StatusOK, acceptW.Code, acceptW.Body.String())
 
-	// Creator PATCHes the membership role to decision_maker.
-	patchBody, _ := json.Marshal(map[string]string{"role": "decision_maker"})
+	patchAndAssertListing := func(targetRole string) {
+		t.Helper()
+		patchBody, _ := json.Marshal(map[string]string{"role": targetRole})
+		patchURL := "/api/sessions/" + sess.ID.String() + "/memberships/" + invitee.ID.String()
+		patchReq := httptest.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(patchBody))
+		patchReq.URL.Path = patchURL
+		patchReq.Header.Set("Content-Type", "application/json")
+		patchReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
+		patchW := httptest.NewRecorder()
+		h.RequireAuth(h.UpdateSessionMembership)(patchW, patchReq)
+		require.Equal(t, http.StatusOK, patchW.Code, patchW.Body.String())
+
+		listReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+		listReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+		listReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
+		listW := httptest.NewRecorder()
+		h.RequireAuth(h.ListInvitations)(listW, listReq)
+		require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+		var listResp map[string]any
+		require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
+		accepted, _ := listResp["invitations"].([]any)
+		require.Len(t, accepted, 1)
+		acceptedInv := accepted[0].(map[string]any)
+		assert.Equal(t, "accepted", acceptedInv["status"])
+		assert.Equal(t, targetRole, acceptedInv["invited_role"], "ListInvitations must reflect the post-PATCH role on accepted rows for target=%s", targetRole)
+		assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"])
+
+		m, err := h.DB.GetSessionMembership(ctx, sess.ID, invitee.ID)
+		require.NoError(t, err)
+		require.NotNil(t, m)
+		assert.Equal(t, targetRole, m.Role)
+	}
+
+	patchAndAssertListing("decision_maker")
+	patchAndAssertListing("creator") // SCRUM-225 regression coverage
+}
+
+// TestListInvitations_AcceptedRowReflectsLiveMembershipRoleEvenIfInvitedRoleStale
+// pins SCRUM-225's contract: the listing reads role from session_memberships
+// for accepted rows, so even if session_invitations.invited_role drifts (e.g.
+// a leftover snapshot from an older code path), the Members panel still sees
+// the correct live role. This is the test that would have caught the original
+// SCRUM-217 bug class without needing per-role coverage.
+func TestListInvitations_AcceptedRowReflectsLiveMembershipRoleEvenIfInvitedRoleStale(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersWithInvitations(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	inviteeEmail := "stale+listing@smoke.test"
+	_, creatorLS, sess, _ := seedInvitationContext(t, h, inviteeEmail, "stale")
+
+	invitee := &models.User{
+		ID:          uuid.New(),
+		Email:       inviteeEmail,
+		DisplayName: "Stale Invitee",
+		Status:      models.UserStatusActive,
+		GlobalRole:  models.GlobalRoleParticipant,
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, invitee))
+	inviteeLS := &models.LoginSession{
+		ID:        uuid.New(),
+		UserID:    invitee.ID,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	require.NoError(t, h.DB.CreateLoginSession(ctx, inviteeLS))
+
+	// Look up invitation id and accept.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+	listReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+	listReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
+	listW := httptest.NewRecorder()
+	h.RequireAuth(h.ListInvitations)(listW, listReq)
+	require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+	var listResp map[string]any
+	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
+	pending := listResp["invitations"].([]any)
+	require.Len(t, pending, 1)
+	invIDStr := pending[0].(map[string]any)["id"].(string)
+
+	acceptReq := httptest.NewRequest(http.MethodPost, "/api/invitations/"+invIDStr+"/accept", nil)
+	acceptReq.URL.Path = "/api/invitations/" + invIDStr + "/accept"
+	acceptReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: inviteeLS.ID.String()})
+	acceptW := httptest.NewRecorder()
+	h.RequireAuth(h.AcceptInvitationByID)(acceptW, acceptReq)
+	require.Equal(t, http.StatusOK, acceptW.Code, acceptW.Body.String())
+
+	// Promote to creator via PATCH.
+	patchBody, _ := json.Marshal(map[string]string{"role": "creator"})
 	patchURL := "/api/sessions/" + sess.ID.String() + "/memberships/" + invitee.ID.String()
 	patchReq := httptest.NewRequest(http.MethodPatch, patchURL, bytes.NewReader(patchBody))
 	patchReq.URL.Path = patchURL
@@ -425,7 +515,17 @@ func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 	h.RequireAuth(h.UpdateSessionMembership)(patchW, patchReq)
 	require.Equal(t, http.StatusOK, patchW.Code, patchW.Body.String())
 
-	// Re-list and assert the invited_role on the accepted row reflects the new role.
+	// Force session_invitations.invited_role to a stale 'participant' value
+	// directly in the database, simulating either a regression in dual-write
+	// coverage or the natural state now that the dual-write was removed.
+	_, err := h.DB.Pool.Exec(ctx, `
+		UPDATE session_invitations
+		SET invited_role = 'participant'
+		WHERE session_id = $1 AND accepted_by_user_id = $2
+	`, sess.ID, invitee.ID)
+	require.NoError(t, err)
+
+	// Listing must still report 'creator' because it reads from session_memberships.
 	listReq2 := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
 	listReq2.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
 	listReq2.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: creatorLS.ID.String()})
@@ -434,18 +534,10 @@ func TestListInvitations_RoleReflectsMembershipAfterPATCH(t *testing.T) {
 	require.Equal(t, http.StatusOK, listW2.Code, listW2.Body.String())
 	var listResp2 map[string]any
 	require.NoError(t, json.NewDecoder(listW2.Body).Decode(&listResp2))
-	accepted, _ := listResp2["invitations"].([]any)
+	accepted := listResp2["invitations"].([]any)
 	require.Len(t, accepted, 1)
 	acceptedInv := accepted[0].(map[string]any)
-	assert.Equal(t, "accepted", acceptedInv["status"])
-	assert.Equal(t, "decision_maker", acceptedInv["invited_role"], "ListInvitations must reflect the post-PATCH role on accepted rows")
-	assert.Equal(t, invitee.ID.String(), acceptedInv["accepted_by_user_id"])
-
-	// Sanity: the membership table also carries the new role.
-	m, err := h.DB.GetSessionMembership(ctx, sess.ID, invitee.ID)
-	require.NoError(t, err)
-	require.NotNil(t, m)
-	assert.Equal(t, "decision_maker", m.Role)
+	assert.Equal(t, "creator", acceptedInv["invited_role"], "listing must source role from memberships, not from session_invitations.invited_role")
 }
 
 func TestResolveInvitation_NoToken_BadRequest(t *testing.T) {
