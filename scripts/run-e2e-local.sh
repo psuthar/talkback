@@ -8,7 +8,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Optional: `web/.env` (gitignored) — set TALKBACK_BOOTSTRAP_ADMIN_* and TALKBACK_ADMIN_* so API + Playwright use the same admin as your local API.
+# Source repo-root `.env` first (general API/Postgres config — matches what a
+# locally-running `talkback-api` Docker container was bootstrapped from). When
+# the script reuses an already-running API rather than starting a fresh one,
+# this is what aligns the admin pre-flight + Playwright global-teardown with
+# the running API's bootstrap admin (SCRUM-224).
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
+# Optional: `web/.env` (gitignored) — set TALKBACK_BOOTSTRAP_ADMIN_* and TALKBACK_ADMIN_* so API + Playwright use the same admin as your local API. Sourced after repo-root `.env` so explicit web/.env values win over repo-root defaults.
 if [ -f web/.env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -121,9 +133,18 @@ ADMIN_STATUS=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${TALKBACK_API_BA
   -H 'content-type: application/json' \
   --data "{\"email\":\"${TALKBACK_ADMIN_EMAIL}\",\"password\":\"${TALKBACK_ADMIN_PASSWORD}\"}" || echo "000")
 if [ "$ADMIN_STATUS" != "200" ]; then
-  echo "run-e2e-local: admin login pre-flight failed (HTTP ${ADMIN_STATUS}) at ${TALKBACK_API_BASE}." >&2
-  echo "  TALKBACK_ADMIN_EMAIL/PASSWORD must match the bootstrap admin of the running API." >&2
-  echo "  If you're reusing an API started with different env, restart it or update web/.env to match." >&2
+  cat >&2 <<EOF
+run-e2e-local: admin login pre-flight failed (HTTP ${ADMIN_STATUS}) at ${TALKBACK_API_BASE}
+  Tried email: ${TALKBACK_ADMIN_EMAIL}
+  Source precedence (highest first): caller env (TALKBACK_ADMIN_EMAIL) → web/.env → repo-root .env → built-in default (ci-admin@smoke.test)
+
+  This usually means the running TalkBack API was bootstrapped from creds the
+  script did not see. Fix one of:
+    1. Restart the API: stop the running process so this script can boot a fresh
+       one with the bootstrap admin it is configured to use, then re-run.
+    2. Match the running API: export TALKBACK_ADMIN_EMAIL and TALKBACK_ADMIN_PASSWORD
+       to the creds the running API was bootstrapped with, then re-run.
+EOF
   exit 1
 fi
 
