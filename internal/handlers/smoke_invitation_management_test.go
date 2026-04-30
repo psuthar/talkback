@@ -92,9 +92,9 @@ func TestSmoke_InvitationMgmt_ListInvitationsForSession(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	list, ok := resp["invitations"].([]any)
 	require.True(t, ok, "response must have 'invitations' array")
-	require.Len(t, list, 1)
-	inv, ok := list[0].(map[string]any)
-	require.True(t, ok)
+	// SCRUM-226: listing also includes the synthetic creator row, so the
+	// invitee is no longer guaranteed to be at index 0; look up by email.
+	inv := findInvitationByEmail(t, list, inviteeEmail)
 	assert.Equal(t, inviteeEmail, inv["invited_email"])
 	assert.Equal(t, "pending", inv["status"])
 }
@@ -161,8 +161,7 @@ func TestSmoke_InvitationMgmt_RevokeInvitation(t *testing.T) {
 	var listResp map[string]any
 	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 	invList, _ := listResp["invitations"].([]any)
-	require.Len(t, invList, 1)
-	inv := invList[0].(map[string]any)
+	inv := findInvitationByEmail(t, invList, inviteeEmail)
 	invIDStr, _ := inv["id"].(string)
 	require.NotEmpty(t, invIDStr)
 
@@ -205,8 +204,7 @@ func TestSmoke_InvitationMgmt_GetInvitationLink(t *testing.T) {
 	var listResp map[string]any
 	require.NoError(t, json.NewDecoder(listW.Body).Decode(&listResp))
 	invList, _ := listResp["invitations"].([]any)
-	require.Len(t, invList, 1)
-	inv := invList[0].(map[string]any)
+	inv := findInvitationByEmail(t, invList, inviteeEmail)
 	invIDStr, _ := inv["id"].(string)
 	require.NotEmpty(t, invIDStr)
 

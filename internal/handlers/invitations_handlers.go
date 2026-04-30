@@ -131,9 +131,7 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	// role after PATCH /api/sessions/:id/memberships/:userId. The
 	// session_invitations.invited_role column remains an immutable snapshot
 	// of the role at invitation time and is only used for pending/revoked
-	// rows where there is no membership yet. This eliminates the dual-write
-	// previously needed for SCRUM-217 and prevents the same class of bug
-	// from recurring per role.
+	// rows where there is no membership yet.
 	memberships, err := h.DB.GetSessionMemberships(ctx, sessionID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list memberships"})
@@ -143,7 +141,8 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	for _, m := range memberships {
 		liveRoleByUserID[m.UserID] = m.Role
 	}
-	items := make([]map[string]interface{}, 0, len(list))
+	items := make([]map[string]interface{}, 0, len(list)+len(memberships))
+	invitedUserIDs := make(map[uuid.UUID]struct{}, len(list))
 	for _, inv := range list {
 		inviterName := ""
 		if u, _ := h.DB.GetUserByID(ctx, inv.InviterUserID); u != nil {
@@ -153,6 +152,7 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		if inv.AcceptedByUserID != nil {
 			s := inv.AcceptedByUserID.String()
 			acceptedByUserID = &s
+			invitedUserIDs[*inv.AcceptedByUserID] = struct{}{}
 		}
 		role := string(inv.InvitedRole)
 		if inv.AcceptedByUserID != nil {
@@ -170,6 +170,33 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 			"accepted_at":         inv.AcceptedAt,
 			"accepted_by_user_id": acceptedByUserID,
 			"created_at":          inv.CreatedAt,
+		})
+	}
+	// SCRUM-226: surface members who have a session_memberships row but no
+	// matching session_invitations row (typically the session creator, who
+	// was never invited). Synthesize an "accepted" listing item per such
+	// membership so the Members panel renders the creator alongside invitees.
+	for _, m := range memberships {
+		if _, alreadyListed := invitedUserIDs[m.UserID]; alreadyListed {
+			continue
+		}
+		u, _ := h.DB.GetUserByID(ctx, m.UserID)
+		if u == nil {
+			// Membership references a user that has been deleted; skip rather
+			// than render a row with no email.
+			continue
+		}
+		userIDStr := m.UserID.String()
+		items = append(items, map[string]interface{}{
+			"id":                  m.ID.String(),
+			"invited_email":       u.Email,
+			"invited_role":        m.Role,
+			"status":              "accepted",
+			"inviter_name":        "",
+			"expires_at":          nil,
+			"accepted_at":         m.JoinedAt,
+			"accepted_by_user_id": &userIDStr,
+			"created_at":          m.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"invitations": items})

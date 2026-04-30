@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,30 +12,68 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-// CreateSession creates a new session
+// CreateSession creates a new session and, if its created_by email maps to a
+// known user, inserts a session_memberships row with role='creator' for that
+// user inside the same transaction (SCRUM-226). This ensures the creator is a
+// first-class member of every session they create — counted in member_count
+// queries, surfaced in the Members panel listing, and never invisible to code
+// paths that enumerate session_memberships.
+//
+// If session.CreatedBy is nil/empty or doesn't match a users row (e.g. an
+// imported session whose creator does not yet have an account), the membership
+// insert is skipped — the session is still created so existing import flows
+// continue to work. The legacy created_by email-match access path in
+// UserCanAccessSession remains as a fallback for those edge cases.
 func (db *DB) CreateSession(ctx context.Context, session *models.Session) error {
 	sourceProvider := string(session.SourceProvider)
 	if sourceProvider == "" {
 		sourceProvider = string(models.SessionSourceUpload)
 	}
-	query := `
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO sessions (id, title, created_by, status, source_provider, source_reference_url)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at
-	`
-
-	err := db.Pool.QueryRow(ctx, query,
+	`,
 		session.ID,
 		session.Title,
 		session.CreatedBy,
 		session.Status,
 		sourceProvider,
 		session.SourceReferenceURL,
-	).Scan(&session.CreatedAt, &session.UpdatedAt)
-	if err != nil {
+	).Scan(&session.CreatedAt, &session.UpdatedAt); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
 
+	if session.CreatedBy != nil && *session.CreatedBy != "" {
+		var creatorUserID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, *session.CreatedBy).Scan(&creatorUserID); err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("lookup creator user: %w", err)
+			}
+			// Creator email has no users row — skip the membership insert; the
+			// legacy created_by email match in UserCanAccessSession still grants
+			// access. This keeps imported sessions with phantom creators working.
+		} else {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO session_memberships (session_id, user_id, role, invited_by_user_id)
+				VALUES ($1, $2, 'creator', NULL)
+				ON CONFLICT (session_id, user_id) DO NOTHING
+			`, session.ID, creatorUserID); err != nil {
+				return fmt.Errorf("insert creator membership: %w", err)
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
 	return nil
 }
 
