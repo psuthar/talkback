@@ -1,0 +1,17 @@
+# release-readiness-core pin — single source of truth.
+# Pinned as part of the SCRUM-261 migration (PR gate engine → release-readiness-core).
+# Format: key=value pairs; lines starting with '#' and blank lines are ignored.
+#
+# Consumers:
+#   - scripts/release_readiness_core_pin.sh (helper for CI + local scripts)
+#   - .github/workflows/release-readiness.yml (shadow + cutover jobs land in SCRUM-265+)
+#   - any future tooling that installs the package or invokes the composite actions
+#
+# Update procedure:
+#   1. Bump version= and sha=/ref= together to a single matching tag from
+#      psuthar/release-readiness-core.
+#   2. Re-run the SCRUM-262 CLI inventory + composite-action existence checks.
+#   3. Re-run the SCRUM-263 gap-test harness against the new pin.
+version=0.3.4
+sha=6ab7582ebdf9c24a572df73bd10102dea2dde2f9
+ref=v0.3.4
