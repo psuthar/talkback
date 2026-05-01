@@ -12,6 +12,15 @@ Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOC
 
 CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
 
+## Migration to release-readiness-core (SCRUM-261)
+
+The PR gate engine is being migrated from in-tree Python/Go scripts to the project-agnostic `release-readiness-core` package. The pin is the **single source of truth** for the migration so CI, local scripts, and gap-test runs cannot drift:
+
+- Pin file: [`version.txt`](./version.txt) — `version=`, `sha=`, `ref=` for the chosen release.
+- Reader: [`scripts/release_readiness_core_pin.sh`](../../scripts/release_readiness_core_pin.sh) — emits any field; use `spec` for `pip install`, `ref` as the `@`-suffix on composite actions `psuthar/release-readiness-core/.github/actions/release-readiness` and `.../release-readiness-pr-gate`.
+
+Current pin: `release-readiness-core==0.3.4` (`v0.3.4`). All seven CLIs ship at this version: `release-readiness-evaluate`, `release-readiness-pr-risk`, `release-readiness-combine`, `release-readiness-check-payload`, `playwright-to-readiness`, `release-readiness-doctor`, `release-readiness-init`. Shadow CI invocation lands in SCRUM-265; cutover and legacy-script deletion in SCRUM-267.
+
 ## Core validations (mapped to changed paths)
 
 | Area | Typical paths |
