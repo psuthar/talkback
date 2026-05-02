@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
+import { SetPrimaryButton } from './SetPrimaryButton'
 import styles from './MaterialsTreePanel.module.css'
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
@@ -185,6 +186,12 @@ export function MaterialsTreePanel({
   deletingId,
   deleteError,
   onDeleteVideo,
+  // SCRUM-275: creator-only "Make primary" affordance. When canManage is
+  // true and onPrimaryChanged is provided, document rows render
+  // SetPrimaryButton next to the title. currentPrimary lets the panel
+  // badge the row that's already the session primary.
+  currentPrimary = null,
+  onPrimaryChanged,
 }) {
   const scrollRef = useRef(null)
   const [probedSlidesStatus, setProbedSlidesStatus] = useState({})
@@ -517,25 +524,43 @@ export function MaterialsTreePanel({
                 )
                 : null
               const viewable = isMaterialViewable(m)
+              const isCurrentPrimary = !!(
+                currentPrimary && currentPrimary.kind === 'document' &&
+                String(currentPrimary.id) === String(m.id)
+              )
+              const sessionId = session?.session?.id || session?.id
               return (
-                <TreeItem
-                  key={m.id}
-                  testId="material-item"
-                  icon={null}
-                  title={m.title || m.filename || 'Untitled'}
-                  meta={metaNode}
-                  metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
-                  selected={selectedDocumentId === m.id}
-                  onClick={(e) => onSelectDocument(m, e)}
-                  onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
-                  deleting={deletingId === String(m.id)}
-                  disabled={!viewable}
-                  buttonTitle={!viewable
-                    ? (isSlideDeckMaterial(m)
-                      ? (resolveSlidesStatus(m) === 'failed' ? 'Slide preview generation failed' : 'Slides are still processing')
-                      : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
-                    : undefined}
-                />
+                <div key={m.id}>
+                  <TreeItem
+                    testId="material-item"
+                    icon={null}
+                    title={m.title || m.filename || 'Untitled'}
+                    meta={metaNode}
+                    metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                    selected={selectedDocumentId === m.id}
+                    onClick={(e) => onSelectDocument(m, e)}
+                    onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                    deleting={deletingId === String(m.id)}
+                    disabled={!viewable}
+                    buttonTitle={!viewable
+                      ? (isSlideDeckMaterial(m)
+                        ? (resolveSlidesStatus(m) === 'failed' ? 'Slide preview generation failed' : 'Slides are still processing')
+                        : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
+                      : undefined}
+                  />
+                  {canManage && onPrimaryChanged && sessionId && viewable && (
+                    <div style={{ padding: '0 8px 4px 24px' }}>
+                      <SetPrimaryButton
+                        apiBaseUrl={apiBaseUrl}
+                        sessionId={sessionId}
+                        kind="document"
+                        id={m.id}
+                        isCurrentPrimary={isCurrentPrimary}
+                        onSuccess={onPrimaryChanged}
+                      />
+                    </div>
+                  )}
+                </div>
               )
             })}
           </TreeSection>
