@@ -99,4 +99,5 @@ artifacts/release-readiness/*
 !artifacts/release-readiness/.gitkeep
 artifacts/release-readiness-fixture-test/
 artifacts/rr-test/
+artifacts/gap-test/
 
