@@ -928,6 +928,19 @@ jobs:
             --coverage coverage.json \
             --prod-health artifacts/release-readiness/prod_health.json \
             --output-dir artifacts/release-readiness-shadow/run || true
+          # release-readiness-evaluate hardcodes the lean machine summary at
+          # <repo-root>/artifacts/release-readiness.json (independent of
+          # --output-dir; see release_readiness_core/readiness_evaluate.py
+          # write_machine_readiness_summary). PR #231's shadow run revealed
+          # the wiring bug — combine looked under the shadow output dir and
+          # 404'd. Snapshot the lean output into release-readiness-shadow/
+          # so shadow artifacts stay self-contained AND so combine has a
+          # stable input below; the shadow write also overwrites the legacy
+          # lean output produced earlier in the workflow, which is fine
+          # because the shadow job is the only consumer left in this run.
+          if [ -f artifacts/release-readiness.json ]; then
+            cp artifacts/release-readiness.json artifacts/release-readiness-shadow/release-readiness.json
+          fi
 
       - name: Run release-readiness-combine (shadow)
         id: shadow_combine
@@ -935,7 +948,10 @@ jobs:
         shell: bash
         run: |
           # Lean machine summaries land in the parent (release-readiness-shadow);
-          # full reports stay under release-readiness-shadow/run.
+          # full reports stay under release-readiness-shadow/run. The lean
+          # release-readiness.json is the snapshot copied from
+          # <repo-root>/artifacts/ in the previous step (see comment there
+          # and ops/release-readiness/shadow-rollout.md PR #231 entry).
           release-readiness-combine \
             --pr-risk-json artifacts/release-readiness-shadow/pr-risk.json \
             --readiness-json artifacts/release-readiness-shadow/release-readiness.json \
