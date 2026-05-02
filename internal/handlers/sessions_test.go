@@ -324,6 +324,104 @@ func TestGetSession(t *testing.T) {
 	})
 }
 
+// TestGetSession_PrimaryDescriptor exercises the SCRUM-271 resolved primary
+// block in the GET response: legacy video-first sessions still report
+// kind=video without DB writes; document-first sessions report kind=document
+// with the material's title; sessions without any primary omit the field.
+func TestGetSession_PrimaryDescriptor(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	t.Run("omits Primary when no primary set", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, h.DB, "no-primary session")
+
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String(), nil)
+		w := httptest.NewRecorder()
+		h.GetSession(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response GetSessionResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		assert.Nil(t, response.Primary, "Primary must be nil/omitted when no primary is set")
+	})
+
+	t.Run("legacy video fallback returns kind=video", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, h.DB, "legacy video session")
+
+		// Create a file_artifact and point primary_video_artifact_id at it without
+		// setting primary_content_kind — exactly the existing-row state the
+		// SCRUM-269 backward-compat note describes.
+		artifactID := uuid.New()
+		filename := "legacy.mp4"
+		_, err := h.DB.Pool.Exec(ctx, `
+			INSERT INTO file_artifacts (id, session_id, kind, filename, content_type,
+			                            storage_provider, storage_bucket, storage_key, status,
+			                            created_at, updated_at)
+			VALUES ($1, $2, 'video', $3, 'video/mp4', 'r2', 'b', $4, 'ready', now(), now())
+		`, artifactID, session.ID, filename, artifactID.String())
+		require.NoError(t, err)
+		_, err = h.DB.Pool.Exec(ctx,
+			`UPDATE sessions SET primary_video_artifact_id = $1 WHERE id = $2`, artifactID, session.ID)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String(), nil)
+		w := httptest.NewRecorder()
+		h.GetSession(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response GetSessionResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		require.NotNil(t, response.Primary)
+		assert.Equal(t, "video", response.Primary.Kind)
+		assert.Equal(t, artifactID, response.Primary.ID)
+		// Title is enriched from the file_artifact's filename when available.
+		require.NotNil(t, response.Primary.Title)
+		assert.Equal(t, filename, *response.Primary.Title)
+		require.NotNil(t, response.Primary.Status)
+		assert.Equal(t, "ready", *response.Primary.Status)
+	})
+
+	t.Run("explicit document primary returns kind=document with title", func(t *testing.T) {
+		session := createTestSessionForHandlers(t, h.DB, "document-primary session")
+
+		artifact, err := h.DB.CreateArtifact(ctx, session.ID, "doc artifact", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:            uuid.New(),
+			ArtifactID:    artifact.ID,
+			SessionID:     session.ID,
+			Kind:          string(models.MaterialKindDocument),
+			Filename:      "spec.pdf",
+			ContentType:   "application/pdf",
+			StorageURL:    "r2://bucket/spec.pdf",
+			TextStatus:    models.MaterialTextStatusReady,
+			ExtractedText: stringPtr("text"),
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+
+		_, err = h.DB.Pool.Exec(ctx, `
+			UPDATE sessions
+			SET primary_content_kind = 'document', primary_material_id = $1
+			WHERE id = $2
+		`, material.ID, session.ID)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String(), nil)
+		w := httptest.NewRecorder()
+		h.GetSession(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		var response GetSessionResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+		require.NotNil(t, response.Primary)
+		assert.Equal(t, "document", response.Primary.Kind)
+		assert.Equal(t, material.ID, response.Primary.ID)
+		require.NotNil(t, response.Primary.Title)
+		assert.Equal(t, "spec.pdf", *response.Primary.Title)
+		require.NotNil(t, response.Primary.Status)
+		assert.Equal(t, "ready", *response.Primary.Status)
+	})
+}
+
 func TestUpsertSessionParticipant(t *testing.T) {
 	t.Parallel()
 	h, cleanup := setupTestHandlersParallel(t)
