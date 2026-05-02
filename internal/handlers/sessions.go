@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1073,11 +1074,12 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Parse request body
 	type UpdateSessionRequest struct {
-		Status          *string `json:"status"`
-		Title           *string `json:"title"`
-		Premise         *string `json:"premise"`
-		PrimaryDecision *string `json:"primary_decision"`
-		DecisionOutcome *string `json:"decision_outcome"`
+		Status          *string               `json:"status"`
+		Title           *string               `json:"title"`
+		Premise         *string               `json:"premise"`
+		PrimaryDecision *string               `json:"primary_decision"`
+		DecisionOutcome *string               `json:"decision_outcome"`
+		Primary         *SessionPrimaryUpdate `json:"primary,omitempty"` // SCRUM-272
 	}
 
 	var req UpdateSessionRequest
@@ -1133,6 +1135,21 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 		if err = h.DB.UpdateSessionContext(r.Context(), sessionID, req.Premise, req.PrimaryDecision, req.DecisionOutcome); err != nil {
 			log.Printf("Error updating session context: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to update session context: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// SCRUM-272: update primary content kind + matching pointer with
+	// session-ownership validation. Empty kind clears the explicit primary.
+	if req.Primary != nil {
+		if err := h.applySessionPrimaryUpdate(r.Context(), sessionID, req.Primary); err != nil {
+			var derr *primaryUpdateError
+			if errors.As(err, &derr) {
+				writeJSON(w, derr.status, map[string]string{"error": derr.message, "code": derr.code})
+				return
+			}
+			log.Printf("UpdateSessionStatus applySessionPrimaryUpdate: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update session primary"})
 			return
 		}
 	}

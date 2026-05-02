@@ -209,6 +209,87 @@ func (db *DB) ListAllSessions(ctx context.Context) ([]*models.Session, error) {
 	return scanSessionRows(rows)
 }
 
+// UpdateSessionPrimary writes the SCRUM-269 primary-content fields on a
+// session. Behavior is keyed on the kind argument:
+//
+//   - "video"    — sets primary_content_kind='video' and
+//     primary_video_artifact_id=*id; clears primary_material_id and
+//     primary_session_link_id.
+//   - "document" — sets primary_content_kind='document' and
+//     primary_material_id=*id; clears primary_session_link_id (legacy
+//     primary_video_artifact_id is preserved because it remains
+//     meaningful for video playback even when the primary is a doc).
+//   - "link"     — sets primary_content_kind='link' and
+//     primary_session_link_id=*id; clears primary_material_id (legacy
+//     primary_video_artifact_id preserved for the same reason).
+//   - ""         — clears the explicit primary: primary_content_kind=NULL,
+//     primary_material_id=NULL, primary_session_link_id=NULL. Legacy
+//     primary_video_artifact_id is preserved; clearing the legacy column
+//     is the existing SetSessionPrimaryVideoArtifact path.
+//
+// Handler-side validation (SCRUM-272) is responsible for rejecting
+// kind/id mismatches and pointers that don't belong to the session.
+func (db *DB) UpdateSessionPrimary(ctx context.Context, sessionID uuid.UUID, kind models.SessionPrimaryContentKind, id *uuid.UUID) error {
+	switch kind {
+	case models.SessionPrimaryContentKindVideo:
+		if id == nil {
+			return fmt.Errorf("UpdateSessionPrimary kind=video requires a non-nil id")
+		}
+		query := `UPDATE sessions
+			SET primary_content_kind = 'video',
+			    primary_video_artifact_id = $1,
+			    primary_material_id = NULL,
+			    primary_session_link_id = NULL,
+			    updated_at = now()
+			WHERE id = $2`
+		if _, err := db.Pool.Exec(ctx, query, *id, sessionID); err != nil {
+			return fmt.Errorf("update session primary (video): %w", err)
+		}
+		return nil
+	case models.SessionPrimaryContentKindDocument:
+		if id == nil {
+			return fmt.Errorf("UpdateSessionPrimary kind=document requires a non-nil id")
+		}
+		query := `UPDATE sessions
+			SET primary_content_kind = 'document',
+			    primary_material_id = $1,
+			    primary_session_link_id = NULL,
+			    updated_at = now()
+			WHERE id = $2`
+		if _, err := db.Pool.Exec(ctx, query, *id, sessionID); err != nil {
+			return fmt.Errorf("update session primary (document): %w", err)
+		}
+		return nil
+	case models.SessionPrimaryContentKindLink:
+		if id == nil {
+			return fmt.Errorf("UpdateSessionPrimary kind=link requires a non-nil id")
+		}
+		query := `UPDATE sessions
+			SET primary_content_kind = 'link',
+			    primary_session_link_id = $1,
+			    primary_material_id = NULL,
+			    updated_at = now()
+			WHERE id = $2`
+		if _, err := db.Pool.Exec(ctx, query, *id, sessionID); err != nil {
+			return fmt.Errorf("update session primary (link): %w", err)
+		}
+		return nil
+	case "":
+		query := `UPDATE sessions
+			SET primary_content_kind = NULL,
+			    primary_material_id = NULL,
+			    primary_session_link_id = NULL,
+			    updated_at = now()
+			WHERE id = $1`
+		if _, err := db.Pool.Exec(ctx, query, sessionID); err != nil {
+			return fmt.Errorf("clear session primary: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("UpdateSessionPrimary: unsupported kind %q", kind)
+	}
+}
+
 // scanSessionRows scans session rows (shared by ListSessionsByCreatedBy, ListSessionsForInvitedUser, ListAllSessions).
 func scanSessionRows(rows interface {
 	Next() bool
