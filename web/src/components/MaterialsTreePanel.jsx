@@ -598,48 +598,67 @@ export function MaterialsTreePanel({
               const linkDocId = `link-${link.id}`
               const isSelected = selectedDocumentId === linkDocId
               const linkSelectable = !isProcessingStatus(link.status)
+              const isLinkPrimary = !!(
+                currentPrimary && currentPrimary.kind === 'link' &&
+                String(currentPrimary.id) === String(link.id)
+              )
+              const sessionId = session?.session?.id || session?.id
               return (
-                <button
-                  key={link.id}
-                  type="button"
-                  data-testid="link-item"
-                  disabled={!linkSelectable}
-                  onClick={(e) => {
-                    if (!linkSelectable) return
-                    if (e.ctrlKey || e.metaKey) {
-                      e.preventDefault()
-                      window.open(link.url, '_blank', 'noopener,noreferrer')
-                    } else {
-                      onSelectLink?.(link)
-                    }
-                  }}
-                  className={styles.linkBtn}
-                  style={{
-                    background: isSelected ? 'var(--color-success-bg)' : 'transparent',
-                    cursor: linkSelectable ? 'pointer' : 'not-allowed',
-                    color: linkSelectable ? 'var(--color-primary)' : '#999',
-                    opacity: linkSelectable ? 1 : 0.7,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = 'transparent'
-                  }}
-                >
-                  <span className={styles.linkTitleCell}>
-                    {link.title || link.url}
-                  </span>
-                  <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
-                    {link.status === 'verified' ? (
-                      <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
-                    ) : link.status === 'pending' || link.status === 'processing' ? (
-                      <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
-                    ) : (
-                      <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
-                    )}
-                  </span>
-                </button>
+                <div key={link.id}>
+                  <button
+                    type="button"
+                    data-testid="link-item"
+                    disabled={!linkSelectable}
+                    onClick={(e) => {
+                      if (!linkSelectable) return
+                      if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault()
+                        window.open(link.url, '_blank', 'noopener,noreferrer')
+                      } else {
+                        onSelectLink?.(link)
+                      }
+                    }}
+                    className={styles.linkBtn}
+                    style={{
+                      background: isSelected ? 'var(--color-success-bg)' : 'transparent',
+                      cursor: linkSelectable ? 'pointer' : 'not-allowed',
+                      color: linkSelectable ? 'var(--color-primary)' : '#999',
+                      opacity: linkSelectable ? 1 : 0.7,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isSelected) e.currentTarget.style.background = 'transparent'
+                    }}
+                  >
+                    <span className={styles.linkTitleCell}>
+                      {link.title || link.url}
+                    </span>
+                    <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
+                      {link.status === 'verified' ? (
+                        <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
+                      ) : link.status === 'pending' || link.status === 'processing' ? (
+                        <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
+                      ) : (
+                        <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
+                      )}
+                    </span>
+                  </button>
+                  {/* SCRUM-276: extend the SCRUM-275 primary badge / button to link rows. */}
+                  {canManage && onPrimaryChanged && sessionId && linkSelectable && (
+                    <div style={{ padding: '0 8px 4px 24px' }}>
+                      <SetPrimaryButton
+                        apiBaseUrl={apiBaseUrl}
+                        sessionId={sessionId}
+                        kind="link"
+                        id={link.id}
+                        isCurrentPrimary={isLinkPrimary}
+                        onSuccess={onPrimaryChanged}
+                      />
+                    </div>
+                  )}
+                </div>
               )
             })}
           </TreeSection>
