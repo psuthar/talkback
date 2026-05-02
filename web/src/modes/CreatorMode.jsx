@@ -3,6 +3,7 @@ import { VideoPlayer, PlayerEvent } from '../VideoPlayer'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 import { DocumentViewer } from '../components/DocumentViewer'
+import { PrimaryStage } from '../components/PrimaryStage'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
@@ -1767,103 +1768,32 @@ export function CreatorMode({
 
         {/* ===== CENTER PANEL ===== */}
         <div className="creator-center-panel">
-          {selectedDocument ? (
-            /* Document/slides/link viewer (same as participant); navigate via left panel */
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px' }}>
-              <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-                <DocumentViewer
-                  doc={selectedDocument}
-                  apiBaseUrl={apiBaseUrl}
-                  sessionId={sessionId}
-                  slidesRefreshTrigger={sessionUpdatedVersion}
-                />
-              </div>
-            </div>
-          ) : (
+          {/* SCRUM-273: PrimaryStage owns the document-vs-video center-pane
+             rendering. Behavior-neutral; ParticipantMode adopts this in
+             SCRUM-274. The transcript + scrollable content below stays in
+             CreatorMode because it is creator-mode-specific (depends on
+             session-level transcript state, processing UI). */}
+          <PrimaryStage
+            selectedDocument={selectedDocument}
+            apiBaseUrl={apiBaseUrl}
+            sessionId={sessionId}
+            sessionUpdatedVersion={sessionUpdatedVersion}
+            currentSession={currentSession}
+            primaryVideoAccessUrl={primaryVideoAccessUrl}
+            hasPrimaryR2Video={hasPrimaryR2Video}
+            video={video}
+            transcriptJobs={transcriptJobs}
+            handleVideoPlayerEvent={handleVideoPlayerEvent}
+            handleVideoTimeUpdate={handleVideoTimeUpdate}
+            currentVideoTime={currentVideoTime}
+            isVideoPlaying={isVideoPlaying}
+            creatorIdentity={creatorIdentity}
+            handlePrimaryVideoMounted={handlePrimaryVideoMounted}
+            retryProcessing={retryProcessing}
+            processingRetrying={processingRetrying}
+          />
+          {!selectedDocument && (
           <>
-          {/* Video player section */}
-          {((currentSession?.video_sources && currentSession.video_sources.length > 0) || currentSession?.session?.primary_video_artifact_id) && (
-            <div data-testid="video-player-container" className="creator-video-container">
-              {/* Explicit non-ready states when primary_video_artifact_id is set but no playable URL */}
-              {currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code && (
-                <div style={{
-                  padding: '24px',
-                  backgroundColor: currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? '#fff8e1' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? '#ffebee' : '#f5f5f5',
-                  textAlign: 'center',
-                  border: '1px solid #e0e0e0'
-                }}>
-                  <p style={{ margin: '0 0 12px', color: '#333', fontSize: '15px' }}>
-                    {currentSession.playback_message || (currentSession.playback_reason_code === 'VIDEO_INGEST_PENDING' ? 'Video is still being prepared. Refresh in a moment.' : currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' ? 'Video ingest failed. Creator can retry import.' : 'Video not available for this session.')}
-                  </p>
-                  {currentSession.playback_reason_code === 'VIDEO_INGEST_FAILED' && (
-                    <button
-                      type="button"
-                      onClick={retryProcessing}
-                      disabled={processingRetrying}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '14px',
-                        backgroundColor: 'var(--color-primary-mid)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: processingRetrying ? 'not-allowed' : 'pointer',
-                        margin: 0
-                      }}
-                    >
-                      {processingRetrying ? 'Retrying…' : 'Retry ingest'}
-                    </button>
-                  )}
-                </div>
-              )}
-              {hasPrimaryR2Video && (
-                <div style={{ padding: '6px 12px', fontSize: '13px', color: '#ccc', backgroundColor: '#1a1a1a' }}>
-                  <strong style={{ color: '#999' }}>Transcript:</strong>{' '}
-                  <span style={{
-                    color: video.transcript_status === 'ready' ? 'var(--color-success-mid)' :
-                           video.transcript_status === 'pending' ? '#ff9800' :
-                           video.transcript_status === 'failed' ? 'var(--color-danger)' : '#999',
-                    fontWeight: 'bold'
-                  }}>
-                    {video.transcript_status === 'missing' ? 'No transcript' :
-                     video.transcript_status === 'pending' ? 'Pending...' :
-                     video.transcript_status === 'processing' ? 'Processing...' :
-                     video.transcript_status === 'ready' ? 'Ready' :
-                     video.transcript_status === 'failed' ? 'Failed' :
-                     video.transcript_status || 'Unknown'}
-                  </span>
-                  {transcriptJobs[video?.id] && (
-                    <>
-                      {' | '}
-                      <strong style={{ color: '#999' }}>Job:</strong>{' '}
-                      <span style={{
-                        color: transcriptJobs[video.id].status === 'completed' ? 'var(--color-success-mid)' :
-                               transcriptJobs[video.id].status === 'failed' ? 'var(--color-danger)' : '#ff9800',
-                        fontWeight: 'bold'
-                      }}>
-                        {transcriptJobs[video.id].status}
-                      </span>
-                    </>
-                  )}
-                </div>
-              )}
-              {video && !(currentSession?.session?.primary_video_artifact_id && !primaryVideoAccessUrl && currentSession?.playback_reason_code) && (
-                <VideoPlayer
-                  video={video}
-                  onEvent={handleVideoPlayerEvent}
-                  onTimeUpdate={handleVideoTimeUpdate}
-                  currentTime={currentVideoTime}
-                  playing={isVideoPlaying}
-                  sessionId={currentSession?.session?.id || currentSession?.id}
-                  apiBaseUrl={apiBaseUrl}
-                  creatorIdentity={creatorIdentity}
-                  primaryVideoAccessUrl={primaryVideoAccessUrl}
-                  primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
-                  onPrimaryVideoMounted={handlePrimaryVideoMounted}
-                />
-              )}
-            </div>
-          )}
 
           {/* Transcript and other content — scrollable */}
           <div className="creator-center-scroll">
