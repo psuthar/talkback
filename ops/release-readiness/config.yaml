@@ -17,6 +17,26 @@ validations:
     description: "Q&A and answer generation with citations"
   orchestration:
     description: "Creator orchestration recommendations and draft approval/rejection flows"
+  migrations_validated:
+    description: "Database migration applied and validated end-to-end"
+
+# Boolean validation keys whose `true` value in evidence JSON satisfies a
+# required validation. Read by release-readiness-core's evaluator
+# (release-readiness-evaluate) during the SCRUM-261 migration; the legacy
+# scripts/release_readiness.py engine ignores this key.
+evidence_boolean_keys:
+  - auth_session
+  - upload_extraction
+  - nav_assets
+  - viewer_materials
+  - qa_rag
+  - migrations_validated
+
+# Artifacts a project genuinely doesn't produce. Listed artifacts neither warn
+# nor deduct when absent. TalkBack currently emits smoke, e2e, coverage, and
+# prod_health, so the list is empty — add an entry only if a downstream
+# pipeline drops that artifact intentionally.
+optional_artifacts: []
 
 # Map changed paths → risk categories (first match wins per file; a file can trigger multiple via multiple rules)
 risk_from_paths:
@@ -68,6 +88,11 @@ risk_from_paths:
     patterns:
       - "db/migrations/**"
       - "internal/migrations/**"
+
+# Map risk categories that don't share a name with a validation key. Default
+# is identity (category=key); declare explicitly when the names differ.
+risk_category_to_required_validation:
+  migrations: migrations_validated
 
 # When these path patterns change, warn unless `config_validation_note` is set in evidence (see script)
 risky_config_patterns:

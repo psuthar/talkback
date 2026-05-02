@@ -1,0 +1,240 @@
+# TalkBack PR-risk config — translates the Go in-tree engine
+# (internal/prrisk/{classify,score,actions,evidence,floors,routing}.go) into
+# the release-readiness-core schema. Authored as part of SCRUM-264 to close
+# the parity gap measured by scripts/prrisk_gap_harness.py (SCRUM-263).
+#
+# Schema: psuthar/release-readiness-core docs/contracts/pr-risk-config-v1.schema.json (v0.3.4).
+#
+# Conventions
+# - Domain `id` MUST equal the package's hardcoded DOMAIN_* constants
+#   (auth, migrations, rag, processing, orchestration, workflows, deploy, …)
+#   so that the score engine emits matching `domain_<id>` factors with the
+#   correct point weights (see release_readiness_core/pr_risk/score.py).
+# - Domain order matches Go's first-match-wins classification in
+#   internal/prrisk/classify.go.
+# - Sensitive domains mirror the Go list of areas where touchesSensitiveCodeWithoutTests
+#   fires the `tests_missing` factor.
+# - Project-specific gates are added on top of the eight bundled-default gates;
+#   the defaults already cover CI fetch depth, PR review summary, workflow /
+#   config validation, add-tests, intent alignment, scattered review, test
+#   proximity, and hotspot regression focus.
+
+version: 1
+
+domains:
+  # ── migrations (matches `db/migrations/` and `internal/migrations/`) ──
+  - id: migrations
+    label: db migrations
+    patterns:
+      - { prefix: "db/migrations/" }
+      - { prefix: "internal/migrations/" }
+
+  # ── auth / session / invite ──
+  # Mirrors classify.go: internal/auth/, internal/invitations/, plus handler
+  # files that contain auth-relevant tokens.
+  - id: auth
+    label: auth/session/invite
+    patterns:
+      - { prefix: "internal/auth/" }
+      - { prefix: "internal/invitations/" }
+      - and:
+          - { contains: "internal/handlers/" }
+          - any_contains:
+              - "login"
+              - "session_invite"
+              - "invitations"
+              - "session_participant"
+              - "zoom_auth"
+              - "teams_auth"
+              - "auth"
+              - "invite"
+
+  # ── RAG / Q&A pipeline ──
+  - id: rag
+    label: RAG / Q&A pipeline
+    patterns:
+      - { prefix: "internal/rag/" }
+      - { contains: "internal/utils/qa.go" }
+      - any_contains:
+          - "internal/handlers/session_ask"
+          - "internal/handlers/session_questions"
+          - "internal/handlers/session_reindex"
+
+  # ── processing / transcription pipeline ──
+  - id: processing
+    label: processing/transcription pipeline
+    patterns:
+      - { prefix: "internal/processing/" }
+      - any_contains:
+          - "internal/handlers/transcript_"
+          - "internal/handlers/transcript"
+          - "internal/handlers/video_url_ingestion"
+          - "internal/handlers/video_upload"
+          - "internal/handlers/session_materials"
+          - "internal/handlers/transcript_job_status"
+          - "internal/handlers/transcript_jobs"
+
+  # ── storage ──
+  - id: storage
+    label: storage
+    patterns:
+      - { prefix: "internal/storage/" }
+
+  # ── orchestration / decision flow (incl. creator UI mode) ──
+  # Order matters: sits ahead of generic `database` so that
+  # internal/database/orchestration_recommendations* lands here, not in db.
+  - id: orchestration
+    label: creator orchestration / recommendations
+    patterns:
+      - { prefix: "internal/orchestration/" }
+      - any_contains:
+          - "internal/handlers/session_orchestration"
+          - "internal/database/orchestration_recommendations"
+          - "internal/database/orchestration_recommendation_audit"
+      - { contains: "web/src/modes/creatormode" }
+
+  # ── internal database (after orchestration to avoid eating its handlers) ──
+  - id: database
+    label: internal/database
+    patterns:
+      - { prefix: "internal/database/" }
+
+  # ── API handlers (catch-all for handlers + cmd/) ──
+  - id: api
+    label: API handlers
+    patterns:
+      - { prefix: "internal/handlers/" }
+      - { prefix: "cmd/" }
+
+  # ── frontend / web ──
+  - id: web
+    label: frontend / web
+    patterns:
+      - { prefix: "web/" }
+
+  # ── CI workflows ──
+  - id: workflows
+    label: CI workflows
+    patterns:
+      - { prefix: ".github/workflows/" }
+
+  # ── deploy / container / hosting config ──
+  - id: deploy
+    label: deploy / container / hosting
+    patterns:
+      - { prefix: "deploy/" }
+      - { exact: "Dockerfile" }
+      - { endswith: "/Dockerfile" }
+      - { endswith: "render.yaml" }
+
+  # ── scripts ──
+  - id: scripts
+    label: scripts
+    patterns:
+      - { prefix: "scripts/" }
+
+# Domains where non-test code change without test files in the diff fires the
+# `tests_missing` factor. Mirrors `touchesSensitiveCodeWithoutTests` in
+# internal/prrisk/classify.go — note that DomainWeb is also sensitive in Go,
+# so a UI / CSS change without a corresponding spec update fires the factor
+# (style-only changes are dampened by the StyleOnly reducer at scoring time).
+sensitive_domains:
+  - migrations
+  - auth
+  - rag
+  - processing
+  - orchestration
+  - storage
+  - database
+  - api
+  - web
+
+# Project-specific gates fired by domain hits. The bundled-default config in
+# release-readiness-core ships eight generic gates (CI fetch depth, PR review
+# summary, workflow / config validation, add-tests, intent alignment,
+# scattered review plan, test proximity, hotspot regression focus); these
+# extend it with TalkBack's domain-aware checks that the legacy Go gate
+# enforced via internal/prrisk/actions.go.
+gates:
+  # auth/session/invite touched → require E2E or equivalent evidence.
+  - id: auth_e2e_gate
+    title: Auth/session/invite flows exercised
+    priority: high
+    fix_type: test
+    applies_when:
+      - { factor_id: domain_auth }
+    applies_when_extra: "auth, session, or invite paths changed"
+    validation_line: "test: auth/session/invite flows exercised (E2E or equivalent evidence)"
+    checklist:
+      - text: "Run E2E specs covering login, invite acceptance, and session access."
+      - text: "If only handler-level tests changed, link them in the PR description."
+    evidence:
+      template: test_domain
+      args:
+        domain: auth
+
+  # migrations touched → require migration validation evidence.
+  - id: migrations_validated_gate
+    title: Validate database migration end-to-end
+    priority: high
+    fix_type: db
+    applies_when:
+      - { factor_id: domain_migrations }
+    applies_when_extra: "DB migrations present in this diff"
+    validation_line: "db: migrations validated end-to-end (apply, rollback if applicable, data integrity)"
+    checklist:
+      - text: "Apply the migration locally; if reversible, run the rollback path."
+      - text: "Confirm no orphaned rows or FK violations after apply."
+      - text: "If the change is destructive, include a backfill / data-integrity note in the PR body."
+    evidence:
+      template: migrations
+
+  # RAG / Q&A pipeline touched → require grounding evidence.
+  - id: rag_citations_gate
+    title: RAG citations / answer grounding evidence
+    priority: high
+    fix_type: test
+    applies_when:
+      - { factor_id: domain_rag }
+    applies_when_extra: "Q&A / RAG pipeline changed"
+    validation_line: "test: Q&A / RAG outputs grounded in source citations (eval harness or equivalent)"
+    checklist:
+      - text: "Re-run the Q&A eval harness against representative fixtures."
+      - text: "Confirm citations match the new retrieval / grounding logic."
+    evidence:
+      template: test_domain
+      args:
+        domain: rag
+
+  # orchestration/decision flow touched → require regression coverage.
+  - id: orchestration_regression_gate
+    title: Orchestration / decision-flow regression coverage
+    priority: high
+    fix_type: test
+    applies_when:
+      - { factor_id: domain_orchestration }
+    applies_when_extra: "creator orchestration or recommendation flow changed"
+    validation_line: "test: orchestration / decision-flow regression covered (E2E or unit)"
+    checklist:
+      - text: "Run E2E covering creator decision-bar / recommendation acceptance flows."
+      - text: "If logic-only change, ensure orchestration unit tests cover the new branch."
+    evidence:
+      template: test_domain
+      args:
+        domain: orchestration
+
+  # processing/transcription pipeline touched → smoke evidence.
+  - id: processing_pipeline_gate
+    title: Processing/transcription pipeline coverage
+    priority: medium
+    fix_type: test
+    applies_when:
+      - { factor_id: domain_processing }
+    applies_when_extra: "upload/extraction/transcript pipeline changed"
+    validation_line: "test: upload/extraction/transcript path covered (smoke or unit)"
+    checklist:
+      - text: "Verify the processing pipeline still produces transcript + chunks for a fixture upload."
+    evidence:
+      template: test_domain
+      args:
+        domain: processing
