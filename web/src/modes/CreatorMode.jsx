@@ -4,6 +4,7 @@ import { TranscriptViewer } from '../components/TranscriptViewer'
 import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { PrimaryStage } from '../components/PrimaryStage'
+import { resolvePrimaryAutoSelection } from '../components/sessionPrimaryAutoSelect'
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
@@ -222,6 +223,32 @@ export function CreatorMode({
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
+
+  // SCRUM-276: when GET session reports an explicit document/link primary,
+  // default the creator's center pane to that material on session load —
+  // mirrors the SCRUM-274 effect already running in ParticipantMode so both
+  // creator and participant see the same default. Skips if the user has
+  // already chosen something else (selectedDocumentId truthy).
+  useEffect(() => {
+    if (!currentSession?.session?.id) return
+    const decision = resolvePrimaryAutoSelection(currentSession, selectedDocumentId)
+    if (!decision) return
+    if (decision.type === 'material') {
+      setSelectedDocument(decision.material)
+      setSelectedDocumentId(decision.material.id)
+      return
+    }
+    if (decision.type === 'link') {
+      const link = decision.link
+      setSelectedDocument({
+        type: 'link',
+        url: link.url,
+        title: link.title || link.url,
+        id: link.id,
+      })
+      setSelectedDocumentId(`link-${link.id}`)
+    }
+  }, [currentSession?.session?.id, currentSession?.primary?.kind, currentSession?.primary?.id])
 
   const handleSelectDocument = (doc) => {
     setSelectedDocument(doc)
