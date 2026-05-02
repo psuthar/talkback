@@ -556,7 +556,11 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-readiness
-          path: artifacts/
+          path: |
+            artifacts/
+            smoke_results.json
+            e2e_results.json
+            coverage.json
           if-no-files-found: warn
 
       - name: Publish TalkBack PR Gate check
@@ -827,3 +831,214 @@ jobs:
             exit 1
           fi
           echo "TalkBack PR Gate: ok (PASS or WARN)"
+
+  # ---------------------------------------------------------------------------
+  # Shadow gate: parallel run of release-readiness-core's release-readiness-pr-gate
+  # composite action against the same evidence artifacts. Publishes a separate,
+  # non-required GitHub Check named "TalkBack PR Gate (shadow)" so adopters can
+  # compare its verdicts to the legacy gate over real traffic before cutover.
+  # All steps continue-on-error: a shadow failure must NOT break the legacy
+  # required check or the rest of the workflow. (SCRUM-265)
+  shadow-readiness:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: release-readiness
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release-readiness-core pin
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(scripts/release_readiness_core_pin.sh version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved release-readiness-core pin: $VERSION"
+
+      - name: Download legacy evidence artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: release-readiness
+          path: .
+
+      - name: Determine base ref
+        id: base
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "base_ref=origin/${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
+          fi
+
+      # release-readiness-core's repository is private so its composite action
+      # cannot be referenced via `uses:` — GitHub Actions resolves composite
+      # actions over the public-repo API and 404s on private repos. Inline the
+      # equivalent CLI invocations using the public PyPI install instead. The
+      # four steps mirror the composite action's source at v0.3.4 (see
+      # release-readiness-core/.github/actions/release-readiness-pr-gate/action.yml).
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install release-readiness-core (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install "release-readiness-core==${{ steps.pin.outputs.version }}"
+
+      - name: Run release-readiness-pr-risk (shadow)
+        id: shadow_prrisk
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release-readiness-shadow/run
+          release-readiness-pr-risk \
+            --repo-root . \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
+            --output-dir artifacts/release-readiness-shadow/run \
+            --config ops/release-readiness/pr-risk-config.yaml
+
+      - name: Run release-readiness-evaluate (shadow)
+        id: shadow_evaluate
+        continue-on-error: true
+        shell: bash
+        run: |
+          # evaluate exits non-zero on BLOCK; combine still runs to emit a
+          # partial gate summary, so don't fail the step here.
+          release-readiness-evaluate \
+            --repo-root . \
+            --config ops/release-readiness/config.yaml \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
+            --smoke-results smoke_results.json \
+            --e2e-results e2e_results.json \
+            --coverage coverage.json \
+            --prod-health artifacts/release-readiness/prod_health.json \
+            --output-dir artifacts/release-readiness-shadow/run || true
+
+      - name: Run release-readiness-combine (shadow)
+        id: shadow_combine
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Lean machine summaries land in the parent (release-readiness-shadow);
+          # full reports stay under release-readiness-shadow/run.
+          release-readiness-combine \
+            --pr-risk-json artifacts/release-readiness-shadow/pr-risk.json \
+            --readiness-json artifacts/release-readiness-shadow/release-readiness.json \
+            --readiness-report-json artifacts/release-readiness-shadow/run/report.json \
+            --output-dir artifacts/release-readiness-shadow \
+            --step-summary || true
+
+      - name: Run release-readiness-check-payload (shadow)
+        id: shadow_check_payload
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          release-readiness-check-payload \
+            --gate-json artifacts/release-readiness-shadow/pr-gate-summary.json \
+            --output artifacts/release-readiness-shadow/pr-gate-check.json \
+            --run-url "$GITHUB_RUN_URL" \
+            --check-name "TalkBack PR Gate (shadow)"
+
+      - name: Upload shadow artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        continue-on-error: true
+        with:
+          name: release-readiness-shadow
+          path: artifacts/release-readiness-shadow/
+          if-no-files-found: warn
+
+      # Publish "TalkBack PR Gate (shadow)" check from the composite action's
+      # pr-gate-check.json output. Mirrors the legacy publish step so the check
+      # appears alongside the existing required check.
+      - name: Publish TalkBack PR Gate (shadow) check
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const ws = process.env.GITHUB_WORKSPACE;
+            const checkPath = path.join(ws, 'artifacts/release-readiness-shadow/pr-gate-check.json');
+            const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
+            let payload;
+            try {
+              payload = JSON.parse(fs.readFileSync(checkPath, 'utf8'));
+            } catch (e) {
+              payload = {
+                check_name: 'TalkBack PR Gate (shadow)',
+                check_conclusion: 'neutral',
+                title: 'TalkBack PR Gate (shadow): unavailable',
+                summary: 'Could not read artifacts/release-readiness-shadow/pr-gate-check.json — ' + String(e),
+                text: '### Error\n\n' + String(e) + (runUrl ? '\n\n' + runUrl : ''),
+                details_url: runUrl || undefined,
+              };
+            }
+            // Force the shadow name regardless of what the composite action wrote
+            // (the action defaults check_name to the `check-name` input, but a
+            // bad write or older action revision shouldn't collide with the
+            // legacy required check).
+            payload.check_name = 'TalkBack PR Gate (shadow)';
+            const headSha = context.payload.pull_request?.head?.sha || context.sha;
+            const checkName = payload.check_name;
+            if (runUrl && payload.summary && !payload.summary.includes(runUrl)) {
+              payload.summary = (payload.summary || '') + '\n\n**Workflow run / artifacts:** ' + runUrl;
+            }
+            const { data: listed } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha,
+              check_name: checkName,
+            });
+            const runs = (listed.check_runs || []).slice().sort((a, b) => b.id - a.id);
+            const output = {
+              title: payload.title,
+              summary: payload.summary || '',
+              text: payload.text || '',
+            };
+            const common = {
+              status: 'completed',
+              // Shadow check is informational; map any non-success to `neutral`
+              // so it never blocks a merge while branch protection still points
+              // at the legacy required check.
+              conclusion: payload.check_conclusion === 'success' ? 'success' : 'neutral',
+              output,
+            };
+            if (payload.details_url) {
+              common.details_url = payload.details_url;
+            }
+            if (runs.length > 0) {
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: runs[0].id,
+                ...common,
+              });
+            } else {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: headSha,
+                name: checkName,
+                ...common,
+              });
+            }
