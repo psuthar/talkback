@@ -57,6 +57,7 @@ type GetSessionResponse struct {
 	Links                []*models.SessionLink `json:"links,omitempty"`                   // session links for citation URL resolution
 	MaterialSlidesReady  map[string]bool       `json:"material_slides_ready,omitempty"`   // material ID -> true when slides manifest exists (PPT/PPTX only)
 	MaterialSlidesStatus map[string]string     `json:"material_slides_status,omitempty"`  // material ID -> processing|ready|failed (PPT/PPTX only)
+	Primary              *SessionPrimaryDescriptor `json:"primary,omitempty"`             // SCRUM-271: resolved center-pane primary (kind + id; legacy primary_video_artifact_id falls back to kind="video")
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -923,8 +924,10 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 
 	// R2-only playback: set video_access_url only when primary artifact exists, ready, r2, and content_type is video.
 	var videoAccessURL, playbackReasonCode, playbackMessage string
+	var primaryVideoArtifact *models.FileArtifact // captured for SessionPrimaryDescriptor enrichment below
 	if session.PrimaryVideoArtifactID != nil {
 		fa, err := h.DB.GetFileArtifactByID(r.Context(), *session.PrimaryVideoArtifactID)
+		primaryVideoArtifact = fa
 		if err != nil || fa == nil {
 			playbackReasonCode = "VIDEO_NOT_INGESTED"
 			playbackMessage = "Video not available for this session."
@@ -978,6 +981,17 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			materialSlidesReady[m.ID.String()] = status == "ready"
 		}
 	}
+	// SCRUM-271: resolve primary descriptor for the center pane. The pure
+	// resolver returns kind+id; the enrichment helpers fill title/status from
+	// data already loaded above (materials, links, the file_artifact fetched
+	// for video playback). Both legacy video-first sessions
+	// (primary_content_kind NULL + primary_video_artifact_id set) and
+	// explicit kind=document/link rows produce a stable Primary block.
+	primary := resolveSessionPrimary(session)
+	primary = enrichSessionPrimaryFromMaterials(primary, allMaterials)
+	primary = enrichSessionPrimaryFromLinks(primary, links)
+	primary = enrichSessionPrimaryFromFileArtifact(primary, primaryVideoArtifact)
+
 	response := GetSessionResponse{
 		Session:              session,
 		Artifacts:            artifacts,
@@ -996,6 +1010,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		Links:                links,
 		MaterialSlidesReady:  materialSlidesReady,
 		MaterialSlidesStatus: materialSlidesStatus,
+		Primary:              primary,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
