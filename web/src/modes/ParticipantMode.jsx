@@ -5,6 +5,7 @@ import { MaterialsTreePanel, MaterialsPanelHeader } from '../components/Material
 import { QAPanel } from '../components/QAPanel'
 import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
+import { resolvePrimaryAutoSelection } from '../components/sessionPrimaryAutoSelect'
 import { getDefaultApiBaseUrl } from '../config'
 import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
@@ -259,6 +260,32 @@ export function ParticipantMode({
     if (!hasSession) return
     fetchSessionQuestions(currentSession.session.id)
   }, [hasSession])
+
+  // SCRUM-274: when GET session reports an explicit primary (kind=document or
+  // kind=link), default the center pane to that material so the participant
+  // lands on the focal artifact without an extra left-panel click. kind=video
+  // is the existing default. The decision lives in resolvePrimaryAutoSelection
+  // so it can be unit-tested without rendering this component.
+  useEffect(() => {
+    if (!hasSession) return
+    const decision = resolvePrimaryAutoSelection(currentSession, selectedDocumentId)
+    if (!decision) return
+    if (decision.type === 'material') {
+      setSelectedDocument(decision.material)
+      setSelectedDocumentId(decision.material.id)
+      return
+    }
+    if (decision.type === 'link') {
+      const link = decision.link
+      setSelectedDocument({
+        type: 'link',
+        url: link.url,
+        title: link.title || link.url,
+        id: link.id,
+      })
+      setSelectedDocumentId(`link-${link.id}`)
+    }
+  }, [hasSession, currentSession?.session?.id, currentSession?.primary?.kind, currentSession?.primary?.id])
 
   useEffect(() => {
     const sid = currentSession?.session?.id
