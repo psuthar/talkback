@@ -3,7 +3,9 @@
 # the release-readiness-core schema. Authored as part of SCRUM-264 to close
 # the parity gap measured by scripts/prrisk_gap_harness.py (SCRUM-263).
 #
-# Schema: psuthar/release-readiness-core docs/contracts/pr-risk-config-v1.schema.json (v0.3.4).
+# Schema: psuthar/release-readiness-core docs/contracts/pr-risk-config-v1.schema.json
+# (the schema is v1 across the v0.3.x / v0.4.x lines; current package pin lives
+# in ops/release-readiness/version.txt).
 #
 # Conventions
 # - Domain `id` MUST equal the package's hardcoded DOMAIN_* constants

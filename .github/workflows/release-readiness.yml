@@ -883,8 +883,11 @@ jobs:
       # cannot be referenced via `uses:` — GitHub Actions resolves composite
       # actions over the public-repo API and 404s on private repos. Inline the
       # equivalent CLI invocations using the public PyPI install instead. The
-      # four steps mirror the composite action's source at v0.3.4 (see
-      # release-readiness-core/.github/actions/release-readiness-pr-gate/action.yml).
+      # four CLIs (release-readiness-pr-risk → -evaluate → -combine →
+      # -check-payload) and their argument shapes are stable across the v0.3.x
+      # and v0.4.x lines of release-readiness-core (verified at v0.3.4 and
+      # v0.4.0); bumping the pin in ops/release-readiness/version.txt is
+      # sufficient and does not require touching these step bodies.
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
