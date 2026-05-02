@@ -879,28 +879,80 @@ jobs:
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
 
-      # Composite-action ref must be a string literal (GitHub Actions does not
-      # allow dynamic `uses:`), so v0.3.4 is hardcoded here. Keep it in sync with
-      # ops/release-readiness/version.txt (the single source of truth) when
-      # bumping the pin — `release-readiness-doctor --ci` in the legacy job will
-      # surface drift early.
-      - name: Run shadow release-readiness-pr-gate
-        id: shadow_gate
-        continue-on-error: true
-        uses: psuthar/release-readiness-core/.github/actions/release-readiness-pr-gate@v0.3.4
+      # release-readiness-core's repository is private so its composite action
+      # cannot be referenced via `uses:` — GitHub Actions resolves composite
+      # actions over the public-repo API and 404s on private repos. Inline the
+      # equivalent CLI invocations using the public PyPI install instead. The
+      # four steps mirror the composite action's source at v0.3.4 (see
+      # release-readiness-core/.github/actions/release-readiness-pr-gate/action.yml).
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          install-source: pypi
-          pypi-version: ${{ steps.pin.outputs.version }}
-          config-path: ops/release-readiness/config.yaml
-          pr-risk-config: ops/release-readiness/pr-risk-config.yaml
-          smoke-results: smoke_results.json
-          e2e-results: e2e_results.json
-          coverage: coverage.json
-          prod-health: artifacts/release-readiness/prod_health.json
-          base-ref: ${{ steps.base.outputs.base_ref }}
-          output-dir: artifacts/release-readiness-shadow
-          check-name: "TalkBack PR Gate (shadow)"
-          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          python-version: "3.12"
+
+      - name: Install release-readiness-core (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          pip install "release-readiness-core==${{ steps.pin.outputs.version }}"
+
+      - name: Run release-readiness-pr-risk (shadow)
+        id: shadow_prrisk
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/release-readiness-shadow/run
+          release-readiness-pr-risk \
+            --repo-root . \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
+            --output-dir artifacts/release-readiness-shadow/run \
+            --config ops/release-readiness/pr-risk-config.yaml
+
+      - name: Run release-readiness-evaluate (shadow)
+        id: shadow_evaluate
+        continue-on-error: true
+        shell: bash
+        run: |
+          # evaluate exits non-zero on BLOCK; combine still runs to emit a
+          # partial gate summary, so don't fail the step here.
+          release-readiness-evaluate \
+            --repo-root . \
+            --config ops/release-readiness/config.yaml \
+            --base-ref "${{ steps.base.outputs.base_ref }}" \
+            --smoke-results smoke_results.json \
+            --e2e-results e2e_results.json \
+            --coverage coverage.json \
+            --prod-health artifacts/release-readiness/prod_health.json \
+            --output-dir artifacts/release-readiness-shadow/run || true
+
+      - name: Run release-readiness-combine (shadow)
+        id: shadow_combine
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Lean machine summaries land in the parent (release-readiness-shadow);
+          # full reports stay under release-readiness-shadow/run.
+          release-readiness-combine \
+            --pr-risk-json artifacts/release-readiness-shadow/pr-risk.json \
+            --readiness-json artifacts/release-readiness-shadow/release-readiness.json \
+            --readiness-report-json artifacts/release-readiness-shadow/run/report.json \
+            --output-dir artifacts/release-readiness-shadow \
+            --step-summary || true
+
+      - name: Run release-readiness-check-payload (shadow)
+        id: shadow_check_payload
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          release-readiness-check-payload \
+            --gate-json artifacts/release-readiness-shadow/pr-gate-summary.json \
+            --output artifacts/release-readiness-shadow/pr-gate-check.json \
+            --run-url "$GITHUB_RUN_URL" \
+            --check-name "TalkBack PR Gate (shadow)"
 
       - name: Upload shadow artifacts
         if: always()
@@ -908,13 +960,7 @@ jobs:
         continue-on-error: true
         with:
           name: release-readiness-shadow
-          path: |
-            artifacts/release-readiness-shadow/
-            artifacts/pr-gate-summary.json
-            artifacts/pr-gate-summary.md
-            artifacts/pr-gate-check.json
-            artifacts/pr-risk.json
-            artifacts/release-readiness.json
+          path: artifacts/release-readiness-shadow/
           if-no-files-found: warn
 
       # Publish "TalkBack PR Gate (shadow)" check from the composite action's
@@ -932,7 +978,7 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             const ws = process.env.GITHUB_WORKSPACE;
-            const checkPath = path.join(ws, 'artifacts/pr-gate-check.json');
+            const checkPath = path.join(ws, 'artifacts/release-readiness-shadow/pr-gate-check.json');
             const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
             let payload;
             try {
@@ -942,7 +988,7 @@ jobs:
                 check_name: 'TalkBack PR Gate (shadow)',
                 check_conclusion: 'neutral',
                 title: 'TalkBack PR Gate (shadow): unavailable',
-                summary: 'Could not read artifacts/pr-gate-check.json — ' + String(e),
+                summary: 'Could not read artifacts/release-readiness-shadow/pr-gate-check.json — ' + String(e),
                 text: '### Error\n\n' + String(e) + (runUrl ? '\n\n' + runUrl : ''),
                 details_url: runUrl || undefined,
               };
