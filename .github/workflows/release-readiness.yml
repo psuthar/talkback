@@ -65,6 +65,16 @@ jobs:
       - name: Install readiness dependencies
         run: pip install -r ops/release-readiness/requirements.txt
 
+      - name: Install release-readiness-core (pinned)
+        run: pip install "$(scripts/release_readiness_core_pin.sh spec)"
+
+      - name: Pre-flight - validate release-readiness configs
+        run: |
+          release-readiness-doctor \
+            --config ops/release-readiness/config.yaml \
+            --pr-risk-config ops/release-readiness/pr-risk-config.yaml \
+            --ci
+
       - name: Validate Q&A eval datasets
         run: |
           python3 scripts/qa_eval_datasets.py
