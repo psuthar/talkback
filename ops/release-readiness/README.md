@@ -19,7 +19,7 @@ The PR gate engine is being migrated from in-tree Python/Go scripts to the proje
 - Pin file: [`version.txt`](./version.txt) — `version=`, `sha=`, `ref=` for the chosen release.
 - Reader: [`scripts/release_readiness_core_pin.sh`](../../scripts/release_readiness_core_pin.sh) — emits any field; use `spec` for `pip install`, `ref` as the `@`-suffix on composite actions `psuthar/release-readiness-core/.github/actions/release-readiness` and `.../release-readiness-pr-gate`.
 
-Current pin: `release-readiness-core==0.3.4` (`v0.3.4`). All seven CLIs ship at this version: `release-readiness-evaluate`, `release-readiness-pr-risk`, `release-readiness-combine`, `release-readiness-check-payload`, `playwright-to-readiness`, `release-readiness-doctor`, `release-readiness-init`. Shadow CI invocation lands in SCRUM-265; cutover and legacy-script deletion in SCRUM-267.
+Current pin: see [`version.txt`](./version.txt) — bump there and the SCRUM-264 doctor pre-flight + SCRUM-265 shadow CI job pick it up automatically. All seven CLIs (`release-readiness-evaluate`, `release-readiness-pr-risk`, `release-readiness-combine`, `release-readiness-check-payload`, `playwright-to-readiness`, `release-readiness-doctor`, `release-readiness-init`) ship at every pinned version. Shadow CI invocation lands in SCRUM-265; cutover and legacy-script deletion in SCRUM-267.
 
 ## Core validations (mapped to changed paths)
 
