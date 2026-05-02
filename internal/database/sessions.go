@@ -93,10 +93,11 @@ func (db *DB) DeleteSession(ctx context.Context, sessionID uuid.UUID) error {
 // GetSession retrieves a session by ID
 func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Session, error) {
 	session := &models.Session{}
-	var sourceProviderStr, sourceRefURL, processingState *string
+	var sourceProviderStr, sourceRefURL, processingState, primaryKindStr *string
 	var indexUpdatedAt, processingUpdatedAt *time.Time
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
+			primary_content_kind, primary_material_id, primary_session_link_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
 			premise, primary_decision, decision_outcome,
 			created_at, updated_at
@@ -112,6 +113,9 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		&sourceProviderStr,
 		&sourceRefURL,
 		&session.PrimaryVideoArtifactID,
+		&primaryKindStr,
+		&session.PrimaryMaterialID,
+		&session.PrimarySessionLinkID,
 		&session.IndexStatus,
 		&indexUpdatedAt,
 		&processingState,
@@ -132,6 +136,10 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 		session.SourceProvider = models.SessionSourceProvider(*sourceProviderStr)
 	}
 	session.SourceReferenceURL = sourceRefURL
+	if primaryKindStr != nil {
+		kind := models.SessionPrimaryContentKind(*primaryKindStr)
+		session.PrimaryContentKind = &kind
+	}
 	session.IndexUpdatedAt = indexUpdatedAt
 	if processingState != nil {
 		session.ProcessingState = *processingState
@@ -145,6 +153,7 @@ func (db *DB) GetSession(ctx context.Context, sessionID uuid.UUID) (*models.Sess
 func (db *DB) ListSessionsByCreatedBy(ctx context.Context, createdBy string) ([]*models.Session, error) {
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
+			primary_content_kind, primary_material_id, primary_session_link_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
 			premise, primary_decision, decision_outcome,
 			created_at, updated_at
@@ -164,6 +173,7 @@ func (db *DB) ListSessionsByCreatedBy(ctx context.Context, createdBy string) ([]
 func (db *DB) ListSessionsForInvitedUser(ctx context.Context, userID uuid.UUID) ([]*models.Session, error) {
 	query := `
 		SELECT s.id, s.title, s.created_by, s.status, s.source_provider, s.source_reference_url, s.primary_video_artifact_id,
+			s.primary_content_kind, s.primary_material_id, s.primary_session_link_id,
 			COALESCE(s.index_status, 'none'), s.index_updated_at, s.processing_state, s.processing_updated_at,
 			s.premise, s.primary_decision, s.decision_outcome,
 			s.created_at, s.updated_at
@@ -184,6 +194,7 @@ func (db *DB) ListSessionsForInvitedUser(ctx context.Context, userID uuid.UUID) 
 func (db *DB) ListAllSessions(ctx context.Context) ([]*models.Session, error) {
 	query := `
 		SELECT id, title, created_by, status, source_provider, source_reference_url, primary_video_artifact_id,
+			primary_content_kind, primary_material_id, primary_session_link_id,
 			COALESCE(index_status, 'none'), index_updated_at, processing_state, processing_updated_at,
 			premise, primary_decision, decision_outcome,
 			created_at, updated_at
@@ -207,7 +218,7 @@ func scanSessionRows(rows interface {
 	var sessions []*models.Session
 	for rows.Next() {
 		session := &models.Session{}
-		var sourceProviderStr, sourceRefURL, processingState *string
+		var sourceProviderStr, sourceRefURL, processingState, primaryKindStr *string
 		var indexUpdatedAt, processingUpdatedAt *time.Time
 		err := rows.Scan(
 			&session.ID,
@@ -217,6 +228,9 @@ func scanSessionRows(rows interface {
 			&sourceProviderStr,
 			&sourceRefURL,
 			&session.PrimaryVideoArtifactID,
+			&primaryKindStr,
+			&session.PrimaryMaterialID,
+			&session.PrimarySessionLinkID,
 			&session.IndexStatus,
 			&indexUpdatedAt,
 			&processingState,
@@ -234,6 +248,10 @@ func scanSessionRows(rows interface {
 			session.SourceProvider = models.SessionSourceProvider(*sourceProviderStr)
 		}
 		session.SourceReferenceURL = sourceRefURL
+		if primaryKindStr != nil {
+			kind := models.SessionPrimaryContentKind(*primaryKindStr)
+			session.PrimaryContentKind = &kind
+		}
 		session.IndexUpdatedAt = indexUpdatedAt
 		if processingState != nil {
 			session.ProcessingState = *processingState

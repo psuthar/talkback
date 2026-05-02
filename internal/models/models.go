@@ -405,6 +405,19 @@ const (
 	SessionSourceTeams  SessionSourceProvider = "teams"
 )
 
+// SessionPrimaryContentKind enumerates the closed set of values stored in
+// sessions.primary_content_kind (CHECK constraint enforced by migration
+// 000044). NULL maps to a Go *SessionPrimaryContentKind that is nil — at
+// the model layer that means "kind not explicitly set"; SCRUM-271's
+// resolver falls back to legacy primary_video_artifact_id semantics.
+type SessionPrimaryContentKind string
+
+const (
+	SessionPrimaryContentKindVideo    SessionPrimaryContentKind = "video"
+	SessionPrimaryContentKindDocument SessionPrimaryContentKind = "document"
+	SessionPrimaryContentKindLink     SessionPrimaryContentKind = "link"
+)
+
 type Session struct {
 	ID                      uuid.UUID  `json:"id"`
 	Title                   string     `json:"title"`
@@ -413,6 +426,9 @@ type Session struct {
 	SourceProvider          SessionSourceProvider `json:"source_provider,omitempty"`
 	SourceReferenceURL      *string    `json:"source_reference_url,omitempty"`
 	PrimaryVideoArtifactID  *uuid.UUID `json:"primary_video_artifact_id,omitempty"` // R2 file_artifact for main video
+	PrimaryContentKind      *SessionPrimaryContentKind `json:"primary_content_kind,omitempty"`
+	PrimaryMaterialID       *uuid.UUID `json:"primary_material_id,omitempty"`
+	PrimarySessionLinkID    *uuid.UUID `json:"primary_session_link_id,omitempty"`
 	IndexStatus             string    `json:"index_status,omitempty"`   // "none" | "building" | "ready" | "failed"
 	IndexUpdatedAt          *time.Time `json:"index_updated_at,omitempty"`
 	ProcessingState         string    `json:"processing_state,omitempty"`       // mirror of session_processing_jobs.state
