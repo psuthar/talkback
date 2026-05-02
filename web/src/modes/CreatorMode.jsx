@@ -1760,6 +1760,12 @@ export function CreatorMode({
                 onDeleteVideo={deleteMaterial}
                 deletingId={deletingMaterialId}
                 deleteError={deleteMaterialError}
+                /* SCRUM-275: pass the resolved primary descriptor so the
+                   panel can badge the current row, and refetch the session
+                   when the creator changes the primary so the participant
+                   side (and the local center pane) pick up the new value. */
+                currentPrimary={currentSession?.primary || null}
+                onPrimaryChanged={() => refetchSession?.()}
               />
 
             </div>
