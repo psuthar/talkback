@@ -159,3 +159,75 @@ func TestConvertWithUnoconv_CorrectArgs(t *testing.T) {
 		t.Errorf("expected src file path in args, got: %s", args)
 	}
 }
+
+// TestConvertSlides_FallsBackToSofficeWhenUnoconvFails asserts the doc'd
+// "unoconv … falling back to soffice --headless" promise on
+// ConvertSlidesToPNGsWithLibreOffice. Prior to the fix, an unoconv that
+// exited 0 without writing the expected PDF (the warm-up failure mode
+// observed in production logs) bubbled up an error that aborted the whole
+// pipeline. The fix logs a [WARN] and re-tries via soffice.
+//
+// We can't easily mock soffice's full PDF rendering in a unit test, so we
+// verify the fallback by tracking which binary got invoked: the fake soffice
+// records its argv to a sentinel file; the assertion is that the file exists
+// after ConvertSlidesToPNGsWithLibreOffice returns. The slides goroutine
+// will still error because the fake soffice doesn't produce a real PDF, but
+// THAT error mentions soffice (proving fallback ran) rather than unoconv.
+func TestConvertSlides_FallsBackToSofficeWhenUnoconvFails(t *testing.T) {
+	scriptDir := t.TempDir()
+	unoconvPath := filepath.Join(scriptDir, "fake-unoconv-fail")
+	sofficePath := filepath.Join(scriptDir, "fake-soffice")
+	sofficeMarker := filepath.Join(scriptDir, "soffice-was-invoked.txt")
+
+	// Fake unoconv: exits 0, writes nothing — triggers "did not produce
+	// expected PDF" inside convertWithUnoconv.
+	unoconvScript := "#!/bin/sh\nexit 0\n"
+	if err := os.WriteFile(unoconvPath, []byte(unoconvScript), 0755); err != nil {
+		t.Fatalf("write fake unoconv: %v", err)
+	}
+
+	// Fake soffice: records that it was invoked, then exits 0 without
+	// producing a PDF (the function will then fail at the "soffice did not
+	// produce expected PDF" check, but the fact that we reached this binary
+	// at all is what we're asserting).
+	sofficeScript := "#!/bin/sh\necho \"$@\" > " + sofficeMarker + "\nexit 0\n"
+	if err := os.WriteFile(sofficePath, []byte(sofficeScript), 0755); err != nil {
+		t.Fatalf("write fake soffice: %v", err)
+	}
+
+	// Important: TALKBACK_SOFFICE_CMD must be empty so we use the local
+	// (non-Docker) soffice path, but sofficeCmd() resolves via PATH.
+	// We swap PATH to point at our fake binaries directory.
+	t.Setenv("TALKBACK_UNOCONV_CMD", unoconvPath)
+	t.Setenv("TALKBACK_USE_UNOCONV", "")
+	t.Setenv("TALKBACK_SOFFICE_CMD", "")
+	// Build a PATH that contains only our fake binaries dir + the system
+	// /usr/bin so PATH lookup resolves "soffice" to our fake script. We rename
+	// the fake to "soffice" via a symlink so exec.LookPath("soffice") finds it.
+	pathDir := t.TempDir()
+	if err := os.Symlink(sofficePath, filepath.Join(pathDir, "soffice")); err != nil {
+		t.Fatalf("symlink fake soffice: %v", err)
+	}
+	t.Setenv("PATH", pathDir+":/usr/bin:/bin")
+
+	srcFile := filepath.Join(scriptDir, "deck.pptx")
+	if err := os.WriteFile(srcFile, []byte("dummy"), 0644); err != nil {
+		t.Fatalf("write src file: %v", err)
+	}
+
+	_, err := ConvertSlidesToPNGsWithLibreOffice(srcFile)
+	// Expect an error from the soffice step (fake doesn't write a PDF),
+	// NOT from unoconv. The unoconv-error path used to bail without
+	// touching soffice; now it should reach soffice.
+	if err == nil {
+		t.Fatal("expected an error (fake soffice doesn't produce a real PDF), got nil")
+	}
+	if !strings.Contains(err.Error(), "soffice") {
+		t.Errorf("error should reference soffice (proving fallback ran), got: %v", err)
+	}
+
+	// The marker file is the strongest evidence the fallback ran.
+	if _, statErr := os.Stat(sofficeMarker); statErr != nil {
+		t.Errorf("fake soffice was never invoked (no marker at %s) — unoconv fallback did NOT trigger: %v", sofficeMarker, statErr)
+	}
+}
