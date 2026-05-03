@@ -93,9 +93,16 @@ func parseSessionPrimaryRequest(in *SessionPrimaryUpdate) (*validatedPrimaryUpda
 	}
 }
 
-// validatePrimaryPointerOwnership confirms that the pointed-to row exists
-// and belongs to sessionID. Errors are typed as primaryUpdateError so the
-// handler can produce a 4xx with a specific code instead of a generic 500.
+// validatePrimaryPointerOwnership confirms that the pointed-to row exists,
+// belongs to sessionID, and is in a ready-to-render state. Errors are typed
+// as primaryUpdateError so the handler can produce a 4xx with a specific
+// code instead of a generic 500.
+//
+// SCRUM-281 added the readiness arm: a creator may not designate a
+// processing/failed material, an unverified link, or a non-ready video as
+// primary. The UI hides the affordance for unprocessed rows
+// (MaterialsTreePanel.jsx), but the API is the trust boundary, so the same
+// rule has to live here too.
 func (h *Handlers) validatePrimaryPointerOwnership(ctx context.Context, sessionID uuid.UUID, parsed *validatedPrimaryUpdate) error {
 	switch parsed.Kind {
 	case models.SessionPrimaryContentKindVideo:
@@ -112,6 +119,13 @@ func (h *Handlers) validatePrimaryPointerOwnership(ctx context.Context, sessionI
 				status:  http.StatusBadRequest,
 				code:    "PRIMARY_VIDEO_WRONG_SESSION",
 				message: "primary video artifact does not belong to this session",
+			}
+		}
+		if fa.Status != models.FileArtifactStatusReady {
+			return &primaryUpdateError{
+				status:  http.StatusBadRequest,
+				code:    "PRIMARY_NOT_READY",
+				message: "primary video artifact is not ready (status=" + string(fa.Status) + ")",
 			}
 		}
 	case models.SessionPrimaryContentKindDocument:
@@ -137,6 +151,13 @@ func (h *Handlers) validatePrimaryPointerOwnership(ctx context.Context, sessionI
 				message: "primary material has been deleted",
 			}
 		}
+		if m.TextStatus != models.MaterialTextStatusReady {
+			return &primaryUpdateError{
+				status:  http.StatusBadRequest,
+				code:    "PRIMARY_NOT_READY",
+				message: "primary material is not ready (text_status=" + string(m.TextStatus) + ")",
+			}
+		}
 	case models.SessionPrimaryContentKindLink:
 		l, err := h.DB.GetSessionLinkByID(ctx, *parsed.ID)
 		if err != nil || l == nil {
@@ -151,6 +172,13 @@ func (h *Handlers) validatePrimaryPointerOwnership(ctx context.Context, sessionI
 				status:  http.StatusBadRequest,
 				code:    "PRIMARY_LINK_WRONG_SESSION",
 				message: "primary session link does not belong to this session",
+			}
+		}
+		if l.Status != models.SessionLinkStatusVerified {
+			return &primaryUpdateError{
+				status:  http.StatusBadRequest,
+				code:    "PRIMARY_NOT_READY",
+				message: "primary session link is not ready (status=" + string(l.Status) + ")",
 			}
 		}
 	}

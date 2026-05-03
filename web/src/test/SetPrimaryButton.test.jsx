@@ -65,6 +65,23 @@ describe('SetPrimaryButton (SCRUM-275)', () => {
 		expect(screen.getByTestId('set-primary-error').textContent).toMatch(/deleted/i)
 	})
 
+	it('renders mapped copy on PRIMARY_NOT_READY (SCRUM-281)', async () => {
+		patchSessionPrimary.mockRejectedValueOnce(
+			new SessionPrimaryError(400, 'PRIMARY_NOT_READY', 'primary material is not ready (text_status=processing)'),
+		)
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+			/>,
+		)
+		fireEvent.click(screen.getByTestId('set-primary-btn'))
+		await waitFor(() => expect(screen.getByTestId('set-primary-error')).toBeInTheDocument())
+		expect(screen.getByTestId('set-primary-error').textContent).toMatch(/still processing/i)
+	})
+
 	it('shows the 403 message when the API returns 403', async () => {
 		patchSessionPrimary.mockRejectedValueOnce(
 			new SessionPrimaryError(403, '', 'forbidden'),
