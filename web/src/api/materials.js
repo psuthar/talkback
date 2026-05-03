@@ -27,6 +27,30 @@ export async function getMaterialSlides(apiBaseUrl, sessionId, materialId) {
 }
 
 /**
+ * SCRUM-287: re-run the slides derivation pipeline for a .ppt/.pptx material
+ * whose previous attempt failed. Creator-only on the server. Resolves on a
+ * 202 enqueue; the actual outcome propagates via the session_updated WS
+ * event when the background goroutine finishes.
+ * @param {string} apiBaseUrl
+ * @param {string} sessionId
+ * @param {string} materialId
+ * @returns {Promise<void>}
+ */
+export async function retryMaterialSlides(apiBaseUrl, sessionId, materialId) {
+  const base = (apiBaseUrl || '').replace(/\/$/, '')
+  const res = await fetch(
+    `${base}/api/sessions/${sessionId}/materials/${materialId}/retry-slides`,
+    {
+      method: 'POST',
+      credentials: 'include',
+    }
+  )
+  if (!res.ok && res.status !== 202) {
+    throw new Error(`Failed to retry slides: ${res.status}`)
+  }
+}
+
+/**
  * Set or clear the display title for a video source.
  * @param {string} apiBaseUrl
  * @param {string} sessionId

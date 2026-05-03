@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
+import { getMaterialSlides, retryMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
 import { SetPrimaryButton } from './SetPrimaryButton'
 import styles from './MaterialsTreePanel.module.css'
 
@@ -580,6 +580,20 @@ export function MaterialsTreePanel({
                       />
                     </div>
                   )}
+                  {/* SCRUM-287: surface a Retry-slides button when the slides
+                      pipeline failed for this .ppt/.pptx so the creator can
+                      recover from a transient pdftoppm/soffice error
+                      without re-uploading. */}
+                  {canManage && sessionId && isSlideDeckMaterial(m) && resolveSlidesStatus(m) === 'failed' && (
+                    <div style={{ padding: '0 8px 4px 24px' }}>
+                      <RetrySlidesButton
+                        apiBaseUrl={apiBaseUrl}
+                        sessionId={sessionId}
+                        materialId={m.id}
+                        onSuccess={onPrimaryChanged}
+                      />
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -698,4 +712,60 @@ export function MaterialsTreePanel({
       {content}
     </div>
   )
+}
+
+/**
+ * RetrySlidesButton — creator-only "Retry slides" inline button shown next
+ * to a .ppt/.pptx row whose slides pipeline failed (SCRUM-287). Resolves
+ * on a 202 enqueue from the new POST /api/sessions/:id/materials/:mid/
+ * retry-slides endpoint; the actual outcome propagates via the
+ * session_updated WebSocket event when the background goroutine finishes.
+ */
+function RetrySlidesButton({ apiBaseUrl, sessionId, materialId, onSuccess }) {
+	const [pending, setPending] = useState(false)
+	const [error, setError] = useState(null)
+	const onClick = async () => {
+		setPending(true)
+		setError(null)
+		try {
+			await retryMaterialSlides(apiBaseUrl, sessionId, materialId)
+			onSuccess?.()
+		} catch (e) {
+			setError(e.message || 'Retry failed')
+		} finally {
+			setPending(false)
+		}
+	}
+	return (
+		<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+			<button
+				type="button"
+				data-testid="retry-slides-btn"
+				aria-label="Retry slides derivation"
+				onClick={onClick}
+				disabled={pending}
+				style={{
+					fontSize: 11,
+					color: '#666',
+					background: 'none',
+					border: 'none',
+					padding: 0,
+					cursor: pending ? 'not-allowed' : 'pointer',
+					textDecoration: 'underline',
+				}}
+			>
+				{pending ? 'Retrying…' : 'Retry slides'}
+			</button>
+			{error && (
+				<span
+					data-testid="retry-slides-error"
+					role="alert"
+					aria-live="polite"
+					style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}
+				>
+					{error}
+				</span>
+			)}
+		</span>
+	)
 }

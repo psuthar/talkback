@@ -296,6 +296,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// SCRUM-287: POST /api/sessions/:id/materials/:mid/retry-slides — creator-only
+		// re-run of the .ppt/.pptx slide derivation pipeline (auth handled inside
+		// the handler; we don't wrap with RequireAuth because the handler reads the
+		// user from context and emits the project's standard 401/403 JSON shape).
+		if len(parts) == 6 && parts[5] == "retry-slides" && r.Method == http.MethodPost {
+			h.RequireAuth(h.RetryMaterialSlides)(w, r)
+			return
+		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
