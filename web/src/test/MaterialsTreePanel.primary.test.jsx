@@ -107,3 +107,80 @@ describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
 		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
 	})
 })
+
+// SCRUM-286: video rows in the presentation slot use SetPrimaryButton's
+// badge form instead of a plain "Primary" meta string, so styling and the
+// Clear affordance match document/link rows.
+describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row', () => {
+	const presVideo = {
+		id: 'vs-1',
+		display_title: 'Lecture',
+		transcript_status: 'ready',
+	}
+
+	function sessionWithPresentationVideo(currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: [presVideo],
+			materials: [],
+			links: [],
+			unread_material_ids: [],
+			primary_video: presVideo,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	it('renders Primary badge on the presentation video when currentPrimary.kind=video', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithPresentationVideo()}
+				currentPrimary={{ kind: 'video', id: 'fa-7' }}
+			/>,
+		)
+		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+		// The legacy static "Primary" meta string is no longer the source of
+		// truth; the badge styling now matches doc/link rows.
+		expect(screen.getByTestId('primary-video-item').textContent).toContain('Lecture')
+	})
+
+	it('renders the Clear control next to the badge when onPrimaryChanged is set', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithPresentationVideo()}
+				currentPrimary={{ kind: 'video', id: 'fa-7' }}
+			/>,
+		)
+		expect(screen.getByTestId('clear-primary-btn')).toBeInTheDocument()
+	})
+
+	it('does not render a primary badge when the session primary is a non-video kind (e.g. document)', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithPresentationVideo()}
+				currentPrimary={{ kind: 'document', id: 'mat-1' }}
+			/>,
+		)
+		// The primary video row shows no badge here — the document row would.
+		// (No matching document fixture in this test, so simply assert no badge
+		// from the video row exists.)
+		expect(screen.queryByTestId('primary-badge')).toBeNull()
+	})
+
+	it('does not render a primary badge when canManage is false', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				session={sessionWithPresentationVideo()}
+				currentPrimary={{ kind: 'video', id: 'fa-7' }}
+			/>,
+		)
+		expect(screen.queryByTestId('primary-badge')).toBeNull()
+	})
+})
