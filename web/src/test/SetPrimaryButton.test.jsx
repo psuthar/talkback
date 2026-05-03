@@ -13,6 +13,72 @@ vi.mock('../api/sessionPrimary', async () => {
 import { patchSessionPrimary, SessionPrimaryError } from '../api/sessionPrimary'
 
 describe('SetPrimaryButton (SCRUM-275)', () => {
+	it('exposes aria-label on the Make-primary button (SCRUM-285)', () => {
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+				itemLabel="Spec.pdf"
+			/>,
+		)
+		const btn = screen.getByTestId('set-primary-btn')
+		expect(btn.getAttribute('aria-label')).toBe('Make session primary (Spec.pdf)')
+	})
+
+	it('renders Primary badge + Clear control when isCurrentPrimary and onSuccess is set (SCRUM-285)', async () => {
+		patchSessionPrimary.mockResolvedValueOnce(undefined)
+		const onSuccess = vi.fn()
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+				isCurrentPrimary
+				onSuccess={onSuccess}
+				itemLabel="Spec.pdf"
+			/>,
+		)
+		const badge = screen.getByTestId('primary-badge')
+		expect(badge.getAttribute('role')).toBe('status')
+		expect(badge.getAttribute('aria-label')).toBe('Session primary (Spec.pdf)')
+		const clear = screen.getByTestId('clear-primary-btn')
+		expect(clear.getAttribute('aria-label')).toBe('Clear session primary (Spec.pdf)')
+
+		fireEvent.click(clear)
+		await waitFor(() => expect(patchSessionPrimary).toHaveBeenCalled())
+		expect(patchSessionPrimary).toHaveBeenCalledWith('', 's1', { kind: '' })
+		expect(onSuccess).toHaveBeenCalled()
+	})
+
+	it('hides Clear control when isCurrentPrimary but no onSuccess (read-only context)', () => {
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+				isCurrentPrimary
+			/>,
+		)
+		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+		expect(screen.queryByTestId('clear-primary-btn')).toBeNull()
+	})
+
+	it('error region uses aria-live=polite and role=alert (SCRUM-285)', async () => {
+		patchSessionPrimary.mockRejectedValueOnce(
+			new SessionPrimaryError(400, 'PRIMARY_NOT_READY', 'still processing'),
+		)
+		render(<SetPrimaryButton apiBaseUrl="" sessionId="s1" kind="document" id="m1" />)
+		fireEvent.click(screen.getByTestId('set-primary-btn'))
+		await waitFor(() => expect(screen.getByTestId('set-primary-error')).toBeInTheDocument())
+		const errEl = screen.getByTestId('set-primary-error')
+		expect(errEl.getAttribute('role')).toBe('alert')
+		expect(errEl.getAttribute('aria-live')).toBe('polite')
+	})
+
 	it('renders Primary badge when row is the current primary (no button)', () => {
 		render(
 			<SetPrimaryButton

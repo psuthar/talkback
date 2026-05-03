@@ -3,22 +3,28 @@ import { patchSessionPrimary, SessionPrimaryError } from '../api/sessionPrimary'
 
 /**
  * SetPrimaryButton — creator-only affordance to anchor the session's
- * center pane on a specific material/link/video (SCRUM-275).
+ * center pane on a specific material/link/video (SCRUM-275; clear control
+ * + a11y added in SCRUM-285).
  *
  * Renders one of:
- *   - "Primary" (disabled badge) when this row is already the session's primary.
- *   - "Make primary" (button) otherwise. Click calls the SCRUM-272 PATCH
- *     endpoint via patchSessionPrimary; on success calls onSuccess so the
- *     parent can refetch the session; on failure shows an inline error
- *     message keyed off the API's structured `code` field.
+ *   - "Primary" badge + "Clear" button when this row is the session's primary
+ *     AND the parent provided onSuccess (i.e. caller is a creator surface).
+ *     Click "Clear" PATCHes {kind:""} to remove the explicit primary; the
+ *     SCRUM-271 resolver then falls back to the legacy video-first behavior.
+ *   - "Primary" badge only (no clear) when isCurrentPrimary but onSuccess is
+ *     omitted — used by read-only surfaces.
+ *   - "Make primary" button otherwise. Click calls the SCRUM-272 PATCH;
+ *     on success calls onSuccess so the parent can refetch; on failure
+ *     shows an inline error keyed off the API's structured `code` field.
  *
- * Acceptance-criteria mapping (SCRUM-275):
- *   - "Invalid selections show a recoverable error without corrupting
- *     session state" — errors are caught, displayed inline, and the parent
- *     state is not mutated until onSuccess fires.
- *   - "Non-creators cannot change primary" — handler-side ACL (SCRUM-272)
- *     returns 403; this button surfaces it via the same error path. Callers
- *     should also gate visibility on a creator-mode flag.
+ * A11y:
+ *   - The Make-primary and Clear buttons carry aria-labels that include the
+ *     kind (and item title via the new `itemLabel` prop) so screen-reader
+ *     announcements are unambiguous when many rows share the same visible
+ *     copy.
+ *   - The badge sets role="status" so SR users hear the primary state.
+ *   - The inline error region is aria-live="polite" so reactive errors are
+ *     announced without stealing focus.
  */
 export function SetPrimaryButton({
 	apiBaseUrl,
@@ -29,34 +35,20 @@ export function SetPrimaryButton({
 	onSuccess,
 	disabled = false,
 	style,
+	itemLabel,
 }) {
 	const [pending, setPending] = useState(false)
 	const [error, setError] = useState(null)
 
-	if (isCurrentPrimary) {
-		return (
-			<span
-				data-testid="primary-badge"
-				style={{
-					fontSize: 11,
-					padding: '2px 6px',
-					marginLeft: 6,
-					borderRadius: 3,
-					backgroundColor: 'var(--color-primary-mid, #1976d2)',
-					color: 'white',
-					...style,
-				}}
-			>
-				Primary
-			</span>
-		)
-	}
+	const labelSuffix = itemLabel ? ` (${itemLabel})` : ''
+	const ariaSetLabel = `Make session primary${labelSuffix}`
+	const ariaClearLabel = `Clear session primary${labelSuffix}`
 
-	const onClick = async () => {
+	const patchPrimary = async (body) => {
 		setPending(true)
 		setError(null)
 		try {
-			await patchSessionPrimary(apiBaseUrl, sessionId, { kind, id })
+			await patchSessionPrimary(apiBaseUrl, sessionId, body)
 			onSuccess?.()
 		} catch (e) {
 			if (e instanceof SessionPrimaryError) {
@@ -69,12 +61,65 @@ export function SetPrimaryButton({
 		}
 	}
 
+	if (isCurrentPrimary) {
+		return (
+			<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, ...style }}>
+				<span
+					data-testid="primary-badge"
+					role="status"
+					aria-label={`Session primary${labelSuffix}`}
+					style={{
+						fontSize: 11,
+						padding: '2px 6px',
+						marginLeft: 6,
+						borderRadius: 3,
+						backgroundColor: 'var(--color-primary-mid, #1976d2)',
+						color: 'white',
+					}}
+				>
+					Primary
+				</span>
+				{onSuccess && (
+					<button
+						type="button"
+						data-testid="clear-primary-btn"
+						aria-label={ariaClearLabel}
+						onClick={() => patchPrimary({ kind: '' })}
+						disabled={pending || disabled}
+						style={{
+							fontSize: 11,
+							color: '#666',
+							background: 'none',
+							border: 'none',
+							padding: 0,
+							cursor: pending || disabled ? 'not-allowed' : 'pointer',
+							textDecoration: 'underline',
+						}}
+					>
+						{pending ? 'Clearing…' : 'Clear'}
+					</button>
+				)}
+				{error && (
+					<span
+						data-testid="set-primary-error"
+						role="alert"
+						aria-live="polite"
+						style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}
+					>
+						{error.message}
+					</span>
+				)}
+			</span>
+		)
+	}
+
 	return (
 		<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, ...style }}>
 			<button
 				type="button"
 				data-testid="set-primary-btn"
-				onClick={onClick}
+				aria-label={ariaSetLabel}
+				onClick={() => patchPrimary({ kind, id })}
 				disabled={pending || disabled}
 				style={{
 					fontSize: 11,
@@ -89,7 +134,12 @@ export function SetPrimaryButton({
 				{pending ? 'Setting…' : 'Make primary'}
 			</button>
 			{error && (
-				<span data-testid="set-primary-error" style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}>
+				<span
+					data-testid="set-primary-error"
+					role="alert"
+					aria-live="polite"
+					style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}
+				>
 					{error.message}
 				</span>
 			)}
