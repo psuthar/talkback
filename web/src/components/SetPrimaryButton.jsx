@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { patchSessionPrimary, SessionPrimaryError } from '../api/sessionPrimary'
 
 /**
@@ -63,53 +63,16 @@ export function SetPrimaryButton({
 
 	if (isCurrentPrimary) {
 		return (
-			<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, ...style }}>
-				<span
-					data-testid="primary-badge"
-					role="status"
-					aria-label={`Session primary${labelSuffix}`}
-					style={{
-						fontSize: 11,
-						padding: '2px 6px',
-						marginLeft: 6,
-						borderRadius: 3,
-						backgroundColor: 'var(--color-primary-mid, #1976d2)',
-						color: 'white',
-					}}
-				>
-					Primary
-				</span>
-				{onSuccess && (
-					<button
-						type="button"
-						data-testid="clear-primary-btn"
-						aria-label={ariaClearLabel}
-						onClick={() => patchPrimary({ kind: '' })}
-						disabled={pending || disabled}
-						style={{
-							fontSize: 11,
-							color: '#666',
-							background: 'none',
-							border: 'none',
-							padding: 0,
-							cursor: pending || disabled ? 'not-allowed' : 'pointer',
-							textDecoration: 'underline',
-						}}
-					>
-						{pending ? 'Clearing…' : 'Clear'}
-					</button>
-				)}
-				{error && (
-					<span
-						data-testid="set-primary-error"
-						role="alert"
-						aria-live="polite"
-						style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}
-					>
-						{error.message}
-					</span>
-				)}
-			</span>
+			<PrimaryBadgeWithContextMenu
+				labelSuffix={labelSuffix}
+				ariaClearLabel={ariaClearLabel}
+				onSuccess={onSuccess}
+				disabled={disabled}
+				pending={pending}
+				error={error}
+				patchPrimary={patchPrimary}
+				style={style}
+			/>
 		)
 	}
 
@@ -168,6 +131,181 @@ function messageForCode(err) {
 			if (err.status === 403) return 'Only the session creator can change the primary.'
 			return err.message || 'Could not update primary.'
 	}
+}
+
+/**
+ * PrimaryBadgeWithContextMenu (SCRUM-290) — the badge form of SetPrimaryButton
+ * with a right-click context menu replacing SCRUM-285's inline Clear text-
+ * button. Three invocation paths:
+ *
+ *   1. Right-click on the badge (mouse / trackpad two-finger).
+ *   2. Focus the badge + press the context-menu key or Shift+F10 (keyboard).
+ *   3. Long-press on the badge for ~500ms (touch / pen).
+ *
+ * The menu is a single item: "Clear primary". Activating it PATCHes
+ * {kind:""} via the same code path SCRUM-285 already shipped. Outside
+ * click and Escape close the menu and return focus to the badge.
+ *
+ * When `onSuccess` is omitted (read-only context), the badge renders
+ * non-interactively — no menu, no tabIndex, no handlers.
+ */
+function PrimaryBadgeWithContextMenu({
+	labelSuffix,
+	ariaClearLabel,
+	onSuccess,
+	disabled,
+	pending,
+	error,
+	patchPrimary,
+	style,
+}) {
+	const interactive = !!onSuccess
+	const [menuOpen, setMenuOpen] = useState(false)
+	const badgeRef = useRef(null)
+	const menuRef = useRef(null)
+	const longPressTimerRef = useRef(null)
+
+	useEffect(() => {
+		if (!menuOpen) return
+		const onDocClick = (e) => {
+			if (menuRef.current && !menuRef.current.contains(e.target)) {
+				setMenuOpen(false)
+			}
+		}
+		const onKey = (e) => {
+			if (e.key === 'Escape') {
+				setMenuOpen(false)
+				badgeRef.current?.focus()
+			}
+		}
+		document.addEventListener('mousedown', onDocClick)
+		document.addEventListener('keydown', onKey)
+		return () => {
+			document.removeEventListener('mousedown', onDocClick)
+			document.removeEventListener('keydown', onKey)
+		}
+	}, [menuOpen])
+
+	const openMenu = () => {
+		if (!interactive || disabled) return
+		setMenuOpen(true)
+	}
+
+	const cancelLongPress = () => {
+		if (longPressTimerRef.current) {
+			clearTimeout(longPressTimerRef.current)
+			longPressTimerRef.current = null
+		}
+	}
+
+	const onPointerDown = (e) => {
+		// Long-press is for touch/pen only; mouse uses the contextmenu event.
+		if (e.pointerType === 'mouse') return
+		cancelLongPress()
+		longPressTimerRef.current = setTimeout(() => {
+			openMenu()
+		}, 500)
+	}
+
+	const onContextMenu = (e) => {
+		if (!interactive) return
+		e.preventDefault()
+		openMenu()
+	}
+
+	const onKeyDown = (e) => {
+		if (!interactive) return
+		if ((e.key === 'F10' && e.shiftKey) || e.key === 'ContextMenu') {
+			e.preventDefault()
+			openMenu()
+		}
+	}
+
+	const onClearClick = () => {
+		setMenuOpen(false)
+		patchPrimary({ kind: '' })
+	}
+
+	return (
+		<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative', ...style }}>
+			<span
+				ref={badgeRef}
+				data-testid="primary-badge"
+				role="status"
+				aria-label={`Session primary${labelSuffix}`}
+				tabIndex={interactive ? 0 : undefined}
+				onContextMenu={onContextMenu}
+				onKeyDown={onKeyDown}
+				onPointerDown={onPointerDown}
+				onPointerUp={cancelLongPress}
+				onPointerMove={cancelLongPress}
+				onPointerCancel={cancelLongPress}
+				style={{
+					fontSize: 11,
+					padding: '2px 6px',
+					marginLeft: 6,
+					borderRadius: 3,
+					backgroundColor: 'var(--color-primary-mid, #1976d2)',
+					color: 'white',
+					cursor: interactive ? 'context-menu' : 'default',
+					outline: 'none',
+				}}
+			>
+				Primary
+			</span>
+			{menuOpen && (
+				<div
+					ref={menuRef}
+					role="menu"
+					data-testid="primary-context-menu"
+					style={{
+						position: 'absolute',
+						top: '100%',
+						left: 0,
+						marginTop: 4,
+						background: '#fff',
+						border: '1px solid #ccc',
+						borderRadius: 4,
+						boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+						zIndex: 100,
+						minWidth: 140,
+					}}
+				>
+					<button
+						type="button"
+						role="menuitem"
+						data-testid="clear-primary-btn"
+						aria-label={ariaClearLabel}
+						onClick={onClearClick}
+						disabled={pending || disabled}
+						style={{
+							display: 'block',
+							width: '100%',
+							textAlign: 'left',
+							fontSize: 12,
+							padding: '6px 10px',
+							background: 'none',
+							border: 'none',
+							cursor: pending || disabled ? 'not-allowed' : 'pointer',
+							color: '#333',
+						}}
+					>
+						{pending ? 'Clearing…' : 'Clear primary'}
+					</button>
+				</div>
+			)}
+			{error && (
+				<span
+					data-testid="set-primary-error"
+					role="alert"
+					aria-live="polite"
+					style={{ fontSize: 11, color: 'var(--color-danger-dark, #b00020)' }}
+				>
+					{error.message}
+				</span>
+			)}
+		</span>
+	)
 }
 
 export default SetPrimaryButton

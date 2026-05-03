@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 
 vi.mock('../api/materials', () => ({
@@ -147,7 +147,7 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 		expect(screen.getByTestId('primary-video-item').textContent).toContain('Lecture')
 	})
 
-	it('renders the Clear control next to the badge when onPrimaryChanged is set', () => {
+	it('exposes the Clear control via right-click on the badge when onPrimaryChanged is set (SCRUM-290)', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -155,6 +155,10 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 				currentPrimary={{ kind: 'video', id: 'fa-7' }}
 			/>,
 		)
+		// Menu starts closed (Clear lives inside it now, not inline).
+		expect(screen.queryByTestId('clear-primary-btn')).toBeNull()
+		// Right-click on the badge opens the context menu.
+		fireEvent.contextMenu(screen.getByTestId('primary-badge'))
 		expect(screen.getByTestId('clear-primary-btn')).toBeInTheDocument()
 	})
 
