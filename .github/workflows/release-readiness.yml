@@ -484,10 +484,20 @@ jobs:
         if: always()
         continue-on-error: true
         run: |
+          # release-readiness-pr-risk and release-readiness-evaluate write
+          # lean machine summaries at the PARENT of --output-dir
+          # (artifacts/pr-risk.json, artifacts/release-readiness.json — the
+          # latter is hardcoded to <repo-root>/artifacts/ regardless of
+          # --output-dir). The full readiness report lands inside
+          # --output-dir at artifacts/release-readiness/report.json. The
+          # original SCRUM-265 shadow job buried these one level deeper
+          # under release-readiness-shadow/run/ — we don't need that subdir
+          # in the consolidated job, but combine has to know where the lean
+          # files actually live.
           release-readiness-combine \
-            --pr-risk-json artifacts/release-readiness/pr-risk.json \
+            --pr-risk-json artifacts/pr-risk.json \
             --readiness-json artifacts/release-readiness.json \
-            --readiness-report-json artifacts/release-readiness/run/report.json \
+            --readiness-report-json artifacts/release-readiness/report.json \
             --output-dir artifacts \
             --step-summary
 
