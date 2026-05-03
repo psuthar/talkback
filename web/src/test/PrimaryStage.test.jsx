@@ -17,14 +17,32 @@ describe('PrimaryStage (SCRUM-273)', () => {
     expect(screen.queryByTestId('video-player-container')).toBeNull()
   })
 
-  it('renders nothing when there is no document and no video sources / artifact', () => {
-    const { container } = render(
+  it('renders the creator empty-state when there is no resolvable primary and no fallback video (SCRUM-288)', () => {
+    render(
       <PrimaryStage
         selectedDocument={null}
         currentSession={{ session: {}, video_sources: [] }}
       />,
     )
-    expect(container.firstChild).toBeNull()
+    const empty = screen.getByTestId('primary-empty-state')
+    expect(empty).toBeInTheDocument()
+    expect(empty.textContent).toMatch(/No primary content yet/i)
+    expect(empty.textContent).toMatch(/Pick any material, link, or video/i)
+    // Empty-state replaces the legacy null-render; video container must not appear.
+    expect(screen.queryByTestId('video-player-container')).toBeNull()
+  })
+
+  it('renders the participant empty-state when mode=participant (SCRUM-288)', () => {
+    render(
+      <PrimaryStage
+        selectedDocument={null}
+        currentSession={{ session: {}, video_sources: [] }}
+        mode="participant"
+      />,
+    )
+    const empty = screen.getByTestId('primary-empty-state')
+    expect(empty.textContent).toMatch(/Waiting for the creator/i)
+    expect(empty.textContent).not.toMatch(/Pick any material/i)
   })
 
   it('renders the video container when currentSession has video_sources', () => {
@@ -117,8 +135,8 @@ describe('PrimaryStage (SCRUM-273)', () => {
     expect(screen.queryByTestId('video-player-container')).toBeNull()
   })
 
-  it('returns null when primary.kind=document but the material is missing (resolver collapse)', () => {
-    const { container } = render(
+  it('renders the empty-state when primary.kind=document but the material is missing (SCRUM-284 collapse → SCRUM-288 empty-state)', () => {
+    render(
       <PrimaryStage
         selectedDocument={null}
         currentSession={{
@@ -129,7 +147,10 @@ describe('PrimaryStage (SCRUM-273)', () => {
         }}
       />,
     )
-    expect(container.firstChild).toBeNull()
+    // SCRUM-282 prevents this state in the data model, but if it somehow
+    // surfaces (e.g. mid-refresh), the empty-state is the right UX rather
+    // than a blank pane.
+    expect(screen.getByTestId('primary-empty-state')).toBeInTheDocument()
   })
 
   it('renders the transcript header when hasPrimaryR2Video is true', () => {
