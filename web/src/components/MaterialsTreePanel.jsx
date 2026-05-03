@@ -606,21 +606,44 @@ export function MaterialsTreePanel({
               const statusInfo = materialStatusMetaImage(m)
               const metaParts = [statusInfo?.label, unreadSet.has(String(m.id)) ? 'New' : null].filter(Boolean)
               const viewable = isMaterialViewable(m)
+              // SCRUM-289: image materials are eligible to be the session
+              // primary too. The backend's primary_content_kind='document'
+              // is the entity-pointer ("any material row"), not a content
+              // label, so reusing kind="document" for image PATCHes is
+              // correct without a schema change.
+              const isCurrentPrimary = !!(
+                currentPrimary && currentPrimary.kind === 'document' &&
+                String(currentPrimary.id) === String(m.id)
+              )
               return (
-                <TreeItem
-                  key={m.id}
-                  testId="images-item"
-                  icon={null}
-                  title={m.filename || 'Untitled'}
-                  meta={metaParts.join(' • ')}
-                  metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
-                  selected={selectedDocumentId === m.id}
-                  onClick={(e) => onSelectDocument(m, e)}
-                  onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
-                  deleting={deletingId === String(m.id)}
-                  disabled={!viewable}
-                  buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
-                />
+                <div key={m.id}>
+                  <TreeItem
+                    testId="images-item"
+                    icon={null}
+                    title={m.filename || 'Untitled'}
+                    meta={metaParts.join(' • ')}
+                    metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                    selected={selectedDocumentId === m.id}
+                    onClick={(e) => onSelectDocument(m, e)}
+                    onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                    deleting={deletingId === String(m.id)}
+                    disabled={!viewable}
+                    buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
+                  />
+                  {canManage && onPrimaryChanged && sessionId && viewable && (
+                    <div style={{ padding: '0 8px 4px 24px' }}>
+                      <SetPrimaryButton
+                        apiBaseUrl={apiBaseUrl}
+                        sessionId={sessionId}
+                        kind="document"
+                        id={m.id}
+                        isCurrentPrimary={isCurrentPrimary}
+                        onSuccess={onPrimaryChanged}
+                        itemLabel={m.filename}
+                      />
+                    </div>
+                  )}
+                </div>
               )
             })}
           </TreeSection>

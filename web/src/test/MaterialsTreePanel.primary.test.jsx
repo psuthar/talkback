@@ -184,3 +184,68 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 		expect(screen.queryByTestId('primary-badge')).toBeNull()
 	})
 })
+
+// SCRUM-289: image-kind materials are eligible for primary too. The Images
+// section now renders SetPrimaryButton + the badge identically to the
+// Documents section, since the backend's primary_content_kind='document'
+// is the entity-pointer (any material row), not a content-type label.
+describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => {
+	const imageMaterial = {
+		id: 'img-1',
+		kind: 'image',
+		filename: 'diagram.png',
+		content_type: 'image/png',
+		text_status: 'ready',
+	}
+
+	function sessionWithImage(currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: [],
+			materials: [imageMaterial],
+			links: [],
+			unread_material_ids: [],
+			primary_video: null,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	it('renders Make-primary button on an image row when canManage + onPrimaryChanged', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithImage()}
+			/>,
+		)
+		expect(screen.getByTestId('images-item')).toBeInTheDocument()
+		const buttons = screen.getAllByTestId('set-primary-btn')
+		expect(buttons.length).toBeGreaterThan(0)
+	})
+
+	it('renders Primary badge on an image row when currentPrimary points at it', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithImage()}
+				currentPrimary={{ kind: 'document', id: 'img-1' }}
+			/>,
+		)
+		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+	})
+
+	it('does not render the button on an image row when canManage is false', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				session={sessionWithImage()}
+			/>,
+		)
+		// Image row still appears, but no SetPrimaryButton.
+		expect(screen.getByTestId('images-item')).toBeInTheDocument()
+		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+	})
+})
