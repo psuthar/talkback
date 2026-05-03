@@ -297,6 +297,103 @@ func TestUpdateSessionPrimary_HandlerEndToEnd(t *testing.T) {
 		assert.False(t, hasPrimary, "cleared primary must not appear in PATCH response")
 	})
 
+	t.Run("kind=document with text_status=processing -> 400 PRIMARY_NOT_READY (SCRUM-281)", func(t *testing.T) {
+		s := mkSession(t, "doc primary processing")
+		artifact, err := h.DB.CreateArtifact(ctx, s.ID, "processing artifact", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   s.ID,
+			Kind:        string(models.MaterialKindDocument),
+			Filename:    "wip.pdf",
+			ContentType: "application/pdf",
+			StorageURL:  "r2://b/wip.pdf",
+			TextStatus:  models.MaterialTextStatusProcessing,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+
+		body := `{"primary":{"kind":"document","id":"` + material.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "PRIMARY_NOT_READY", resp["code"])
+
+		got, err := h.DB.GetSession(ctx, s.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.PrimaryContentKind, "session must remain unchanged after a 400")
+	})
+
+	t.Run("kind=document with text_status=failed -> 400 PRIMARY_NOT_READY (SCRUM-281)", func(t *testing.T) {
+		s := mkSession(t, "doc primary failed")
+		artifact, err := h.DB.CreateArtifact(ctx, s.ID, "failed artifact", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   s.ID,
+			Kind:        string(models.MaterialKindDocument),
+			Filename:    "broken.pdf",
+			ContentType: "application/pdf",
+			StorageURL:  "r2://b/broken.pdf",
+			TextStatus:  models.MaterialTextStatusFailed,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+
+		body := `{"primary":{"kind":"document","id":"` + material.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "PRIMARY_NOT_READY", resp["code"])
+	})
+
+	t.Run("kind=link with status=processing -> 400 PRIMARY_NOT_READY (SCRUM-281)", func(t *testing.T) {
+		s := mkSession(t, "link primary processing")
+		linkTitle := "WIP link"
+		link := &models.SessionLink{
+			ID:        uuid.New(),
+			SessionID: s.ID,
+			URL:       "https://example.com/wip",
+			Title:     &linkTitle,
+			Status:    models.SessionLinkStatusProcessing,
+		}
+		require.NoError(t, h.DB.CreateSessionLink(ctx, link))
+
+		body := `{"primary":{"kind":"link","id":"` + link.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "PRIMARY_NOT_READY", resp["code"])
+	})
+
+	t.Run("kind=video with file_artifact status=pending -> 400 PRIMARY_NOT_READY (SCRUM-281)", func(t *testing.T) {
+		s := mkSession(t, "video primary pending")
+		filename := "uploading.mp4"
+		fa := &models.FileArtifact{
+			ID:              uuid.New(),
+			SessionID:       &s.ID,
+			OwnerUserID:     &creatorUser.ID,
+			Kind:            models.FileArtifactKindVideo,
+			Filename:        &filename,
+			ContentType:     "video/mp4",
+			StorageProvider: "local",
+			StorageBucket:   "test",
+			StorageKey:      "vid/uploading.mp4",
+			Status:          models.FileArtifactStatusPending,
+		}
+		require.NoError(t, h.DB.CreateFileArtifact(ctx, fa))
+
+		body := `{"primary":{"kind":"video","id":"` + fa.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "PRIMARY_NOT_READY", resp["code"])
+	})
+
 	t.Run("non-creator -> 403", func(t *testing.T) {
 		s := mkSession(t, "non-creator forbidden")
 		stranger := &models.User{

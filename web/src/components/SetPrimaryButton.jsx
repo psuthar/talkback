@@ -113,6 +113,7 @@ function messageForCode(err) {
 			return 'That item belongs to a different session.'
 		case 'PRIMARY_BAD_KIND': return 'Unsupported primary type.'
 		case 'PRIMARY_MISSING_ID': return 'Missing target — please retry.'
+		case 'PRIMARY_NOT_READY': return 'This item is still processing — try again once it finishes.'
 		default:
 			if (err.status === 403) return 'Only the session creator can change the primary.'
 			return err.message || 'Could not update primary.'
