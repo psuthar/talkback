@@ -47,6 +47,10 @@ export function PrimaryStage({
 	handlePrimaryVideoMounted,
 	retryProcessing,
 	processingRetrying,
+	// SCRUM-288: switches the empty-state copy when nothing resolves. CreatorMode
+	// is the only consumer today; add 'participant' if/when ParticipantMode adopts
+	// this component.
+	mode = 'creator',
 }) {
 	const renderDoc = (doc) => (
 		<div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px' }}>
@@ -98,7 +102,37 @@ export function PrimaryStage({
 	const hasVideoSources = currentSession?.video_sources && currentSession.video_sources.length > 0
 	const hasPrimaryArtifact = !!currentSession?.session?.primary_video_artifact_id
 	if (!hasVideoSources && !hasPrimaryArtifact) {
-		return null
+		// SCRUM-288: render a useful empty-state instead of a blank pane when
+		// the session has no resolvable primary and no fallback video. Copy
+		// differs by mode so participants get a "waiting for the creator"
+		// hint while creators see a direct call to action.
+		const isCreator = mode !== 'participant'
+		const heading = isCreator
+			? 'No primary content yet'
+			: 'Waiting for the creator to choose primary content'
+		const body = isCreator
+			? 'Pick any material, link, or video from the left to make it primary.'
+			: 'The creator hasn’t set a primary yet. The center pane will update when they do.'
+		return (
+			<div
+				data-testid="primary-empty-state"
+				role="status"
+				style={{
+					flex: 1,
+					minHeight: 0,
+					display: 'flex',
+					flexDirection: 'column',
+					alignItems: 'center',
+					justifyContent: 'center',
+					textAlign: 'center',
+					padding: '32px',
+					color: '#555',
+				}}
+			>
+				<h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 600 }}>{heading}</h3>
+				<p style={{ margin: 0, fontSize: 14, maxWidth: 420 }}>{body}</p>
+			</div>
+		)
 	}
 
 	const primaryArtifactNotReady = hasPrimaryArtifact && !primaryVideoAccessUrl && !!currentSession?.playback_reason_code
