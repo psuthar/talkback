@@ -208,6 +208,7 @@ export function MaterialsTreePanel({
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
   const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
   const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
+  const sessionId = session?.session?.id || session?.id
 
   const isMaterialImage = (m) => {
     const ct = (m.content_type || '').toLowerCase()
@@ -406,7 +407,13 @@ export function MaterialsTreePanel({
                 testId="primary-video-item"
                 icon={null}
                 title={videoDisplayTitle(presentationVideo)}
-                meta="Primary"
+                /* SCRUM-286: replace the static "Primary" meta string with the
+                   SetPrimaryButton badge + Clear control rendered below so
+                   video rows match the document/link row visual treatment.
+                   When the session primary isn't actually kind=video (e.g. a
+                   document is primary but a fallback video shows here), no
+                   badge appears. */
+                meta=""
                 selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
                 onClick={() => {
                   setSelectedVideo(presentationVideo)
@@ -415,6 +422,19 @@ export function MaterialsTreePanel({
                   onSelectVideo?.()
                 }}
               />
+              {canManage && onPrimaryChanged && sessionId && currentPrimary?.kind === 'video' && currentPrimary?.id && (
+                <span style={{ paddingLeft: 8 }}>
+                  <SetPrimaryButton
+                    apiBaseUrl={apiBaseUrl}
+                    sessionId={sessionId}
+                    kind="video"
+                    id={currentPrimary.id}
+                    isCurrentPrimary={true}
+                    onSuccess={onPrimaryChanged}
+                    itemLabel={videoDisplayTitle(presentationVideo)}
+                  />
+                </span>
+              )}
               {canManage && (
                 <button
                   data-testid="edit-video-title-btn"
