@@ -32,7 +32,7 @@ Before writing implementation code:
 - If `web/` logic changed (not style-only), at least one E2E spec must be added/updated.
 - Run:
 
-`go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir /tmp/prrisk-check`
+`release-readiness-pr-risk --repo-root . --base-ref origin/main --output-dir /tmp/prrisk-check --config ops/release-readiness/pr-risk-config.yaml`
 
 If `tests_missing` appears and change is not style-only, do not commit until tests are added.
 

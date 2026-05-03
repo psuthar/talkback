@@ -1,0 +1,42 @@
+# SCRUM-267: validation-map for release-readiness-core's playwright-to-readiness CLI.
+# Replaces the dict that lived inside scripts/e2e_to_readiness.py before the
+# release-readiness-core cutover.
+#
+# Each key is a readiness validation; each value is a list of Playwright test
+# file stems. A validation is:
+#   - true  if all tests in the group ran and all passed
+#   - false if any test in the group failed
+#   - absent if no tests from that group ran
+#
+# When adding a new validation, also update ops/release-readiness/config.yaml
+# and verify the test stem matches the actual Playwright file (extensions like
+# .e2e.ts are stripped before lookup; see playwright-to-readiness --help).
+
+# Auth, session access, and invite flow.
+auth_session:
+  - creator-access           # creator opens session in edit mode, sees creator-only UI
+  - participant-acceptance   # new participant accepts invite, signs up, lands on session
+  - invite-invalid-token     # invalid invite token shows error page (not crash)
+  - participant-happy-path   # full participant journey: view material, ask question, see answer
+  - session-availability     # participant sees materials panel and QA input after joining
+  - session-routing          # canonical URLs, legacy redirects, invite landing page routing
+
+# Material upload and processing pipeline (files reach terminal state after extraction).
+upload_extraction:
+  - material-processing-state  # PPTX/DOCX/JPG: disabled while processing, enabled at terminal
+
+# Materials tree panel / left-nav asset navigation.
+nav_assets:
+  - material-viewers  # uploaded materials appear in the MaterialsTreePanel left nav
+
+# Material viewer rendering (DocumentViewer, SlideDeckViewer, etc.).
+viewer_materials:
+  - material-viewers   # viewer renders for MP4, PPTX, DOCX, JPG, link uploads
+  - pptx-polling-stop  # regression: slide-deck polling loops stop after timeout
+
+# Q&A and RAG answer generation.
+# qa-history verifies question persistence and display.
+# participant-happy-path verifies the full ask→answer pipeline (RAG generation, not just display).
+qa_rag:
+  - qa-history             # previously asked question (seeded via API) is visible in QA panel
+  - participant-happy-path # participant asks a new question and receives a generated answer

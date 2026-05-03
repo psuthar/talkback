@@ -122,15 +122,16 @@ jobs:
             echo "pptx=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: PR risk scoring (v2.8)
+      - name: PR risk scoring (release-readiness-core)
         id: prrisk
         continue-on-error: true
         run: |
           mkdir -p artifacts/release-readiness
-          go run ./cmd/prrisk \
+          release-readiness-pr-risk \
             --repo-root . \
             --base-ref "${{ steps.base.outputs.base_ref }}" \
-            --output-dir artifacts/release-readiness
+            --output-dir artifacts/release-readiness \
+            --config ops/release-readiness/pr-risk-config.yaml
 
       - name: Run Go tests (smoke signal + coverage)
         id: gotest
@@ -311,13 +312,14 @@ jobs:
           fi
           npx playwright test $GREP_ARGS 2>&1 | tee playwright-live.log
 
-      - name: Convert Playwright results to readiness schema
+      - name: Convert Playwright results to readiness schema (playwright-to-readiness)
         continue-on-error: true
         run: |
           test -f playwright-results.json
-          python scripts/e2e_to_readiness.py \
+          playwright-to-readiness \
             --input playwright-results.json \
-            --output e2e_results.json
+            --output e2e_results.json \
+            --validation-map ops/release-readiness/e2e-validation-map.yaml
 
       - name: Stage E2E artifacts (JSON, HTML report, traces/screenshots)
         if: always()
@@ -349,7 +351,7 @@ jobs:
               "",
               "Files:",
               "  playwright-results.json — raw Playwright --reporter=json",
-              "  e2e_results.json — readiness schema (scripts/e2e_to_readiness.py)",
+              "  e2e_results.json — readiness schema (release-readiness-core's playwright-to-readiness)",
               "  playwright-report/index.html — open locally after download",
               "  test-results/ — traces, screenshots (when failures/retries)",
               "",
@@ -412,19 +414,16 @@ jobs:
             api.log
           if-no-files-found: ignore
 
-      - name: Run release readiness
+      - name: Run release-readiness-evaluate
         id: readiness
         continue-on-error: true
         shell: bash
-        env:
-          READINESS_ENFORCEMENT_MODE: ${{ env.READINESS_ENFORCEMENT_MODE }}
         run: |
-          set -euo pipefail
-          MIG_ARGS=()
-          if [ "${{ steps.gotest.outcome }}" = "success" ]; then
-            MIG_ARGS+=(--migration-validated)
-          fi
-          bash scripts/release-readiness.sh \
+          # release-readiness-evaluate exits non-zero on BLOCK; combine still
+          # runs to emit a partial gate summary, so the step swallows the exit
+          # code. The dedicated "Evaluate Release Readiness Outcome" step
+          # below is responsible for failing the job on BLOCK.
+          release-readiness-evaluate \
             --repo-root . \
             --config ops/release-readiness/config.yaml \
             --base-ref "${{ steps.base.outputs.base_ref }}" \
@@ -432,9 +431,7 @@ jobs:
             --e2e-results e2e_results.json \
             --coverage coverage.json \
             --prod-health artifacts/release-readiness/prod_health.json \
-            --output-dir artifacts/release-readiness \
-            --enforcement-mode "${READINESS_ENFORCEMENT_MODE:-block_only}" \
-            "${MIG_ARGS[@]}"
+            --output-dir artifacts/release-readiness || true
 
       - name: Evaluate Release Readiness Outcome
         id: evaluate
@@ -477,79 +474,39 @@ jobs:
           echo "::error::Unknown outcome: $OUTCOME"
           exit 1
 
-      # Combines PR Risk + Release Readiness into a single unified gate decision.
-      # Runs before the PR risk semantic step so its section appears first in step summary.
-      # continue-on-error: true so a script bug never blocks the rest of the workflow.
-      - name: Compute PR gate summary
+      # SCRUM-267: combine PR Risk + Release Readiness into the unified gate
+      # via release-readiness-core's CLIs (PR-risk generation lands at
+      # artifacts/release-readiness/pr-risk.json; release-readiness-evaluate
+      # writes the lean release-readiness.json at <repo-root>/artifacts/ and
+      # the full report under artifacts/release-readiness/run/report.json,
+      # mirroring the SCRUM-265 shadow paths).
+      - name: Run release-readiness-combine
         if: always()
         continue-on-error: true
         run: |
-          python3 scripts/pr_gate.py \
-            --pr-risk-json artifacts/pr-risk.json \
+          release-readiness-combine \
+            --pr-risk-json artifacts/release-readiness/pr-risk.json \
             --readiness-json artifacts/release-readiness.json \
-            --readiness-report-json artifacts/release-readiness/report.json \
+            --readiness-report-json artifacts/release-readiness/run/report.json \
             --output-dir artifacts \
             --step-summary
 
-      # Deterministic adapter: pr-gate-summary.json -> artifacts/pr-gate-check.json for GitHub Checks API.
+      # Build the GitHub Checks API payload from the unified gate summary.
+      # SCRUM-267 phase 2: --warn-conclusion action_required matches the
+      # legacy required-check semantics (WARN blocks merge, workflow stays
+      # green). Optional phase-3 "failure" toggle is the only further change
+      # needed to lock down WARN with red workflow status.
       - name: Build PR gate GitHub Check payload
         if: always()
         env:
           GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python3 scripts/pr_gate_check_payload.py \
+          release-readiness-check-payload \
             --gate-json artifacts/pr-gate-summary.json \
-            --output artifacts/pr-gate-check.json
-
-      # Verifies that normalize_action strips all taxonomy prefixes from the live pr-risk.json.
-      # Catches new labels added to the Go engine before they reach user-facing output.
-      - name: Smoke-check action normalization
-        if: always()
-        continue-on-error: true
-        run: |
-          python3 - <<'PY'
-          import json, re, sys
-          sys.path.insert(0, 'scripts')
-          from pr_gate import normalize_action
-
-          path = 'artifacts/pr-risk.json'
-          try:
-              data = json.loads(open(path, encoding='utf-8').read())
-          except Exception as e:
-              print(f'Skipped: {path} not available ({e})')
-              sys.exit(0)
-
-          # A normalized action must not start with a single-word lowercase prefix followed by ": ".
-          _leaking = re.compile(r'^[a-z]+:\s')
-          validations = data.get('required_validations') or []
-          issues = []
-          for raw in validations:
-              result = normalize_action(raw)
-              if result and _leaking.match(result):
-                  issues.append(f'  raw={raw!r} => {result!r}')
-
-          if issues:
-              print(f'FAIL: normalize_action left {len(issues)} prefix label(s) in output:')
-              for i in issues:
-                  print(i)
-              sys.exit(1)
-          else:
-              print(f'OK: {len(validations)} required_validations normalized cleanly')
-          PY
-
-      # Maps merge_recommendation to Checks API conclusions (PASS→success, WARN→neutral, BLOCK→failure).
-      # Does not use continue-on-error: the job must fail on BLOCK or generator/parsing errors.
-      - name: Evaluate PR risk semantic result
-        id: prrisk_semantic
-        if: always()
-        env:
-          PRRISK_GEN_OUTCOME: ${{ steps.prrisk.outcome }}
-          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python3 scripts/evaluate_pr_risk_semantic.py \
-            --pr-risk-json artifacts/pr-risk.json \
-            --generator-outcome "$PRRISK_GEN_OUTCOME" \
-            --semantic-json-out artifacts/pr-risk-semantic.json
+            --output artifacts/pr-gate-check.json \
+            --run-url "$GITHUB_RUN_URL" \
+            --check-name "TalkBack PR Gate" \
+            --warn-conclusion action_required
 
       - name: Upload Release Readiness Artifact
         if: always()
@@ -831,233 +788,3 @@ jobs:
             exit 1
           fi
           echo "TalkBack PR Gate: ok (PASS or WARN)"
-
-  # ---------------------------------------------------------------------------
-  # Shadow gate: parallel run of release-readiness-core's release-readiness-pr-gate
-  # composite action against the same evidence artifacts. Publishes a separate,
-  # non-required GitHub Check named "TalkBack PR Gate (shadow)" so adopters can
-  # compare its verdicts to the legacy gate over real traffic before cutover.
-  # All steps continue-on-error: a shadow failure must NOT break the legacy
-  # required check or the rest of the workflow. (SCRUM-265)
-  shadow-readiness:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    needs: release-readiness
-    permissions:
-      contents: read
-      pull-requests: read
-      checks: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Resolve release-readiness-core pin
-        id: pin
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION=$(scripts/release_readiness_core_pin.sh version)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Resolved release-readiness-core pin: $VERSION"
-
-      - name: Download legacy evidence artifact
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: release-readiness
-          path: .
-
-      - name: Determine base ref
-        id: base
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "base_ref=origin/${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
-          fi
-
-      # release-readiness-core's repository is private so its composite action
-      # cannot be referenced via `uses:` — GitHub Actions resolves composite
-      # actions over the public-repo API and 404s on private repos. Inline the
-      # equivalent CLI invocations using the public PyPI install instead. The
-      # four CLIs (release-readiness-pr-risk → -evaluate → -combine →
-      # -check-payload) and their argument shapes are stable across the v0.3.x
-      # and v0.4.x lines of release-readiness-core (verified at v0.3.4 and
-      # v0.4.0); bumping the pin in ops/release-readiness/version.txt is
-      # sufficient and does not require touching these step bodies.
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install release-readiness-core (pinned)
-        shell: bash
-        run: |
-          set -euo pipefail
-          pip install "release-readiness-core==${{ steps.pin.outputs.version }}"
-
-      - name: Run release-readiness-pr-risk (shadow)
-        id: shadow_prrisk
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/release-readiness-shadow/run
-          release-readiness-pr-risk \
-            --repo-root . \
-            --base-ref "${{ steps.base.outputs.base_ref }}" \
-            --output-dir artifacts/release-readiness-shadow/run \
-            --config ops/release-readiness/pr-risk-config.yaml
-
-      - name: Run release-readiness-evaluate (shadow)
-        id: shadow_evaluate
-        continue-on-error: true
-        shell: bash
-        run: |
-          # evaluate exits non-zero on BLOCK; combine still runs to emit a
-          # partial gate summary, so don't fail the step here.
-          release-readiness-evaluate \
-            --repo-root . \
-            --config ops/release-readiness/config.yaml \
-            --base-ref "${{ steps.base.outputs.base_ref }}" \
-            --smoke-results smoke_results.json \
-            --e2e-results e2e_results.json \
-            --coverage coverage.json \
-            --prod-health artifacts/release-readiness/prod_health.json \
-            --output-dir artifacts/release-readiness-shadow/run || true
-          # release-readiness-evaluate hardcodes the lean machine summary at
-          # <repo-root>/artifacts/release-readiness.json (independent of
-          # --output-dir; see release_readiness_core/readiness_evaluate.py
-          # write_machine_readiness_summary). PR #231's shadow run revealed
-          # the wiring bug — combine looked under the shadow output dir and
-          # 404'd. Snapshot the lean output into release-readiness-shadow/
-          # so shadow artifacts stay self-contained AND so combine has a
-          # stable input below; the shadow write also overwrites the legacy
-          # lean output produced earlier in the workflow, which is fine
-          # because the shadow job is the only consumer left in this run.
-          if [ -f artifacts/release-readiness.json ]; then
-            cp artifacts/release-readiness.json artifacts/release-readiness-shadow/release-readiness.json
-          fi
-
-      - name: Run release-readiness-combine (shadow)
-        id: shadow_combine
-        continue-on-error: true
-        shell: bash
-        run: |
-          # Lean machine summaries land in the parent (release-readiness-shadow);
-          # full reports stay under release-readiness-shadow/run. The lean
-          # release-readiness.json is the snapshot copied from
-          # <repo-root>/artifacts/ in the previous step (see comment there
-          # and ops/release-readiness/shadow-rollout.md PR #231 entry).
-          release-readiness-combine \
-            --pr-risk-json artifacts/release-readiness-shadow/pr-risk.json \
-            --readiness-json artifacts/release-readiness-shadow/release-readiness.json \
-            --readiness-report-json artifacts/release-readiness-shadow/run/report.json \
-            --output-dir artifacts/release-readiness-shadow \
-            --step-summary || true
-
-      - name: Run release-readiness-check-payload (shadow)
-        id: shadow_check_payload
-        continue-on-error: true
-        shell: bash
-        env:
-          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          release-readiness-check-payload \
-            --gate-json artifacts/release-readiness-shadow/pr-gate-summary.json \
-            --output artifacts/release-readiness-shadow/pr-gate-check.json \
-            --run-url "$GITHUB_RUN_URL" \
-            --check-name "TalkBack PR Gate (shadow)"
-
-      - name: Upload shadow artifacts
-        if: always()
-        uses: actions/upload-artifact@v6
-        continue-on-error: true
-        with:
-          name: release-readiness-shadow
-          path: artifacts/release-readiness-shadow/
-          if-no-files-found: warn
-
-      # Publish "TalkBack PR Gate (shadow)" check from the composite action's
-      # pr-gate-check.json output. Mirrors the legacy publish step so the check
-      # appears alongside the existing required check.
-      - name: Publish TalkBack PR Gate (shadow) check
-        if: always()
-        continue-on-error: true
-        uses: actions/github-script@v8
-        env:
-          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const ws = process.env.GITHUB_WORKSPACE;
-            const checkPath = path.join(ws, 'artifacts/release-readiness-shadow/pr-gate-check.json');
-            const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
-            let payload;
-            try {
-              payload = JSON.parse(fs.readFileSync(checkPath, 'utf8'));
-            } catch (e) {
-              payload = {
-                check_name: 'TalkBack PR Gate (shadow)',
-                check_conclusion: 'neutral',
-                title: 'TalkBack PR Gate (shadow): unavailable',
-                summary: 'Could not read artifacts/release-readiness-shadow/pr-gate-check.json — ' + String(e),
-                text: '### Error\n\n' + String(e) + (runUrl ? '\n\n' + runUrl : ''),
-                details_url: runUrl || undefined,
-              };
-            }
-            // Force the shadow name regardless of what the composite action wrote
-            // (the action defaults check_name to the `check-name` input, but a
-            // bad write or older action revision shouldn't collide with the
-            // legacy required check).
-            payload.check_name = 'TalkBack PR Gate (shadow)';
-            const headSha = context.payload.pull_request?.head?.sha || context.sha;
-            const checkName = payload.check_name;
-            if (runUrl && payload.summary && !payload.summary.includes(runUrl)) {
-              payload.summary = (payload.summary || '') + '\n\n**Workflow run / artifacts:** ' + runUrl;
-            }
-            const { data: listed } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: headSha,
-              check_name: checkName,
-            });
-            const runs = (listed.check_runs || []).slice().sort((a, b) => b.id - a.id);
-            const output = {
-              title: payload.title,
-              summary: payload.summary || '',
-              text: payload.text || '',
-            };
-            const common = {
-              status: 'completed',
-              // Shadow check is informational; map any non-success to `neutral`
-              // so it never blocks a merge while branch protection still points
-              // at the legacy required check.
-              conclusion: payload.check_conclusion === 'success' ? 'success' : 'neutral',
-              output,
-            };
-            if (payload.details_url) {
-              common.details_url = payload.details_url;
-            }
-            if (runs.length > 0) {
-              await github.rest.checks.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                check_run_id: runs[0].id,
-                ...common,
-              });
-            } else {
-              await github.rest.checks.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: headSha,
-                name: checkName,
-                ...common,
-              });
-            }

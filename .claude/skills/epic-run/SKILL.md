@@ -171,7 +171,7 @@ If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable
 
 ## Final Gate (how to read it)
 
-**Source of truth:** `pr-gate-summary.json` written by `scripts/pr_gate.py` in the **`release-readiness`** GitHub Actions workflow (unified PR Risk + Release Readiness). Read the field **`final_gate.status`**.
+**Source of truth:** `pr-gate-summary.json` written by `release-readiness-combine` (release-readiness-core CLI) in the **`release-readiness`** GitHub Actions workflow (unified PR Risk + Release Readiness). Read the field **`final_gate.status`**.
 
 **How to obtain it for the open PR (in order of preference):**
 
@@ -187,7 +187,7 @@ If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable
 | **`BLOCK`** | **HALT** — agent does **not** auto-merge. |
 | Missing / parse error / timeout | **HALT** — do not merge. |
 
-**Note:** Final Gate already combines PR Risk and Release Readiness (`scripts/pr_gate.py`). There is **no** separate epic step to re-read `ops/bundles/report.json` after merge if Final Gate was **PASS** before merge.
+**Note:** Final Gate already combines PR Risk and Release Readiness (`release-readiness-combine`). There is **no** separate epic step to re-read `ops/bundles/report.json` after merge if Final Gate was **PASS** before merge.
 
 **Human override:** The **user** may still **squash-merge** the PR themselves after a **WARN** (or otherwise accept risk and merge despite gate policy). The agent **must not** do that merge during epic HALT; the user does it in GitHub. Afterward, **`continue epic`** must **reconcile** close-out—see **User override: manual squash merge** below—not re-attempt `merge_pull_request` for that PR.
 

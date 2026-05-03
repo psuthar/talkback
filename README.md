@@ -55,7 +55,7 @@ This moves CI/CD from:
 - **Reducers:** signals that *lower* risk (e.g. validation notes in commits, unit vs E2E test evidence for sensitive areas)
 - **Required actions before merge:** explicit checklist items, separate from optional mitigations
 - **Automatic PR comment:** every PR receives a risk summary comment (🟢/🟡/🔴 result, score, top signals); the comment updates on new commits — no artifact inspection needed
-- CLI: `go run ./cmd/prrisk --repo-root . --base-ref <ref> --output-dir artifacts/release-readiness`
+- CLI: `release-readiness-pr-risk --repo-root . --base-ref <ref> --output-dir artifacts/release-readiness --config ops/release-readiness/pr-risk-config.yaml` (install via `pip install "$(scripts/release_readiness_core_pin.sh spec)"`).
 - Artifacts: `pr_risk.json` / `pr_risk.md`
 
 Full pipeline details: [`ops/release-readiness/README.md`](ops/release-readiness/README.md).
