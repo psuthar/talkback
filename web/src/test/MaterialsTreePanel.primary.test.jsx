@@ -176,13 +176,104 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 		expect(screen.queryByTestId('primary-badge')).toBeNull()
 	})
 
-	it('does not render a primary badge when canManage is false', () => {
+})
+
+// SCRUM-293: participants (canManage=false) should still see the Primary
+// badge as a read-only status indicator on whichever row is the session
+// primary. They must NOT see the Make-primary button or the right-click
+// Clear menu — the badge is purely informational for them.
+describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility', () => {
+	const docMaterial = {
+		id: 'mat-1',
+		kind: 'document',
+		filename: 'spec.pdf',
+		content_type: 'application/pdf',
+		text_status: 'ready',
+	}
+	const presVideo = { id: 'vs-1', display_title: 'Lecture', transcript_status: 'ready' }
+
+	function sessionWithDoc(currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: [],
+			materials: [docMaterial],
+			links: [],
+			unread_material_ids: [],
+			primary_video: null,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	function sessionWithVideo(currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: [presVideo],
+			materials: [],
+			links: [],
+			unread_material_ids: [],
+			primary_video: presVideo,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	it('participant sees Primary badge on a document row when it is the session primary', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
 				canManage={false}
-				session={sessionWithPresentationVideo()}
+				onPrimaryChanged={undefined}
+				session={sessionWithDoc()}
+				currentPrimary={{ kind: 'document', id: 'mat-1' }}
+			/>,
+		)
+		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+		// No Make-primary button, no right-click menu interactivity.
+		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+	})
+
+	it('participant sees Primary badge on the video row when a video is the session primary', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				onPrimaryChanged={undefined}
+				session={sessionWithVideo()}
 				currentPrimary={{ kind: 'video', id: 'fa-7' }}
+			/>,
+		)
+		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+	})
+
+	it('participant primary badge is non-interactive (no tabIndex, right-click is a no-op)', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				onPrimaryChanged={undefined}
+				session={sessionWithDoc()}
+				currentPrimary={{ kind: 'document', id: 'mat-1' }}
+			/>,
+		)
+		const badge = screen.getByTestId('primary-badge')
+		expect(badge.getAttribute('tabindex')).toBeNull()
+		fireEvent.contextMenu(badge)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('participant sees no badge on a row that is NOT the session primary', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				onPrimaryChanged={undefined}
+				session={sessionWithDoc()}
+				currentPrimary={{ kind: 'document', id: 'different-id' }}
 			/>,
 		)
 		expect(screen.queryByTestId('primary-badge')).toBeNull()

@@ -202,12 +202,15 @@ export function MaterialsTreePanel({
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, additional_videos = [], material_slides_ready = {}, material_slides_status = {} } = session
+  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, material_slides_ready = {}, material_slides_status = {} } = session
   const linkCount = Array.isArray(links) ? links.length : 0
   const newLinkCount = Math.max(0, linkCount - lastSeenLinkCount)
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
+  // SCRUM-293: keep `presentationVideo` for the primary-row identification
+  // logic in the merged Videos section (the primary row gets the
+  // `primary-video-item` testid). The legacy `additional_videos` /
+  // `otherVideos` split is no longer rendered as a separate section.
   const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
-  const otherVideos = (additional_videos?.length >= 0 ? additional_videos : (video_sources?.slice(1) ?? []))
   const sessionId = session?.session?.id || session?.id
 
   const isMaterialImage = (m) => {
@@ -388,74 +391,22 @@ export function MaterialsTreePanel({
             {deleteError}
           </div>
         )}
-        <TreeSection title="Presentation">
-          {!presentationVideo ? (
-            <div className={styles.emptyNote}>No presentation video selected yet.</div>
-          ) : editingTitleId === presentationVideo.id ? (
-            <VideoTitleEditRow
-              currentTitle={videoDisplayTitle(presentationVideo)}
-              saving={savingTitleId === presentationVideo.id}
-              value={editingTitleValue}
-              onChange={setEditingTitleValue}
-              onSave={() => saveDisplayTitle(presentationVideo.id)}
-              onCancel={() => setEditingTitleId(null)}
-            />
-          ) : (
-            <>
-              <TreeItem
-                key={presentationVideo.id}
-                testId="primary-video-item"
-                icon={null}
-                title={videoDisplayTitle(presentationVideo)}
-                /* SCRUM-286: replace the static "Primary" meta string with the
-                   SetPrimaryButton badge + Clear control rendered below so
-                   video rows match the document/link row visual treatment.
-                   When the session primary isn't actually kind=video (e.g. a
-                   document is primary but a fallback video shows here), no
-                   badge appears. */
-                meta=""
-                selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(presentationVideo.id)}
-                onClick={() => {
-                  setSelectedVideo(presentationVideo)
-                  setVideoId(presentationVideo.id)
-                  setVideoPlayerKey(prev => prev + 1)
-                  onSelectVideo?.()
-                }}
-              />
-              {canManage && onPrimaryChanged && sessionId && currentPrimary?.kind === 'video' && currentPrimary?.id && (
-                <span style={{ paddingLeft: 8 }}>
-                  <SetPrimaryButton
-                    apiBaseUrl={apiBaseUrl}
-                    sessionId={sessionId}
-                    kind="video"
-                    id={currentPrimary.id}
-                    isCurrentPrimary={true}
-                    onSuccess={onPrimaryChanged}
-                    itemLabel={videoDisplayTitle(presentationVideo)}
-                  />
-                </span>
-              )}
-              {canManage && (
-                <button
-                  data-testid="edit-video-title-btn"
-                  type="button"
-                  onClick={() => { setEditingTitleId(presentationVideo.id); setEditingTitleValue(presentationVideo.display_title || '') }}
-                  style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
-                >
-                  Edit title
-                </button>
-              )}
-            </>
-          )}
-        </TreeSection>
-
-        {otherVideos.length > 0 && (
-          <TreeSection title="Additional Videos">
-            {otherVideos.map((v) => (
-              (() => {
-                const materialId = videoMaterialId(v)
-                const videoSelectable = !isProcessingStatus(v?.transcript_status)
-                return editingTitleId === v.id ? (
+        {/* SCRUM-293: single "Videos" section. The split between Presentation
+            and Additional Videos was meaningful when the primary video was
+            hardcoded to the first upload; now any video can be primary and
+            the Primary badge marks which one. The presentation-video testid
+            is preserved on whichever row IS currently primary so the
+            material-viewers e2e (`getByTestId('primary-video-item')`) keeps
+            passing without an e2e change. */}
+        {video_sources.length > 0 && (
+          <TreeSection title="Videos">
+            {video_sources.map((v) => {
+              const materialId = videoMaterialId(v)
+              const videoSelectable = !isProcessingStatus(v?.transcript_status)
+              const isPrimaryRow = !!(presentationVideo && String(presentationVideo.id) === String(v.id))
+              const rowTestId = isPrimaryRow ? 'primary-video-item' : 'video-item'
+              if (editingTitleId === v.id) {
+                return (
                   <VideoTitleEditRow
                     key={v.id}
                     currentTitle={videoDisplayTitle(v)}
@@ -465,40 +416,60 @@ export function MaterialsTreePanel({
                     onSave={() => saveDisplayTitle(v.id)}
                     onCancel={() => setEditingTitleId(null)}
                   />
-                ) : (
-                  <div key={v.id}>
-                    <TreeItem
-                      testId="video-item"
-                      icon={null}
-                      title={videoDisplayTitle(v)}
-                      meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
-                      metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
-                      selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
-                      onClick={() => {
-                        setSelectedVideo(v)
-                        setVideoId(v.id)
-                        setVideoPlayerKey(prev => prev + 1)
-                        onSelectVideo?.()
-                      }}
-                      onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
-                      deleting={materialId ? deletingId === String(materialId) : false}
-                      disabled={!videoSelectable}
-                      buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
-                    />
-                    {canManage && (
-                      <button
-                        data-testid="edit-video-title-btn"
-                        type="button"
-                        onClick={() => { setEditingTitleId(v.id); setEditingTitleValue(v.display_title || '') }}
-                        style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
-                      >
-                        Edit title
-                      </button>
-                    )}
-                  </div>
                 )
-              })()
-            ))}
+              }
+              return (
+                <div key={v.id}>
+                  <TreeItem
+                    testId={rowTestId}
+                    icon={null}
+                    title={videoDisplayTitle(v)}
+                    meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
+                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
+                    selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
+                    onClick={() => {
+                      setSelectedVideo(v)
+                      setVideoId(v.id)
+                      setVideoPlayerKey(prev => prev + 1)
+                      onSelectVideo?.()
+                    }}
+                    onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
+                    deleting={materialId ? deletingId === String(materialId) : false}
+                    disabled={!videoSelectable}
+                    buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
+                  />
+                  {/* SCRUM-293: Primary badge for ALL roles when the row is
+                      currently primary (read-only for participants,
+                      interactive for creators). Make-primary on non-primary
+                      videos is still deferred — VideoSource doesn't expose
+                      its file_artifact id, so PATCH primary kind=video has
+                      no id to send. */}
+                  {sessionId && isPrimaryRow && currentPrimary?.kind === 'video' && currentPrimary?.id && (
+                    <div style={{ padding: '0 8px 4px 24px' }}>
+                      <SetPrimaryButton
+                        apiBaseUrl={apiBaseUrl}
+                        sessionId={sessionId}
+                        kind="video"
+                        id={currentPrimary.id}
+                        isCurrentPrimary={true}
+                        onSuccess={canManage ? onPrimaryChanged : undefined}
+                        itemLabel={videoDisplayTitle(v)}
+                      />
+                    </div>
+                  )}
+                  {canManage && (
+                    <button
+                      data-testid="edit-video-title-btn"
+                      type="button"
+                      onClick={() => { setEditingTitleId(v.id); setEditingTitleValue(v.display_title || '') }}
+                      style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
+                    >
+                      Edit title
+                    </button>
+                  )}
+                </div>
+              )
+            })}
           </TreeSection>
         )}
 
@@ -568,7 +539,10 @@ export function MaterialsTreePanel({
                         : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
                       : undefined}
                   />
-                  {canManage && onPrimaryChanged && sessionId && viewable && (
+                  {/* SCRUM-293: render the badge for ALL roles when the row is
+                      primary (read-only for participants, interactive for
+                      creators). Make-primary stays creator-only. */}
+                  {sessionId && (isCurrentPrimary || (canManage && onPrimaryChanged && viewable)) && (
                     <div style={{ padding: '0 8px 4px 24px' }}>
                       <SetPrimaryButton
                         apiBaseUrl={apiBaseUrl}
@@ -576,7 +550,7 @@ export function MaterialsTreePanel({
                         kind="document"
                         id={m.id}
                         isCurrentPrimary={isCurrentPrimary}
-                        onSuccess={onPrimaryChanged}
+                        onSuccess={canManage ? onPrimaryChanged : undefined}
                       />
                     </div>
                   )}
@@ -630,7 +604,8 @@ export function MaterialsTreePanel({
                     disabled={!viewable}
                     buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
                   />
-                  {canManage && onPrimaryChanged && sessionId && viewable && (
+                  {/* SCRUM-293: badge visible to all roles; Make-primary creator-only. */}
+                  {sessionId && (isCurrentPrimary || (canManage && onPrimaryChanged && viewable)) && (
                     <div style={{ padding: '0 8px 4px 24px' }}>
                       <SetPrimaryButton
                         apiBaseUrl={apiBaseUrl}
@@ -638,7 +613,7 @@ export function MaterialsTreePanel({
                         kind="document"
                         id={m.id}
                         isCurrentPrimary={isCurrentPrimary}
-                        onSuccess={onPrimaryChanged}
+                        onSuccess={canManage ? onPrimaryChanged : undefined}
                         itemLabel={m.filename}
                       />
                     </div>
@@ -702,8 +677,9 @@ export function MaterialsTreePanel({
                       )}
                     </span>
                   </button>
-                  {/* SCRUM-276: extend the SCRUM-275 primary badge / button to link rows. */}
-                  {canManage && onPrimaryChanged && sessionId && linkSelectable && (
+                  {/* SCRUM-276 link primary badge / button. SCRUM-293: badge
+                      visible to all roles; Make-primary creator-only. */}
+                  {sessionId && (isLinkPrimary || (canManage && onPrimaryChanged && linkSelectable)) && (
                     <div style={{ padding: '0 8px 4px 24px' }}>
                       <SetPrimaryButton
                         apiBaseUrl={apiBaseUrl}
@@ -711,7 +687,7 @@ export function MaterialsTreePanel({
                         kind="link"
                         id={link.id}
                         isCurrentPrimary={isLinkPrimary}
-                        onSuccess={onPrimaryChanged}
+                        onSuccess={canManage ? onPrimaryChanged : undefined}
                       />
                     </div>
                   )}
@@ -721,7 +697,7 @@ export function MaterialsTreePanel({
           </TreeSection>
         )}
 
-        {!presentationVideo && otherVideos.length === 0 && documentMaterials.length === 0 && imageMaterials.length === 0 && (!Array.isArray(links) || links.length === 0) && (hideTranscriptSection || video_sources.filter(v => v.transcript_text).length === 0) && (
+        {video_sources.length === 0 && documentMaterials.length === 0 && imageMaterials.length === 0 && (!Array.isArray(links) || links.length === 0) && (hideTranscriptSection || video_sources.filter(v => v.transcript_text).length === 0) && (
           <div className={styles.emptyNote} data-testid="no-materials-message">No materials yet — creator can add files.</div>
         )}
       </div>
