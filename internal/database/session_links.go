@@ -73,6 +73,49 @@ func (db *DB) GetSessionLinkByID(ctx context.Context, id uuid.UUID) (*models.Ses
 	return &link, nil
 }
 
+// GetSessionLinksByIDs returns the links whose ids are in the provided slice
+// (single query, no extracted_text). Used by ListSessions to resolve session
+// primary descriptors in O(1) extra queries regardless of page size. Empty
+// input → empty map; missing ids are silently absent.
+func (db *DB) GetSessionLinksByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*models.SessionLink, error) {
+	out := make(map[uuid.UUID]*models.SessionLink, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	query := `
+		SELECT id, session_id, url, title, status, error_message, created_at, updated_at
+		FROM session_links WHERE id = ANY($1)
+	`
+	rows, err := db.Pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("query session links by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var l models.SessionLink
+		var title, errMsg *string
+		if err := rows.Scan(
+			&l.ID,
+			&l.SessionID,
+			&l.URL,
+			&title,
+			&l.Status,
+			&errMsg,
+			&l.CreatedAt,
+			&l.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan session link: %w", err)
+		}
+		l.Title = title
+		l.ErrorMessage = errMsg
+		out[l.ID] = &l
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session links by ids: %w", err)
+	}
+	return out, nil
+}
+
 // GetSessionLinksBySessionID returns all links for the session (for API list). Does not include extracted_text to keep payload small.
 func (db *DB) GetSessionLinksBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.SessionLink, error) {
 	query := `
