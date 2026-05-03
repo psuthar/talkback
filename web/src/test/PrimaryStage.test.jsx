@@ -75,6 +75,63 @@ describe('PrimaryStage (SCRUM-273)', () => {
     expect(btn).toBeEnabled()
   })
 
+  it('falls back to DocumentViewer when selectedDocument is null but primary.kind=document (SCRUM-284)', () => {
+    render(
+      <PrimaryStage
+        selectedDocument={null}
+        apiBaseUrl=""
+        sessionId="s1"
+        currentSession={{
+          session: {},
+          video_sources: [],
+          materials: [
+            { id: 'mat-42', filename: 'spec.pdf', text_status: 'ready' },
+          ],
+          primary: { kind: 'document', id: 'mat-42' },
+        }}
+      />,
+    )
+    expect(screen.getByTestId('document-viewer')).toBeInTheDocument()
+    expect(screen.getByTestId('document-viewer').textContent).toBe('doc:mat-42')
+    expect(screen.queryByTestId('video-player-container')).toBeNull()
+  })
+
+  it('falls back to DocumentViewer (link iframe shape) when selectedDocument is null but primary.kind=link (SCRUM-284)', () => {
+    render(
+      <PrimaryStage
+        selectedDocument={null}
+        apiBaseUrl=""
+        sessionId="s1"
+        currentSession={{
+          session: {},
+          video_sources: [],
+          links: [
+            { id: 'link-7', url: 'https://example.com/spec', title: 'Reference link' },
+          ],
+          primary: { kind: 'link', id: 'link-7' },
+        }}
+      />,
+    )
+    expect(screen.getByTestId('document-viewer')).toBeInTheDocument()
+    expect(screen.getByTestId('document-viewer').textContent).toBe('doc:link-link-7')
+    expect(screen.queryByTestId('video-player-container')).toBeNull()
+  })
+
+  it('returns null when primary.kind=document but the material is missing (resolver collapse)', () => {
+    const { container } = render(
+      <PrimaryStage
+        selectedDocument={null}
+        currentSession={{
+          session: {},
+          video_sources: [],
+          materials: [],
+          primary: { kind: 'document', id: 'mat-missing' },
+        }}
+      />,
+    )
+    expect(container.firstChild).toBeNull()
+  })
+
   it('renders the transcript header when hasPrimaryR2Video is true', () => {
     render(
       <PrimaryStage
