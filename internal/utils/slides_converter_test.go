@@ -9,6 +9,38 @@ import (
 	"testing"
 )
 
+// TestPdftoppmCmd_HonorsEnvOverride asserts pdftoppmCmd() returns the
+// TALKBACK_PDFTOPPM_CMD value verbatim when set, without consulting PATH.
+// SCRUM-287: this is the new override knob that lets ops point at a
+// non-PATH poppler-utils install (e.g. /opt/homebrew/bin/pdftoppm) without
+// recompiling.
+func TestPdftoppmCmd_HonorsEnvOverride(t *testing.T) {
+	t.Setenv("TALKBACK_PDFTOPPM_CMD", "/opt/custom/bin/pdftoppm")
+	got, err := pdftoppmCmd()
+	if err != nil {
+		t.Fatalf("pdftoppmCmd: %v", err)
+	}
+	if got != "/opt/custom/bin/pdftoppm" {
+		t.Fatalf("expected env override; got %q", got)
+	}
+}
+
+// TestPdftoppmCmd_StructuredErrorWhenMissing asserts pdftoppmCmd() returns a
+// structured error when the env override is empty and PATH lookup fails.
+// The error message must mention TALKBACK_PDFTOPPM_CMD so an operator
+// reading the log knows how to fix it.
+func TestPdftoppmCmd_StructuredErrorWhenMissing(t *testing.T) {
+	t.Setenv("TALKBACK_PDFTOPPM_CMD", "")
+	t.Setenv("PATH", "/nonexistent")
+	_, err := pdftoppmCmd()
+	if err == nil {
+		t.Fatal("expected error when pdftoppm is missing; got nil")
+	}
+	if !strings.Contains(err.Error(), "TALKBACK_PDFTOPPM_CMD") {
+		t.Fatalf("error message must mention TALKBACK_PDFTOPPM_CMD; got %q", err.Error())
+	}
+}
+
 // TestSofficeAvailable verifies that the LibreOffice soffice binary is available in the environment
 // where tests are running. If soffice is not on PATH (e.g. local dev on Windows without LibreOffice),
 // the test is skipped rather than failed.

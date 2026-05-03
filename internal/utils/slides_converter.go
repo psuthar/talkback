@@ -48,6 +48,31 @@ func sofficeCmd() (string, error) {
 	return path, nil
 }
 
+// pdftoppmCmd returns the executable to use for PDF→PNG rasterisation in
+// local mode: TALKBACK_PDFTOPPM_CMD if set, otherwise PATH-resolved
+// "pdftoppm". Symmetric with sofficeCmd so ops can swap the binary path
+// (e.g. point at a homebrew-installed poppler in non-PATH locations) without
+// recompiling.
+//
+// Docker mode bypasses this helper entirely — slide conversion runs inside
+// the talkback-api container via `docker run --entrypoint pdftoppm`, gated
+// on TALKBACK_SOFFICE_CMD.
+//
+// SCRUM-287: introduced as part of the .pptx ingest hardening; the prior
+// code invoked bare "pdftoppm" with no override + no startup health check,
+// so a missing/relocated poppler-utils install caused slide derivation to
+// fail in a background goroutine with no user-visible signal.
+func pdftoppmCmd() (string, error) {
+	if cmd := os.Getenv("TALKBACK_PDFTOPPM_CMD"); cmd != "" {
+		return cmd, nil
+	}
+	path, err := exec.LookPath("pdftoppm")
+	if err != nil {
+		return "", fmt.Errorf("pdftoppm not found on PATH (install poppler-utils or set TALKBACK_PDFTOPPM_CMD): %w", err)
+	}
+	return path, nil
+}
+
 // unoconvCmd returns the unoconv executable path: TALKBACK_UNOCONV_CMD if set, otherwise searches PATH.
 func unoconvCmd() (string, error) {
 	if cmd := os.Getenv("TALKBACK_UNOCONV_CMD"); cmd != "" {
@@ -296,7 +321,12 @@ func pdfPageCountDocker(ctx context.Context, containerPDF, root string) int {
 // runPdfToPpmOnePage runs pdftoppm for a single page (pageNum, 1-based). Used by the parallel worker.
 func runPdfToPpmOnePage(ctx context.Context, pdfPath, outPrefix, dpiStr string, pageNum int) error {
 	pageStr := strconv.Itoa(pageNum)
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, "-f", pageStr, "-l", pageStr, pdfPath, outPrefix)
+	cmdPath, err := pdftoppmCmd()
+	if err != nil {
+		log.Printf("[WARN] slides: pdftoppm unavailable: %v", err)
+		return err
+	}
+	cmd := exec.CommandContext(ctx, cmdPath, "-png", "-r", dpiStr, "-f", pageStr, "-l", pageStr, pdfPath, outPrefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pdftoppm page %d failed: %w; output=%s", pageNum, err, string(out))
 	}
@@ -361,7 +391,12 @@ func runPdfToPpm(pdfPath, outPrefix string) error {
 		return runPdfToPpmParallel(ctx, pdfPath, outPrefix, dpiStr, pageCount, workers)
 	}
 	// Fall back to single-process conversion (unknown page count or single page).
-	cmd := exec.CommandContext(ctx, "pdftoppm", "-png", "-r", dpiStr, pdfPath, outPrefix)
+	cmdPath, err := pdftoppmCmd()
+	if err != nil {
+		log.Printf("[WARN] slides: pdftoppm unavailable: %v", err)
+		return err
+	}
+	cmd := exec.CommandContext(ctx, cmdPath, "-png", "-r", dpiStr, pdfPath, outPrefix)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pdftoppm failed: %w; output=%s", err, string(out))
 	}
