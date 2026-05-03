@@ -3,19 +3,31 @@ import { VideoPlayer } from '../VideoPlayer'
 import { DocumentViewer } from './DocumentViewer'
 
 /**
- * PrimaryStage — center-column primary content renderer (SCRUM-273).
+ * PrimaryStage — center-column primary content renderer (SCRUM-273, extended
+ * for all three kinds in SCRUM-284).
  *
- * Encapsulates the document-vs-video conditional that previously lived inline
- * in CreatorMode.jsx so the same view can be reused by ParticipantMode in
- * SCRUM-274. This refactor is intentionally behavior-neutral: the JSX
- * branches, prop wiring, inline styles, and data-testid hooks match the
- * pre-refactor CreatorMode block exactly.
+ * Render priority (the first match wins):
+ *   1. `selectedDocument` — explicit selection from the parent (set by the
+ *      auto-select helper or a manual click on the materials tree). Rendered
+ *      via DocumentViewer regardless of whether the underlying entity is a
+ *      material or a link, since DocumentViewer handles both.
+ *   2. `currentSession.primary.kind === 'document'` — fall back to the
+ *      session's resolved primary descriptor and look the material up in
+ *      currentSession.materials. This guards against the case where the
+ *      parent cleared selection but the session still has a primary set.
+ *   3. `currentSession.primary.kind === 'link'` — same idea, looking up
+ *      currentSession.links. The synthesised doc shape matches what
+ *      ParticipantMode's handleSelectLink produces (type='link', url, title,
+ *      id) so DocumentViewer renders the iframe path.
+ *   4. Otherwise — the legacy video-stage: render the VideoPlayer with
+ *      ingest-pending / failed copy when the primary artifact isn't ready.
  *
- * The ingest-pending / failed copy and Retry-ingest button are still
- * controlled by CreatorMode-level state (retryProcessing, processingRetrying);
- * pass them through unchanged to preserve existing behavior. ParticipantMode
- * does not yet wire those — SCRUM-274 will decide whether to surface a
- * recoverable Retry there or render a participant-friendly variant.
+ * The ingest-pending / failed copy and Retry-ingest button are creator-level
+ * concerns (retryProcessing, processingRetrying); pass them through to
+ * preserve existing behavior. ParticipantMode still owns its own
+ * transcript pane + VideoStartOverlay around the video case, so it does
+ * not consume PrimaryStage end-to-end — but it CAN reuse the doc/link
+ * fallback above by passing currentSession through.
  */
 export function PrimaryStage({
 	selectedDocument,
@@ -36,19 +48,51 @@ export function PrimaryStage({
 	retryProcessing,
 	processingRetrying,
 }) {
-	if (selectedDocument) {
-		return (
-			<div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px' }}>
-				<div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
-					<DocumentViewer
-						doc={selectedDocument}
-						apiBaseUrl={apiBaseUrl}
-						sessionId={sessionId}
-						slidesRefreshTrigger={sessionUpdatedVersion}
-					/>
-				</div>
+	const renderDoc = (doc) => (
+		<div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '12px' }}>
+			<div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+				<DocumentViewer
+					doc={doc}
+					apiBaseUrl={apiBaseUrl}
+					sessionId={sessionId}
+					slidesRefreshTrigger={sessionUpdatedVersion}
+				/>
 			</div>
-		)
+		</div>
+	)
+
+	if (selectedDocument) {
+		return renderDoc(selectedDocument)
+	}
+
+	// SCRUM-284: fall back to the session's resolved primary descriptor when
+	// the parent didn't pre-select. Document kind looks up the material;
+	// link kind synthesizes the doc shape DocumentViewer expects for an
+	// iframe render. Returns null silently when the descriptor points at a
+	// row that's been removed (resolver collapse) so the parent's empty-state
+	// UX still wins.
+	const primaryKind = currentSession?.primary?.kind
+	const primaryId = currentSession?.primary?.id
+	if (primaryKind === 'document' && primaryId) {
+		const materials = Array.isArray(currentSession?.materials) ? currentSession.materials : []
+		const material = materials.find((m) => m && String(m.id) === String(primaryId))
+		if (material) {
+			return renderDoc(material)
+		}
+	}
+	if (primaryKind === 'link' && primaryId) {
+		const links = Array.isArray(currentSession?.links)
+			? currentSession.links
+			: (Array.isArray(currentSession?.session?.links) ? currentSession.session.links : [])
+		const link = links.find((l) => l && String(l.id) === String(primaryId))
+		if (link?.url) {
+			return renderDoc({
+				type: 'link',
+				id: `link-${link.id}`,
+				url: link.url,
+				title: link.title || link.url,
+			})
+		}
 	}
 
 	const hasVideoSources = currentSession?.video_sources && currentSession.video_sources.length > 0
