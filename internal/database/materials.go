@@ -161,6 +161,61 @@ func (db *DB) GetMaterialsByArtifactID(ctx context.Context, artifactID uuid.UUID
 	return materials, nil
 }
 
+// GetMaterialsByIDs returns the materials whose ids are in the provided slice
+// (single query, soft-deleted tombstones included). Used by ListSessions to
+// resolve session primary descriptors in O(1) extra queries regardless of
+// page size. Empty input → empty map; missing ids are silently absent from
+// the result so callers must check before dereferencing.
+func (db *DB) GetMaterialsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*models.Material, error) {
+	out := make(map[uuid.UUID]*models.Material, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	query := `
+		SELECT id, artifact_id, session_id, kind, filename, content_type, storage_url, COALESCE(storage_provider, 'local'), storage_key, size_bytes, text_status, extracted_text, title, error_message, created_at, deleted_at
+		FROM materials
+		WHERE id = ANY($1)
+	`
+	rows, err := db.Pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("query materials by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		m := &models.Material{}
+		var storageKeyNull sql.NullString
+		if err := rows.Scan(
+			&m.ID,
+			&m.ArtifactID,
+			&m.SessionID,
+			&m.Kind,
+			&m.Filename,
+			&m.ContentType,
+			&m.StorageURL,
+			&m.StorageProvider,
+			&storageKeyNull,
+			&m.SizeBytes,
+			&m.TextStatus,
+			&m.ExtractedText,
+			&m.Title,
+			&m.ErrorMessage,
+			&m.CreatedAt,
+			&m.DeletedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan material: %w", err)
+		}
+		m.StorageKey = storageKeyNull.String
+		if m.StorageProvider == "" {
+			m.StorageProvider = "local"
+		}
+		out[m.ID] = m
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate materials by ids: %w", err)
+	}
+	return out, nil
+}
+
 // GetMaterialsBySessionID retrieves all materials for a session (including soft-deleted tombstones).
 func (db *DB) GetMaterialsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.Material, error) {
 	query := `

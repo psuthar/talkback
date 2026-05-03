@@ -97,9 +97,32 @@ func (h *Handlers) ListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// SCRUM-280: resolve and enrich the primary descriptor for each row in the
+	// page using batched fetches (one per kind that appears in the page).
+	// Existing raw primary_* columns on Session stay; the new `primary` block
+	// is additive so this is wire-shape backward compatible.
+	sessions := make([]*models.Session, len(out))
+	for i := range out {
+		sessions[i] = out[i].Session
+	}
+	primaries := h.resolveAndEnrichSessionPrimaryForList(ctx, sessions)
+	enriched := make([]sessionListRowWithPrimary, len(out))
+	for i, row := range out {
+		enriched[i] = sessionListRowWithPrimary{SessionListRow: row, Primary: primaries[i]}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(out)
+	json.NewEncoder(w).Encode(enriched)
+}
+
+// sessionListRowWithPrimary embeds the existing list row and adds the
+// resolved primary descriptor. JSON encodes flat: every prior field stays at
+// the top level (embedding), with the new `primary` block appended when
+// present.
+type sessionListRowWithPrimary struct {
+	database.SessionListRow
+	Primary *SessionPrimaryDescriptor `json:"primary,omitempty"`
 }
 
 // CreateSession creates a new session (RequireAuth; requires admin or creator role).

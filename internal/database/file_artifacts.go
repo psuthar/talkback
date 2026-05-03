@@ -87,6 +87,68 @@ func (db *DB) GetFileArtifactByID(ctx context.Context, id uuid.UUID) (*models.Fi
 	return fa, nil
 }
 
+// GetFileArtifactsByIDs returns the file_artifacts whose ids are in the
+// provided slice (single query). Used by ListSessions to resolve session
+// primary descriptors (kind=video) in O(1) extra queries regardless of
+// page size. Empty input → empty map; missing ids are silently absent.
+func (db *DB) GetFileArtifactsByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*models.FileArtifact, error) {
+	out := make(map[uuid.UUID]*models.FileArtifact, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	query := `
+		SELECT id, session_id, owner_user_id, kind, filename, content_type, size_bytes, sha256,
+			storage_provider, storage_bucket, storage_key, status, failure_reason, metadata_json, created_at, updated_at
+		FROM file_artifacts
+		WHERE id = ANY($1)
+	`
+	rows, err := db.Pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("query file_artifacts by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		fa := &models.FileArtifact{}
+		var sessionID, ownerUserID *uuid.UUID
+		var filename, sha256, failureReason *string
+		var sizeBytes *int64
+		var kindStr, statusStr string
+		if err := rows.Scan(
+			&fa.ID,
+			&sessionID,
+			&ownerUserID,
+			&kindStr,
+			&filename,
+			&fa.ContentType,
+			&sizeBytes,
+			&sha256,
+			&fa.StorageProvider,
+			&fa.StorageBucket,
+			&fa.StorageKey,
+			&statusStr,
+			&failureReason,
+			&fa.MetadataJSON,
+			&fa.CreatedAt,
+			&fa.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan file_artifact: %w", err)
+		}
+		fa.Kind = models.FileArtifactKind(kindStr)
+		fa.Status = models.FileArtifactStatus(statusStr)
+		fa.SessionID = sessionID
+		fa.OwnerUserID = ownerUserID
+		fa.Filename = filename
+		fa.Sha256 = sha256
+		fa.SizeBytes = sizeBytes
+		fa.FailureReason = failureReason
+		out[fa.ID] = fa
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate file_artifacts by ids: %w", err)
+	}
+	return out, nil
+}
+
 // UpdateFileArtifactToReady sets status=ready and size_bytes (and optionally content_type from head).
 func (db *DB) UpdateFileArtifactToReady(ctx context.Context, id uuid.UUID, sizeBytes int64, contentType string) error {
 	return db.UpdateFileArtifactToReadyWithMetadata(ctx, id, sizeBytes, contentType, nil)

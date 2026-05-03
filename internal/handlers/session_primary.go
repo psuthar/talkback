@@ -146,6 +146,72 @@ func enrichSessionPrimaryFromFileArtifact(p *SessionPrimaryDescriptor, fa *model
 	return p
 }
 
+// resolveAndEnrichSessionPrimaryForList builds resolved+enriched primary
+// descriptors for a page of session list rows in O(1) extra queries: one
+// batched fetch per kind that appears in the page. Returns a slice of
+// descriptors aligned by index with the input slice (entries are nil when
+// the matching session has no primary).
+//
+// SCRUM-280: surfaces the same {kind, id, title?, status?} block the GET
+// handler produces, so clients can render "Primary: <title>" in session
+// listings without a per-row fetch.
+func (h *Handlers) resolveAndEnrichSessionPrimaryForList(ctx context.Context, sessions []*models.Session) []*SessionPrimaryDescriptor {
+	out := make([]*SessionPrimaryDescriptor, len(sessions))
+	if len(sessions) == 0 {
+		return out
+	}
+	// First pass: resolve kind+id without DB calls and bucket the pointer ids
+	// per kind for batched lookup. resolveSessionPrimary handles the legacy
+	// kind=NULL → video fallback and the "kind set but pointer NULL" repair
+	// case (returns nil).
+	resolved := make([]*SessionPrimaryDescriptor, len(sessions))
+	matIDs := make([]uuid.UUID, 0)
+	linkIDs := make([]uuid.UUID, 0)
+	faIDs := make([]uuid.UUID, 0)
+	for i, s := range sessions {
+		p := resolveSessionPrimary(s)
+		resolved[i] = p
+		if p == nil {
+			continue
+		}
+		switch p.Kind {
+		case "document":
+			matIDs = append(matIDs, p.ID)
+		case "link":
+			linkIDs = append(linkIDs, p.ID)
+		case "video":
+			faIDs = append(faIDs, p.ID)
+		}
+	}
+	// Three batched fetches — one per kind that actually appears in the page.
+	// Errors degrade to title/status nil rather than failing the whole list:
+	// the descriptor's kind+id are still the useful payload for clients.
+	matMap, _ := h.DB.GetMaterialsByIDs(ctx, matIDs)
+	linkMap, _ := h.DB.GetSessionLinksByIDs(ctx, linkIDs)
+	faMap, _ := h.DB.GetFileArtifactsByIDs(ctx, faIDs)
+	for i, p := range resolved {
+		if p == nil {
+			continue
+		}
+		switch p.Kind {
+		case "document":
+			if m, ok := matMap[p.ID]; ok {
+				p = enrichSessionPrimaryFromMaterials(p, []*models.Material{m})
+			}
+		case "link":
+			if l, ok := linkMap[p.ID]; ok {
+				p = enrichSessionPrimaryFromLinks(p, []*models.SessionLink{l})
+			}
+		case "video":
+			if fa, ok := faMap[p.ID]; ok {
+				p = enrichSessionPrimaryFromFileArtifact(p, fa)
+			}
+		}
+		out[i] = p
+	}
+	return out
+}
+
 // resolveAndEnrichSessionPrimaryForResponse returns the fully-enriched primary
 // descriptor for a session by fetching only the rows needed for the resolved
 // kind. Use this in handler paths that don't already load materials/links/the
