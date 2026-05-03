@@ -188,10 +188,25 @@ func (db *DB) CountSessionLinksBySessionID(ctx context.Context, sessionID uuid.U
 }
 
 // DeleteSessionLink deletes a link by id. Caller should delete chunks with source_type='link' and source_id=id, then reindex if desired.
+//
+// SCRUM-282: if the link is the session's primary, clear
+// primary_content_kind + primary_session_link_id in the same transaction so
+// the session can't end up with kind='link' and the pointer NULL — the
+// silent-empty state the FK SET-NULL alone would leave behind.
 func (db *DB) DeleteSessionLink(ctx context.Context, id uuid.UUID) error {
-	_, err := db.Pool.Exec(ctx, `DELETE FROM session_links WHERE id = $1`, id)
+	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions
+		SET primary_content_kind = NULL, primary_session_link_id = NULL
+		WHERE primary_content_kind = 'link' AND primary_session_link_id = $1`, id); err != nil {
+		return fmt.Errorf("clear session primary on link delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM session_links WHERE id = $1`, id); err != nil {
 		return fmt.Errorf("delete session link: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }

@@ -431,19 +431,51 @@ func (db *DB) UpdateMaterialTextStatusWithError(ctx context.Context, materialID 
 }
 
 // SoftDeleteMaterial marks a material as deleted (tombstone): sets deleted_at and clears storage_key. File must be removed from R2/local by caller first.
+//
+// SCRUM-282: if the material was the session's primary, clear
+// primary_content_kind + primary_material_id in the same transaction so the
+// resolver doesn't surface a tombstoned row as primary on the next GET. The
+// FK is ON DELETE SET NULL (migration 000044) so the pointer would clear
+// automatically on a hard delete, but kind would linger — soft delete needs
+// the same treatment manually because deleted_at doesn't trigger the FK.
 func (db *DB) SoftDeleteMaterial(ctx context.Context, materialID uuid.UUID) error {
-	_, err := db.Pool.Exec(ctx, `UPDATE materials SET deleted_at = now(), storage_key = NULL WHERE id = $1`, materialID)
+	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE materials SET deleted_at = now(), storage_key = NULL WHERE id = $1`, materialID); err != nil {
 		return fmt.Errorf("soft delete material: %w", err)
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions
+		SET primary_content_kind = NULL, primary_material_id = NULL
+		WHERE primary_content_kind = 'document' AND primary_material_id = $1`, materialID); err != nil {
+		return fmt.Errorf("clear session primary on soft delete: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // DeleteMaterial deletes a material by ID. Caller should delete session chunks for this material first (or use DeleteMaterialAndChunks).
+//
+// SCRUM-282: clear primary_content_kind on any session whose primary pointed
+// at this material before the FK SET-NULL fires; otherwise kind would stay
+// 'document' with primary_material_id NULL — exactly the silent-empty state
+// the migration's NULL-safe resolver was supposed to avoid.
 func (db *DB) DeleteMaterial(ctx context.Context, materialID uuid.UUID) error {
-	_, err := db.Pool.Exec(ctx, `DELETE FROM materials WHERE id = $1`, materialID)
+	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions
+		SET primary_content_kind = NULL, primary_material_id = NULL
+		WHERE primary_content_kind = 'document' AND primary_material_id = $1`, materialID); err != nil {
+		return fmt.Errorf("clear session primary on delete: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM materials WHERE id = $1`, materialID); err != nil {
 		return fmt.Errorf("delete material: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
