@@ -36,9 +36,12 @@ function makeSession(overrides = {}) {
 }
 
 describe('MaterialsTreePanel — empty section suppression', () => {
-  it('hides Additional Videos section when no additional videos', () => {
+  it('hides Videos section when no videos (SCRUM-293: single Videos section replaces Presentation/Additional Videos)', () => {
     render(<MaterialsTreePanel {...baseProps} session={makeSession()} />)
+    expect(screen.queryByText('Videos')).toBeNull()
+    // Legacy section names stay gone after the SCRUM-293 collapse.
     expect(screen.queryByText('Additional Videos')).toBeNull()
+    expect(screen.queryByText('Presentation')).toBeNull()
   })
 
   it('hides Documents section when no documents', () => {
@@ -77,12 +80,14 @@ describe('MaterialsTreePanel — empty section suppression', () => {
     expect(screen.getByText('Images')).toBeTruthy()
   })
 
-  it('shows Additional Videos section when additional videos exist', () => {
+  it('shows the single Videos section when video_sources exist (SCRUM-293)', () => {
     const session = makeSession({
-      additional_videos: [{ id: 'v2', stored_video_object_key: 'sessions/1/extra.mp4', transcript_status: 'ready' }],
+      video_sources: [{ id: 'v2', stored_video_object_key: 'sessions/1/extra.mp4', transcript_status: 'ready' }],
     })
     render(<MaterialsTreePanel {...baseProps} session={session} />)
-    expect(screen.getByText('Additional Videos')).toBeTruthy()
+    expect(screen.getByText('Videos')).toBeTruthy()
+    expect(screen.queryByText('Additional Videos')).toBeNull()
+    expect(screen.queryByText('Presentation')).toBeNull()
   })
 
   it('shows no-materials message when all sections are empty', () => {
