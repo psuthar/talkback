@@ -146,6 +146,53 @@ func enrichSessionPrimaryFromFileArtifact(p *SessionPrimaryDescriptor, fa *model
 	return p
 }
 
+// snapshotSessionPrimary returns the (kind, id) pair for the session's
+// current primary as the SCRUM-283 audit row stores it: kind is the
+// closed-set string (or empty for "no explicit primary"), id is the
+// matching pointer or nil. Used to capture the pre-PATCH state before
+// applySessionPrimaryUpdate overwrites it.
+func snapshotSessionPrimary(s *models.Session) (string, *uuid.UUID) {
+	if s == nil {
+		return "", nil
+	}
+	if s.PrimaryContentKind != nil {
+		switch *s.PrimaryContentKind {
+		case models.SessionPrimaryContentKindVideo:
+			return "video", s.PrimaryVideoArtifactID
+		case models.SessionPrimaryContentKindDocument:
+			return "document", s.PrimaryMaterialID
+		case models.SessionPrimaryContentKindLink:
+			return "link", s.PrimarySessionLinkID
+		}
+	}
+	if s.PrimaryVideoArtifactID != nil {
+		return "video", s.PrimaryVideoArtifactID
+	}
+	return "", nil
+}
+
+// parseRequestedPrimary mirrors snapshotSessionPrimary for the request body
+// shape. An empty kind ("") plus nil id represents "clear primary"; any
+// non-empty kind requires an id (parseSessionPrimaryRequest enforces this).
+func parseRequestedPrimary(in *SessionPrimaryUpdate) (string, *uuid.UUID) {
+	if in == nil || in.Kind == nil {
+		return "", nil
+	}
+	return *in.Kind, in.ID
+}
+
+// actorUserID extracts the audit row's actor pointer from the request user.
+// Nil when no user is in scope (shouldn't happen at this point in the
+// handler — the auth guard runs upstream — but defensive against callers
+// reusing the helper from a system path).
+func actorUserID(user *models.User) *uuid.UUID {
+	if user == nil {
+		return nil
+	}
+	id := user.ID
+	return &id
+}
+
 // resolveAndEnrichSessionPrimaryForList builds resolved+enriched primary
 // descriptors for a page of session list rows in O(1) extra queries: one
 // batched fetch per kind that appears in the page. Returns a slice of

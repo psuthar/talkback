@@ -416,6 +416,141 @@ func TestUpdateSessionPrimary_HandlerEndToEnd(t *testing.T) {
 	})
 }
 
+// TestUpdateSessionPrimary_AuditHistory_SCRUM283 verifies that every
+// successful PATCH primary writes one row to sessions_primary_history with
+// the correct before/after kind+id and actor; failed PATCHes write nothing.
+func TestUpdateSessionPrimary_AuditHistory_SCRUM283(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	creatorEmail := "history-creator@scrum283.test"
+	creatorUser := &models.User{
+		ID:          uuid.New(),
+		Email:       creatorEmail,
+		DisplayName: "History Creator",
+		Status:      "active",
+		GlobalRole:  "creator",
+	}
+	require.NoError(t, h.DB.CreateUser(ctx, creatorUser))
+
+	mkSession := func(title string) *models.Session {
+		s := &models.Session{
+			ID:        uuid.New(),
+			Title:     title,
+			CreatedBy: &creatorEmail,
+			Status:    models.SessionStatusOpen,
+		}
+		require.NoError(t, h.DB.CreateSession(ctx, s))
+		return s
+	}
+
+	doPatch := func(t *testing.T, sessionID uuid.UUID, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+sessionID.String(),
+			bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey, creatorUser))
+		w := httptest.NewRecorder()
+		h.UpdateSessionStatus(w, req)
+		return w
+	}
+
+	t.Run("set primary writes history row with prev=(none) new=(document)", func(t *testing.T) {
+		s := mkSession("history initial set")
+		artifact, err := h.DB.CreateArtifact(ctx, s.ID, "doc", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   s.ID,
+			Kind:        string(models.MaterialKindDocument),
+			Filename:    "x.pdf",
+			ContentType: "application/pdf",
+			StorageURL:  "r2://b/x.pdf",
+			TextStatus:  models.MaterialTextStatusReady,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+
+		body := `{"primary":{"kind":"document","id":"` + material.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		hist, err := h.DB.ListSessionPrimaryHistory(ctx, s.ID)
+		require.NoError(t, err)
+		require.Len(t, hist, 1, "exactly one audit row after a single set")
+		row := hist[0]
+		assert.Equal(t, s.ID, row.SessionID)
+		require.NotNil(t, row.ActorUserID)
+		assert.Equal(t, creatorUser.ID, *row.ActorUserID)
+		assert.Equal(t, "", row.PrevKind)
+		assert.Nil(t, row.PrevID)
+		assert.Equal(t, "document", row.NewKind)
+		require.NotNil(t, row.NewID)
+		assert.Equal(t, material.ID, *row.NewID)
+	})
+
+	t.Run("clear primary writes history row with prev=(document) new=(none)", func(t *testing.T) {
+		s := mkSession("history clear")
+		artifact, err := h.DB.CreateArtifact(ctx, s.ID, "doc", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   s.ID,
+			Kind:        string(models.MaterialKindDocument),
+			Filename:    "y.pdf",
+			ContentType: "application/pdf",
+			StorageURL:  "r2://b/y.pdf",
+			TextStatus:  models.MaterialTextStatusReady,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+		_, err = h.DB.Pool.Exec(ctx, `
+			UPDATE sessions SET primary_content_kind='document', primary_material_id=$1
+			WHERE id=$2`, material.ID, s.ID)
+		require.NoError(t, err)
+
+		body := `{"primary":{"kind":""}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		hist, err := h.DB.ListSessionPrimaryHistory(ctx, s.ID)
+		require.NoError(t, err)
+		require.Len(t, hist, 1)
+		row := hist[0]
+		assert.Equal(t, "document", row.PrevKind)
+		require.NotNil(t, row.PrevID)
+		assert.Equal(t, material.ID, *row.PrevID)
+		assert.Equal(t, "", row.NewKind)
+		assert.Nil(t, row.NewID)
+	})
+
+	t.Run("rejected PATCH (PRIMARY_NOT_READY) writes no history row", func(t *testing.T) {
+		s := mkSession("history skipped on reject")
+		artifact, err := h.DB.CreateArtifact(ctx, s.ID, "doc processing", nil)
+		require.NoError(t, err)
+		material := &models.Material{
+			ID:          uuid.New(),
+			ArtifactID:  artifact.ID,
+			SessionID:   s.ID,
+			Kind:        string(models.MaterialKindDocument),
+			Filename:    "z.pdf",
+			ContentType: "application/pdf",
+			StorageURL:  "r2://b/z.pdf",
+			TextStatus:  models.MaterialTextStatusProcessing,
+		}
+		require.NoError(t, h.DB.CreateMaterial(ctx, material))
+
+		body := `{"primary":{"kind":"document","id":"` + material.ID.String() + `"}}`
+		w := doPatch(t, s.ID, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+		hist, err := h.DB.ListSessionPrimaryHistory(ctx, s.ID)
+		require.NoError(t, err)
+		assert.Empty(t, hist, "no audit row when PATCH rejected")
+	})
+}
+
 // Sanity: primaryUpdateError satisfies errors.As as expected.
 func TestPrimaryUpdateError_ErrorsAs(t *testing.T) {
 	src := &primaryUpdateError{status: 400, code: "X", message: "y"}
