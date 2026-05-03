@@ -27,7 +27,7 @@ describe('SetPrimaryButton (SCRUM-275)', () => {
 		expect(btn.getAttribute('aria-label')).toBe('Make session primary (Spec.pdf)')
 	})
 
-	it('renders Primary badge + Clear control when isCurrentPrimary and onSuccess is set (SCRUM-285)', async () => {
+	it('right-click on Primary badge opens context menu, click Clear PATCHes kind="" (SCRUM-285 → SCRUM-290)', async () => {
 		patchSessionPrimary.mockResolvedValueOnce(undefined)
 		const onSuccess = vi.fn()
 		render(
@@ -44,7 +44,16 @@ describe('SetPrimaryButton (SCRUM-275)', () => {
 		const badge = screen.getByTestId('primary-badge')
 		expect(badge.getAttribute('role')).toBe('status')
 		expect(badge.getAttribute('aria-label')).toBe('Session primary (Spec.pdf)')
+		// Menu starts closed.
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+		expect(screen.queryByTestId('clear-primary-btn')).toBeNull()
+
+		// Right-click opens the menu.
+		fireEvent.contextMenu(badge)
+		const menu = screen.getByTestId('primary-context-menu')
+		expect(menu.getAttribute('role')).toBe('menu')
 		const clear = screen.getByTestId('clear-primary-btn')
+		expect(clear.getAttribute('role')).toBe('menuitem')
 		expect(clear.getAttribute('aria-label')).toBe('Clear session primary (Spec.pdf)')
 
 		fireEvent.click(clear)
@@ -53,7 +62,66 @@ describe('SetPrimaryButton (SCRUM-275)', () => {
 		expect(onSuccess).toHaveBeenCalled()
 	})
 
-	it('hides Clear control when isCurrentPrimary but no onSuccess (read-only context)', () => {
+	it('Shift+F10 on focused Primary badge opens the context menu (SCRUM-290)', () => {
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+				isCurrentPrimary
+				onSuccess={vi.fn()}
+			/>,
+		)
+		const badge = screen.getByTestId('primary-badge')
+		// Badge is keyboard-focusable when interactive.
+		expect(badge.getAttribute('tabindex')).toBe('0')
+		fireEvent.keyDown(badge, { key: 'F10', shiftKey: true })
+		expect(screen.getByTestId('primary-context-menu')).toBeInTheDocument()
+	})
+
+	it('Escape closes the open context menu (SCRUM-290)', () => {
+		render(
+			<SetPrimaryButton
+				apiBaseUrl=""
+				sessionId="s1"
+				kind="document"
+				id="m1"
+				isCurrentPrimary
+				onSuccess={vi.fn()}
+			/>,
+		)
+		const badge = screen.getByTestId('primary-badge')
+		fireEvent.contextMenu(badge)
+		expect(screen.getByTestId('primary-context-menu')).toBeInTheDocument()
+		fireEvent.keyDown(document, { key: 'Escape' })
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('outside click closes the open context menu without firing PATCH (SCRUM-290)', () => {
+		patchSessionPrimary.mockClear()
+		render(
+			<>
+				<div data-testid="outside">elsewhere</div>
+				<SetPrimaryButton
+					apiBaseUrl=""
+					sessionId="s1"
+					kind="document"
+					id="m1"
+					isCurrentPrimary
+					onSuccess={vi.fn()}
+				/>
+			</>,
+		)
+		const badge = screen.getByTestId('primary-badge')
+		fireEvent.contextMenu(badge)
+		expect(screen.getByTestId('primary-context-menu')).toBeInTheDocument()
+		fireEvent.mouseDown(screen.getByTestId('outside'))
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+		expect(patchSessionPrimary).not.toHaveBeenCalled()
+	})
+
+	it('hides Clear control when isCurrentPrimary but no onSuccess (read-only context — right-click is a no-op)', () => {
 		render(
 			<SetPrimaryButton
 				apiBaseUrl=""
@@ -63,7 +131,12 @@ describe('SetPrimaryButton (SCRUM-275)', () => {
 				isCurrentPrimary
 			/>,
 		)
-		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
+		const badge = screen.getByTestId('primary-badge')
+		expect(badge).toBeInTheDocument()
+		// Read-only: badge is not keyboard-focusable and right-click does nothing.
+		expect(badge.getAttribute('tabindex')).toBeNull()
+		fireEvent.contextMenu(badge)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 		expect(screen.queryByTestId('clear-primary-btn')).toBeNull()
 	})
 
