@@ -1165,6 +1165,11 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 	// SCRUM-272: update primary content kind + matching pointer with
 	// session-ownership validation. Empty kind clears the explicit primary.
 	if req.Primary != nil {
+		// SCRUM-283: snapshot the prior primary state before the apply so we
+		// can write an audit row capturing the before/after transition. The
+		// `session` variable was loaded at the top of the handler and reflects
+		// the pre-PATCH state; use it as the source of truth.
+		prevKind, prevID := snapshotSessionPrimary(session)
 		if err := h.applySessionPrimaryUpdate(r.Context(), sessionID, req.Primary); err != nil {
 			var derr *primaryUpdateError
 			if errors.As(err, &derr) {
@@ -1174,6 +1179,25 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 			log.Printf("UpdateSessionStatus applySessionPrimaryUpdate: %v", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update session primary"})
 			return
+		}
+		// SCRUM-283: persistent audit row + websocket broadcast so participants
+		// see the change without polling. Both are best-effort: if the audit
+		// insert or broadcast fails, the PATCH still succeeded — log and move
+		// on rather than rolling back the user's intentional change.
+		newKind, newID := parseRequestedPrimary(req.Primary)
+		actorID := actorUserID(user)
+		if err := h.DB.InsertSessionPrimaryHistory(r.Context(), &database.SessionPrimaryHistoryRow{
+			SessionID:   sessionID,
+			ActorUserID: actorID,
+			PrevKind:    prevKind,
+			PrevID:      prevID,
+			NewKind:     newKind,
+			NewID:       newID,
+		}); err != nil {
+			log.Printf("UpdateSessionStatus InsertSessionPrimaryHistory: %v", err)
+		}
+		if h.Hub != nil {
+			h.Hub.BroadcastSessionUpdated(sessionID)
 		}
 	}
 
