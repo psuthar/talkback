@@ -418,6 +418,15 @@ export function MaterialsTreePanel({
                   />
                 )
               }
+              // SCRUM-293: preserve the legacy "Presentation row is always
+              // clickable" behavior — only disable non-primary rows when
+              // their transcript is still processing. Clicking a row only
+              // changes which video occupies the center pane; transcript
+              // readiness gates playback features inside the player, not
+              // the row itself. The primary row stays clickable so the
+              // material-viewers e2e (which waits for clickable
+              // primary-video-item right after MP4 upload) keeps passing.
+              const rowDisabled = !isPrimaryRow && !videoSelectable
               return (
                 <div key={v.id}>
                   <TreeItem
@@ -435,8 +444,8 @@ export function MaterialsTreePanel({
                     }}
                     onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
                     deleting={materialId ? deletingId === String(materialId) : false}
-                    disabled={!videoSelectable}
-                    buttonTitle={!videoSelectable ? 'Video is still processing' : undefined}
+                    disabled={rowDisabled}
+                    buttonTitle={rowDisabled ? 'Video is still processing' : undefined}
                   />
                   {/* SCRUM-293: Primary badge for ALL roles when the row is
                       currently primary (read-only for participants,
