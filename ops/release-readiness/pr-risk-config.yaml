@@ -1,7 +1,6 @@
-# TalkBack PR-risk config — translates the Go in-tree engine
-# (internal/prrisk/{classify,score,actions,evidence,floors,routing}.go) into
-# the release-readiness-core schema. Authored as part of SCRUM-264 to close
-# the parity gap measured by scripts/prrisk_gap_harness.py (SCRUM-263).
+# TalkBack PR-risk config — release-readiness-core schema.
+# (Authored under SCRUM-264 to reach parity with the legacy Go in-tree engine
+# during the SCRUM-261 migration; legacy engine deleted in SCRUM-267 cutover.)
 #
 # Schema: psuthar/release-readiness-core docs/contracts/pr-risk-config-v1.schema.json
 # (the schema is v1 across the v0.3.x / v0.4.x lines; current package pin lives
@@ -12,10 +11,11 @@
 #   (auth, migrations, rag, processing, orchestration, workflows, deploy, …)
 #   so that the score engine emits matching `domain_<id>` factors with the
 #   correct point weights (see release_readiness_core/pr_risk/score.py).
-# - Domain order matches Go's first-match-wins classification in
-#   internal/prrisk/classify.go.
-# - Sensitive domains mirror the Go list of areas where touchesSensitiveCodeWithoutTests
-#   fires the `tests_missing` factor.
+# - Domain order is first-match-wins (mirrors the parity baseline that the
+#   pre-cutover Go classifier produced over 22 PRs of soak — see
+#   ops/release-readiness/shadow-rollout.md).
+# - Sensitive domains mark areas where touching code without tests fires the
+#   `tests_missing` factor.
 # - Project-specific gates are added on top of the eight bundled-default gates;
 #   the defaults already cover CI fetch depth, PR review summary, workflow /
 #   config validation, add-tests, intent alignment, scattered review, test
@@ -137,7 +137,7 @@ domains:
 
 # Domains where non-test code change without test files in the diff fires the
 # `tests_missing` factor. Mirrors `touchesSensitiveCodeWithoutTests` in
-# internal/prrisk/classify.go — note that DomainWeb is also sensitive in Go,
+# release-readiness-core's package classifier — note DomainWeb was also
 # so a UI / CSS change without a corresponding spec update fires the factor
 # (style-only changes are dampened by the StyleOnly reducer at scoring time).
 sensitive_domains:
@@ -156,7 +156,7 @@ sensitive_domains:
 # summary, workflow / config validation, add-tests, intent alignment,
 # scattered review plan, test proximity, hotspot regression focus); these
 # extend it with TalkBack's domain-aware checks that the legacy Go gate
-# enforced via internal/prrisk/actions.go.
+# enforced via the package's `required_validations` rules.
 gates:
   # auth/session/invite touched → require E2E or equivalent evidence.
   - id: auth_e2e_gate

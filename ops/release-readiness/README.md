@@ -1,25 +1,30 @@
-# TalkBack release readiness (v1)
+# TalkBack release readiness
 
-Deterministic, evidence-based checks before deploy. **Scoring and PASS/WARN/BLOCK are computed only by `scripts/release_readiness.py`** — no LLM in the decision path. An LLM may summarize `report.json` afterward only.
+Deterministic, evidence-based PR gate before deploy. Scoring and PASS/WARN/BLOCK come from [`release-readiness-core`](https://github.com/psuthar/release-readiness-core), pinned in [`version.txt`](./version.txt). No LLM in the decision path; an LLM may summarize `report.json` afterward.
+
+The migration to `release-readiness-core` (epic SCRUM-261) is **complete**:
+
+- SCRUM-262: pin file (`version.txt`) committed.
+- SCRUM-263 / 264: gap-test harness + `pr-risk-config.yaml` reached parity with the legacy Go engine.
+- SCRUM-265: shadow gate ran alongside legacy on every PR.
+- SCRUM-266: 22-PR soak window (see [`shadow-rollout.md`](./shadow-rollout.md)) — 0 unexplained disagreements.
+- SCRUM-267: legacy in-tree gate (`cmd/prrisk`, `internal/prrisk`, `scripts/{pr_gate,release_readiness,evaluate_pr_risk_semantic,e2e_to_readiness}.py`, `scripts/release-readiness.sh`) deleted; CI is now release-readiness-core only.
 
 ## What it does
 
-1. **Evidence collection** — reads optional JSON artifacts (smoke, E2E, coverage, prod health) and `git diff` vs a base ref.
-2. **Scoring** — applies YAML rules (`config.yaml`): blockers (smoke fail, critical E2E, migrations without validation, risky paths without validation evidence), warnings (missing artifacts, E2E retries, coverage drop, risky config paths).
-3. **Outputs** — `artifacts/release-readiness/report.json`, `report.md`, and a **machine summary** at `artifacts/release-readiness.json` (`outcome`, `score`, `warnings`, `blockers`) for CI gates and PR summaries.
-4. **PR risk (v2.8)** — deterministic diff-based risk from `go run ./cmd/prrisk`, emitting `pr_risk.json` and `pr_risk.md` under the output directory, plus a stable machine summary at **`artifacts/pr-risk.json`** (score, band, `merge_recommendation` as `PASS`/`WARN`/`BLOCK`, `required_validations`, `top_risk_factors`). The readiness script reads `pr_risk.json` and caps the outcome: PR Risk BLOCK → readiness BLOCK; PR Risk WARN → readiness at most WARN.
-5. **Unified PR gate** — `scripts/pr_gate.py` combines PR Risk + Release Readiness into **`pr-gate-summary.json`** / **`pr-gate-summary.md`**. **`scripts/pr_gate_check_payload.py`** turns that JSON into **`artifacts/pr-gate-check.json`** for the GitHub Check **TalkBack PR Gate** (no duplicated combining rules in YAML).
+1. **Evidence collection** — Go tests, Playwright e2e, coverage, prod health, git diff vs base ref.
+2. **PR risk** — `release-readiness-pr-risk` writes `pr_risk.json` / `pr_risk.md` plus a stable `artifacts/pr-risk.json` summary.
+3. **Readiness scoring** — `release-readiness-evaluate` writes `artifacts/release-readiness/report.json`, `report.md`, and the lean machine summary `artifacts/release-readiness.json`.
+4. **Unified gate** — `release-readiness-combine` produces `pr-gate-summary.json` / `pr-gate-summary.md` (PASS/WARN/BLOCK from PR Risk + Release Readiness).
+5. **GitHub Check** — `release-readiness-check-payload --check-name "TalkBack PR Gate" --warn-conclusion action_required` writes `pr-gate-check.json`. The workflow's github-script step publishes it; payload conclusion flows through unmodified (no remap).
 
-CI runs `bash scripts/release-readiness.sh` (wrapper around `scripts/release_readiness.py`). If the evaluator crashes before writing `report.json`, the wrapper sets `READINESS_FAILED=true` in `GITHUB_ENV` for the final gate step.
+## Pin upgrade workflow
 
-## Migration to release-readiness-core (SCRUM-261)
+The pin in [`version.txt`](./version.txt) is the **single source of truth** for which `release-readiness-core` build CI installs.
 
-The PR gate engine is being migrated from in-tree Python/Go scripts to the project-agnostic `release-readiness-core` package. The pin is the **single source of truth** for the migration so CI, local scripts, and gap-test runs cannot drift:
-
-- Pin file: [`version.txt`](./version.txt) — `version=`, `sha=`, `ref=` for the chosen release.
-- Reader: [`scripts/release_readiness_core_pin.sh`](../../scripts/release_readiness_core_pin.sh) — emits any field; use `spec` for `pip install`, `ref` as the `@`-suffix on composite actions `psuthar/release-readiness-core/.github/actions/release-readiness` and `.../release-readiness-pr-gate`.
-
-Current pin: see [`version.txt`](./version.txt) — bump there and the SCRUM-264 doctor pre-flight + SCRUM-265 shadow CI job pick it up automatically. All seven CLIs (`release-readiness-evaluate`, `release-readiness-pr-risk`, `release-readiness-combine`, `release-readiness-check-payload`, `playwright-to-readiness`, `release-readiness-doctor`, `release-readiness-init`) ship at every pinned version. Shadow CI invocation lands in SCRUM-265; cutover and legacy-script deletion in SCRUM-267.
+- Reader: [`scripts/release_readiness_core_pin.sh`](../../scripts/release_readiness_core_pin.sh) — emits `version`, `sha`, `ref`, or `spec` (the latter is what `pip install` consumes).
+- To bump: edit `version.txt` (set `version=`, `sha=`, `ref=` together), run the [`shadow-rollout.md`](./shadow-rollout.md) tracking once on the next PR to confirm parity.
+- All seven CLIs (`release-readiness-evaluate`, `release-readiness-pr-risk`, `release-readiness-combine`, `release-readiness-check-payload`, `playwright-to-readiness`, `release-readiness-doctor`, `release-readiness-init`) ship at every pinned version.
 
 ## Core validations (mapped to changed paths)
 
@@ -33,176 +38,121 @@ Current pin: see [`version.txt`](./version.txt) — bump there and the SCRUM-264
 | orchestration | `internal/orchestration/**`, `session_orchestration*`, creator recommendations UI |
 | migrations | `db/migrations`, `internal/migrations` |
 
-When a risk category is triggered by the diff, the report must show that validation satisfied **unless** smoke/E2E pass and infer coverage (see `infer_validations_when_pass` in `config.yaml`). **Migrations** require explicit `migrations_validated: true` in smoke JSON or `--migration-validated` / CI flag.
+When a risk category is triggered by the diff, the report must show that validation satisfied **unless** smoke/e2e infer coverage (`infer_validations_when_pass` in `config.yaml`). **Migrations** require explicit `migrations_validated: true` in smoke JSON or `--migration-validated` / CI flag.
 
 ## Run locally
 
+Install the pinned `release-readiness-core` plus the small auxiliary deps used by config validation:
+
 ```bash
-cd /path/to/talkback
-python -m pip install -r ops/release-readiness/requirements.txt
+pip install "$(scripts/release_readiness_core_pin.sh spec)"
+pip install -r ops/release-readiness/requirements.txt
+```
 
-# Demo: fixtures + no path risks (deterministic PASS)
-python scripts/release_readiness.py --fixture-mode --output-dir artifacts/release-readiness
+Then drive the four CLIs against your working tree:
 
-# Real: run Go tests, write smoke_results.json, then evaluate
-if go test ./... -count=1; then
-  echo '{"status":"passed","failed_count":0}' > smoke_results.json
-else
-  echo '{"status":"failed","failed_count":1}' > smoke_results.json
-fi
+```bash
+mkdir -p artifacts/release-readiness
 
-python scripts/release_readiness.py \
+# 1) PR risk
+release-readiness-pr-risk \
+  --repo-root . \
+  --base-ref origin/main \
+  --output-dir artifacts/release-readiness \
+  --config ops/release-readiness/pr-risk-config.yaml
+
+# 2) Smoke / coverage / e2e evidence — same as CI:
+go test ./... -count=1
+echo '{"status":"passed","failed_count":0,"total_count":1,"validations":{"migrations_validated":true}}' > smoke_results.json
+
+# (optional, post-Playwright)
+playwright-to-readiness \
+  --input playwright-results.json \
+  --output e2e_results.json \
+  --validation-map ops/release-readiness/e2e-validation-map.yaml
+
+# 3) Readiness evaluate
+release-readiness-evaluate \
+  --repo-root . \
   --config ops/release-readiness/config.yaml \
   --base-ref origin/main \
   --smoke-results smoke_results.json \
+  --e2e-results e2e_results.json \
   --output-dir artifacts/release-readiness
 
-# Optional but recommended: PR risk v2.8 (git diff signals; no Python)
-# Must run BEFORE release_readiness.py if you want PR Risk to influence the outcome.
-go run ./cmd/prrisk --repo-root . --base-ref origin/main --output-dir artifacts/release-readiness
+# 4) Combine into the unified gate + GitHub Checks payload
+release-readiness-combine \
+  --pr-risk-json artifacts/release-readiness/pr-risk.json \
+  --readiness-json artifacts/release-readiness.json \
+  --readiness-report-json artifacts/release-readiness/run/report.json \
+  --output-dir artifacts
+
+release-readiness-check-payload \
+  --gate-json artifacts/pr-gate-summary.json \
+  --output artifacts/pr-gate-check.json \
+  --check-name "TalkBack PR Gate" \
+  --warn-conclusion action_required
 ```
 
-Exit code: `0` for PASS (or WARN in `block_only` mode), `1` for BLOCK (or WARN in `warn_and_block` mode).
-
-### Enforcement mode
-
-| Mode | Exit 1 when | How to set |
-|------|-------------|------------|
-| `block_only` *(default)* | BLOCK | default |
-| `warn_and_block` | WARN **or** BLOCK | `--enforcement-mode warn_and_block` or `READINESS_ENFORCEMENT_MODE=warn_and_block` |
-
-The recommended initial policy is **`block_only`**: warnings are visible in the report and artifact but do not fail the workflow. Move to `warn_and_block` once the team is comfortable with the baseline warning rate.
-
-### Environment variables
-
-| Variable | Meaning |
-|----------|---------|
-| `RELEASE_READINESS_BASE_REF` | Default `origin/main` for `--base-ref` |
-| `PRRISK_JIRA_ISSUE_KEY` | Optional; echoed into PR risk v2.x `integrations` for future Jira linking |
-| `READINESS_ENFORCEMENT_MODE` | `block_only` (default) or `warn_and_block` |
+`final_gate.status` in `pr-gate-summary.json` is the authoritative PASS / WARN / BLOCK verdict.
 
 ## CI
 
-GitHub Actions workflow `.github/workflows/release-readiness.yml` runs on `pull_request` and `workflow_dispatch`:
+`.github/workflows/release-readiness.yml` (one job, `release-readiness`) runs on `pull_request`, `push`, and `workflow_dispatch`:
 
-1. Runs `go run ./cmd/prrisk` (PR risk v2.8) with `continue-on-error: true`, writes `pr_risk.json`, `pr_risk.md`, and **`artifacts/pr-risk.json`**.
-2. Runs `go test ./...` and writes `smoke_results.json`.
-3. Installs Node 22, runs `npm install` in `web/`, and installs Playwright (chromium only).
-4. Builds the React frontend (`npm run build`).
-5. Starts the Go API in the background on port 8081 against the CI PostgreSQL service.
-6. Waits up to 30s for the API health check at `/health`.
-7. Runs `npx playwright test --reporter=json` with `|| true` so test failures do not abort the step.
-8. Runs `python scripts/e2e_to_readiness.py` to convert the Playwright output to `e2e_results.json`.
-9. Runs `bash scripts/release-readiness.sh` (with `continue-on-error: true` so later steps still run).
-10. **Evaluate Release Readiness Outcome** — reads `artifacts/release-readiness.json` with `jq`; fails the job on `READINESS_FAILED`, on `BLOCK`, or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`; emits `::warning::` for `WARN` in `block_only` mode (workflow job stays green).
-11. **Compute PR gate summary** — `python3 scripts/pr_gate.py` writes **`pr-gate-summary.json`** and **`pr-gate-summary.md`** (unified PASS/WARN/BLOCK from PR Risk + Release Readiness) and appends the **PR Gate** section to `GITHUB_STEP_SUMMARY`.
-12. **Build PR gate GitHub Check payload** — `python3 scripts/pr_gate_check_payload.py` writes **`artifacts/pr-gate-check.json`** (title, summary, text, `workflow_should_fail`, `details_url`) from the gate JSON alone — no duplicated gate logic in YAML.
-13. **Smoke-check action normalization** — optional guard on `normalize_action`.
-14. **Evaluate PR risk semantic result** — `python3 scripts/evaluate_pr_risk_semantic.py` writes **`pr-risk-semantic.json`** (used for PR comment fallback and diagnostics).
-15. **Upload Release Readiness Artifact** — uploads the entire **`artifacts/`** directory (`if: always()`), including gate files, readiness outputs, and PR risk outputs — runs **before** the gate check is published so BLOCK still uploads artifacts.
-16. **Publish TalkBack PR Gate check** — GitHub Checks API (`checks: write`): creates or updates a check run named **`TalkBack PR Gate`** with conclusion **success** (PASS), **neutral** (WARN), or **failure** (BLOCK or gate/payload errors). **`details_url`** points at this workflow run when available.
-17. **Post PR gate comment** — unified table on pull requests (or PR-risk-only fallback).
-18. **Add PR Summary** — release readiness lines appended to the job summary UI.
-19. **Enforce TalkBack PR gate outcome** — reads **`pr-gate-check.json`**; exits **1** when `workflow_should_fail` is true (unified **BLOCK** or gate could not be computed). Runs **after** upload and check publication.
+1. Set up Go + Python; install `release-readiness-core` from the pin.
+2. **Pre-flight** — `release-readiness-doctor` validates `config.yaml` + `pr-risk-config.yaml`.
+3. **PR risk scoring** — `release-readiness-pr-risk` writes `pr-risk.json` + `pr_risk.md`.
+4. **Go tests + smoke_results.json + coverage.json** — same as before.
+5. **Frontend build + API server + Playwright e2e** — collect `playwright-results.json`.
+6. **Convert e2e** — `playwright-to-readiness` writes `e2e_results.json` (validation-map at [`e2e-validation-map.yaml`](./e2e-validation-map.yaml)).
+7. **Run release-readiness-evaluate** — writes `report.json`, `report.md`, lean `release-readiness.json`.
+8. **Evaluate Release Readiness Outcome** — fails the job on `BLOCK` (or on `WARN` when `READINESS_ENFORCEMENT_MODE=warn_and_block`).
+9. **Run release-readiness-combine** — writes `pr-gate-summary.json` + `.md`.
+10. **Build PR gate GitHub Check payload** — `release-readiness-check-payload --warn-conclusion action_required`.
+11. **Upload Release Readiness Artifact** — uploads `artifacts/`, `smoke_results.json`, `e2e_results.json`, `coverage.json`.
+12. **Publish TalkBack PR Gate check** — github-script reads `pr-gate-check.json` and updates the named check; conclusion flows through unmodified.
+13. **Post PR gate comment** — unified table on pull requests.
+14. **Add PR Summary** — release-readiness lines appended to the job summary UI.
+15. **Enforce TalkBack PR gate outcome** — exits 1 when `workflow_should_fail` is true (BLOCK).
 
-### Branch protection vs TalkBack PR Gate
+### Branch protection
 
-The primary reviewer-facing semantic status is the GitHub Check **`TalkBack PR Gate`**: **PASS** → green (success), **WARN** → yellow (neutral), **BLOCK** → red (failure). **WARN** is cautionary, not a merge block by itself; **BLOCK** is a hard stop. Add a branch protection required check on **`TalkBack PR Gate`** if you want those semantics enforced independently of other CI jobs. You may still require separate workflows for tests/builds. Fork PRs often cannot create checks with the default `GITHUB_TOKEN` (read-only); same-repo PRs need `permissions: checks: write`.
+The reviewer-facing semantic status is the GitHub Check `TalkBack PR Gate`. After the SCRUM-267 cutover, with `--warn-conclusion action_required`, the mapping is:
 
-### E2E environment variables used in CI
+| Final Gate status | Check conclusion | Effect |
+|-------------------|------------------|--------|
+| `PASS` | `success` | green check, merge allowed |
+| `WARN` | `action_required` | yellow check, merge blocked by branch protection |
+| `BLOCK` | `failure` | red check, merge blocked |
 
-| Variable | Value in CI | Purpose |
-|----------|-------------|---------|
-| `DATABASE_URL` | postgres service on localhost:5432 | API database |
-| `PORT` | 8081 | API listen port (avoids clash with 8080 reserved by runner) |
-| `RUN_MIGRATIONS` | true | Run DB migrations on API startup |
-| `STORAGE_DRIVER` | local | Use local disk — no R2 credentials needed |
-| `ENCRYPTION_KEY` | fixed CI value | Required for session token signing |
-| `TALKBACK_API_BASE` | http://localhost:8081 | Playwright tests use this to call the API |
-| `TALKBACK_ADMIN_EMAIL` | ci-admin@smoke.test | Admin user for test teardown |
-| `TALKBACK_ADMIN_PASSWORD` | SmokePass123! | Admin password for teardown |
+Add a branch-protection required check on `TalkBack PR Gate` to enforce these semantics independently of other CI jobs.
+
+### Phase-3 (optional) strictness
+
+To turn the workflow status RED on WARN (so the workflow itself fails, not just the published check), bump `--warn-conclusion failure` in step 10. This is the strictest enforcement and only worth adopting once the team is comfortable with the Phase-2 baseline.
 
 ### E2E debug artifacts (CI)
 
-The Release Readiness job stages Playwright outputs under **`artifacts/e2e-playwright/`**, which is included in the **`release-readiness`** artifact upload (`if: always()`), so you can inspect failures without parsing the job log alone:
+The release-readiness job stages Playwright outputs under `artifacts/e2e-playwright/`, included in the `release-readiness` artifact upload (`if: always()`):
 
 | Path | Contents |
 |------|----------|
 | `README.txt` | Short summary: failed specs (file + title when `ok: false`), plus `e2e_results.json` fields |
 | `playwright-results.json` | Raw `npx playwright test --reporter=json` output |
-| `e2e_results.json` | Output of `scripts/e2e_to_readiness.py` |
+| `e2e_results.json` | Output of `playwright-to-readiness` |
 | `playwright-report/` | HTML report — open `index.html` locally after download |
 | `test-results/` | Traces, screenshots (from Playwright config: trace on first retry, screenshot on failure) |
 
-Playwright is run with `--reporter=json --reporter=html` so both machine-readable and HTML reports are produced.
+## E2E validation map
 
-## E2E → readiness converter (`scripts/e2e_to_readiness.py`)
+The mapping from Playwright spec stems → readiness validation keys lives in [`e2e-validation-map.yaml`](./e2e-validation-map.yaml). Edit there when you add a new e2e file:
 
-`scripts/e2e_to_readiness.py` converts the raw Playwright `--reporter=json` output into the `e2e_results.json` schema that `release_readiness_engine.py` expects.
+1. Identify which validation(s) the test exercises (`auth_session`, `upload_extraction`, `nav_assets`, `viewer_materials`, `qa_rag`, …).
+2. Add the test's file stem (without `.e2e.ts` / `.spec.ts`) to the matching list.
+3. The `playwright-to-readiness` CLI picks it up on the next CI run.
 
-### What it does
-
-- Walks the Playwright suite tree to collect all leaf test specs.
-- Maps each spec to one or more readiness validations by matching the spec's source file stem:
-
-  | Validation | Source file stems |
-  |------------|------------------|
-  | `auth_session` | creator-access, participant-acceptance, invite-invalid-token, participant-happy-path, session-availability, session-routing |
-  | `upload_extraction` | material-processing-state |
-  | `nav_assets` | material-viewers |
-  | `viewer_materials` | material-viewers, pptx-polling-stop |
-  | `qa_rag` | qa-history |
-  | `orchestration` | creator-access, qa-history (plus orchestration-targeted smoke as added) |
-
-- Sets a validation key to `true` if all tests in its group passed, `false` if any failed, or omits the key if no tests from that group ran (so the engine can apply inference instead of an explicit `false`).
-- Counts retried tests (specs with more than one result entry) and surfaces them as `retries`.
-- If the input file is missing or unparseable, writes a safe skipped/failed placeholder so downstream steps never fail on a missing artifact.
-
-### Run locally
-
-```bash
-# After running Playwright with JSON reporter:
-cd web
-npx playwright test --reporter=json 2>/dev/null > ../playwright-results.json || true
-cd ..
-
-python scripts/e2e_to_readiness.py \
-  --input playwright-results.json \
-  --output e2e_results.json
-
-cat e2e_results.json
-```
-
-### Test the converter without a browser
-
-A minimal sample Playwright JSON fixture is provided at `fixtures/sample_e2e_playwright/playwright-results.json`:
-
-```bash
-python scripts/e2e_to_readiness.py \
-  --input ops/release-readiness/fixtures/sample_e2e_playwright/playwright-results.json \
-  --output /tmp/e2e_results.json
-
-cat /tmp/e2e_results.json
-# expected: status=passed, all 5 validations=true
-```
-
-## PR Risk integration
-
-When `pr_risk.json` is present in the output directory (written by `go run ./cmd/prrisk`), the readiness engine reads the `enforcement.merge_recommendation` field and applies these deterministic caps:
-
-| PR Risk recommendation | Effect on readiness |
-|------------------------|---------------------|
-| `pass` | No change; readiness outcome driven solely by smoke/E2E/coverage evidence |
-| `warn` | Adds a warning; outcome is at most WARN even if all other checks pass |
-| `block` | Adds a hard blocker; outcome is BLOCK regardless of other evidence |
-
-The evidence summary (`pass_count`, `missing_count`, `unknown_count`, `fail_count`) from PR Risk is also surfaced in the readiness `reasons` list for report visibility.
-
-**Graceful degradation:** if `pr_risk.json` is absent, unreadable, or has a parse error, the PR Risk block is silently skipped and readiness continues with evidence-only scoring.
-
-**Ordering requirement:** `go run ./cmd/prrisk` must complete before `python scripts/release_readiness.py`. The CI workflow already ensures this ordering.
-
-**Hotspot overlap (v2.8+):** The contextual factor labeled **Diff overlaps a path prefix touched in multiple recent commits** is based on **how many distinct commits** (in the last 50 sampled) touched each two-segment path prefix—not on raw diff LOC or file-line counts in the log. That keeps `top_risk_factors` aligned with “sustained activity in an area” instead of mislabeling one bulky commit as “high churn.”
+A validation is `true` if all tests in its group pass, `false` if any fail, and absent if no tests from that group ran (so the engine can apply inference instead of an explicit `false`).
 
 ## Suppressing the risky-config warning via commit messages
 
@@ -210,7 +160,7 @@ When `.github/workflows/**`, `Dockerfile`, `deploy/**`, `go.mod`, or other paths
 
 > Risky config/workflow paths changed without validation note
 
-You can suppress this warning by including a `Validation:` (or `Validate:`) section in **any commit** in the range being evaluated (`base_ref...HEAD`).  The section just needs to start the line — everything after the colon is the human-readable note:
+Suppress by including a `Validation:` (or `Validate:`) section in **any commit** in the range:
 
 ```
 Fix: update Dockerfile base image to Go 1.23
@@ -218,65 +168,17 @@ Fix: update Dockerfile base image to Go 1.23
 Validation:
 - ran workflow_dispatch on staging branch
 - confirmed Docker build succeeded and API /health returned ok
-- verified E2E smoke suite passed end-to-end
+- verified e2e smoke suite passed end-to-end
 ```
 
-The readiness script reads `git log base_ref...HEAD --format=%B` and scans for a line beginning with `Validation:` or `Validate:` (case-insensitive).  When found:
-
-- `evidence.validation_note_present` → `true`
-- `evidence.validation_note_source` → `"commit_message"`
-- The `risky_config_without_note` warning and its score penalty are suppressed
-- The markdown report row **Validation note** shows `yes (commit_message)`
-
-This works for **direct commits to main/master** (push event) and **PR merges** (pull_request event) because the workflow already computes the correct `base_ref` for each event type:
-
-| Event | `base_ref` used | Commit range scanned |
-|-------|-----------------|----------------------|
-| `pull_request` | `origin/<base-branch>` | PR head commits only |
-| `push` | `github.event.before` (or `HEAD~1`) | The pushed commits |
-| `workflow_dispatch` | `--base-ref` input (or `HEAD~1`) | Explicit or last commit |
+`release-readiness-evaluate` scans `git log base_ref...HEAD --format=%B` for a line beginning with `Validation:` or `Validate:` (case-insensitive); when found, the warning and its score penalty are suppressed.
 
 ## Remediation guidance
 
-Every WARN or BLOCK report includes a **Remediation guidance** table in both `report.md` and `report.json` (`remediation_items` array). Each row maps directly to a failed check:
-
-| Column | Meaning |
-|--------|---------|
-| `check` | The internal check key (e.g. `smoke_failed`, `e2e_critical`) |
-| `severity` | `BLOCK` or `WARN` |
-| `likely_cause` | Deterministic description of why this check fires |
-| `recommended_action` | Concrete next step to resolve it |
-| `fix_type` | Category: `code`, `test`, `config`, `process`, `infra`, `db` |
-
-Guidance is config-driven — edit `remediation:` in `config.yaml` to adjust any entry. Unknown check keys fall back to a generic "Investigate check: <key>" entry.
-
-### Branch protection with enforcement mode
-
-To use the readiness outcome as a merge gate:
-
-1. Enable **branch protection rules** on `main` in GitHub Settings → Branches.
-2. Require the `release-readiness` status check to pass before merging.
-3. Set enforcement mode in `.github/workflows/release-readiness.yml`:
-
-```yaml
-env:
-  READINESS_ENFORCEMENT_MODE: block_only   # change to warn_and_block for stricter policy
-```
-
-**Recommended initial policy:** start with `block_only`. The workflow fails (and the merge is blocked) only on BLOCK outcomes. Warnings appear in the artifact but don't block. Upgrade to `warn_and_block` once warning noise is under control.
+Every WARN or BLOCK `report.json` includes a `remediation_items` array (mirrored in `report.md`). Each row maps directly to a failed check (`check`, `severity`, `likely_cause`, `recommended_action`, `fix_type`). Guidance is config-driven via `remediation:` in `config.yaml`.
 
 ## Extending
 
-- **New Relic / deploy health**: add a step that writes `prod_health.json`, pass `--prod-health`.
-- **Coverage**: emit `coverage.json` with `line_percent` and `baseline_percent` (from main branch artifact or stored baseline).
-- **New E2E test file**: add its stem(s) to `VALIDATION_FILE_STEMS` in `scripts/e2e_to_readiness.py`.
-
-## Sample fixtures
-
-| Directory | Purpose |
-|-----------|---------|
-| `fixtures/sample_pass/` | Happy-path smoke + E2E + coverage + health |
-| `fixtures/sample_block_smoke/` | Failing smoke (expect BLOCK when combined with script) |
-| `fixtures/sample_e2e_playwright/` | Minimal Playwright JSON reporter output for converter testing |
-
-Run with `--fixture-mode` (loads `sample_pass`).
+- **New Relic / deploy health**: write `prod_health.json`, pass `--prod-health` to `release-readiness-evaluate`.
+- **Coverage**: emit `coverage.json` with `line_percent` and `baseline_percent`.
+- **New e2e file**: add its stem to [`e2e-validation-map.yaml`](./e2e-validation-map.yaml).

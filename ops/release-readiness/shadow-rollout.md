@@ -4,7 +4,7 @@
 
 **Status:** ✅ **complete** — 22 PRs observed (target ≥15), 3 disagreements all sharing the same documented root cause. Final reconciliation summary at the bottom of this doc recommends cutover. SCRUM-267 unblocked.
 
-This doc tracks every PR that runs after the shadow gate went live. For each PR we record the verdict from the **legacy** in-tree gate (`scripts/release-readiness.sh` + `go run ./cmd/prrisk` driving `scripts/pr_gate.py`) alongside the verdict from the **shadow** [`release-readiness-core`](https://github.com/psuthar/release-readiness-core) gate (inlined CLIs in `.github/workflows/release-readiness.yml` `shadow-readiness` job). When the two disagree, the disagreement gets a root cause and a resolution — never a silent override.
+This doc tracked every PR that ran after the shadow gate went live, recording the verdict from the **legacy** in-tree gate (now deleted in SCRUM-267 — formerly `scripts/release-readiness.sh` + `go run ./cmd/prrisk` driving `scripts/pr_gate.py`) alongside the verdict from the **shadow** [`release-readiness-core`](https://github.com/psuthar/release-readiness-core) gate (inlined CLIs in `.github/workflows/release-readiness.yml`'s former `shadow-readiness` job). When the two disagreed, each got a root cause and a resolution — never a silent override.
 
 ## Stop condition (cutover gate for SCRUM-267)
 
