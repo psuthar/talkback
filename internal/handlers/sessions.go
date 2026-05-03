@@ -1162,7 +1162,19 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SCRUM-279: include the resolved primary descriptor so a creator who just
+	// PATCHed the primary doesn't need a follow-up GET to read title/status.
+	// The wrapper embeds *models.Session, so all existing wire fields stay at
+	// the top level — only the new optional `primary` is added.
+	resp := struct {
+		*models.Session
+		Primary *SessionPrimaryDescriptor `json:"primary,omitempty"`
+	}{
+		Session: session,
+		Primary: h.resolveAndEnrichSessionPrimaryForResponse(r.Context(), session),
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(session)
+	json.NewEncoder(w).Encode(resp)
 }

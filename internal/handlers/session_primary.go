@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/models"
 )
@@ -141,5 +143,39 @@ func enrichSessionPrimaryFromFileArtifact(p *SessionPrimaryDescriptor, fa *model
 	}
 	status := string(fa.Status)
 	p.Status = &status
+	return p
+}
+
+// resolveAndEnrichSessionPrimaryForResponse returns the fully-enriched primary
+// descriptor for a session by fetching only the rows needed for the resolved
+// kind. Use this in handler paths that don't already load materials/links/the
+// primary file_artifact for other reasons (e.g. PATCH primary). GetSession
+// composes the resolver + enrichers directly because it already has those rows
+// in scope. Errors fetching the supplemental rows degrade to title/status nil
+// rather than failing the whole response — the descriptor's kind+id are still
+// useful to clients.
+//
+// SCRUM-279: keeps PATCH response symmetric with GET so clients no longer have
+// to chase a follow-up GET to learn the title/status of the primary they just
+// set.
+func (h *Handlers) resolveAndEnrichSessionPrimaryForResponse(ctx context.Context, session *models.Session) *SessionPrimaryDescriptor {
+	p := resolveSessionPrimary(session)
+	if p == nil {
+		return nil
+	}
+	switch p.Kind {
+	case "document":
+		materials, _ := h.DB.GetActiveMaterialsBySessionID(ctx, session.ID)
+		return enrichSessionPrimaryFromMaterials(p, materials)
+	case "link":
+		links, _ := h.DB.GetSessionLinksBySessionID(ctx, session.ID)
+		return enrichSessionPrimaryFromLinks(p, links)
+	case "video":
+		if session.PrimaryVideoArtifactID == nil {
+			return p
+		}
+		fa, _ := h.DB.GetFileArtifactByID(ctx, *session.PrimaryVideoArtifactID)
+		return enrichSessionPrimaryFromFileArtifact(p, fa)
+	}
 	return p
 }
