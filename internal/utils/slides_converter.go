@@ -503,12 +503,16 @@ func slideNumberFromFilename(name string) int {
 func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error) {
 	overallStart := time.Now()
 
-	// Validate that at least one converter is available before acquiring the semaphore.
+	// Validate that at least one converter is available before acquiring the
+	// semaphore. We need to know about both up front because the unoconv path
+	// can flake on cold starts or specific .pptx files; if it does, we want to
+	// fall back to soffice instead of failing the whole pipeline (the doc on
+	// this function has always promised that fallback — the implementation
+	// just didn't honor it).
 	unoconvActive := useUnoconv()
-	if !unoconvActive {
-		if _, err := sofficeCmd(); err != nil {
-			return nil, err
-		}
+	_, sofficeAvailErr := sofficeCmd()
+	if !unoconvActive && sofficeAvailErr != nil {
+		return nil, sofficeAvailErr
 	}
 
 	// Serialize slide conversions to avoid resource contention on constrained platforms.
@@ -552,11 +556,26 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 		var err error
 		pdfPath, err = convertWithUnoconv(ctx, srcPath, tmpDir)
 		if err != nil {
-			return nil, err
+			// SCRUM-X: unoconv flaked. Common after a cold start, after the
+			// LibreOffice listener crashed, or on .pptx files that trigger a
+			// known unoconv parse bug (the warm-up logs "unoconv did not
+			// produce expected PDF" — the same path runs here on real
+			// uploads). Fall through to a fresh soffice rather than failing
+			// the whole pipeline. Costs ~8-10s on first invocation but
+			// avoids the user-visible Failed status SCRUM-287's retry
+			// surfaced.
+			if sofficeAvailErr != nil {
+				return nil, fmt.Errorf("slides conversion failed: unoconv errored (%w) and soffice is unavailable: %v", err, sofficeAvailErr)
+			}
+			log.Printf("[WARN] slides: unoconv failed (%v); falling back to soffice for %s", err, srcPath)
+			unoconvActive = false
+		} else {
+			log.Printf("slides timing: unoconv pptx→pdf %v src=%s", time.Since(tConv), srcPath)
 		}
-		log.Printf("slides timing: unoconv pptx→pdf %v src=%s", time.Since(tConv), srcPath)
-	} else {
-		cmdPath, _ := sofficeCmd() // already validated above
+	}
+	if !unoconvActive {
+		soffStart := time.Now()
+		cmdPath, _ := sofficeCmd() // validated above (sofficeAvailErr was nil)
 		cmd := exec.CommandContext(ctx, cmdPath, "--headless", "--convert-to", "pdf", "--outdir", tmpDir, srcPath)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -582,7 +601,7 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 			}
 			pdfPath = resolved
 		}
-		log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(tConv), srcPath)
+		log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(soffStart), srcPath)
 	}
 
 	// Step 2: PDF → one PNG per page (pdftoppm)
