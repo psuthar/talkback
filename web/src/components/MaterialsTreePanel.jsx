@@ -434,15 +434,22 @@ export function MaterialsTreePanel({
               // primary-video-item right after MP4 upload) keeps passing.
               const rowDisabled = !isPrimaryRow && !videoSelectable
               const videoIsPrimaryRow = !!(sessionId && isPrimaryRow && currentPrimary?.kind === 'video' && currentPrimary?.id)
+              // SCRUM-295: enable Make-primary on video rows. The PATCH endpoint
+              // expects kind="video" + id=<file_artifact_id>; VideoSource serializes
+              // that as `artifact_id`. Eligibility mirrors documents/links: creator
+              // + onPrimaryChanged + the row is selectable + the video is not
+              // already the current primary.
+              const videoMakePrimaryId = v.artifact_id
+              const canSetVideoPrimary = !!(canManage && onPrimaryChanged && videoSelectable && videoMakePrimaryId && !videoIsPrimaryRow)
               return (
                 <div key={v.id}>
                   <SessionPrimaryRow
                     apiBaseUrl={apiBaseUrl}
                     sessionId={sessionId}
                     kind="video"
-                    id={videoIsPrimaryRow ? currentPrimary.id : null}
+                    id={videoIsPrimaryRow ? currentPrimary.id : videoMakePrimaryId}
                     isCurrentPrimary={videoIsPrimaryRow}
-                    canSetPrimary={false}
+                    canSetPrimary={canSetVideoPrimary}
                     onSuccess={canManage ? onPrimaryChanged : undefined}
                     itemLabel={videoDisplayTitle(v)}
                   >

@@ -181,6 +181,106 @@ describe('MaterialsTreePanel SCRUM-294 video-row primary badge + right-click cle
 	})
 })
 
+describe('MaterialsTreePanel SCRUM-295 video-row Make-primary affordance', () => {
+	// SCRUM-295: video rows now expose Make-primary via right-click, just like
+	// document/image/link rows. The PATCH id is the video's file_artifact_id,
+	// serialized on VideoSource as `artifact_id`. Eligibility requires creator
+	// + onPrimaryChanged + the video is selectable + artifact_id is present
+	// + the video is not already the current primary.
+	const presVideoWithArtifact = {
+		id: 'vs-1',
+		display_title: 'Lecture',
+		transcript_status: 'ready',
+		artifact_id: 'fa-vs-1',
+	}
+
+	function sessionWithVideos(videos, currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: videos,
+			materials: [],
+			links: [],
+			unread_material_ids: [],
+			primary_video: videos[0] ?? null,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	it('right-click on a freshly-uploaded video (no currentPrimary) opens Make-primary menu', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([presVideoWithArtifact])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+
+	it('does not open a menu when video has no artifact_id (legacy / pre-migration row)', () => {
+		const noArtifact = { ...presVideoWithArtifact, artifact_id: undefined }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([noArtifact])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('does not open a menu while the video transcript is still processing (not selectable)', () => {
+		const processing = { ...presVideoWithArtifact, transcript_status: 'processing' }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([processing])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('does not open a menu when canManage is false (participant)', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				onPrimaryChanged={undefined}
+				session={sessionWithVideos([presVideoWithArtifact])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('right-click on a non-primary additional video row also opens Make-primary menu', () => {
+		const additional = { id: 'vs-2', display_title: 'Q&A clip', transcript_status: 'ready', artifact_id: 'fa-vs-2' }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([presVideoWithArtifact, additional])}
+				currentPrimary={null}
+			/>,
+		)
+		// The additional video row uses testid="video-item" (not primary-video-item).
+		const row = screen.getByTestId('video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+})
+
 describe('MaterialsTreePanel SCRUM-294 participant-mode primary badge visibility', () => {
 	const docMaterial = {
 		id: 'mat-1',

@@ -227,6 +227,46 @@ test.describe('Material upload and viewer flow', () => {
     await deleteSession(request, session.id)
   })
 
+  // SCRUM-295: creator can right-click an MP4 video row → Make primary →
+  // PATCH primary kind=video succeeds via the video's file_artifact_id
+  // (serialized on VideoSource as `artifact_id`). Closes the gap reported
+  // in the SCRUM-295 bug screenshot where freshly-uploaded MP4 had no UI
+  // affordance to be marked primary.
+  test('SCRUM-295: creator can make a video the session primary via right-click on the row', async ({ page, context, request }) => {
+    const email = uniqueEmail('video-make-primary')
+    await createUserAndLoginWithId(context, request, email)
+    const session = await createSession(request, 'E2E SCRUM-295 Video Make Primary')
+
+    await navigateToCreatorSession(page, session.id)
+    await uploadFile(page, MP4_FILE)
+
+    const primaryVideoItem = page.getByTestId('primary-video-item')
+    await expect(primaryVideoItem).toBeVisible({ timeout: 15_000 })
+
+    // Pre-condition (the bug): no Primary badge yet, since the upload does not
+    // auto-set primary_video_artifact_id.
+    await expect(page.getByTestId('primary-badge')).toHaveCount(0)
+
+    // Right-click the row → context menu opens with Make primary.
+    await primaryVideoItem.click({ button: 'right' })
+    await expect(page.getByTestId('primary-context-menu')).toBeVisible()
+    const makeBtn = page.getByTestId('make-primary-btn')
+    await expect(makeBtn).toBeVisible()
+
+    // Click Make primary; PATCH succeeds and the inline badge appears.
+    await makeBtn.click()
+    await expect(page.getByTestId('primary-badge')).toBeVisible({ timeout: 10_000 })
+
+    // After becoming primary, the same row's right-click now offers Clear primary.
+    await primaryVideoItem.click({ button: 'right' })
+    await expect(page.getByTestId('clear-primary-btn')).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
+  })
+
   // ─── PPTX upload ──────────────────────────────────────────────────────────
   test('PPTX upload appears in Documents section with Processing status', async ({ page, context, request }) => {
     const email = uniqueEmail('pptx-viewer')
