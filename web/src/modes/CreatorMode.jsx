@@ -1235,6 +1235,28 @@ export function CreatorMode({
     }
   }
 
+  // SCRUM-296: link deletion from the materials tree sidebar. Reuses the
+  // existing deletingMaterialId/deleteMaterialError state, namespacing link
+  // IDs as `link-<id>` so they cannot collide with material IDs.
+  const deleteLink = async (linkId) => {
+    if (!sessionId || !linkId || apiBaseUrl == null) return
+    setDeleteMaterialError(null)
+    setDeletingMaterialId(`link-${linkId}`)
+    try {
+      const base = (apiBaseUrl || '').replace(/\/$/, '')
+      const res = await fetch(`${base}/api/sessions/${sessionId}/links/${linkId}`, { method: 'DELETE', credentials: 'include' })
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      if (refetchSession) await refetchSession()
+    } catch (err) {
+      setDeleteMaterialError(err?.message || 'Delete failed')
+    } finally {
+      setDeletingMaterialId(null)
+    }
+  }
+
   // Sync context form fields when session changes
   useEffect(() => {
     setContextPremise(currentSession?.session?.premise ?? '')
@@ -1785,6 +1807,7 @@ export function CreatorMode({
                 canManage={!!sessionId}
                 onDeleteMaterial={deleteMaterial}
                 onDeleteVideo={deleteMaterial}
+                onDeleteLink={deleteLink}
                 deletingId={deletingMaterialId}
                 deleteError={deleteMaterialError}
                 /* SCRUM-275: pass the resolved primary descriptor so the
