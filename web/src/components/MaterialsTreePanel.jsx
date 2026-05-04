@@ -434,15 +434,31 @@ export function MaterialsTreePanel({
               // primary-video-item right after MP4 upload) keeps passing.
               const rowDisabled = !isPrimaryRow && !videoSelectable
               const videoIsPrimaryRow = !!(sessionId && isPrimaryRow && currentPrimary?.kind === 'video' && currentPrimary?.id)
+              // SCRUM-295: enable Make-primary on video rows. The PATCH endpoint
+              // expects kind="video" + id=<file_artifact_id>. The legacy
+              // `artifact_id` field on VideoSource references the old artifacts
+              // table, which is NOT what primary_video_artifact_id keys off — we
+              // need `file_artifact_id` (added on VideoSource by SCRUM-295).
+              // Migration 038 added the column; pre-migration rows have NULL,
+              // so the affordance short-circuits cleanly for legacy rows.
+              //
+              // Note: we deliberately do NOT gate on videoSelectable. The
+              // server requires file_artifact.status=ready (PRIMARY_NOT_READY
+              // otherwise), but the upload handler creates the file_artifact
+              // status=ready synchronously, so the video is set-primary-able
+              // before the (async) transcript pipeline finishes. Failing
+              // PATCHes still surface via the inline error region.
+              const videoMakePrimaryId = v.file_artifact_id
+              const canSetVideoPrimary = !!(canManage && onPrimaryChanged && videoMakePrimaryId && !videoIsPrimaryRow)
               return (
                 <div key={v.id}>
                   <SessionPrimaryRow
                     apiBaseUrl={apiBaseUrl}
                     sessionId={sessionId}
                     kind="video"
-                    id={videoIsPrimaryRow ? currentPrimary.id : null}
+                    id={videoIsPrimaryRow ? currentPrimary.id : videoMakePrimaryId}
                     isCurrentPrimary={videoIsPrimaryRow}
-                    canSetPrimary={false}
+                    canSetPrimary={canSetVideoPrimary}
                     onSuccess={canManage ? onPrimaryChanged : undefined}
                     itemLabel={videoDisplayTitle(v)}
                   >

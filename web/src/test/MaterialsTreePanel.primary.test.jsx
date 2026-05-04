@@ -181,6 +181,111 @@ describe('MaterialsTreePanel SCRUM-294 video-row primary badge + right-click cle
 	})
 })
 
+describe('MaterialsTreePanel SCRUM-295 video-row Make-primary affordance', () => {
+	// SCRUM-295: video rows now expose Make-primary via right-click, just like
+	// document/image/link rows. The PATCH id is the video's file_artifact_id
+	// (serialized on VideoSource as `file_artifact_id` after migration 038).
+	// Eligibility requires creator + onPrimaryChanged + file_artifact_id is
+	// present + the video is not already the current primary. Transcript
+	// status is intentionally NOT a gate: file_artifact is born ready by the
+	// upload handler, so set-primary works before transcription finishes.
+	const presVideoWithFileArtifact = {
+		id: 'vs-1',
+		display_title: 'Lecture',
+		transcript_status: 'ready',
+		file_artifact_id: 'fa-vs-1',
+	}
+
+	function sessionWithVideos(videos, currentPrimary = null) {
+		return {
+			session: { id: 'sess-1' },
+			video_sources: videos,
+			materials: [],
+			links: [],
+			unread_material_ids: [],
+			primary_video: videos[0] ?? null,
+			additional_videos: [],
+			material_slides_ready: {},
+			material_slides_status: {},
+			currentPrimary,
+		}
+	}
+
+	it('right-click on a freshly-uploaded video (no currentPrimary) opens Make-primary menu', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([presVideoWithFileArtifact])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+
+	it('does not open a menu when video has no file_artifact_id (legacy / pre-migration row)', () => {
+		const noFA = { ...presVideoWithFileArtifact, file_artifact_id: undefined }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([noFA])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('opens Make-primary menu even while transcript is processing (file_artifact gate is server-side)', () => {
+		// Transcript readiness is decoupled from file_artifact readiness: a
+		// just-uploaded MP4 has transcript_status=pending but its file_artifact
+		// is already status=ready, so the PATCH primary will succeed.
+		const transcriptProcessing = { ...presVideoWithFileArtifact, transcript_status: 'processing' }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([transcriptProcessing])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+
+	it('does not open a menu when canManage is false (participant)', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				canManage={false}
+				onPrimaryChanged={undefined}
+				session={sessionWithVideos([presVideoWithFileArtifact])}
+				currentPrimary={null}
+			/>,
+		)
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
+	})
+
+	it('right-click on a non-primary additional video row also opens Make-primary menu', () => {
+		const additional = { id: 'vs-2', display_title: 'Q&A clip', transcript_status: 'ready', file_artifact_id: 'fa-vs-2' }
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithVideos([presVideoWithFileArtifact, additional])}
+				currentPrimary={null}
+			/>,
+		)
+		// The additional video row uses testid="video-item" (not primary-video-item).
+		const row = screen.getByTestId('video-item').closest('div')
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+})
+
 describe('MaterialsTreePanel SCRUM-294 participant-mode primary badge visibility', () => {
 	const docMaterial = {
 		id: 'mat-1',

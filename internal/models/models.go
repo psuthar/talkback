@@ -131,6 +131,10 @@ type VideoSource struct {
 	TranscriptSegments    []TranscriptSegment   `json:"transcript_segments,omitempty"` // Normalized start/end/text (optional)
 	VideoRole             *VideoRole           `json:"video_role,omitempty"`          // primary | secondary; only one primary per session
 	DisplayTitle          *string              `json:"display_title,omitempty"`       // Human-readable title set by creator
+	// SCRUM-295: file_artifacts.id linked to this video source so the SCRUM-271
+	// primary system (which keys off file_artifacts.id) can reference it. NULL
+	// for legacy rows created before migration 038.
+	FileArtifactID        *uuid.UUID           `json:"file_artifact_id,omitempty"`
 	CreatedAt             time.Time            `json:"created_at"`
 }
 
