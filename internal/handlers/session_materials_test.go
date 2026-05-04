@@ -197,6 +197,49 @@ func TestSessionUploadMaterial(t *testing.T) {
 		assert.NotNil(t, m["extracted_text"], "extracted_text should be set immediately for XLSX")
 	})
 
+	t.Run("SCRUM-295: uploads mp4 and creates linked file_artifact (kind=video, status=ready)", func(t *testing.T) {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		header := make(map[string][]string)
+		header["Content-Disposition"] = []string{`form-data; name="file"; filename="clip.mp4"`}
+		header["Content-Type"] = []string{"video/mp4"}
+		fileWriter, err := writer.CreatePart(header)
+		require.NoError(t, err)
+		_, err = fileWriter.Write([]byte("not-a-real-mp4-but-fine-for-this-test"))
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.SessionUploadMaterial(w, req)
+		require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
+
+		// The handler creates a VideoSource alongside the Material. Look it up
+		// and verify the SCRUM-295 linkage to a file_artifact.
+		ctx := context.Background()
+		sources, err := h.DB.GetVideoSourcesBySessionID(ctx, session.ID)
+		require.NoError(t, err)
+		var mp4Source *models.VideoSource
+		for _, vs := range sources {
+			if vs != nil && vs.SourceType == models.VideoSourceTypeUpload {
+				mp4Source = vs
+				break
+			}
+		}
+		require.NotNil(t, mp4Source, "expected an upload video_source after MP4 materials/upload")
+		require.NotNil(t, mp4Source.FileArtifactID, "MP4 materials/upload must populate file_artifact_id so SCRUM-272 PATCH primary kind=video has a target")
+
+		fa, err := h.DB.GetFileArtifactByID(ctx, *mp4Source.FileArtifactID)
+		require.NoError(t, err)
+		require.NotNil(t, fa)
+		assert.Equal(t, models.FileArtifactKindVideo, fa.Kind)
+		assert.Equal(t, models.FileArtifactStatusReady, fa.Status)
+		require.NotNil(t, fa.SessionID)
+		assert.Equal(t, session.ID, *fa.SessionID)
+		assert.NotEmpty(t, fa.StorageKey)
+	})
+
 	t.Run("uploads pptx and returns 201 with ready (sync extraction)", func(t *testing.T) {
 		tmp := t.TempDir()
 		pptxPath := filepath.Join(tmp, "minimal.pptx")

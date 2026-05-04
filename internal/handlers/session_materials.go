@@ -407,6 +407,10 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		}
 		videoID := uuid.New()
 		originalURL := "file:///" + filename
+		// SCRUM-295: also create a file_artifacts row for this upload so the
+		// SCRUM-271/272 primary system (which keys off file_artifacts.id)
+		// can reference it. Same path as video_upload.go's createVideoFileArtifact.
+		fileArtifactID := createVideoFileArtifact(r.Context(), h, sessionID, filename, contentType, 0, storageProvider == "r2", videoStoredKey)
 		videoSource := &models.VideoSource{
 			ID:                   videoID,
 			ArtifactID:           artifactID,
@@ -418,6 +422,7 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			OriginalURL:          &originalURL,
 			TranscriptStatus:     models.VideoTranscriptStatusPending,
 			AutoTranscribeEnabled: true,
+			FileArtifactID:       fileArtifactID,
 		}
 		if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
 			log.Printf("SessionUploadMaterial CreateVideoSource: %v", err)
