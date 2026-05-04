@@ -192,6 +192,7 @@ export function MaterialsTreePanel({
   deletingId,
   deleteError,
   onDeleteVideo,
+  onDeleteLink,
   // SCRUM-275: creator-only "Make primary" affordance. When canManage is
   // true and onPrimaryChanged is provided, document rows render
   // SetPrimaryButton next to the title. currentPrimary lets the panel
@@ -721,18 +722,40 @@ export function MaterialsTreePanel({
                             <span className={styles.linkTitleCell}>
                               {link.title || link.url}
                             </span>
-                            <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
-                              {link.status === 'verified' ? (
-                                <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
-                              ) : link.status === 'pending' || link.status === 'processing' ? (
-                                <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
-                              ) : (
-                                <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
-                              )}
-                            </span>
+                            {/* SCRUM-296: collapse the verified `✓` so the row
+                               grammar matches docs/images ([title] [×]).
+                               Pending/failed still render so users see signal. */}
+                            {link.status !== 'verified' && (
+                              <span className={styles.linkStatusIcon} title={link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
+                                {link.status === 'pending' || link.status === 'processing' ? (
+                                  <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
+                                ) : (
+                                  <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
+                                )}
+                              </span>
+                            )}
                           </button>
                           {badge && (
                             <span className={styles.treeItemPrimarySlot}>{badge}</span>
+                          )}
+                          {canManage && onDeleteLink && (
+                            <button
+                              type="button"
+                              data-testid="link-delete-btn"
+                              onClick={(e) => { e.stopPropagation(); onDeleteLink(link.id) }}
+                              disabled={deletingId === `link-${link.id}`}
+                              aria-label={`Remove ${link.title || link.url}`}
+                              title={`Remove ${link.title || link.url}`}
+                              className={styles.treeItemDeleteBtn}
+                              style={{
+                                color: deletingId === `link-${link.id}` ? '#bbb' : '#999',
+                                cursor: deletingId === `link-${link.id}` ? 'not-allowed' : 'pointer',
+                              }}
+                              onMouseEnter={(e) => { if (deletingId !== `link-${link.id}`) e.currentTarget.style.color = 'var(--color-danger-dark)' }}
+                              onMouseLeave={(e) => { if (deletingId !== `link-${link.id}`) e.currentTarget.style.color = '#999' }}
+                            >
+                              {deletingId === `link-${link.id}` ? '…' : '×'}
+                            </button>
                           )}
                         </div>
                         {menuNode}

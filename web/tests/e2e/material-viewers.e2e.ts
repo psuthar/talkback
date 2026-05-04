@@ -428,4 +428,49 @@ test.describe('Material upload and viewer flow', () => {
     await loginAsAdmin(request)
     await deleteSession(request, session.id)
   })
+
+  // ─── SCRUM-296: link delete affordance in materials tree ───────────────────
+  test('SCRUM-296: link row in materials tree shows × delete button that removes the link', async ({ page, context, request }) => {
+    const email = uniqueEmail('link-delete')
+    await createUserAndLoginWithId(context, request, email)
+    const session = await createSession(request, 'E2E SCRUM-296 Link Delete')
+
+    await navigateToCreatorSession(page, session.id)
+
+    // Add a link via the URL input.
+    await ensureAddContentExpanded(page)
+    const urlInput = page.getByTestId('add-link-url-input')
+    await expect(urlInput).toBeVisible({ timeout: 5_000 })
+    await urlInput.fill(TEST_LINK_URL)
+    const addLinkResponse = page.waitForResponse(
+      (res) => res.url().includes('/links') && res.request().method() === 'POST',
+      { timeout: 15_000 }
+    )
+    await page.getByTestId('add-link-submit-btn').click()
+    await addLinkResponse
+
+    // Link row appears in the Links section.
+    const linkItem = page.getByTestId('link-item').filter({ hasText: /example\.com|Example Domain/i })
+    await expect(linkItem).toBeVisible({ timeout: 15_000 })
+
+    // The × delete button is present on the link row (this is the bug fix —
+    // before SCRUM-296 the link row had no delete affordance).
+    const deleteBtn = page.getByTestId('link-delete-btn')
+    await expect(deleteBtn).toBeVisible({ timeout: 5_000 })
+
+    // Click delete and wait for the DELETE request to complete.
+    const deleteLinkResponse = page.waitForResponse(
+      (res) => res.url().includes('/links/') && res.request().method() === 'DELETE',
+      { timeout: 15_000 }
+    )
+    await deleteBtn.click()
+    await deleteLinkResponse
+
+    // Row disappears after the session refetch.
+    await expect(linkItem).toHaveCount(0, { timeout: 15_000 })
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
+  })
 })
