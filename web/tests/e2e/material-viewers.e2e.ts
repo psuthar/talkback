@@ -24,11 +24,13 @@ import { test, expect } from '@playwright/test'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 import {
+  API_BASE,
   createUserAndLoginWithId,
   createSession,
   deleteSession,
   deleteUserViaAdmin,
   loginAsAdmin,
+  pasteMaterial,
   uniqueEmail,
 } from './fixtures'
 
@@ -172,6 +174,57 @@ test.describe('Material upload and viewer flow', () => {
     await deleteSession(request, session.id)
     const adminRequest = request
     // user cleanup handled in afterAll for shared user; inline session cleaned here
+  })
+
+  // ─── SCRUM-294: inline Primary badge + right-click context menu ───────────
+  // Deterministic flow: paste a text material (synchronous, text_status=ready
+  // immediately), explicitly PATCH the session primary to that material so
+  // currentPrimary is populated server-side, then load the page and assert
+  // the inline badge + right-click menu. (MP4 upload alone does NOT auto-set
+  // primary_video_artifact_id, so a video-based variant of this test would
+  // race the resolver — we exercise the document path instead.)
+  test('SCRUM-294: primary document row shows inline Primary badge and right-click opens Clear menu', async ({ page, context, request }) => {
+    const email = uniqueEmail('primary-ux')
+    await createUserAndLoginWithId(context, request, email)
+    const session = await createSession(request, 'E2E SCRUM-294 Primary UX')
+
+    // Add a text material (text_status=ready immediately, viewable=true).
+    const material = await pasteMaterial(request, session.id, 'SCRUM-294 doc', 'body text for primary UX e2e')
+    expect(material?.id).toBeTruthy()
+
+    // Explicitly set this material as the session primary so currentPrimary
+    // is populated when the page loads.
+    const patchRes = await request.patch(`${API_BASE}/api/sessions/${session.id}`, {
+      data: { primary: { kind: 'document', id: material.id } },
+    })
+    expect(patchRes.ok()).toBe(true)
+
+    await navigateToCreatorSession(page, session.id)
+
+    // The pasted material appears as a Document row.
+    const docItem = page.getByTestId('material-item').filter({ hasText: 'SCRUM-294 doc' })
+    await expect(docItem).toBeVisible({ timeout: 15_000 })
+
+    // Inline Primary badge sits in the row (not on a separate sub-line below it).
+    await expect(page.getByTestId('primary-badge')).toBeVisible({ timeout: 10_000 })
+
+    // The legacy "Make primary" inline text affordance is gone for all rows.
+    await expect(page.getByText('Make primary', { exact: true })).toHaveCount(0)
+
+    // Right-click on the row fires onContextMenu on the row container (handler
+    // bubbles up from the inner button) and opens the context menu with the
+    // Clear-primary action — the SCRUM-290 path is preserved.
+    await docItem.click({ button: 'right' })
+    await expect(page.getByTestId('primary-context-menu')).toBeVisible()
+    await expect(page.getByTestId('clear-primary-btn')).toBeVisible()
+
+    // Escape closes the menu (no PATCH).
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('primary-context-menu')).toHaveCount(0)
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
   })
 
   // ─── PPTX upload ──────────────────────────────────────────────────────────
