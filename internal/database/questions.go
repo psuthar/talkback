@@ -418,3 +418,24 @@ func (db *DB) UpdateAnswerConfirmed(ctx context.Context, answerID uuid.UUID, con
 	}
 	return nil
 }
+
+// UpdateAnswerContent replaces the answer body in place: text, status, confidence,
+// citations, and model. Also bumps created_at so stale-cache checks compare against
+// the retry time rather than the original cold-cache miss. The answer's ID and
+// question_id are preserved so existing client references remain valid.
+func (db *DB) UpdateAnswerContent(ctx context.Context, answerID uuid.UUID, text string, status models.AnswerStatus, confidence float32, citations []models.Citation, model *string) error {
+	citationsJSON, err := json.Marshal(citations)
+	if err != nil {
+		return fmt.Errorf("failed to marshal citations: %w", err)
+	}
+	query := `
+		UPDATE answers
+		SET answer_text = $1, answer_status = $2, confidence = $3, citations = $4, model = $5, created_at = now()
+		WHERE id = $6
+	`
+	_, err = db.Pool.Exec(ctx, query, text, status, confidence, citationsJSON, model, answerID)
+	if err != nil {
+		return fmt.Errorf("failed to update answer content: %w", err)
+	}
+	return nil
+}
