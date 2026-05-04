@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -147,6 +148,14 @@ func (h *Handlers) UploadVideoFile(w http.ResponseWriter, r *http.Request) {
 		transcriptSourceURL = objectKey
 	}
 
+	// SCRUM-295: also create a file_artifact row for this upload so the
+	// SCRUM-271/272 primary system (which keys off file_artifacts.id) can
+	// reference it. The file is already on disk/R2 by this point so the
+	// artifact is born status=ready. Failure here is logged but does not
+	// fail the upload — the video_source is still usable; just the
+	// Make-primary affordance won't appear for this row.
+	fileArtifactID := createVideoFileArtifact(r.Context(), h, sessionID, header.Filename, contentType, header.Size, h.Storage != nil, objectKey)
+
 	// Create video source
 	videoSource := &models.VideoSource{
 		ID:                    videoID,
@@ -158,6 +167,7 @@ func (h *Handlers) UploadVideoFile(w http.ResponseWriter, r *http.Request) {
 		StoredVideoObjectKey:  &objectKey,
 		TranscriptStatus:      models.VideoTranscriptStatusPending,
 		AutoTranscribeEnabled: true,
+		FileArtifactID:        fileArtifactID,
 	}
 
 	if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
@@ -186,9 +196,13 @@ func (h *Handlers) UploadVideoFile(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Warning: Failed to link job to video source: %v", err)
 		}
 
-		// Enqueue job for processing
-		if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
-			log.Printf("Warning: Failed to enqueue job: %v", err)
+		// Enqueue job for processing. JobProcessor is nil in test harnesses
+		// that don't drive transcription end-to-end; skip enqueue cleanly so
+		// upload-only tests can exercise the synchronous bookkeeping.
+		if h.JobProcessor != nil {
+			if err := h.JobProcessor.Enqueue(r.Context(), job); err != nil {
+				log.Printf("Warning: Failed to enqueue job: %v", err)
+			}
 		}
 	}
 
@@ -211,4 +225,53 @@ func parseSizeMB(sizeStr string) (int64, error) {
 		return 0, err
 	}
 	return size * 1024 * 1024, nil
+}
+
+// createVideoFileArtifact (SCRUM-295) creates a file_artifacts row for a
+// just-uploaded MP4 so the SCRUM-271/272 primary system can reference it.
+// The file is already on disk/R2 by this point so status is born "ready".
+// Returns the new artifact's id, or nil if creation failed (logged as a
+// warning so the upload still succeeds — just without a Make-primary id).
+func createVideoFileArtifact(ctx context.Context, h *Handlers, sessionID uuid.UUID, filename, contentType string, sizeBytes int64, useR2 bool, storageKey string) *uuid.UUID {
+	id := uuid.New()
+	provider := "local"
+	bucket := "local"
+	if useR2 {
+		provider = "r2"
+		if envBucket := strings.TrimSpace(os.Getenv("R2_BUCKET")); envBucket != "" {
+			bucket = envBucket
+		} else {
+			bucket = "talkback-r2-bucket"
+		}
+	}
+	ct := strings.TrimSpace(contentType)
+	if ct == "" {
+		ct = "video/mp4"
+	}
+	var size *int64
+	if sizeBytes > 0 {
+		size = &sizeBytes
+	}
+	var fn *string
+	if filename != "" {
+		f := filename
+		fn = &f
+	}
+	fa := &models.FileArtifact{
+		ID:              id,
+		SessionID:       &sessionID,
+		Kind:            models.FileArtifactKindVideo,
+		Filename:        fn,
+		ContentType:     ct,
+		SizeBytes:       size,
+		StorageProvider: provider,
+		StorageBucket:   bucket,
+		StorageKey:      storageKey,
+		Status:          models.FileArtifactStatusReady,
+	}
+	if err := h.DB.CreateFileArtifact(ctx, fa); err != nil {
+		log.Printf("UploadVideoFile create file_artifact: %v", err)
+		return nil
+	}
+	return &id
 }

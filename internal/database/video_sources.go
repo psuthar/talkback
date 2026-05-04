@@ -11,8 +11,8 @@ import (
 
 func (db *DB) CreateVideoSource(ctx context.Context, videoSource *models.VideoSource) error {
 	query := `
-		INSERT INTO video_sources (id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, auto_transcribe_enabled, transcription_source, transcription_job_id, video_role)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+		INSERT INTO video_sources (id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, auto_transcribe_enabled, transcription_source, transcription_job_id, video_role, file_artifact_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING created_at
 	`
 	// Set defaults if not provided
@@ -50,6 +50,7 @@ func (db *DB) CreateVideoSource(ctx context.Context, videoSource *models.VideoSo
 		videoSource.TranscriptionSource,
 		videoSource.TranscriptionJobID,
 		videoRole,
+		videoSource.FileArtifactID,
 	).Scan(&videoSource.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("failed to create video source: %w", err)
@@ -128,7 +129,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 	var sourceTypeStr string
 	var segmentsRaw []byte
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, file_artifact_id, created_at
 		FROM video_sources
 		WHERE artifact_id = $1
 	`
@@ -157,6 +158,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 		&segmentsRaw,
 		&videoRolePtr,
 		&videoSource.DisplayTitle,
+		&videoSource.FileArtifactID,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
@@ -176,7 +178,7 @@ func (db *DB) GetVideoSourceByArtifactID(ctx context.Context, artifactID uuid.UU
 // GetVideoSourcesBySessionID retrieves all video sources for a session
 func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.VideoSource, error) {
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, file_artifact_id, created_at
 		FROM video_sources
 		WHERE session_id = $1
 		ORDER BY created_at
@@ -218,6 +220,7 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 			&segmentsRaw,
 			&videoRolePtr,
 			&vs.DisplayTitle,
+			&vs.FileArtifactID,
 			&vs.CreatedAt,
 		)
 		if err != nil {
@@ -251,7 +254,7 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 	var segmentsRaw []byte
 	var videoRolePtr *string
 	query := `
-		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, created_at
+		SELECT id, artifact_id, session_id, provider, video_url, playback_mode, embed_url, media_url, duration_seconds, poster_url, source_type, stored_video_object_key, original_url, failure_reason, transcript_status, transcript_text, auto_transcribe_enabled, transcription_source, transcription_job_id, raw_vtt, transcript_segments, video_role, display_title, file_artifact_id, created_at
 		FROM video_sources
 		WHERE id = $1
 	`
@@ -280,6 +283,7 @@ func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*model
 		&segmentsRaw,
 		&videoRolePtr,
 		&videoSource.DisplayTitle,
+		&videoSource.FileArtifactID,
 		&videoSource.CreatedAt,
 	)
 	if err != nil {
