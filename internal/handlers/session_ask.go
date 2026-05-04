@@ -132,20 +132,30 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	artifactID := artifacts[0].ID
 
-	// Optional: repeat-question cache by session and thread
+	// Optional: repeat-question cache by session and thread.
+	// SCRUM-297: stale not_covered answers (cached when the index hadn't yet
+	// caught up to a freshly-added link/material) are auto-retried. The retry
+	// runs the full retrieval+LLM path and updates the cached answer in place,
+	// preserving the answer ID so client references remain valid.
 	existingQ, existingA, _ := h.DB.FindExistingQuestionByText(ctx, sessionID, req.QuestionText, parentQuestionID)
+	retryStaleAnswer := false
 	if existingQ != nil && existingA != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(SessionAskResponse{
-			Question: SessionAskQuestionResponse{
-				ID:           existingQ.ID.String(),
-				QuestionText: existingQ.QuestionText,
-				CreatedAt:    existingQ.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			},
-			Answer: h.sessionAskAnswerFromModelWithContext(ctx, sessionID, existingA),
-		})
-		return
+		indexAdvanced := session.IndexUpdatedAt != nil && session.IndexUpdatedAt.After(existingA.CreatedAt)
+		if existingA.AnswerStatus == models.AnswerStatusNotCovered && indexAdvanced {
+			retryStaleAnswer = true
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(SessionAskResponse{
+				Question: SessionAskQuestionResponse{
+					ID:           existingQ.ID.String(),
+					QuestionText: existingQ.QuestionText,
+					CreatedAt:    existingQ.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+				},
+				Answer: h.sessionAskAnswerFromModelWithContext(ctx, sessionID, existingA),
+			})
+			return
+		}
 	}
 
 	// Ensure index (chunk + embed) if not ready
@@ -186,26 +196,44 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 					log.Printf("SessionAsk RetrieveTopK after reindex: %v", err)
 				}
 			}
+		} else if sessionHasUnindexedSources(ctx, h.DB, sessionID) {
+			// SCRUM-297: partial-index race. Some sources have content (e.g. a
+			// freshly-verified link's extracted_text) but no rows in
+			// session_chunks for that source — the async indexing job hadn't
+			// caught up when the question fired. IndexSession is idempotent
+			// (UpsertSessionChunk uses content_hash) so we don't wipe; just
+			// run it to fill in the missing chunks, then retry retrieval.
+			if reindexErr := rag.IndexSession(ctx, h.DB, embedder, sessionID, h.Storage); reindexErr != nil {
+				log.Printf("SessionAsk reindex after partial-index detect: %v", reindexErr)
+			} else {
+				sessionChunks, err = rag.RetrieveTopK(ctx, h.DB, sessionID, questionEmbedding[0], rag.DefaultTopK, primaryVideoID)
+				if err != nil {
+					log.Printf("SessionAsk RetrieveTopK after partial-index reindex: %v", err)
+				}
+			}
 		}
 	}
 
-	// Enforce per-session question limit
-	count, err := h.DB.CountQuestionsBySessionID(ctx, sessionID)
-	if err != nil {
-		log.Printf("SessionAsk CountQuestionsBySessionID: %v", err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"message": "Failed to check question limit"})
-		return
-	}
-	if count >= auth.Config.MaxQuestionsPerSession {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":         "session question limit reached",
-			"max_questions": auth.Config.MaxQuestionsPerSession,
-		})
-		return
+	// Enforce per-session question limit. Skip on stale-answer retry — no
+	// new question row will be created, so the count cannot increase.
+	if !retryStaleAnswer {
+		count, err := h.DB.CountQuestionsBySessionID(ctx, sessionID)
+		if err != nil {
+			log.Printf("SessionAsk CountQuestionsBySessionID: %v", err)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"message": "Failed to check question limit"})
+			return
+		}
+		if count >= auth.Config.MaxQuestionsPerSession {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":         "session question limit reached",
+				"max_questions": auth.Config.MaxQuestionsPerSession,
+			})
+			return
+		}
 	}
 
 	// asked_by is the logged-in user's email (everyone must be authenticated to ask).
@@ -217,19 +245,26 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 			askedByPtr = &email
 		}
 	}
-	question := &models.Question{
-		ID:               uuid.New(),
-		ArtifactID:       artifactID,
-		SessionID:        sessionID,
-		ParentQuestionID: parentQuestionID,
-		AskedBy:          askedByPtr,
-		QuestionText:     req.QuestionText,
-		QuestionSource:   models.QuestionSourceText,
-	}
-	if err := h.DB.CreateQuestion(ctx, question); err != nil {
-		log.Printf("SessionAsk CreateQuestion: %v", err)
-		http.Error(w, "Failed to create question", http.StatusInternalServerError)
-		return
+	var question *models.Question
+	if retryStaleAnswer {
+		// SCRUM-297: reuse the existing question row so the answer's foreign
+		// key remains valid and clients keep the same question ID.
+		question = existingQ
+	} else {
+		question = &models.Question{
+			ID:               uuid.New(),
+			ArtifactID:       artifactID,
+			SessionID:        sessionID,
+			ParentQuestionID: parentQuestionID,
+			AskedBy:          askedByPtr,
+			QuestionText:     req.QuestionText,
+			QuestionSource:   models.QuestionSourceText,
+		}
+		if err := h.DB.CreateQuestion(ctx, question); err != nil {
+			log.Printf("SessionAsk CreateQuestion: %v", err)
+			http.Error(w, "Failed to create question", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Temporary tracing: show what lookup is being used to answer (set ASK_TRACE=1)
@@ -292,20 +327,45 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to process answer", http.StatusInternalServerError)
 		return
 	}
-	if err := h.DB.CreateAnswer(ctx, answer); err != nil {
-		log.Printf("SessionAsk CreateAnswer: %v", err)
-		http.Error(w, "Failed to save answer", http.StatusInternalServerError)
-		return
+	if retryStaleAnswer {
+		// SCRUM-297: update the cached answer row in place so clients that
+		// reference the original answer ID see the new content.
+		answer.ID = existingA.ID
+		if err := h.DB.UpdateAnswerContent(ctx, existingA.ID, answer.AnswerText, answer.AnswerStatus, answer.Confidence, answer.Citations, answer.Model); err != nil {
+			log.Printf("SessionAsk UpdateAnswerContent: %v", err)
+			http.Error(w, "Failed to save answer", http.StatusInternalServerError)
+			return
+		}
+		// Best-effort fetch of the updated row so CreatedAt reflects the retry
+		// time (used by future stale-cache checks).
+		if updated, getErr := h.DB.GetAnswerByID(ctx, existingA.ID); getErr == nil && updated != nil {
+			answer = updated
+		}
+	} else {
+		if err := h.DB.CreateAnswer(ctx, answer); err != nil {
+			log.Printf("SessionAsk CreateAnswer: %v", err)
+			http.Error(w, "Failed to save answer", http.StatusInternalServerError)
+			return
+		}
 	}
 
-	// Broadcast so creator view (and other clients) get real-time Q&A updates
+	// Broadcast so creator view (and other clients) get real-time Q&A updates.
+	// On stale-answer retry the question already existed; only broadcast the
+	// updated answer so subscribers re-render it. Hub uses BroadcastAnswerCreated
+	// for both create and update — the client treats it as the latest answer.
 	if h.Hub != nil {
-		h.Hub.BroadcastQuestionCreated(sessionID, question)
+		if !retryStaleAnswer {
+			h.Hub.BroadcastQuestionCreated(sessionID, question)
+		}
 		h.Hub.BroadcastAnswerCreated(sessionID, answer)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	if retryStaleAnswer {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
 	json.NewEncoder(w).Encode(SessionAskResponse{
 		Question: SessionAskQuestionResponse{
 			ID:           question.ID.String(),
@@ -557,6 +617,42 @@ func sessionEmptyChunkMessage(ctx context.Context, db *database.DB, sessionID uu
 		return "Transcript or content is still being imported. Please wait a moment and try again."
 	}
 	return ""
+}
+
+// sessionHasUnindexedSources returns true if the session has a verified link
+// or active material whose extracted_text is non-empty but no rows exist in
+// session_chunks for that source. This catches the partial-index race where
+// the async indexing job hasn't yet caught up to a freshly-added source —
+// without it, retrieval can return only transcript chunks and miss the new
+// content entirely. SCRUM-297.
+func sessionHasUnindexedSources(ctx context.Context, db *database.DB, sessionID uuid.UUID) bool {
+	links, err := db.GetVerifiedSessionLinksBySessionID(ctx, sessionID)
+	if err == nil {
+		for _, link := range links {
+			if link.ExtractedText == nil || strings.TrimSpace(*link.ExtractedText) == "" {
+				continue
+			}
+			linkID := link.ID
+			chunks, err := db.ListSessionChunksBySessionIDAndSource(ctx, sessionID, "link", &linkID, 1)
+			if err == nil && len(chunks) == 0 {
+				return true
+			}
+		}
+	}
+	mats, err := db.GetActiveMaterialsBySessionID(ctx, sessionID)
+	if err == nil {
+		for _, m := range mats {
+			if m.ExtractedText == nil || strings.TrimSpace(*m.ExtractedText) == "" {
+				continue
+			}
+			matID := m.ID
+			chunks, err := db.ListSessionChunksBySessionIDAndSource(ctx, sessionID, "material", &matID, 1)
+			if err == nil && len(chunks) == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sessionHasIndexableContent returns true if the session has content that could yield RAG chunks (transcript, materials with text, or verified links with extracted text).
