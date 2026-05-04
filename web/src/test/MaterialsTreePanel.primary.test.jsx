@@ -5,8 +5,8 @@ import { MaterialsTreePanel } from '../components/MaterialsTreePanel'
 vi.mock('../api/materials', () => ({
 	getMaterialSlides: vi.fn().mockResolvedValue({ slides: [] }),
 }))
-// Stub the API module so SetPrimaryButton's import is harmless if it tries to
-// call out (no click in these tests).
+// Stub the API module so SessionPrimaryRow's import is harmless if it tries
+// to call out (no menu interaction in most tests).
 vi.mock('../api/sessionPrimary', async () => {
 	const actual = await vi.importActual('../api/sessionPrimary')
 	return { ...actual, patchSessionPrimary: vi.fn() }
@@ -45,23 +45,36 @@ function sessionWithLinks(links, currentPrimary = null) {
 	}
 }
 
-describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
+describe('MaterialsTreePanel SCRUM-294 link-row primary affordance (right-click menu)', () => {
 	const verifiedLink = { id: 'l1', url: 'https://example.com', title: 'Doc', status: 'verified' }
 
-	it('renders Make-primary button on a link row when canManage + onPrimaryChanged', () => {
+	it('does NOT render an inline "Make primary" text link below an eligible link row', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
 				session={sessionWithLinks([verifiedLink])}
 			/>,
 		)
-		// Two SetPrimaryButton instances may exist (documents + links); the link
-		// row's button is the one we care about — at least one is present.
-		const buttons = screen.getAllByTestId('set-primary-btn')
-		expect(buttons.length).toBeGreaterThan(0)
+		// SCRUM-294: the previous "Make primary" text link is gone — no inline
+		// affordance renders below the row anymore.
+		expect(screen.queryByText(/^Make primary$/i)).toBeNull()
 	})
 
-	it('renders Primary badge when currentPrimary matches the link row', () => {
+	it('right-click on the link row opens the Make-primary context menu', () => {
+		render(
+			<MaterialsTreePanel
+				{...baseProps}
+				session={sessionWithLinks([verifiedLink])}
+			/>,
+		)
+		const row = screen.getByTestId('link-item').parentElement
+		expect(row).not.toBeNull()
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('primary-context-menu')).toBeInTheDocument()
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
+	})
+
+	it('renders the inline Primary badge on a link row when currentPrimary matches', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -72,7 +85,7 @@ describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
 		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
 	})
 
-	it('does not render the button on a processing link (linkSelectable false)', () => {
+	it('does not open a Make-primary menu on a processing link (linkSelectable false)', () => {
 		const processingLink = { ...verifiedLink, status: 'processing' }
 		render(
 			<MaterialsTreePanel
@@ -80,12 +93,12 @@ describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
 				session={sessionWithLinks([processingLink])}
 			/>,
 		)
-		// The link row exists but no Make-primary button below it.
-		expect(screen.getByTestId('link-item')).toBeInTheDocument()
-		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+		const row = screen.getByTestId('link-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 	})
 
-	it('does not render the button when canManage is false', () => {
+	it('does not open a menu on link rows when canManage is false', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -93,10 +106,12 @@ describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
 				session={sessionWithLinks([verifiedLink])}
 			/>,
 		)
-		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+		const row = screen.getByTestId('link-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 	})
 
-	it('does not render the button when onPrimaryChanged is not provided', () => {
+	it('does not open a menu when onPrimaryChanged is not provided', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -104,19 +119,14 @@ describe('MaterialsTreePanel SCRUM-276 primary badging on link rows', () => {
 				session={sessionWithLinks([verifiedLink])}
 			/>,
 		)
-		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+		const row = screen.getByTestId('link-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 	})
 })
 
-// SCRUM-286: video rows in the presentation slot use SetPrimaryButton's
-// badge form instead of a plain "Primary" meta string, so styling and the
-// Clear affordance match document/link rows.
-describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row', () => {
-	const presVideo = {
-		id: 'vs-1',
-		display_title: 'Lecture',
-		transcript_status: 'ready',
-	}
+describe('MaterialsTreePanel SCRUM-294 video-row primary badge + right-click clear', () => {
+	const presVideo = { id: 'vs-1', display_title: 'Lecture', transcript_status: 'ready' }
 
 	function sessionWithPresentationVideo(currentPrimary = null) {
 		return {
@@ -133,7 +143,7 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 		}
 	}
 
-	it('renders Primary badge on the presentation video when currentPrimary.kind=video', () => {
+	it('renders Primary badge inline on the presentation video when currentPrimary.kind=video', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -142,12 +152,10 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 			/>,
 		)
 		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
-		// The legacy static "Primary" meta string is no longer the source of
-		// truth; the badge styling now matches doc/link rows.
 		expect(screen.getByTestId('primary-video-item').textContent).toContain('Lecture')
 	})
 
-	it('exposes the Clear control via right-click on the badge when onPrimaryChanged is set (SCRUM-290)', () => {
+	it('right-click on the primary video row opens the Clear-primary menu', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -155,14 +163,13 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 				currentPrimary={{ kind: 'video', id: 'fa-7' }}
 			/>,
 		)
-		// Menu starts closed (Clear lives inside it now, not inline).
-		expect(screen.queryByTestId('clear-primary-btn')).toBeNull()
-		// Right-click on the badge opens the context menu.
-		fireEvent.contextMenu(screen.getByTestId('primary-badge'))
+		const row = screen.getByTestId('primary-video-item').closest('div')
+		expect(row).not.toBeNull()
+		fireEvent.contextMenu(row)
 		expect(screen.getByTestId('clear-primary-btn')).toBeInTheDocument()
 	})
 
-	it('does not render a primary badge when the session primary is a non-video kind (e.g. document)', () => {
+	it('does not render a primary badge when the session primary is a non-video kind', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -170,19 +177,11 @@ describe('MaterialsTreePanel SCRUM-286 primary badge on presentation video row',
 				currentPrimary={{ kind: 'document', id: 'mat-1' }}
 			/>,
 		)
-		// The primary video row shows no badge here — the document row would.
-		// (No matching document fixture in this test, so simply assert no badge
-		// from the video row exists.)
 		expect(screen.queryByTestId('primary-badge')).toBeNull()
 	})
-
 })
 
-// SCRUM-293: participants (canManage=false) should still see the Primary
-// badge as a read-only status indicator on whichever row is the session
-// primary. They must NOT see the Make-primary button or the right-click
-// Clear menu — the badge is purely informational for them.
-describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility', () => {
+describe('MaterialsTreePanel SCRUM-294 participant-mode primary badge visibility', () => {
 	const docMaterial = {
 		id: 'mat-1',
 		kind: 'document',
@@ -222,7 +221,7 @@ describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility
 		}
 	}
 
-	it('participant sees Primary badge on a document row when it is the session primary', () => {
+	it('participant sees Primary badge inline on a primary document row', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -233,11 +232,14 @@ describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility
 			/>,
 		)
 		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
-		// No Make-primary button, no right-click menu interactivity.
-		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+		// No make-primary text affordance, no menu on right-click.
+		expect(screen.queryByText(/^Make primary$/i)).toBeNull()
+		const row = screen.getByTestId('material-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 	})
 
-	it('participant sees Primary badge on the video row when a video is the session primary', () => {
+	it('participant sees Primary badge inline on the video row when video is primary', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -250,23 +252,7 @@ describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility
 		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
 	})
 
-	it('participant primary badge is non-interactive (no tabIndex, right-click is a no-op)', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWithDoc()}
-				currentPrimary={{ kind: 'document', id: 'mat-1' }}
-			/>,
-		)
-		const badge = screen.getByTestId('primary-badge')
-		expect(badge.getAttribute('tabindex')).toBeNull()
-		fireEvent.contextMenu(badge)
-		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
-	})
-
-	it('participant sees no badge on a row that is NOT the session primary', () => {
+	it('participant sees no badge on a row that is NOT primary', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -280,11 +266,7 @@ describe('MaterialsTreePanel SCRUM-293 participant-mode primary badge visibility
 	})
 })
 
-// SCRUM-289: image-kind materials are eligible for primary too. The Images
-// section now renders SetPrimaryButton + the badge identically to the
-// Documents section, since the backend's primary_content_kind='document'
-// is the entity-pointer (any material row), not a content-type label.
-describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => {
+describe('MaterialsTreePanel SCRUM-294 image-row primary affordance (right-click menu)', () => {
 	const imageMaterial = {
 		id: 'img-1',
 		kind: 'image',
@@ -308,7 +290,7 @@ describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => 
 		}
 	}
 
-	it('renders Make-primary button on an image row when canManage + onPrimaryChanged', () => {
+	it('right-click on an image row opens the Make-primary context menu (creator)', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -316,11 +298,14 @@ describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => 
 			/>,
 		)
 		expect(screen.getByTestId('images-item')).toBeInTheDocument()
-		const buttons = screen.getAllByTestId('set-primary-btn')
-		expect(buttons.length).toBeGreaterThan(0)
+		// No inline "Make primary" text — only the right-click affordance.
+		expect(screen.queryByText(/^Make primary$/i)).toBeNull()
+		const row = screen.getByTestId('images-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.getByTestId('make-primary-btn')).toBeInTheDocument()
 	})
 
-	it('renders Primary badge on an image row when currentPrimary points at it', () => {
+	it('renders inline Primary badge on an image row when currentPrimary points at it', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -331,7 +316,7 @@ describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => 
 		expect(screen.getByTestId('primary-badge')).toBeInTheDocument()
 	})
 
-	it('does not render the button on an image row when canManage is false', () => {
+	it('does not open a menu on an image row when canManage is false', () => {
 		render(
 			<MaterialsTreePanel
 				{...baseProps}
@@ -339,8 +324,8 @@ describe('MaterialsTreePanel SCRUM-289 primary affordance on image rows', () => 
 				session={sessionWithImage()}
 			/>,
 		)
-		// Image row still appears, but no SetPrimaryButton.
-		expect(screen.getByTestId('images-item')).toBeInTheDocument()
-		expect(screen.queryByTestId('set-primary-btn')).toBeNull()
+		const row = screen.getByTestId('images-item').parentElement
+		fireEvent.contextMenu(row)
+		expect(screen.queryByTestId('primary-context-menu')).toBeNull()
 	})
 })

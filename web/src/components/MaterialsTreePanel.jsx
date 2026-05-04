@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getMaterialSlides, retryMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
-import { SetPrimaryButton } from './SetPrimaryButton'
+import { SessionPrimaryRow } from './SetPrimaryButton'
 import styles from './MaterialsTreePanel.module.css'
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
@@ -110,13 +110,15 @@ function TreeSection({ title, children }) {
   )
 }
 
-function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle }) {
+function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle, primaryBadge, rowHandlers }) {
+  const handlers = rowHandlers || {}
   return (
     <div
       className={styles.treeItemRow}
       style={{
         background: selected ? 'var(--color-success-bg)' : 'transparent',
         ...(disabled && { opacity: 0.7 }),
+        position: 'relative',
       }}
       onMouseEnter={(e) => {
         if (!selected && !disabled) e.currentTarget.style.background = '#f0f0f0'
@@ -124,6 +126,7 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
       onMouseLeave={(e) => {
         if (!selected) e.currentTarget.style.background = selected ? 'var(--color-success-bg)' : 'transparent'
       }}
+      {...handlers}
     >
       <button
         data-testid={testId}
@@ -143,6 +146,9 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
           <span className={styles.treeItemMeta} style={metaStyle}>{meta}</span>
         )}
       </button>
+      {primaryBadge && (
+        <span className={styles.treeItemPrimarySlot}>{primaryBadge}</span>
+      )}
       {onDelete && (
         <button
           type="button"
@@ -427,45 +433,46 @@ export function MaterialsTreePanel({
               // material-viewers e2e (which waits for clickable
               // primary-video-item right after MP4 upload) keeps passing.
               const rowDisabled = !isPrimaryRow && !videoSelectable
+              const videoIsPrimaryRow = !!(sessionId && isPrimaryRow && currentPrimary?.kind === 'video' && currentPrimary?.id)
               return (
                 <div key={v.id}>
-                  <TreeItem
-                    testId={rowTestId}
-                    icon={null}
-                    title={videoDisplayTitle(v)}
-                    meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
-                    metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
-                    selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
-                    onClick={() => {
-                      setSelectedVideo(v)
-                      setVideoId(v.id)
-                      setVideoPlayerKey(prev => prev + 1)
-                      onSelectVideo?.()
-                    }}
-                    onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
-                    deleting={materialId ? deletingId === String(materialId) : false}
-                    disabled={rowDisabled}
-                    buttonTitle={rowDisabled ? 'Video is still processing' : undefined}
-                  />
-                  {/* SCRUM-293: Primary badge for ALL roles when the row is
-                      currently primary (read-only for participants,
-                      interactive for creators). Make-primary on non-primary
-                      videos is still deferred — VideoSource doesn't expose
-                      its file_artifact id, so PATCH primary kind=video has
-                      no id to send. */}
-                  {sessionId && isPrimaryRow && currentPrimary?.kind === 'video' && currentPrimary?.id && (
-                    <div style={{ padding: '0 8px 4px 24px' }}>
-                      <SetPrimaryButton
-                        apiBaseUrl={apiBaseUrl}
-                        sessionId={sessionId}
-                        kind="video"
-                        id={currentPrimary.id}
-                        isCurrentPrimary={true}
-                        onSuccess={canManage ? onPrimaryChanged : undefined}
-                        itemLabel={videoDisplayTitle(v)}
-                      />
-                    </div>
-                  )}
+                  <SessionPrimaryRow
+                    apiBaseUrl={apiBaseUrl}
+                    sessionId={sessionId}
+                    kind="video"
+                    id={videoIsPrimaryRow ? currentPrimary.id : null}
+                    isCurrentPrimary={videoIsPrimaryRow}
+                    canSetPrimary={false}
+                    onSuccess={canManage ? onPrimaryChanged : undefined}
+                    itemLabel={videoDisplayTitle(v)}
+                  >
+                    {({ badge, rowHandlers, menuNode, errorNode }) => (
+                      <>
+                        <TreeItem
+                          testId={rowTestId}
+                          icon={null}
+                          title={videoDisplayTitle(v)}
+                          meta={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? 'Processing…' : v.transcript_status === 'failed' ? 'Failed' : ''}
+                          metaStyle={v.transcript_status === 'pending' || v.transcript_status === 'processing' ? { color: '#e65100' } : v.transcript_status === 'failed' ? { color: 'var(--color-danger-dark)' } : undefined}
+                          selected={!selectedDocumentId && selectedVideo != null && String(selectedVideo.id) === String(v.id)}
+                          onClick={() => {
+                            setSelectedVideo(v)
+                            setVideoId(v.id)
+                            setVideoPlayerKey(prev => prev + 1)
+                            onSelectVideo?.()
+                          }}
+                          onDelete={canManage && onDeleteVideo && materialId ? () => onDeleteVideo(materialId) : undefined}
+                          deleting={materialId ? deletingId === String(materialId) : false}
+                          disabled={rowDisabled}
+                          buttonTitle={rowDisabled ? 'Video is still processing' : undefined}
+                          primaryBadge={badge}
+                          rowHandlers={rowHandlers}
+                        />
+                        {menuNode}
+                        {errorNode}
+                      </>
+                    )}
+                  </SessionPrimaryRow>
                   {canManage && (
                     <button
                       data-testid="edit-video-title-btn"
@@ -531,38 +538,42 @@ export function MaterialsTreePanel({
               const sessionId = session?.session?.id || session?.id
               return (
                 <div key={m.id}>
-                  <TreeItem
-                    testId="material-item"
-                    icon={null}
-                    title={m.title || m.filename || 'Untitled'}
-                    meta={metaNode}
-                    metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
-                    selected={selectedDocumentId === m.id}
-                    onClick={(e) => onSelectDocument(m, e)}
-                    onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
-                    deleting={deletingId === String(m.id)}
-                    disabled={!viewable}
-                    buttonTitle={!viewable
-                      ? (isSlideDeckMaterial(m)
-                        ? (resolveSlidesStatus(m) === 'failed' ? 'Slide preview generation failed' : 'Slides are still processing')
-                        : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
-                      : undefined}
-                  />
-                  {/* SCRUM-293: render the badge for ALL roles when the row is
-                      primary (read-only for participants, interactive for
-                      creators). Make-primary stays creator-only. */}
-                  {sessionId && (isCurrentPrimary || (canManage && onPrimaryChanged && viewable)) && (
-                    <div style={{ padding: '0 8px 4px 24px' }}>
-                      <SetPrimaryButton
-                        apiBaseUrl={apiBaseUrl}
-                        sessionId={sessionId}
-                        kind="document"
-                        id={m.id}
-                        isCurrentPrimary={isCurrentPrimary}
-                        onSuccess={canManage ? onPrimaryChanged : undefined}
-                      />
-                    </div>
-                  )}
+                  <SessionPrimaryRow
+                    apiBaseUrl={apiBaseUrl}
+                    sessionId={sessionId}
+                    kind="document"
+                    id={m.id}
+                    isCurrentPrimary={isCurrentPrimary}
+                    canSetPrimary={!!(canManage && onPrimaryChanged && viewable)}
+                    onSuccess={canManage ? onPrimaryChanged : undefined}
+                    itemLabel={m.title || m.filename}
+                  >
+                    {({ badge, rowHandlers, menuNode, errorNode }) => (
+                      <>
+                        <TreeItem
+                          testId="material-item"
+                          icon={null}
+                          title={m.title || m.filename || 'Untitled'}
+                          meta={metaNode}
+                          metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                          selected={selectedDocumentId === m.id}
+                          onClick={(e) => onSelectDocument(m, e)}
+                          onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                          deleting={deletingId === String(m.id)}
+                          disabled={!viewable}
+                          buttonTitle={!viewable
+                            ? (isSlideDeckMaterial(m)
+                              ? (resolveSlidesStatus(m) === 'failed' ? 'Slide preview generation failed' : 'Slides are still processing')
+                              : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
+                            : undefined}
+                          primaryBadge={badge}
+                          rowHandlers={rowHandlers}
+                        />
+                        {menuNode}
+                        {errorNode}
+                      </>
+                    )}
+                  </SessionPrimaryRow>
                   {/* SCRUM-287: surface a Retry-slides button when the slides
                       pipeline failed for this .ppt/.pptx so the creator can
                       recover from a transient pdftoppm/soffice error
@@ -600,33 +611,38 @@ export function MaterialsTreePanel({
               )
               return (
                 <div key={m.id}>
-                  <TreeItem
-                    testId="images-item"
-                    icon={null}
-                    title={m.filename || 'Untitled'}
-                    meta={metaParts.join(' • ')}
-                    metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
-                    selected={selectedDocumentId === m.id}
-                    onClick={(e) => onSelectDocument(m, e)}
-                    onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
-                    deleting={deletingId === String(m.id)}
-                    disabled={!viewable}
-                    buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
-                  />
-                  {/* SCRUM-293: badge visible to all roles; Make-primary creator-only. */}
-                  {sessionId && (isCurrentPrimary || (canManage && onPrimaryChanged && viewable)) && (
-                    <div style={{ padding: '0 8px 4px 24px' }}>
-                      <SetPrimaryButton
-                        apiBaseUrl={apiBaseUrl}
-                        sessionId={sessionId}
-                        kind="document"
-                        id={m.id}
-                        isCurrentPrimary={isCurrentPrimary}
-                        onSuccess={canManage ? onPrimaryChanged : undefined}
-                        itemLabel={m.filename}
-                      />
-                    </div>
-                  )}
+                  <SessionPrimaryRow
+                    apiBaseUrl={apiBaseUrl}
+                    sessionId={sessionId}
+                    kind="document"
+                    id={m.id}
+                    isCurrentPrimary={isCurrentPrimary}
+                    canSetPrimary={!!(canManage && onPrimaryChanged && viewable)}
+                    onSuccess={canManage ? onPrimaryChanged : undefined}
+                    itemLabel={m.filename}
+                  >
+                    {({ badge, rowHandlers, menuNode, errorNode }) => (
+                      <>
+                        <TreeItem
+                          testId="images-item"
+                          icon={null}
+                          title={m.filename || 'Untitled'}
+                          meta={metaParts.join(' • ')}
+                          metaStyle={statusInfo?.color ? { color: statusInfo.color } : undefined}
+                          selected={selectedDocumentId === m.id}
+                          onClick={(e) => onSelectDocument(m, e)}
+                          onDelete={canManage && onDeleteMaterial ? () => onDeleteMaterial(m.id) : undefined}
+                          deleting={deletingId === String(m.id)}
+                          disabled={!viewable}
+                          buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
+                          primaryBadge={badge}
+                          rowHandlers={rowHandlers}
+                        />
+                        {menuNode}
+                        {errorNode}
+                      </>
+                    )}
+                  </SessionPrimaryRow>
                 </div>
               )
             })}
@@ -646,60 +662,68 @@ export function MaterialsTreePanel({
               const sessionId = session?.session?.id || session?.id
               return (
                 <div key={link.id}>
-                  <button
-                    type="button"
-                    data-testid="link-item"
-                    disabled={!linkSelectable}
-                    onClick={(e) => {
-                      if (!linkSelectable) return
-                      if (e.ctrlKey || e.metaKey) {
-                        e.preventDefault()
-                        window.open(link.url, '_blank', 'noopener,noreferrer')
-                      } else {
-                        onSelectLink?.(link)
-                      }
-                    }}
-                    className={styles.linkBtn}
-                    style={{
-                      background: isSelected ? 'var(--color-success-bg)' : 'transparent',
-                      cursor: linkSelectable ? 'pointer' : 'not-allowed',
-                      color: linkSelectable ? 'var(--color-primary)' : '#999',
-                      opacity: linkSelectable ? 1 : 0.7,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isSelected) e.currentTarget.style.background = 'transparent'
-                    }}
+                  <SessionPrimaryRow
+                    apiBaseUrl={apiBaseUrl}
+                    sessionId={sessionId}
+                    kind="link"
+                    id={link.id}
+                    isCurrentPrimary={isLinkPrimary}
+                    canSetPrimary={!!(canManage && onPrimaryChanged && linkSelectable)}
+                    onSuccess={canManage ? onPrimaryChanged : undefined}
+                    itemLabel={link.title || link.url}
                   >
-                    <span className={styles.linkTitleCell}>
-                      {link.title || link.url}
-                    </span>
-                    <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
-                      {link.status === 'verified' ? (
-                        <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
-                      ) : link.status === 'pending' || link.status === 'processing' ? (
-                        <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
-                      ) : (
-                        <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
-                      )}
-                    </span>
-                  </button>
-                  {/* SCRUM-276 link primary badge / button. SCRUM-293: badge
-                      visible to all roles; Make-primary creator-only. */}
-                  {sessionId && (isLinkPrimary || (canManage && onPrimaryChanged && linkSelectable)) && (
-                    <div style={{ padding: '0 8px 4px 24px' }}>
-                      <SetPrimaryButton
-                        apiBaseUrl={apiBaseUrl}
-                        sessionId={sessionId}
-                        kind="link"
-                        id={link.id}
-                        isCurrentPrimary={isLinkPrimary}
-                        onSuccess={canManage ? onPrimaryChanged : undefined}
-                      />
-                    </div>
-                  )}
+                    {({ badge, rowHandlers, menuNode, errorNode }) => (
+                      <>
+                        <div className={styles.linkRow} {...rowHandlers}>
+                          <button
+                            type="button"
+                            data-testid="link-item"
+                            disabled={!linkSelectable}
+                            onClick={(e) => {
+                              if (!linkSelectable) return
+                              if (e.ctrlKey || e.metaKey) {
+                                e.preventDefault()
+                                window.open(link.url, '_blank', 'noopener,noreferrer')
+                              } else {
+                                onSelectLink?.(link)
+                              }
+                            }}
+                            className={styles.linkBtn}
+                            style={{
+                              background: isSelected ? 'var(--color-success-bg)' : 'transparent',
+                              cursor: linkSelectable ? 'pointer' : 'not-allowed',
+                              color: linkSelectable ? 'var(--color-primary)' : '#999',
+                              opacity: linkSelectable ? 1 : 0.7,
+                            }}
+                            onMouseEnter={(e) => {
+                              if (linkSelectable && !isSelected) e.currentTarget.style.background = '#f0f0f0'
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.background = 'transparent'
+                            }}
+                          >
+                            <span className={styles.linkTitleCell}>
+                              {link.title || link.url}
+                            </span>
+                            <span className={styles.linkStatusIcon} title={link.status === 'verified' ? 'Verified' : link.status === 'failed' && link.error_message ? link.error_message : link.status === 'pending' || link.status === 'processing' ? 'Processing' : 'Not verified'}>
+                              {link.status === 'verified' ? (
+                                <span style={{ color: 'var(--color-success)' }} aria-hidden>✓</span>
+                              ) : link.status === 'pending' || link.status === 'processing' ? (
+                                <span style={{ color: '#ed6c02' }} aria-hidden>…</span>
+                              ) : (
+                                <span style={{ color: 'var(--color-danger-dark)' }} aria-hidden>✕</span>
+                              )}
+                            </span>
+                          </button>
+                          {badge && (
+                            <span className={styles.treeItemPrimarySlot}>{badge}</span>
+                          )}
+                        </div>
+                        {menuNode}
+                        {errorNode}
+                      </>
+                    )}
+                  </SessionPrimaryRow>
                 </div>
               )
             })}

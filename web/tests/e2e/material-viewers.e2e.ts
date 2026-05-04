@@ -174,6 +174,41 @@ test.describe('Material upload and viewer flow', () => {
     // user cleanup handled in afterAll for shared user; inline session cleaned here
   })
 
+  // ─── SCRUM-294: inline Primary badge + right-click context menu ───────────
+  test('SCRUM-294: primary video row shows inline Primary badge and right-click opens Clear menu', async ({ page, context, request }) => {
+    const email = uniqueEmail('primary-ux')
+    await createUserAndLoginWithId(context, request, email)
+    const session = await createSession(request, 'E2E SCRUM-294 Primary UX')
+
+    await navigateToCreatorSession(page, session.id)
+    await uploadFile(page, MP4_FILE)
+
+    const primaryVideoItem = page.getByTestId('primary-video-item')
+    await expect(primaryVideoItem).toBeVisible({ timeout: 15_000 })
+
+    // Inline Primary badge sits in the row (not on a separate sub-line below it).
+    const badge = page.getByTestId('primary-badge')
+    await expect(badge).toBeVisible()
+
+    // The legacy "Make primary" inline text affordance is gone for all rows.
+    await expect(page.getByText('Make primary', { exact: true })).toHaveCount(0)
+
+    // Right-click on the row fires onContextMenu on the row container (handler
+    // bubbles up from the inner button) and opens the context menu with the
+    // Clear-primary action — the SCRUM-290 path is preserved.
+    await primaryVideoItem.click({ button: 'right' })
+    await expect(page.getByTestId('primary-context-menu')).toBeVisible()
+    await expect(page.getByTestId('clear-primary-btn')).toBeVisible()
+
+    // Escape closes the menu (no PATCH).
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('primary-context-menu')).toHaveCount(0)
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
+  })
+
   // ─── PPTX upload ──────────────────────────────────────────────────────────
   test('PPTX upload appears in Documents section with Processing status', async ({ page, context, request }) => {
     const email = uniqueEmail('pptx-viewer')
