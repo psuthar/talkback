@@ -48,6 +48,23 @@ Both services must agree. Coordinated update:
 
 If the rotation drift is unacceptable, do this off-hours.
 
+## How to check if the sidecar is healthy
+
+Three signals, in increasing order of "something needs attention":
+
+1. **`/healthz` returns 200** (Render service detail page or `curl <sidecar-url>/healthz`). Liveness only — does not test the LLM path.
+2. **Backend per-call log lines** (SCRUM-306). Every `talkback-api` call to the sidecar emits one line in either of two formats:
+   - Image: `markitdown.image: outcome=<tag> duration_ms=<n> [tokens=<n>] [code=<stable>] [err=<short>]`
+   - URL: `markitdown.url: outcome=<tag> duration_ms=<n> [code=<stable>] [err=<short>]`
+   Outcome tags: `success`, `unavailable`, `unauthorized`, `bad_request`, `upstream_http`, `unclassified_error`. Aggregate by `outcome=` to get a per-tag rate; aggregate by `duration_ms=` to get latency histograms.
+3. **Backend fallback warning** — `WARN markitdown_sidecar_fallback url=<...> err=<...>`. URL extraction is silently falling back to the legacy Go walker. A small steady rate is normal (transient sidecar restarts); a sustained spike means the sidecar is degraded.
+
+Quick triage flowchart:
+- `/healthz` not 200 → sidecar process is dead; restart in Render.
+- `/healthz` 200, but `outcome=unavailable` rate elevated → sidecar is healthy *to itself* but talkback-api can't reach it (network policy, env var drift, secret mismatch). Re-check `MARKITDOWN_SIDECAR_URL` and the SECRET pair.
+- `outcome=unauthorized` non-zero → SECRET drift between sidecar and backend. Re-sync per the secret rotation procedure above.
+- `outcome=bad_request` rate elevated → caller bugs (e.g., backend sending wrong content type); check the `code=` field for the stable error identifier.
+
 ## Reading sidecar logs
 
 Render → `markitdown-sidecar` → Logs. The sidecar emits one structured JSON line per request:
