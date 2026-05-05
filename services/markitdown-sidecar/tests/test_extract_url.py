@@ -269,3 +269,39 @@ def test_wrapper_resolves_max_bytes_env_override(monkeypatch: pytest.MonkeyPatch
 def test_wrapper_max_bytes_arg_overrides_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SIDECAR_URL_MAX_BYTES", "8192")
     assert mwrap._resolve_url_max_bytes(1024) == 1024
+
+
+def test_wrapper_sends_browser_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Sites like Wikipedia 403 on the default httpx User-Agent. The sidecar
+    # must mirror internal/urlextract/urlextract.go's browser UA so behavior
+    # is consistent with the legacy fallback path.
+    import httpx
+
+    captured: dict = {}
+
+    class _FakeResp:
+        def __init__(self, url: str) -> None:
+            self.status_code = 200
+            self.content = b"<html><body><h1>OK</h1><p>x</p></body></html>"
+            self.url = url
+
+    class _FakeClient:
+        def __init__(self, *, timeout=None, follow_redirects=False, headers=None):
+            captured["headers"] = dict(headers or {})
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url: str) -> _FakeResp:
+            return _FakeResp(url)
+
+    monkeypatch.setattr(httpx, "Client", _FakeClient)
+
+    mwrap.extract_url_to_markdown(url="https://en.wikipedia.org/wiki/Prime_number")
+
+    ua = captured["headers"].get("User-Agent", "")
+    assert "Mozilla/5.0" in ua, f"expected browser UA, got: {ua!r}"
+    assert "Chrome" in ua

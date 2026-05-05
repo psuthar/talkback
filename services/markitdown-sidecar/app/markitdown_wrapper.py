@@ -17,6 +17,14 @@ from typing import Optional
 
 _DEFAULT_MODEL = "gpt-4o-mini"
 
+# Mirror internal/urlextract/urlextract.go so the sidecar and legacy fallback
+# fetch with identical headers — Wikipedia and others 403 the default httpx UA.
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
 
 @dataclass(frozen=True)
 class ImageExtractResult:
@@ -173,7 +181,11 @@ def extract_url_to_markdown(
         )
 
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=timeout,
+            follow_redirects=True,
+            headers={"User-Agent": _BROWSER_USER_AGENT},
+        ) as client:
             try:
                 resp = client.get(url)
             except httpx.TimeoutException as exc:
