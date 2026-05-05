@@ -8,7 +8,13 @@ WORKDIR /app
 
 COPY pyproject.toml ./
 RUN pip install --upgrade pip \
- && pip install "fastapi>=0.115,<1.0" "uvicorn[standard]>=0.30,<1.0" "pydantic>=2.7,<3.0"
+ && pip install \
+    "fastapi>=0.115,<1.0" \
+    "uvicorn[standard]>=0.30,<1.0" \
+    "pydantic>=2.7,<3.0" \
+    "python-multipart>=0.0.9" \
+    "markitdown>=0.0.1" \
+    "openai>=1.40,<2.0"
 
 COPY app ./app
 

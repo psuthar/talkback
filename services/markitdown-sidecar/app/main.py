@@ -1,11 +1,10 @@
-"""MarkItDown sidecar — FastAPI app skeleton.
+"""MarkItDown sidecar — FastAPI app.
 
-Public surface today:
-- GET  /healthz                — unauthenticated liveness probe
-- POST /extract/_ping          — protected stub (proves bearer auth wiring;
-                                  removed by SCRUM-300 once /extract/image lands)
+Public surface:
+- GET  /healthz        — unauthenticated liveness probe
+- POST /extract/image  — bearer-auth; multipart image -> markdown caption (SCRUM-300)
 
-Subsequent tickets add /extract/image (SCRUM-300) and /extract/url (SCRUM-301).
+SCRUM-301 will add /extract/url; SCRUM-306 layers in usage telemetry.
 """
 
 from __future__ import annotations
@@ -14,9 +13,9 @@ import logging
 import os
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 
-from app.auth import require_bearer
+from app.extract_image import router as extract_image_router
 from app.logging_middleware import RequestLoggingMiddleware
 
 
@@ -42,10 +41,7 @@ def create_app() -> FastAPI:
     async def healthz() -> dict[str, Any]:
         return {"status": "ok", "version": _VERSION}
 
-    @app.post("/extract/_ping", dependencies=[Depends(require_bearer)])
-    async def extract_ping() -> dict[str, Any]:
-        return {"ok": True}
-
+    app.include_router(extract_image_router)
     return app
 
 

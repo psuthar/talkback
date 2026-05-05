@@ -12,7 +12,7 @@ The Go backend talks to this sidecar over HTTP. PPTX/DOCX/PDF/XLSX/Whisper conti
 | Method | Path                | Auth     | Notes |
 |--------|---------------------|----------|-------|
 | GET    | `/healthz`          | none     | Liveness probe; returns `{"status": "ok", "version": "..."}` |
-| POST   | `/extract/_ping`    | bearer   | Skeleton stub; replaced by `/extract/image` in SCRUM-300 |
+| POST   | `/extract/image`    | bearer   | multipart `file` upload → `{"text", "model", "tokens_used"}`. Caps body at `SIDECAR_IMAGE_MAX_BYTES` (default 10 MB). 415 on non-image content type, 413 on oversize, 500 with stable error code on LLM/MarkItDown failure. |
 
 ## Local dev
 
@@ -20,10 +20,12 @@ The Go backend talks to this sidecar over HTTP. PPTX/DOCX/PDF/XLSX/Whisper conti
 cd services/markitdown-sidecar
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
-SIDECAR_SECRET=dev-secret uvicorn app.main:app --reload
+SIDECAR_SECRET=dev-secret OPENAI_API_KEY=sk-... uvicorn app.main:app --reload
 # in another shell:
 curl localhost:8000/healthz
-curl -X POST -H "Authorization: Bearer dev-secret" localhost:8000/extract/_ping
+curl -X POST -H "Authorization: Bearer dev-secret" \
+  -F "file=@/path/to/image.png" \
+  localhost:8000/extract/image
 ```
 
 ## Tests
@@ -51,8 +53,9 @@ The image runs as the non-root `sidecar` user on Python 3.12-slim.
 | `SIDECAR_SECRET`       | yes      | —       | Shared bearer secret. Backend sets the same value as `MARKITDOWN_SIDECAR_SECRET`. |
 | `SIDECAR_VERSION`      | no       | `dev`   | Version string returned by `/healthz`. |
 | `SIDECAR_LOG_LEVEL`    | no       | `INFO`  | Stdlib logging level. |
-
-`OPENAI_API_KEY` will be required by SCRUM-300 (image captioning).
+| `OPENAI_API_KEY`       | yes (for /extract/image) | — | OpenAI key for vision-based image captioning. |
+| `SIDECAR_OPENAI_MODEL` | no       | `gpt-4o-mini` | Override the vision model used for image captioning. |
+| `SIDECAR_IMAGE_MAX_BYTES` | no    | `10485760` | Cap on image upload size before 413. |
 
 ## Project layout
 
@@ -60,9 +63,12 @@ The image runs as the non-root `sidecar` user on Python 3.12-slim.
 services/markitdown-sidecar/
 ├── app/
 │   ├── auth.py                  # Bearer auth dependency
+│   ├── extract_image.py         # POST /extract/image (SCRUM-300)
 │   ├── logging_middleware.py    # JSON access logs
-│   └── main.py                  # FastAPI app factory
+│   ├── main.py                  # FastAPI app factory
+│   └── markitdown_wrapper.py    # MarkItDown SDK wrapper (testable seam)
 ├── tests/
+│   ├── test_extract_image.py
 │   └── test_health_and_auth.py
 ├── Dockerfile
 ├── pyproject.toml
