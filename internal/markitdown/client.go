@@ -45,6 +45,7 @@ const (
 	envImageTimeout           = "MARKITDOWN_SIDECAR_IMAGE_TIMEOUT_S"
 	envURLTimeout             = "MARKITDOWN_SIDECAR_URL_TIMEOUT_S"
 	envImageExtractionEnabled = "MARKITDOWN_IMAGE_EXTRACTION_ENABLED"
+	envURLExtractionEnabled   = "MARKITDOWN_URL_EXTRACTION_ENABLED"
 )
 
 // ImageExtractionEnabled returns true when the operator has explicitly opted
@@ -54,6 +55,16 @@ const (
 // through the sidecar (assuming the client is also Enabled()).
 func ImageExtractionEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(envImageExtractionEnabled)), "true")
+}
+
+// URLExtractionEnabled returns true when the operator has opted in to
+// sidecar-based URL extraction. Defaults to false; existing
+// internal/urlextract behavior (Go DOM walker) stays the canonical path
+// otherwise. When enabled, the link-extraction worker tries the sidecar
+// first and falls back to the Go path on transient sidecar failure so
+// link verification stays robust on outages.
+func URLExtractionEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(envURLExtractionEnabled)), "true")
 }
 
 // Default per-operation timeouts. Image captioning involves an LLM round-trip
