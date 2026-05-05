@@ -27,27 +27,29 @@ def test_healthz_does_not_require_auth(client: TestClient) -> None:
 
 
 def test_protected_route_rejects_missing_bearer(client: TestClient) -> None:
-    res = client.post("/extract/_ping")
+    res = client.post("/extract/image")
     assert res.status_code == 401
     assert res.json()["detail"]["error"] == "missing_bearer_token"
 
 
 def test_protected_route_rejects_wrong_bearer(client: TestClient) -> None:
-    res = client.post("/extract/_ping", headers={"Authorization": "Bearer wrong"})
+    res = client.post("/extract/image", headers={"Authorization": "Bearer wrong"})
     assert res.status_code == 401
     assert res.json()["detail"]["error"] == "invalid_bearer_token"
 
 
 def test_protected_route_rejects_non_bearer_scheme(client: TestClient) -> None:
-    res = client.post("/extract/_ping", headers={"Authorization": "Basic dXNlcjpwYXNz"})
+    res = client.post("/extract/image", headers={"Authorization": "Basic dXNlcjpwYXNz"})
     assert res.status_code == 401
     assert res.json()["detail"]["error"] == "missing_bearer_token"
 
 
-def test_protected_route_accepts_correct_bearer(client: TestClient) -> None:
-    res = client.post("/extract/_ping", headers={"Authorization": "Bearer test-secret"})
-    assert res.status_code == 200
-    assert res.json() == {"ok": True}
+def test_protected_route_passes_auth_with_correct_bearer(client: TestClient) -> None:
+    # No multipart body — body validation runs after auth, so a 422 here proves
+    # auth accepted the bearer and the request reached the body validator.
+    # End-to-end happy path is covered by tests/test_extract_image.py.
+    res = client.post("/extract/image", headers={"Authorization": "Bearer test-secret"})
+    assert res.status_code == 422
 
 
 def test_response_includes_request_id_header(client: TestClient) -> None:
@@ -68,6 +70,6 @@ def test_protected_route_500_when_secret_missing(monkeypatch: pytest.MonkeyPatch
 
     importlib.reload(main_module)
     client = TestClient(main_module.app)
-    res = client.post("/extract/_ping", headers={"Authorization": "Bearer anything"})
+    res = client.post("/extract/image", headers={"Authorization": "Bearer anything"})
     assert res.status_code == 500
     assert res.json()["detail"]["error"] == "sidecar_misconfigured"
