@@ -26,6 +26,14 @@ def test_healthz_does_not_require_auth(client: TestClient) -> None:
     assert "version" in body
 
 
+def test_healthz_supports_head_method(client: TestClient) -> None:
+    # Free-tier ping monitors (UptimeRobot's free plan) send HEAD by default.
+    # HEAD on /healthz must return 200 with no body, per RFC 9110.
+    res = client.head("/healthz")
+    assert res.status_code == 200
+    assert res.content == b""
+
+
 def test_protected_route_rejects_missing_bearer(client: TestClient) -> None:
     res = client.post("/extract/image")
     assert res.status_code == 401

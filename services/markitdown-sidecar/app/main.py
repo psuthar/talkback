@@ -39,7 +39,10 @@ def create_app() -> FastAPI:
     app = FastAPI(title="markitdown-sidecar", version=_VERSION)
     app.add_middleware(RequestLoggingMiddleware)
 
-    @app.get("/healthz")
+    # GET + HEAD: HEAD is required for free-tier ping monitors (UptimeRobot's
+    # free plan only sends HEAD). Per RFC 9110, HEAD on a GET resource returns
+    # the same status and headers with no body — FastAPI handles that for us.
+    @app.api_route("/healthz", methods=["GET", "HEAD"])
     async def healthz() -> dict[str, Any]:
         return {"status": "ok", "version": _VERSION}
 
