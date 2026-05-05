@@ -3,7 +3,7 @@
 # Link a Render Postgres in the dashboard and set DATABASE_URL (or use envVar fromDatabase).
 #
 # SCRUM-305: this blueprint also defines markitdown-sidecar (Python service)
-# used by talkback-api for image captioning and URL→Markdown extraction.
+# used by talkback for image captioning and URL→Markdown extraction.
 # See docs/markitdown-sidecar-runbook.md for rollout, secret rotation, and
 # incident response playbooks.
 services:
@@ -11,9 +11,9 @@ services:
   # Python FastAPI service wrapping Microsoft MarkItDown. Two endpoints:
   #   POST /extract/image — vision-based image captioning + OCR (SCRUM-300)
   #   POST /extract/url   — readability-style HTML→Markdown (SCRUM-301)
-  # talkback-api calls this sidecar via the typed Go client in
+  # talkback calls this sidecar via the typed Go client in
   # internal/markitdown (SCRUM-302). Both feature flags default OFF on
-  # talkback-api so a half-rolled-out deploy degrades to legacy behavior.
+  # talkback so a half-rolled-out deploy degrades to legacy behavior.
   - type: web
     name: markitdown-sidecar
     runtime: docker
@@ -38,7 +38,7 @@ services:
         value: gpt-4o-mini
       # Set manually in Dashboard (never in code):
       #   SIDECAR_SECRET     — shared bearer token (32+ random bytes); also
-      #                        set on talkback-api as MARKITDOWN_SIDECAR_SECRET.
+      #                        set on talkback as MARKITDOWN_SIDECAR_SECRET.
       #   OPENAI_API_KEY     — required by /extract/image for vision LLM.
       - key: SIDECAR_SECRET
         sync: false
@@ -46,7 +46,7 @@ services:
         sync: false
 
   - type: web
-    name: talkback-api
+    name: talkback
     runtime: docker
     preDeployCommand: sh -c 'if [ -n "$RENDER_RESET_DB_ON_RELEASE" ]; then /reset-db; fi'
     healthCheckPath: /health
@@ -68,7 +68,7 @@ services:
       - key: R2_PRESIGN_GET_TTL_SECONDS
         value: "3600"
       # Add in Dashboard: DATABASE_URL, CORS_ALLOWED_ORIGINS, BASE_URL, OPENAI_API_KEY, and R2_* above
-      # MCP server — mounted at /mcp on talkback-api (SCRUM-89). Set in Dashboard:
+      # MCP server — mounted at /mcp on talkback (SCRUM-89). Set in Dashboard:
       - key: TALKBACK_MCP_API_KEY
         sync: false      # shared secret; set manually in Dashboard, never in code
       - key: TALKBACK_MCP_REQUIRE_CLIENT_KEY
