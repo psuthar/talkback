@@ -1,6 +1,6 @@
 # MarkItDown sidecar — operator runbook
 
-Operational guide for the Python sidecar deployed alongside `talkback-api` (SCRUM-305). Service code lives at `services/markitdown-sidecar/`; Go client lives at `internal/markitdown/`. Deployment is defined in the root `render.yaml`.
+Operational guide for the Python sidecar deployed alongside `talkback` (SCRUM-305). Service code lives at `services/markitdown-sidecar/`; Go client lives at `internal/markitdown/`. Deployment is defined in the root `render.yaml`.
 
 ## At a glance
 
@@ -9,7 +9,7 @@ Operational guide for the Python sidecar deployed alongside `talkback-api` (SCRU
 | `markitdown-sidecar`  | `services/markitdown-sidecar` | `GET /healthz` (200)    |
 | Backend integration   | `internal/markitdown/`        | `Client.Enabled()`      |
 
-Two feature flags on `talkback-api` gate user-visible behavior:
+Two feature flags on `talkback` gate user-visible behavior:
 - `MARKITDOWN_IMAGE_EXTRACTION_ENABLED` — image captioning for `kind=image` materials.
 - `MARKITDOWN_URL_EXTRACTION_ENABLED` — sidecar-first link extraction (with Go-path fallback on failure).
 
@@ -21,19 +21,19 @@ Both default `false`. Either disabled (or sidecar unconfigured) → legacy behav
 2. **Set required secrets** on `markitdown-sidecar`:
    - `SIDECAR_SECRET`: 32+ random bytes (`openssl rand -hex 32`). The bearer token. Never commit.
    - `OPENAI_API_KEY`: required by `/extract/image` for vision LLM calls.
-3. **Wire the backend** on `talkback-api`:
+3. **Wire the backend** on `talkback`:
    - `MARKITDOWN_SIDECAR_URL`: the sidecar's Render service URL (from the dashboard).
    - `MARKITDOWN_SIDECAR_SECRET`: same value as `SIDECAR_SECRET` above.
-4. **Verify integration without flipping flags.** With both extraction flags still `false`, deploy `talkback-api`. The startup log should read: `Markitdown sidecar client enabled (base=..., image_extraction=false)`. No user-visible behavior changes; flags are still off.
-5. **Flip one flag at a time.** Set `MARKITDOWN_IMAGE_EXTRACTION_ENABLED=true` on `talkback-api` (Dashboard → Save → service redeploys). Upload an image-bearing material in staging; confirm `text_status` reaches `ready` with non-empty `extracted_text`.
+4. **Verify integration without flipping flags.** With both extraction flags still `false`, deploy `talkback`. The startup log should read: `Markitdown sidecar client enabled (base=..., image_extraction=false)`. No user-visible behavior changes; flags are still off.
+5. **Flip one flag at a time.** Set `MARKITDOWN_IMAGE_EXTRACTION_ENABLED=true` on `talkback` (Dashboard → Save → service redeploys). Upload an image-bearing material in staging; confirm `text_status` reaches `ready` with non-empty `extracted_text`.
 6. **Then URL extraction.** Set `MARKITDOWN_URL_EXTRACTION_ENABLED=true`. Add a structured URL (with headings/tables) to a session; confirm the link's chunked content preserves the markdown structure.
 
 ## Rollback
 
 Three levers, fastest first:
 
-1. **Flag flip** (~30s redeploy on `talkback-api`): set `MARKITDOWN_IMAGE_EXTRACTION_ENABLED=false` and/or `MARKITDOWN_URL_EXTRACTION_ENABLED=false`. Backend reverts to legacy behavior immediately on next request. No restart on the sidecar.
-2. **Disconnect**: clear `MARKITDOWN_SIDECAR_URL` on `talkback-api`. `Client.Enabled()` returns false, and both extraction paths short-circuit.
+1. **Flag flip** (~30s redeploy on `talkback`): set `MARKITDOWN_IMAGE_EXTRACTION_ENABLED=false` and/or `MARKITDOWN_URL_EXTRACTION_ENABLED=false`. Backend reverts to legacy behavior immediately on next request. No restart on the sidecar.
+2. **Disconnect**: clear `MARKITDOWN_SIDECAR_URL` on `talkback`. `Client.Enabled()` returns false, and both extraction paths short-circuit.
 3. **Service stop**: pause `markitdown-sidecar` in Dashboard. Backend's URL extraction transparently falls back to the Go DOM walker (logged as `markitdown_sidecar_fallback`); image extraction marks new uploads `text_status=failed` with a clear error_message.
 
 Material rows already populated by the sidecar before rollback are safe — the extracted_text remains valid markdown.
@@ -53,7 +53,7 @@ If the rotation drift is unacceptable, do this off-hours.
 Three signals, in increasing order of "something needs attention":
 
 1. **`/healthz` returns 200** (Render service detail page or `curl <sidecar-url>/healthz`). Liveness only — does not test the LLM path.
-2. **Backend per-call log lines** (SCRUM-306). Every `talkback-api` call to the sidecar emits one line in either of two formats:
+2. **Backend per-call log lines** (SCRUM-306). Every `talkback` call to the sidecar emits one line in either of two formats:
    - Image: `markitdown.image: outcome=<tag> duration_ms=<n> [tokens=<n>] [code=<stable>] [err=<short>]`
    - URL: `markitdown.url: outcome=<tag> duration_ms=<n> [code=<stable>] [err=<short>]`
    Outcome tags: `success`, `unavailable`, `unauthorized`, `bad_request`, `upstream_http`, `unclassified_error`. Aggregate by `outcome=` to get a per-tag rate; aggregate by `duration_ms=` to get latency histograms.
@@ -61,7 +61,7 @@ Three signals, in increasing order of "something needs attention":
 
 Quick triage flowchart:
 - `/healthz` not 200 → sidecar process is dead; restart in Render.
-- `/healthz` 200, but `outcome=unavailable` rate elevated → sidecar is healthy *to itself* but talkback-api can't reach it (network policy, env var drift, secret mismatch). Re-check `MARKITDOWN_SIDECAR_URL` and the SECRET pair.
+- `/healthz` 200, but `outcome=unavailable` rate elevated → sidecar is healthy *to itself* but talkback can't reach it (network policy, env var drift, secret mismatch). Re-check `MARKITDOWN_SIDECAR_URL` and the SECRET pair.
 - `outcome=unauthorized` non-zero → SECRET drift between sidecar and backend. Re-sync per the secret rotation procedure above.
 - `outcome=bad_request` rate elevated → caller bugs (e.g., backend sending wrong content type); check the `code=` field for the stable error identifier.
 
@@ -89,8 +89,8 @@ The backend logs `markitdown_sidecar_fallback` (INFO) every time URL extraction 
 | All `/extract/image` requests 401         | Backend / sidecar SECRET drift            | Re-sync `SIDECAR_SECRET` and `MARKITDOWN_SIDECAR_SECRET`. |
 | `/extract/image` returns 500 with `llm_misconfigured` | `OPENAI_API_KEY` missing or invalid on sidecar | Set/refresh the key; redeploy sidecar. |
 | `/extract/image` returns 500 with `dependency_missing` | MarkItDown / openai pip install failed in image | Rebuild the Docker image; check Render build logs. |
-| Image uploads stuck on `text_status=pending` | Worker not running / sidecar unreachable | Check `talkback-api` logs for the link-extraction worker; check `markitdown-sidecar` is `live`. |
-| URL extractions returning legacy content unexpectedly | `MARKITDOWN_URL_EXTRACTION_ENABLED=false` | Flip to `true` and redeploy `talkback-api`. |
+| Image uploads stuck on `text_status=pending` | Worker not running / sidecar unreachable | Check `talkback` logs for the link-extraction worker; check `markitdown-sidecar` is `live`. |
+| URL extractions returning legacy content unexpectedly | `MARKITDOWN_URL_EXTRACTION_ENABLED=false` | Flip to `true` and redeploy `talkback`. |
 | Spike in `markitdown_sidecar_fallback` log lines | Sidecar 5xx / unreachable                 | Check sidecar service status; if persistent, flip flags off and investigate. |
 | Cost spike / OpenAI bill alarm            | Large image uploads triggering many vision calls | Use Option 1 rollback (flag flip) to immediately stop `extract.image` traffic; investigate per-session usage in sidecar logs. |
 
