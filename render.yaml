@@ -1,7 +1,50 @@
 # Render Blueprint: TalkBack API (optional reset on deploy)
 # See README "Reset database and deploy on Render" for when to set RENDER_RESET_DB_ON_RELEASE.
 # Link a Render Postgres in the dashboard and set DATABASE_URL (or use envVar fromDatabase).
+#
+# SCRUM-305: this blueprint also defines markitdown-sidecar (Python service)
+# used by talkback-api for image captioning and URL→Markdown extraction.
+# See docs/markitdown-sidecar-runbook.md for rollout, secret rotation, and
+# incident response playbooks.
 services:
+  # ─── markitdown-sidecar (SCRUM-298 epic) ─────────────────────────────────
+  # Python FastAPI service wrapping Microsoft MarkItDown. Two endpoints:
+  #   POST /extract/image — vision-based image captioning + OCR (SCRUM-300)
+  #   POST /extract/url   — readability-style HTML→Markdown (SCRUM-301)
+  # talkback-api calls this sidecar via the typed Go client in
+  # internal/markitdown (SCRUM-302). Both feature flags default OFF on
+  # talkback-api so a half-rolled-out deploy degrades to legacy behavior.
+  - type: web
+    name: markitdown-sidecar
+    runtime: docker
+    rootDir: services/markitdown-sidecar
+    healthCheckPath: /healthz
+    plan: starter
+    envVars:
+      - key: SIDECAR_VERSION
+        # Render exposes the commit SHA via $RENDER_GIT_COMMIT; surface a short
+        # form on /healthz so the operator can confirm which build is live.
+        generateValue: false
+        sync: false
+      - key: SIDECAR_LOG_LEVEL
+        value: INFO
+      - key: SIDECAR_IMAGE_MAX_BYTES
+        value: "10485760"
+      - key: SIDECAR_URL_MAX_BYTES
+        value: "2097152"
+      - key: SIDECAR_URL_TIMEOUT_S
+        value: "15"
+      - key: SIDECAR_OPENAI_MODEL
+        value: gpt-4o-mini
+      # Set manually in Dashboard (never in code):
+      #   SIDECAR_SECRET     — shared bearer token (32+ random bytes); also
+      #                        set on talkback-api as MARKITDOWN_SIDECAR_SECRET.
+      #   OPENAI_API_KEY     — required by /extract/image for vision LLM.
+      - key: SIDECAR_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
   - type: web
     name: talkback-api
     runtime: docker
@@ -33,3 +76,18 @@ services:
       - key: TALKBACK_MCP_ACTING_USER_ID
         sync: false      # TalkBack users.id UUID (global fallback acting user)
       # OR: TALKBACK_MCP_KEY_USER_MAP_JSON — JSON map from API key → users.id UUID (per-key alternative)
+      # SCRUM-305: markitdown sidecar wiring. Both feature flags default OFF so
+      # rolling forward without configuring the sidecar is safe; flip per env
+      # in Dashboard once the sidecar is healthy. SECRET must match the value
+      # set on the markitdown-sidecar service above.
+      - key: MARKITDOWN_SIDECAR_URL
+        # Set in Dashboard to the markitdown-sidecar service URL (Render
+        # provides this on the service detail page; e.g.
+        # https://markitdown-sidecar.onrender.com). Empty string disables.
+        sync: false
+      - key: MARKITDOWN_SIDECAR_SECRET
+        sync: false      # must match SIDECAR_SECRET on the sidecar service
+      - key: MARKITDOWN_IMAGE_EXTRACTION_ENABLED
+        value: "false"   # flip to "true" in Dashboard when ready to roll out
+      - key: MARKITDOWN_URL_EXTRACTION_ENABLED
+        value: "false"   # flip to "true" in Dashboard when ready to roll out
