@@ -404,7 +404,12 @@ func (jp *JobProcessor) processLinkExtractionJob(ctx context.Context, job *model
 		log.Printf("Warning: Failed to set link processing: %v", err)
 	}
 
-	result, err := urlextract.FetchAndExtract(ctx, job.SourceURL, urlextract.DefaultMaxBytes)
+	// SCRUM-304: when the markitdown sidecar is configured and the URL-
+	// extraction feature flag is on, prefer the sidecar's MarkItDown
+	// HTML→Markdown path (preserves headings/lists/tables). Falls back to
+	// the Go DOM walker on transient sidecar failure so link verification
+	// stays robust during outages.
+	result, err := urlextract.FetchAndExtractWithSidecar(ctx, job.SourceURL, urlextract.DefaultMaxBytes, jp.Markitdown)
 	if err != nil {
 		errMsg := err.Error()
 		if len(errMsg) > 500 {
