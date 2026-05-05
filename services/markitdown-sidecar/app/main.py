@@ -3,8 +3,9 @@
 Public surface:
 - GET  /healthz        — unauthenticated liveness probe
 - POST /extract/image  — bearer-auth; multipart image -> markdown caption (SCRUM-300)
+- POST /extract/url    — bearer-auth; URL -> markdown via MarkItDown HTML path (SCRUM-301)
 
-SCRUM-301 will add /extract/url; SCRUM-306 layers in usage telemetry.
+SCRUM-306 layers in usage telemetry.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from app.extract_image import router as extract_image_router
+from app.extract_url import router as extract_url_router
 from app.logging_middleware import RequestLoggingMiddleware
 
 
@@ -42,6 +44,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": _VERSION}
 
     app.include_router(extract_image_router)
+    app.include_router(extract_url_router)
     return app
 
 

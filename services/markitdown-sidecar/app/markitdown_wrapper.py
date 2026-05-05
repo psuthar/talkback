@@ -25,12 +25,36 @@ class ImageExtractResult:
     tokens_used: int
 
 
+@dataclass(frozen=True)
+class URLExtractResult:
+    text: str
+    title: str
+    fetched_url: str
+    status_code: int
+
+
 class ExtractionError(Exception):
     """Raised when MarkItDown / the upstream LLM cannot produce a result."""
 
     def __init__(self, message: str, *, code: str = "extraction_failed") -> None:
         super().__init__(message)
         self.code = code
+
+
+class UpstreamHTTPError(Exception):
+    """Raised when the upstream URL returns a 4xx — caller should pass-through."""
+
+    def __init__(self, status_code: int, message: str, *, fetched_url: str = "") -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.fetched_url = fetched_url
+
+
+# Default URL extraction limits — mirror the existing Go urlextract package
+# (15s timeout, 2 MB body cap) so behavior is comparable when SCRUM-304's
+# fallback kicks in.
+_DEFAULT_URL_TIMEOUT_S = 15.0
+_DEFAULT_URL_MAX_BYTES = 2 * 1024 * 1024
 
 
 def _guess_extension(content_type: str) -> str:
@@ -89,3 +113,115 @@ def extract_image_to_markdown(
 
     text = (getattr(result, "text_content", "") or "").strip()
     return ImageExtractResult(text=text, model=resolved_model, tokens_used=0)
+
+
+def _resolve_url_timeout(override: Optional[float]) -> float:
+    if override is not None and override > 0:
+        return override
+    raw = os.environ.get("SIDECAR_URL_TIMEOUT_S")
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _DEFAULT_URL_TIMEOUT_S
+
+
+def _resolve_url_max_bytes(override: Optional[int]) -> int:
+    if override is not None and override > 0:
+        return override
+    raw = os.environ.get("SIDECAR_URL_MAX_BYTES")
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return _DEFAULT_URL_MAX_BYTES
+
+
+def extract_url_to_markdown(
+    *,
+    url: str,
+    max_bytes: Optional[int] = None,
+    timeout_s: Optional[float] = None,
+) -> URLExtractResult:
+    """Fetch `url` and convert the HTML response to markdown via MarkItDown.
+
+    On upstream 4xx, raises `UpstreamHTTPError` so the endpoint can mirror
+    the upstream status to the caller. On internal failure raises
+    `ExtractionError` with a stable code.
+
+    Tests typically monkeypatch this function entirely; the body still
+    works end-to-end against a real URL when invoked directly.
+    """
+    if not url:
+        raise ExtractionError("empty url", code="empty_url")
+
+    cap = _resolve_url_max_bytes(max_bytes)
+    timeout = _resolve_url_timeout(timeout_s)
+
+    try:
+        import httpx
+    except ImportError as exc:  # pragma: no cover
+        raise ExtractionError(
+            f"httpx not installed: {exc}",
+            code="dependency_missing",
+        )
+
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            try:
+                resp = client.get(url)
+            except httpx.TimeoutException as exc:
+                raise ExtractionError(f"upstream timeout: {exc}", code="timeout")
+            except httpx.HTTPError as exc:
+                raise ExtractionError(f"fetch failed: {exc}", code="fetch_failed")
+    except ExtractionError:
+        raise
+
+    fetched_url = str(resp.url)
+    if 400 <= resp.status_code < 500:
+        raise UpstreamHTTPError(
+            resp.status_code,
+            f"upstream returned {resp.status_code}",
+            fetched_url=fetched_url,
+        )
+    if resp.status_code >= 500:
+        raise ExtractionError(
+            f"upstream returned {resp.status_code}",
+            code="fetch_failed",
+        )
+
+    body_bytes = resp.content
+    if len(body_bytes) > cap:
+        raise ExtractionError(
+            f"upstream body exceeds cap ({len(body_bytes)} > {cap})",
+            code="body_too_large",
+        )
+
+    try:
+        from markitdown import MarkItDown
+    except ImportError as exc:  # pragma: no cover
+        raise ExtractionError(
+            f"markitdown not installed: {exc}",
+            code="dependency_missing",
+        )
+
+    converter = MarkItDown()
+    try:
+        result = converter.convert_stream(io.BytesIO(body_bytes), file_extension=".html")
+    except Exception as exc:  # pragma: no cover — depends on MarkItDown internals
+        raise ExtractionError(f"markitdown conversion failed: {exc}", code="extraction_failed")
+
+    text = (getattr(result, "text_content", "") or "").strip()
+    title = (getattr(result, "title", "") or "").strip()
+    return URLExtractResult(
+        text=text,
+        title=title,
+        fetched_url=fetched_url,
+        status_code=resp.status_code,
+    )
