@@ -13,6 +13,7 @@ The Go backend talks to this sidecar over HTTP. PPTX/DOCX/PDF/XLSX/Whisper conti
 |--------|---------------------|----------|-------|
 | GET    | `/healthz`          | none     | Liveness probe; returns `{"status": "ok", "version": "..."}` |
 | POST   | `/extract/image`    | bearer   | multipart `file` upload → `{"text", "model", "tokens_used"}`. Caps body at `SIDECAR_IMAGE_MAX_BYTES` (default 10 MB). 415 on non-image content type, 413 on oversize, 500 with stable error code on LLM/MarkItDown failure. |
+| POST   | `/extract/url`      | bearer   | JSON `{"url": "https://...", "max_bytes"?, "timeout_s"?}` → `{"text", "title", "fetched_url", "status_code"}`. 4xx pass-through when upstream returns 4xx, 413 on body cap exceeded, 500 with stable error code (`empty_url`, `timeout`, `fetch_failed`, `extraction_failed`, `dependency_missing`). |
 
 ## Local dev
 
@@ -56,6 +57,8 @@ The image runs as the non-root `sidecar` user on Python 3.12-slim.
 | `OPENAI_API_KEY`       | yes (for /extract/image) | — | OpenAI key for vision-based image captioning. |
 | `SIDECAR_OPENAI_MODEL` | no       | `gpt-4o-mini` | Override the vision model used for image captioning. |
 | `SIDECAR_IMAGE_MAX_BYTES` | no    | `10485760` | Cap on image upload size before 413. |
+| `SIDECAR_URL_MAX_BYTES` | no      | `2097152` | Cap on upstream HTML body size before 413. Mirrors the existing Go urlextract package. |
+| `SIDECAR_URL_TIMEOUT_S` | no      | `15` | Per-request timeout (seconds) for upstream URL fetches. |
 
 ## Project layout
 
@@ -64,11 +67,13 @@ services/markitdown-sidecar/
 ├── app/
 │   ├── auth.py                  # Bearer auth dependency
 │   ├── extract_image.py         # POST /extract/image (SCRUM-300)
+│   ├── extract_url.py           # POST /extract/url   (SCRUM-301)
 │   ├── logging_middleware.py    # JSON access logs
 │   ├── main.py                  # FastAPI app factory
 │   └── markitdown_wrapper.py    # MarkItDown SDK wrapper (testable seam)
 ├── tests/
 │   ├── test_extract_image.py
+│   ├── test_extract_url.py
 │   └── test_health_and_auth.py
 ├── Dockerfile
 ├── pyproject.toml
