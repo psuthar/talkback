@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/markitdown"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/urlextract"
@@ -39,6 +40,11 @@ type JobProcessor struct {
 	mu                   sync.RWMutex
 	OnTranscriptCompleted OnTranscriptCompletedFunc // Optional: called when a transcript/material extraction job completes (e.g. trigger session reindex + broadcast)
 	OnSessionUpdated      OnSessionUpdatedFunc      // Optional: called when session should refresh without reindex (e.g. material extraction failed)
+	// Markitdown is the typed sidecar client used for image captioning + OCR
+	// (SCRUM-303). nil is allowed in tests; image-extraction job dispatch
+	// short-circuits to the legacy "ready with empty text" path when nil or
+	// disabled.
+	Markitdown *markitdown.Client
 }
 
 // NewJobProcessor creates a new job processor
@@ -230,6 +236,15 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 		return
 	}
 
+	// SCRUM-303: image materials route through the markitdown sidecar
+	// (vision model + OCR) instead of the Go pure-text extractor. We branch
+	// before ExtractTextFromFileWithMeta so the file is read once into
+	// memory and shipped to the sidecar as multipart/form-data.
+	if mat.Kind == string(models.MaterialKindImage) || strings.HasPrefix(strings.ToLower(mat.ContentType), "image/") {
+		jp.handleImageExtraction(ctx, job, mat, filePath, jobStart, workerID)
+		return
+	}
+
 	// Important: for R2 presigned downloads the temp file may not preserve
 	// the original extension. Use mat metadata for routing.
 	extractStart := time.Now()
@@ -275,6 +290,81 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 	}
 	log.Printf("material_extract: completed material_id=%s filename=%s extract_ms=%d total_ms=%d",
 		materialID, mat.Filename, time.Since(extractStart).Milliseconds(), time.Since(jobStart).Milliseconds())
+}
+
+// handleImageExtraction is the image-material branch of
+// processMaterialExtractionJob. Reads the file bytes, calls the sidecar
+// client, and persists the resulting markdown as the material's
+// extracted_text. SCRUM-303.
+//
+// Failure semantics mirror the PDF/Office worker: any error marks the
+// material text_status=failed with a stable error_message so the UI can
+// surface the actual cause. The worker is only invoked when the upload
+// handler explicitly enqueued an extraction job, which already gates on
+// markitdown.ImageExtractionEnabled() AND Markitdown.Enabled() — so the
+// path that gets here always has a configured client.
+func (jp *JobProcessor) handleImageExtraction(ctx context.Context, job *models.TranscriptJob, mat *models.Material, filePath string, jobStart time.Time, workerID int) {
+	if jp.Markitdown == nil || !jp.Markitdown.Enabled() {
+		errMsg := "markitdown sidecar client not configured"
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+
+	body, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		errMsg := fmt.Sprintf("read image bytes: %v", readErr)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+
+	extractStart := time.Now()
+	result, callErr := jp.Markitdown.ExtractImage(ctx, body, mat.ContentType)
+	if callErr != nil {
+		errMsg := callErr.Error()
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:497] + "..."
+		}
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		log.Printf("image_extract: failed material_id=%s err=%v", mat.ID, callErr)
+		return
+	}
+
+	text := strings.TrimSpace(result.Text)
+	if text == "" {
+		// Empty caption is unusual but not a failure: store empty so the
+		// material moves out of "pending" without lying about content.
+		text = ""
+	}
+	if err := jp.db.UpdateMaterialTextStatus(ctx, mat.ID, models.MaterialTextStatusReady, &text); err != nil {
+		errMsg := fmt.Sprintf("save extracted text: %v", err)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+	if err := jp.db.CompleteTranscriptJob(ctx, job.ID, nil, nil, nil); err != nil {
+		log.Printf("Failed to complete image extraction job: %v", err)
+		return
+	}
+	if jp.OnTranscriptCompleted != nil {
+		jp.OnTranscriptCompleted(job.SessionID)
+	}
+	log.Printf("image_extract: completed material_id=%s filename=%s extract_ms=%d total_ms=%d worker=%d",
+		mat.ID, mat.Filename, time.Since(extractStart).Milliseconds(), time.Since(jobStart).Milliseconds(), workerID)
 }
 
 // processLinkExtractionJob runs URL fetch+extract for a session link; job has SessionLinkID set.

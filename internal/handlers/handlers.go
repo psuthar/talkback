@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/invitations"
+	"github.com/psuthar/talkback/internal/markitdown"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
@@ -29,6 +30,10 @@ type Handlers struct {
 	// IndexAsync triggers async RAG re-indexing for a session. nil means no-op (used in tests).
 	// In production, set to: func(id uuid.UUID) { rag.IndexSessionAsync(id, db, store) }
 	IndexAsync func(sessionID uuid.UUID)
+	// Markitdown is the typed client for the Python sidecar (SCRUM-298 epic).
+	// nil is allowed in tests; upload paths short-circuit to legacy behavior
+	// when the client is nil or .Enabled() returns false.
+	Markitdown *markitdown.Client
 }
 
 // triggerIndex calls IndexAsync if set; otherwise a no-op. All handler code should use this
