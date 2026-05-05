@@ -36,7 +36,9 @@ func FetchAndExtractWithSidecar(ctx context.Context, rawURL string, maxBytes int
 		return FetchAndExtract(ctx, rawURL, maxBytes)
 	}
 
-	result, err := client.ExtractURL(ctx, rawURL)
+	// SCRUM-306: route via the instrumented wrapper so ops gets a stable
+	// "markitdown.url: outcome=<tag> duration_ms=<n>" log line per call.
+	result, err := markitdown.InstrumentedExtractURL(ctx, client, rawURL)
 	if err == nil {
 		return &FetchResult{
 			Title:    result.Title,
@@ -62,7 +64,9 @@ func FetchAndExtractWithSidecar(ctx context.Context, rawURL string, maxBytes int
 	}
 
 	// Sidecar unavailable, unauthorized, or any other failure mode →
-	// fall back to the Go path. Log once at INFO so we can spot patterns.
-	log.Printf("urlextract: sidecar fallback markitdown_sidecar_fallback url=%s err=%v", rawURL, err)
+	// fall back to the Go path. Promoted to WARN-prefix at SCRUM-306 so
+	// log aggregation can surface fallback bursts as the first health
+	// signal for URL extraction.
+	log.Printf("WARN markitdown_sidecar_fallback url=%s err=%v", rawURL, err)
 	return FetchAndExtract(ctx, rawURL, maxBytes)
 }

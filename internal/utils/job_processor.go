@@ -326,7 +326,9 @@ func (jp *JobProcessor) handleImageExtraction(ctx context.Context, job *models.T
 	}
 
 	extractStart := time.Now()
-	result, callErr := jp.Markitdown.ExtractImage(ctx, body, mat.ContentType)
+	// SCRUM-306: route via the instrumented wrapper so ops gets a stable
+	// "markitdown.image: outcome=<tag> duration_ms=<n>" log line per call.
+	result, callErr := markitdown.InstrumentedExtractImage(ctx, jp.Markitdown, body, mat.ContentType)
 	if callErr != nil {
 		errMsg := callErr.Error()
 		if len(errMsg) > 500 {
