@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/auth"
+	"github.com/psuthar/talkback/internal/markitdown"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
@@ -252,7 +253,16 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	textStatus := models.MaterialTextStatusPending
 	var extractedText *string
 	var errMsg *string
+	// SCRUM-303: when the operator has opted into image captioning, set
+	// text_status=pending so the worker can populate extracted_text via
+	// the sidecar. The decision to actually enqueue the extraction job is
+	// re-checked below (needsImageExtraction) so a flag flipped on without
+	// a configured sidecar client cleanly falls back to the legacy
+	// "ready with empty text" path.
+	imageExtractionGate := isImage && markitdown.ImageExtractionEnabled() && h.Markitdown != nil && h.Markitdown.Enabled()
 	switch {
+	case imageExtractionGate:
+		textStatus = models.MaterialTextStatusPending
 	case isImage:
 		textStatus = models.MaterialTextStatusReady
 	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
@@ -337,7 +347,10 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 
 	// Enqueue material extraction job for PDF/Office so extraction runs async (worker sets processing → ready/failed, then index + broadcast).
 	// Skip the async job when text was already extracted synchronously during upload (textStatus==ready with extractedText set).
-	needsExtraction := ((contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)) &&
+	// SCRUM-303: image materials also need the async path when image-extraction
+	// is gated on; the worker calls the sidecar.
+	needsExtraction := (((contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)) ||
+		imageExtractionGate) &&
 		!(textStatus == models.MaterialTextStatusReady && extractedText != nil)
 	if needsExtraction && h.JobProcessor != nil {
 		jobKey := "material_extract:" + material.ID.String()

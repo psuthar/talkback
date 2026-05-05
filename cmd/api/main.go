@@ -29,6 +29,7 @@ import (
 	"github.com/psuthar/talkback/internal/email"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/invitations"
+	"github.com/psuthar/talkback/internal/markitdown"
 	"github.com/psuthar/talkback/internal/mcpserver"
 	"github.com/psuthar/talkback/internal/migrations"
 	"github.com/psuthar/talkback/internal/models"
@@ -169,6 +170,20 @@ func main() {
 	log.Println("Invitation service enabled (mailto delivery; set RESEND_API_KEY for email sending)")
 	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
 	h.IndexAsync = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
+
+	// SCRUM-303: wire markitdown sidecar client into both the upload handler
+	// (gates pending vs ready at upload time) and the JobProcessor (worker
+	// calls the sidecar). NewClient reads env; if MARKITDOWN_SIDECAR_URL or
+	// MARKITDOWN_SIDECAR_SECRET is unset, .Enabled() returns false and the
+	// upload path stays on the legacy "ready with empty text" branch.
+	mdClient := markitdown.NewClient()
+	h.Markitdown = mdClient
+	jobProcessor.Markitdown = mdClient
+	if mdClient.Enabled() {
+		log.Printf("Markitdown sidecar client enabled (base=%s, image_extraction=%t)", mdClient.BaseURL, markitdown.ImageExtractionEnabled())
+	} else {
+		log.Println("Markitdown sidecar client disabled (MARKITDOWN_SIDECAR_URL/SECRET not set)")
+	}
 
 	// When a transcript job completes: reindex session for RAG; if it was a Whisper fallback, mark processing job ready and broadcast
 	onJobReady := func(sessionID uuid.UUID) { h.Hub.BroadcastSessionProcessingReady(sessionID) }

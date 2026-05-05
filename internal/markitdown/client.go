@@ -39,12 +39,22 @@ import (
 )
 
 const (
-	envBaseURL      = "MARKITDOWN_SIDECAR_URL"
-	envSecret       = "MARKITDOWN_SIDECAR_SECRET"
-	envRetries      = "MARKITDOWN_SIDECAR_RETRIES"
-	envImageTimeout = "MARKITDOWN_SIDECAR_IMAGE_TIMEOUT_S"
-	envURLTimeout   = "MARKITDOWN_SIDECAR_URL_TIMEOUT_S"
+	envBaseURL                = "MARKITDOWN_SIDECAR_URL"
+	envSecret                 = "MARKITDOWN_SIDECAR_SECRET"
+	envRetries                = "MARKITDOWN_SIDECAR_RETRIES"
+	envImageTimeout           = "MARKITDOWN_SIDECAR_IMAGE_TIMEOUT_S"
+	envURLTimeout             = "MARKITDOWN_SIDECAR_URL_TIMEOUT_S"
+	envImageExtractionEnabled = "MARKITDOWN_IMAGE_EXTRACTION_ENABLED"
 )
+
+// ImageExtractionEnabled returns true when the operator has explicitly opted
+// in to image captioning via env. Defaults to false on first ship so the
+// existing "image upload sets text_status=ready with empty text" path stays
+// active for unconfigured environments. Once set to "true", uploads route
+// through the sidecar (assuming the client is also Enabled()).
+func ImageExtractionEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(envImageExtractionEnabled)), "true")
+}
 
 // Default per-operation timeouts. Image captioning involves an LLM round-trip
 // so it gets the longer budget; URL extraction is just a fetch + markdown
