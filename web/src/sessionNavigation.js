@@ -40,13 +40,14 @@ export function parseSessionNavigationFromLocation(loc) {
 /**
  * Relative path + query for the SPA session route (leading slash), e.g. /app/sessions/&lt;uuid&gt;?mode=view
  * @param {string} sessionId
- * @param {{ mode?: string, api?: string, zoom?: string }} [queryParams]
+ * @param {{ mode?: string, api?: string, zoom?: string, google_meet?: string }} [queryParams]
  */
 export function canonicalSessionRelativePath(sessionId, queryParams = {}) {
   const sp = new URLSearchParams()
   if (queryParams.mode) sp.set('mode', queryParams.mode)
   if (queryParams.api) sp.set('api', queryParams.api)
   if (queryParams.zoom) sp.set('zoom', queryParams.zoom)
+  if (queryParams.google_meet) sp.set('google_meet', queryParams.google_meet)
   const q = sp.toString()
   return `${CANONICAL_SESSION_PREFIX}/${encodeURIComponent(sessionId)}${q ? `?${q}` : ''}`
 }
