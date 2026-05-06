@@ -57,15 +57,7 @@ type TeamsTokenFunc func(ctx context.Context, creatorIdentity string) (string, e
 // GoogleMeetTokenFunc returns a valid Google Meet access token for the given creator identity.
 type GoogleMeetTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
 
-// runGoogleMeetJob is a stub; the real ingest pipeline lands in SCRUM-317.
-// It exists so RunJob can dispatch to it and so callers compile against the
-// SCRUM-316 plumbing without waiting for the pipeline implementation.
-var runGoogleMeetJob = func(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getGoogleMeetToken GoogleMeetTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
-	attempt := job.AttemptCount + 1
-	setJobFailedPermanent(ctx, db, job.ID, attempt, "google_meet_pipeline_pending", "Google Meet ingest pipeline not yet implemented (SCRUM-317)")
-	_ = db.UpdateSessionProcessingMirror(ctx, job.SessionID, models.ProcessingStateFailedPermanent)
-	return nil
-}
+// runGoogleMeetJob is implemented in pipeline_google_meet.go.
 
 // RunJob runs the ingestion pipeline for one session_processing_job (fetch → download → parse → chunk → embed → ready).
 // It dispatches to the appropriate provider pipeline based on job.Source.
