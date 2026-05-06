@@ -131,6 +131,14 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "google-meet" {
+		if r.Method == http.MethodPost {
+			h.SessionImportGoogleMeet(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "ingestion" {
 		if r.Method == http.MethodGet {
 			h.SessionIngestionStatus(w, r)
