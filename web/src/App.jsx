@@ -50,6 +50,7 @@ const CREATE_SOURCE = /** @type {const} */ ({
   EMPTY: 'empty',
   ZOOM: 'zoom',
   TEAMS: 'teams',
+  GOOGLE_MEET: 'google_meet',
 })
 
 // Compact import status + Retry when session has Zoom source but no primary video (Artifact View).
@@ -305,6 +306,12 @@ function App() {
   const [teamsImportModalRec, setTeamsImportModalRec] = useState(null)
   const [teamsImportSessionName, setTeamsImportSessionName] = useState('')
   const [teamsImportModalError, setTeamsImportModalError] = useState('')
+
+  // Google Meet: gated by API GET /api/google-meet/status → enabled
+  const [googleMeetApiEnabled, setGoogleMeetApiEnabled] = useState(false)
+  // googleMeetConnection: { google_email, google_user_id, workspace_eligible } or null
+  const [googleMeetConnection, setGoogleMeetConnection] = useState(null)
+  const [googleMeetConnectError, setGoogleMeetConnectError] = useState('')
 
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
@@ -1697,6 +1704,16 @@ function App() {
     } catch (_) { /* ignore */ }
   }
 
+  const disconnectGoogleMeet = async () => {
+    try {
+      await fetch(`${apiBaseUrl}/api/google-meet/disconnect`, {
+        method: 'POST',
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      setGoogleMeetConnection(null)
+    } catch (_) { /* ignore */ }
+  }
+
   const fetchTeamsRecordings = async () => {
     setTeamsRecordingsLoading(true)
     setTeamsRecordingsError('')
@@ -1837,6 +1854,44 @@ function App() {
       setTeamsImportError(message === 'missing_code_or_state' ? 'Teams sign-in was cancelled or incomplete.' : message === 'server_not_configured' ? 'Teams is not configured on the server.' : message === 'exchange_failed' ? 'Could not complete Teams sign-in.' : message === 'save_failed' ? 'Could not save Teams connection.' : message || 'Teams sign-in failed.')
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     }
+    const meet = urlParams.get('google_meet')
+    if (meet === 'connected' && ci) {
+      setCreatorIdentity(ci)
+      const base = (apiBaseUrl || getDefaultApiBaseUrl()).replace(/\/$/, '')
+      fetch(`${base}/api/google-meet/status`, { headers: { 'X-Creator-Identity': ci } })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.enabled) {
+            setGoogleMeetApiEnabled(true)
+            if (data.connected) {
+              setGoogleMeetConnection({
+                google_email: data.google_email || null,
+                google_user_id: data.google_user_id || null,
+                workspace_eligible: typeof data.workspace_eligible === 'boolean' ? data.workspace_eligible : null,
+              })
+            }
+          }
+        })
+        .catch(() => {})
+      try {
+        if (sessionStorage.getItem('talkback.google_meet_return_to_create') === '1') {
+          sessionStorage.removeItem('talkback.google_meet_return_to_create')
+          setSessionMode('create')
+          setCreateSource(CREATE_SOURCE.GOOGLE_MEET)
+        }
+      } catch (_) { /* ignore */ }
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    } else if (meet === 'error') {
+      setGoogleMeetConnectError(
+        message === 'missing_code_or_state' ? 'Google sign-in was cancelled or incomplete.'
+        : message === 'server_not_configured' ? 'Google Meet is not configured on the server.'
+        : message === 'exchange_failed' ? 'Could not complete Google sign-in.'
+        : message === 'save_failed' ? 'Could not save Google Meet connection.'
+        : message === 'refresh_token_missing' ? "Google didn't issue offline access. Try again — when Google asks 'Confirm choices', make sure all permissions are checked."
+        : message || 'Google sign-in failed.'
+      )
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash)
+    }
   }, [])
 
   // Fetch Zoom connection status when creator identity is set (uses /api/zoom/status)
@@ -1885,6 +1940,34 @@ function App() {
       .catch(() => {
         setTeamsApiEnabled(false)
         setTeamsConnection(null)
+      })
+    return () => ac.abort()
+  }, [creatorIdentity, apiBaseUrl])
+
+  // Fetch Google Meet feature flag + connection (GET /api/google-meet/status)
+  useEffect(() => {
+    if (!creatorIdentity || apiBaseUrl == null) return
+    const ac = new AbortController()
+    fetch(`${apiBaseUrl}/api/google-meet/status`, {
+      signal: ac.signal,
+      headers: { 'X-Creator-Identity': creatorIdentity }
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        setGoogleMeetApiEnabled(data.enabled === true)
+        if (data.enabled && data.connected) {
+          setGoogleMeetConnection({
+            google_email: data.google_email || null,
+            google_user_id: data.google_user_id || null,
+            workspace_eligible: typeof data.workspace_eligible === 'boolean' ? data.workspace_eligible : null,
+          })
+        } else {
+          setGoogleMeetConnection(null)
+        }
+      })
+      .catch(() => {
+        setGoogleMeetApiEnabled(false)
+        setGoogleMeetConnection(null)
       })
     return () => ac.abort()
   }, [creatorIdentity, apiBaseUrl])
@@ -3706,6 +3789,24 @@ function App() {
                     >
                       From Zoom
                     </button>
+                    {googleMeetApiEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => setCreateSource(CREATE_SOURCE.GOOGLE_MEET)}
+                        style={{
+                          backgroundColor: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'var(--color-primary-mid)' : '#e0e0e0',
+                          color: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'white' : 'black',
+                          padding: '8px 16px',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                          fontWeight: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'bold' : 'normal'
+                        }}
+                      >
+                        From Google Meet
+                      </button>
+                    )}
                     {teamsApiEnabled && (
                       <button
                         type="button"
@@ -3930,6 +4031,48 @@ function App() {
                 {createSource === CREATE_SOURCE.TEAMS && !teamsApiEnabled && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff3e0', borderRadius: '5px', fontSize: '13px' }}>
                     Microsoft Teams import is not enabled on this server (the API must set ENABLE_TEAMS=true).
+                  </div>
+                )}
+
+                {createSource === CREATE_SOURCE.GOOGLE_MEET && !googleMeetApiEnabled && (
+                  <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff3e0', borderRadius: '5px', fontSize: '13px' }}>
+                    Google Meet import is not enabled on this server (the API must set ENABLE_GOOGLE_MEET=true).
+                  </div>
+                )}
+
+                {createSource === CREATE_SOURCE.GOOGLE_MEET && googleMeetApiEnabled && (
+                  <div style={{ marginBottom: '20px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '6px', border: '1px solid #e0e0e0' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Google Meet</div>
+                    {googleMeetConnection ? (
+                      <>
+                        <div style={{ marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <span style={{ color: googleMeetConnection.workspace_eligible === false ? '#f57c00' : 'var(--color-success)', fontSize: '14px' }}>
+                            Connected as {googleMeetConnection.google_email || googleMeetConnection.google_user_id || 'Google user'}
+                            {googleMeetConnection.workspace_eligible === false && ' — Workspace Business Standard or higher is required to import recordings.'}
+                          </span>
+                          <button type="button" onClick={disconnectGoogleMeet} style={{ padding: '4px 10px', fontSize: '13px' }}>
+                            Disconnect
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>Disconnecting won&apos;t affect sessions you&apos;ve already imported.</div>
+                      </>
+                    ) : (
+                      <div style={{ marginBottom: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try { sessionStorage.setItem('talkback.google_meet_return_to_create', '1') } catch (_) {}
+                            window.location.href = `${apiBaseUrl}/auth/google-meet/start?creator_identity=${encodeURIComponent(creatorIdentity)}`
+                          }}
+                          style={{ padding: '6px 12px', backgroundColor: 'var(--color-primary-mid)', color: 'white', border: 'none', borderRadius: '4px', fontSize: '14px', cursor: 'pointer' }}
+                        >
+                          Connect Google Meet
+                        </button>
+                      </div>
+                    )}
+                    {googleMeetConnectError && (
+                      <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{googleMeetConnectError}</div>
+                    )}
                   </div>
                 )}
 
