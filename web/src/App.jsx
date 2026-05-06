@@ -20,6 +20,7 @@ import {
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
 import { shouldShowAppAuthCluster } from './headerVisibility'
+import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus } from './googleMeetMessages'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -1863,13 +1864,8 @@ function App() {
         .then((data) => {
           if (data.enabled) {
             setGoogleMeetApiEnabled(true)
-            if (data.connected) {
-              setGoogleMeetConnection({
-                google_email: data.google_email || null,
-                google_user_id: data.google_user_id || null,
-                workspace_eligible: typeof data.workspace_eligible === 'boolean' ? data.workspace_eligible : null,
-              })
-            }
+            const conn = googleMeetConnectionFromStatus(data)
+            if (conn) setGoogleMeetConnection(conn)
           }
         })
         .catch(() => {})
@@ -1882,14 +1878,7 @@ function App() {
       } catch (_) { /* ignore */ }
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     } else if (meet === 'error') {
-      setGoogleMeetConnectError(
-        message === 'missing_code_or_state' ? 'Google sign-in was cancelled or incomplete.'
-        : message === 'server_not_configured' ? 'Google Meet is not configured on the server.'
-        : message === 'exchange_failed' ? 'Could not complete Google sign-in.'
-        : message === 'save_failed' ? 'Could not save Google Meet connection.'
-        : message === 'refresh_token_missing' ? "Google didn't issue offline access. Try again — when Google asks 'Confirm choices', make sure all permissions are checked."
-        : message || 'Google sign-in failed.'
-      )
+      setGoogleMeetConnectError(googleMeetOAuthErrorMessage(message))
       window.history.replaceState({}, '', window.location.pathname + window.location.hash)
     }
   }, [])
@@ -1955,15 +1944,7 @@ function App() {
       .then((res) => res.json())
       .then((data) => {
         setGoogleMeetApiEnabled(data.enabled === true)
-        if (data.enabled && data.connected) {
-          setGoogleMeetConnection({
-            google_email: data.google_email || null,
-            google_user_id: data.google_user_id || null,
-            workspace_eligible: typeof data.workspace_eligible === 'boolean' ? data.workspace_eligible : null,
-          })
-        } else {
-          setGoogleMeetConnection(null)
-        }
+        setGoogleMeetConnection(googleMeetConnectionFromStatus(data))
       })
       .catch(() => {
         setGoogleMeetApiEnabled(false)
