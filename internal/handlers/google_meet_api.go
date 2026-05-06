@@ -3,11 +3,14 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/psuthar/talkback/internal/googlemeet"
 )
 
 // GoogleMeetStatusResponse is the response for GET /api/google-meet/status.
@@ -119,6 +122,50 @@ func (h *Handlers) GoogleMeetAPIDisconnect(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GoogleMeetRecordingsResponse is the response for GET /api/google-meet/recordings.
+type GoogleMeetRecordingsResponse struct {
+	Items []googlemeet.RecordingListItem `json:"items"`
+}
+
+// GoogleMeetAPIRecordings lists Meet recordings the user can import. If the
+// connection's granted_scope is missing drive.readonly, returns 401 with code
+// meet_missing_scopes so the SPA can prompt reconnect.
+func (h *Handlers) GoogleMeetAPIRecordings(w http.ResponseWriter, r *http.Request) {
+	if !googleMeetEnabled() {
+		http.Error(w, "Google Meet integration disabled", http.StatusNotFound)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	creatorIdentity := readCreatorIdentity(r)
+	if creatorIdentity == "" {
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "creator_identity required"})
+		return
+	}
+	accessToken, conn, err := h.GetValidGoogleMeetAccessTokenContext(r.Context(), creatorIdentity)
+	if err != nil || conn == nil {
+		log.Printf("[google_meet] recordings token fetch failed err=%v conn_nil=%v", err, conn == nil)
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "Google Meet not connected. Connect Google Meet first."})
+		return
+	}
+	if conn.GrantedScope != nil && !strings.Contains(*conn.GrantedScope, "drive.readonly") {
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "meet_missing_scopes", "message": "Reconnect Google Meet and accept Drive read-only access"})
+		return
+	}
+	items, err := googlemeet.ListRecordingsAll(r.Context(), accessToken, googlemeet.DefaultHTTPClient())
+	if err != nil {
+		log.Printf("[google_meet] ListRecordingsAll error: %v", err)
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "Failed to list Google Meet recordings"})
+		return
+	}
+	if items == nil {
+		items = []googlemeet.RecordingListItem{}
+	}
+	writeJSONStatus(w, http.StatusOK, GoogleMeetRecordingsResponse{Items: items})
 }
 
 // readCreatorIdentity returns the creator identity from the X-Creator-Identity header
