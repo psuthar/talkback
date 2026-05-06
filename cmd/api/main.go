@@ -424,6 +424,8 @@ func main() {
 	// headers even when ENABLE_TEAMS is false (handler returns enabled:false). Unregistered /api/* falls through
 	// to SPA 404 without CORS and breaks the browser preflight.
 	http.HandleFunc(wrapNR("/api/teams/status", corsMiddleware(h.TeamsAPIStatus)))
+	// Google Meet status follows the same always-on pattern.
+	http.HandleFunc(wrapNR("/api/google-meet/status", corsMiddleware(h.GoogleMeetAPIStatus)))
 
 	// API Session list (my sessions): GET /api/sessions requires auth
 	http.HandleFunc(wrapNR("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
@@ -475,9 +477,11 @@ func main() {
 		http.HandleFunc(wrapNR("/auth/google-meet/start", corsMiddleware(h.GoogleMeetAuthStart)))
 		http.HandleFunc(wrapNR("/auth/google-meet/callback", corsMiddleware(h.GoogleMeetAuthCallback)))
 		http.HandleFunc(wrapNR("/auth/google-meet/disconnect", corsMiddleware(h.GoogleMeetAuthDisconnect)))
-		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET=true; OAuth routes registered")
+		http.HandleFunc(wrapNR("/api/google-meet/connect", corsMiddleware(h.GoogleMeetAPIConnect)))
+		http.HandleFunc(wrapNR("/api/google-meet/disconnect", corsMiddleware(h.GoogleMeetAPIDisconnect)))
+		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET=true; OAuth and /api/google-meet/* routes registered")
 	} else {
-		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET not set; OAuth routes disabled")
+		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET not set; OAuth and other /api/google-meet/* routes disabled (GET /api/google-meet/status still returns enabled:false)")
 	}
 
 	// MCP StreamableHTTP handler — optional, requires TALKBACK_MCP_API_KEY.
