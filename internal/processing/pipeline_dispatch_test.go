@@ -131,7 +131,7 @@ func TestPipelineDispatch_TeamsWithNoTokenFails(t *testing.T) {
 	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceTeams)
 
 	// Call RunJob with nil getTeamsToken to trigger the teams_not_configured path.
-	err := RunJob(context.Background(), db, job, nil, nil, nil, "", nil, nil)
+	err := RunJob(context.Background(), db, job, nil, nil, nil, nil, "", nil, nil)
 
 	// RunJob must return nil — it handles the failure internally.
 	assert.NoError(t, err, "RunJob must return nil for teams dispatch (failure recorded in DB)")
@@ -170,7 +170,7 @@ func TestPipelineDispatch_UnsupportedSourceFails(t *testing.T) {
 	syntheticJob := *realJob
 	syntheticJob.Source = "unsupported"
 
-	err := RunJob(ctx, db, &syntheticJob, nil, nil, nil, "", nil, nil)
+	err := RunJob(ctx, db, &syntheticJob, nil, nil, nil, nil, "", nil, nil)
 
 	assert.NoError(t, err, "RunJob must return nil for unsupported source (failure recorded in DB)")
 
@@ -182,6 +182,26 @@ func TestPipelineDispatch_UnsupportedSourceFails(t *testing.T) {
 		"unsupported source must be failed_permanent")
 	require.NotNil(t, updated.LastErrorCode)
 	assert.Equal(t, "unsupported_source", *updated.LastErrorCode)
+}
+
+// TestPipelineDispatch_GoogleMeetWithNoTokenFails covers the new google_meet
+// switch arm: nil getGoogleMeetToken → failed_permanent + google_meet_not_configured.
+func TestPipelineDispatch_GoogleMeetWithNoTokenFails(t *testing.T) {
+	t.Parallel()
+	db, cleanup := setupProcessingTestDB(t)
+	defer cleanup()
+
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceGoogleMeet)
+
+	err := RunJob(context.Background(), db, job, nil, nil, nil, nil, "", nil, nil)
+	assert.NoError(t, err, "RunJob must return nil for google_meet dispatch (failure recorded in DB)")
+
+	updated, dbErr := db.GetSessionProcessingJobByID(context.Background(), job.ID)
+	require.NoError(t, dbErr)
+	require.NotNil(t, updated)
+	assert.Equal(t, models.ProcessingStateFailedPermanent, updated.State)
+	require.NotNil(t, updated.LastErrorCode)
+	assert.Equal(t, "google_meet_not_configured", *updated.LastErrorCode)
 }
 
 // TestSetJobFailedTransient_EscalatesToPermanentAfterMaxAttempts verifies that

@@ -54,11 +54,24 @@ type ZoomTokenFunc func(ctx context.Context, creatorIdentity string) (string, er
 // TeamsTokenFunc returns a valid Microsoft Graph access token for the given creator identity.
 type TeamsTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
 
+// GoogleMeetTokenFunc returns a valid Google Meet access token for the given creator identity.
+type GoogleMeetTokenFunc func(ctx context.Context, creatorIdentity string) (string, error)
+
+// runGoogleMeetJob is a stub; the real ingest pipeline lands in SCRUM-317.
+// It exists so RunJob can dispatch to it and so callers compile against the
+// SCRUM-316 plumbing without waiting for the pipeline implementation.
+var runGoogleMeetJob = func(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getGoogleMeetToken GoogleMeetTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
+	attempt := job.AttemptCount + 1
+	setJobFailedPermanent(ctx, db, job.ID, attempt, "google_meet_pipeline_pending", "Google Meet ingest pipeline not yet implemented (SCRUM-317)")
+	_ = db.UpdateSessionProcessingMirror(ctx, job.SessionID, models.ProcessingStateFailedPermanent)
+	return nil
+}
+
 // RunJob runs the ingestion pipeline for one session_processing_job (fetch → download → parse → chunk → embed → ready).
 // It dispatches to the appropriate provider pipeline based on job.Source.
 // Idempotent: skips stages whose outputs already exist. Updates job state and session mirror.
 // onJobReady is optional; when set, it is called when the job reaches ready so the API can broadcast to WebSocket clients.
-func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
+func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getZoomToken ZoomTokenFunc, getTeamsToken TeamsTokenFunc, getGoogleMeetToken GoogleMeetTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
 	switch job.Source {
 	case models.SessionProcessingJobSourceZoom:
 		return runZoomJob(ctx, db, job, getZoomToken, store, storagePrefix, jobProcessor, onJobReady)
@@ -70,6 +83,14 @@ func RunJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJ
 			return nil
 		}
 		return runTeamsJob(ctx, db, job, getTeamsToken, store, storagePrefix, jobProcessor, onJobReady)
+	case models.SessionProcessingJobSourceGoogleMeet:
+		if getGoogleMeetToken == nil {
+			attempt := job.AttemptCount + 1
+			setJobFailedPermanent(ctx, db, job.ID, attempt, "google_meet_not_configured", "Google Meet token resolver not configured")
+			_ = db.UpdateSessionProcessingMirror(ctx, job.SessionID, models.ProcessingStateFailedPermanent)
+			return nil
+		}
+		return runGoogleMeetJob(ctx, db, job, getGoogleMeetToken, store, storagePrefix, jobProcessor, onJobReady)
 	default:
 		// Any job source not explicitly handled here is a misconfiguration. Fail
 		// permanently so the worker never reclaims it and the job does not spin.
