@@ -7,6 +7,9 @@ import {
   googleMeetEmptyStateMessage,
   googleMeetImportErrorMessage,
   googleMeetImportTranscriptNote,
+  googleMeetWaitingCopy,
+  googleMeetShouldShowReconnect,
+  googleMeetTerminalErrorState,
 } from '../googleMeetMessages'
 
 describe('googleMeetOAuthErrorMessage', () => {
@@ -180,5 +183,67 @@ describe('googleMeetImportTranscriptNote', () => {
     expect(googleMeetImportTranscriptNote('something_else')).toBe('')
     expect(googleMeetImportTranscriptNote('')).toBe('')
     expect(googleMeetImportTranscriptNote(undefined)).toBe('')
+  })
+})
+
+describe('googleMeetWaitingCopy', () => {
+  it("returns the Google-finishing copy when sessionSource === 'google_meet'", () => {
+    const msg = googleMeetWaitingCopy('google_meet')
+    expect(msg).toMatch(/Google to finish preparing/)
+  })
+
+  it('returns null for other session sources (caller falls through to existing copy)', () => {
+    expect(googleMeetWaitingCopy('zoom')).toBeNull()
+    expect(googleMeetWaitingCopy('teams')).toBeNull()
+    expect(googleMeetWaitingCopy('upload')).toBeNull()
+    expect(googleMeetWaitingCopy('')).toBeNull()
+    expect(googleMeetWaitingCopy(undefined)).toBeNull()
+  })
+})
+
+describe('googleMeetShouldShowReconnect', () => {
+  it('returns true for the auth-related Meet error codes', () => {
+    expect(googleMeetShouldShowReconnect('meet_auth')).toBe(true)
+    expect(googleMeetShouldShowReconnect('meet_not_connected')).toBe(true)
+    expect(googleMeetShouldShowReconnect('meet_refresh_token_missing')).toBe(true)
+    expect(googleMeetShouldShowReconnect('google_meet_auth')).toBe(true)
+    expect(googleMeetShouldShowReconnect('google_meet_not_connected')).toBe(true)
+  })
+
+  it('returns false for unrelated codes and empty/null/undefined', () => {
+    expect(googleMeetShouldShowReconnect('zoom_auth')).toBe(false)
+    expect(googleMeetShouldShowReconnect('teams_auth')).toBe(false)
+    expect(googleMeetShouldShowReconnect('something_else')).toBe(false)
+    expect(googleMeetShouldShowReconnect('')).toBe(false)
+    expect(googleMeetShouldShowReconnect(null)).toBe(false)
+    expect(googleMeetShouldShowReconnect(undefined)).toBe(false)
+  })
+})
+
+describe('googleMeetTerminalErrorState', () => {
+  it('returns terminal copy + suppressRetry for meet_workspace_required', () => {
+    const t = googleMeetTerminalErrorState('meet_workspace_required')
+    expect(t).not.toBeNull()
+    expect(t.copy).toMatch(/Workspace Business Standard/)
+    expect(t.suppressRetry).toBe(true)
+  })
+
+  it('returns terminal copy for meet_recording_deleted', () => {
+    const t = googleMeetTerminalErrorState('meet_recording_deleted')
+    expect(t.copy).toMatch(/deleted on Google/)
+    expect(t.suppressRetry).toBe(true)
+  })
+
+  it('returns terminal copy for google_meet_no_drive_file', () => {
+    const t = googleMeetTerminalErrorState('google_meet_no_drive_file')
+    expect(t.copy).toMatch(/did not produce a downloadable file/)
+  })
+
+  it('returns null for retryable / unknown / falsy codes', () => {
+    expect(googleMeetTerminalErrorState('meet_auth')).toBeNull()
+    expect(googleMeetTerminalErrorState('something_else')).toBeNull()
+    expect(googleMeetTerminalErrorState('')).toBeNull()
+    expect(googleMeetTerminalErrorState(null)).toBeNull()
+    expect(googleMeetTerminalErrorState(undefined)).toBeNull()
   })
 })

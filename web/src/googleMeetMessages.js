@@ -109,6 +109,63 @@ export function googleMeetImportErrorMessage(status, data) {
   return msg || 'Failed to start import.'
 }
 
+// Auth-related last_error_codes the SPA renders a "Reconnect Google Meet"
+// link for in the in-session processing banner.
+const reconnectErrorCodes = new Set([
+  'meet_auth',
+  'meet_not_connected',
+  'meet_refresh_token_missing',
+  'google_meet_auth',
+  'google_meet_not_connected',
+])
+
+// Terminal (non-retryable) last_error_codes — banner suppresses "Retry now".
+const terminalErrorCodes = {
+  meet_workspace_required: 'This account no longer has access to Meet recordings. Recording import requires Google Workspace Business Standard or higher.',
+  meet_recording_deleted: "This Meet recording was deleted on Google's side and can't be imported.",
+  google_meet_no_drive_file: 'Google Meet finished the recording but did not produce a downloadable file. Re-record or contact Google admin.',
+}
+
+/**
+ * Banner copy for the waiting-state branch when the session was sourced from
+ * Google Meet (sessionSource === 'google_meet'). Returns null for any other
+ * source so the caller falls through to the existing teams/zoom/generic copy.
+ *
+ * @param {string} sessionSource
+ * @returns {string|null}
+ */
+export function googleMeetWaitingCopy(sessionSource) {
+  if (sessionSource !== 'google_meet') return null
+  return "Waiting for Google to finish preparing this recording. We'll keep checking."
+}
+
+/**
+ * Whether the in-session banner should render a "Reconnect Google Meet" link
+ * given a processingStatus.last_error_code value.
+ *
+ * @param {string|null|undefined} lastErrorCode
+ * @returns {boolean}
+ */
+export function googleMeetShouldShowReconnect(lastErrorCode) {
+  if (!lastErrorCode) return false
+  return reconnectErrorCodes.has(lastErrorCode)
+}
+
+/**
+ * For terminal (non-retryable) Meet error codes, returns the banner copy and
+ * indicates that the "Retry now" button should be hidden. For other codes,
+ * returns null so the caller renders the standard failed_permanent branch.
+ *
+ * @param {string|null|undefined} lastErrorCode
+ * @returns {{ copy: string, suppressRetry: boolean } | null}
+ */
+export function googleMeetTerminalErrorState(lastErrorCode) {
+  if (!lastErrorCode) return null
+  const copy = terminalErrorCodes[lastErrorCode]
+  if (!copy) return null
+  return { copy, suppressRetry: true }
+}
+
 /**
  * Inline note rendered above the session-name input in the import modal when
  * the chosen recording has no transcript. Returns empty string for any

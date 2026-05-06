@@ -24,6 +24,7 @@ import { MemberRowActions } from '../components/MemberRowActions'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
+import { googleMeetWaitingCopy, googleMeetShouldShowReconnect, googleMeetTerminalErrorState } from '../googleMeetMessages'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import topbarStyles from './ParticipantMode.module.css'
@@ -1514,13 +1515,15 @@ export function CreatorMode({
                       : isAwaitingWhisper
                         ? "Video downloaded — transcribing audio. This may take several minutes."
                         : isWaiting
-                        ? (sessionSource === 'teams'
-                          ? "Waiting for Microsoft Teams or your tenant to finish processing. We'll keep checking."
-                          : "Waiting for the recording provider to finish processing. We'll keep checking.")
+                        ? (googleMeetWaitingCopy(sessionSource)
+                          || (sessionSource === 'teams'
+                            ? "Waiting for Microsoft Teams or your tenant to finish processing. We'll keep checking."
+                            : "Waiting for the recording provider to finish processing. We'll keep checking."))
                         : processingStatus.state === 'failed_transient'
                           ? `Temporary issue${processingStatus.last_error_code ? ` [${processingStatus.last_error_code}]` : ''}${processingStatus.last_error_message ? ': ' + processingStatus.last_error_message : ''}. We'll retry automatically.`
                           : processingStatus.state === 'failed_permanent'
-                            ? `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect your account or retry.`
+                            ? (googleMeetTerminalErrorState(processingStatus.last_error_code)?.copy
+                              || `Processing failed. ${processingStatus.last_error_message || processingStatus.last_error_code || 'Unknown error'}. Reconnect your account or retry.`)
                             : readyButNoVideoYet
                               ? (videoPollExhausted
                                 ? 'Video URL did not appear after several tries. Refresh the page or retry import.'
@@ -1533,7 +1536,7 @@ export function CreatorMode({
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                {hasJob && (processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent' || processingStatus.state === 'waiting') && (
+                {hasJob && (processingStatus.state === 'failed_transient' || processingStatus.state === 'failed_permanent' || processingStatus.state === 'waiting') && !googleMeetTerminalErrorState(processingStatus.last_error_code) && (
                   <button
                     type="button"
                     onClick={retryProcessing}
@@ -1558,6 +1561,14 @@ export function CreatorMode({
                     style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: 500 }}
                   >
                     Reconnect Zoom
+                  </a>
+                )}
+                {hasJob && processingStatus.state === 'failed_permanent' && googleMeetShouldShowReconnect(processingStatus.last_error_code) && (
+                  <a
+                    href={buildCanonicalSessionUrl(sessionId, { mode: 'edit', google_meet: 'connect' })}
+                    style={{ fontSize: '12px', color: 'var(--color-primary)', fontWeight: 500 }}
+                  >
+                    Reconnect Google Meet
                   </a>
                 )}
               </div>
