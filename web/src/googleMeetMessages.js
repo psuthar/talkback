@@ -90,6 +90,39 @@ export function googleMeetEmptyStateMessage(workspaceEligible) {
 }
 
 /**
+ * Map a non-2xx response from POST /api/google-meet/import into the inline
+ * modal-error copy. Status 409 is the duplicate-title path; 422 surfaces the
+ * server message; anything else falls back to a generic.
+ *
+ * @param {number} status
+ * @param {{message?: string}|null|undefined} data
+ * @returns {string}
+ */
+export function googleMeetImportErrorMessage(status, data) {
+  const msg = (data && data.message) ? data.message : ''
+  if (status === 409) {
+    return msg || 'A session with this name already exists. Please use a unique name.'
+  }
+  if (status === 422) {
+    return msg || 'Recording could not be imported.'
+  }
+  return msg || 'Failed to start import.'
+}
+
+/**
+ * Inline note rendered above the session-name input in the import modal when
+ * the chosen recording has no transcript. Returns empty string for any
+ * other transcript_state ('ready' / 'pending').
+ *
+ * @param {string} transcriptState
+ * @returns {string}
+ */
+export function googleMeetImportTranscriptNote(transcriptState) {
+  if (transcriptState !== 'none') return ''
+  return "This recording has no transcript. You'll get video and AI-generated answers about anything visible on screen, but Q&A quality is best when a transcript is available."
+}
+
+/**
  * Normalize the JSON body of GET /api/google-meet/status into the
  * googleMeetConnection shape the SPA stores. Returns null when the integration
  * is disabled or the user is not connected.

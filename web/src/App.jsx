@@ -20,7 +20,7 @@ import {
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
 import { shouldShowAppAuthCluster } from './headerVisibility'
-import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus, googleMeetRecordingsErrorMessage, googleMeetTranscriptBadge, googleMeetEmptyStateMessage } from './googleMeetMessages'
+import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus, googleMeetRecordingsErrorMessage, googleMeetTranscriptBadge, googleMeetEmptyStateMessage, googleMeetImportErrorMessage, googleMeetImportTranscriptNote } from './googleMeetMessages'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -316,6 +316,11 @@ function App() {
   const [googleMeetRecordings, setGoogleMeetRecordings] = useState([])
   const [googleMeetRecordingsLoading, setGoogleMeetRecordingsLoading] = useState(false)
   const [googleMeetRecordingsError, setGoogleMeetRecordingsError] = useState('')
+  const [googleMeetImportModalRec, setGoogleMeetImportModalRec] = useState(null)
+  const [googleMeetImportSessionName, setGoogleMeetImportSessionName] = useState('')
+  const [googleMeetImportModalError, setGoogleMeetImportModalError] = useState('')
+  const [googleMeetImporting, setGoogleMeetImporting] = useState(false)
+  const [googleMeetImportToast, setGoogleMeetImportToast] = useState(null)
 
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
@@ -1717,6 +1722,50 @@ function App() {
       setGoogleMeetConnection(null)
       setGoogleMeetRecordings([])
     } catch (_) { /* ignore */ }
+  }
+
+  const openGoogleMeetImportModal = (rec) => {
+    setGoogleMeetImportModalRec(rec)
+    setGoogleMeetImportSessionName(rec.subject || 'Google Meet recording')
+    setGoogleMeetImportModalError('')
+  }
+
+  const closeGoogleMeetImportModal = () => {
+    setGoogleMeetImportModalRec(null)
+    setGoogleMeetImportSessionName('')
+    setGoogleMeetImportModalError('')
+  }
+
+  const importFromGoogleMeetRecording = async (rec, sessionTitle) => {
+    const baseTitle = sessionTitle ?? rec.subject ?? 'Google Meet recording'
+    const title = (baseTitle || 'Google Meet recording').trim()
+    setGoogleMeetImporting(true)
+    setGoogleMeetImportModalError('')
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/google-meet/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Creator-Identity': creatorIdentity },
+        credentials: 'include',
+        body: JSON.stringify({
+          title,
+          conference_record: rec.conference_record_name,
+          recording: rec.recording_name,
+        })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setGoogleMeetImportModalError(googleMeetImportErrorMessage(res.status, data))
+        return
+      }
+      closeGoogleMeetImportModal()
+      setGoogleMeetImportToast({ message: 'Import started' })
+      setTimeout(() => setGoogleMeetImportToast(null), 3000)
+      await openSession(data.id, 'creator', true)
+    } catch (err) {
+      setGoogleMeetImportModalError(err.message || 'Failed to import')
+    } finally {
+      setGoogleMeetImporting(false)
+    }
   }
 
   const loadGoogleMeetRecordings = async () => {
@@ -3269,6 +3318,43 @@ function App() {
         </div>
       )}
 
+      {/* Google Meet import: session name + transcript-state note */}
+      {googleMeetImportModalRec && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={closeGoogleMeetImportModal}>
+          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Import Google Meet recording</h3>
+            <p style={{ marginBottom: '12px', color: '#555', fontSize: '14px' }}>Recording: {googleMeetImportModalRec.subject || 'Untitled'}</p>
+            {googleMeetImportTranscriptNote(googleMeetImportModalRec.transcript_state) && (
+              <div style={{ marginBottom: '12px', fontSize: '13px', color: '#666', fontStyle: 'italic' }}>
+                {googleMeetImportTranscriptNote(googleMeetImportModalRec.transcript_state)}
+              </div>
+            )}
+            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px' }}>Session name (required)</label>
+            <input
+              type="text"
+              value={googleMeetImportSessionName}
+              onChange={e => { setGoogleMeetImportSessionName(e.target.value); setGoogleMeetImportModalError('') }}
+              placeholder="e.g., Sprint demo"
+              style={{ width: '100%', padding: '8px', marginBottom: '12px', boxSizing: 'border-box' }}
+            />
+            {googleMeetImportModalError && (
+              <div className="error" style={{ marginBottom: '12px', fontSize: '13px' }}>{googleMeetImportModalError}</div>
+            )}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button type="button" onClick={closeGoogleMeetImportModal} style={{ padding: '8px 16px' }}>Cancel</button>
+              <button
+                type="button"
+                onClick={() => importFromGoogleMeetRecording(googleMeetImportModalRec, googleMeetImportSessionName)}
+                disabled={googleMeetImporting || !googleMeetImportSessionName?.trim()}
+                style={{ padding: '8px 16px', cursor: googleMeetImporting || !googleMeetImportSessionName?.trim() ? 'not-allowed' : 'pointer' }}
+              >
+                {googleMeetImporting ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Teams import: session name (duplicate check on server) */}
       {teamsImportModalRec && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={closeTeamsImportModal}>
@@ -4119,6 +4205,14 @@ function App() {
                                     <span title={badge.tooltip} style={{ padding: '2px 6px', borderRadius: '3px', fontSize: '11px', backgroundColor: badgeBg, color: badgeFg }}>
                                       {badge.label}
                                     </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => openGoogleMeetImportModal(rec)}
+                                      disabled={googleMeetImporting}
+                                      style={{ padding: '4px 12px', fontSize: '12px', backgroundColor: 'var(--color-primary-mid)', color: 'white', border: 'none', borderRadius: '4px', cursor: googleMeetImporting ? 'not-allowed' : 'pointer' }}
+                                    >
+                                      Import
+                                    </button>
                                   </div>
                                 </div>
                               )
