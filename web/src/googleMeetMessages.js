@@ -32,6 +32,64 @@ export function googleMeetOAuthErrorMessage(message) {
 }
 
 /**
+ * Map a GET /api/google-meet/recordings error response (`{code, message}`)
+ * into user-facing copy. Distinct codes get hand-tuned strings; unknown codes
+ * fall back to the server's `message` or a generic.
+ *
+ * @param {string|null|undefined} code
+ * @param {string|null|undefined} message
+ * @returns {string}
+ */
+export function googleMeetRecordingsErrorMessage(code, message) {
+  switch (code) {
+    case 'google_meet_not_connected':
+    case 'meet_auth':
+      return 'Google session expired. Disconnect and reconnect Google Meet.'
+    case 'meet_missing_scopes':
+      return 'Reconnect Google Meet and accept Drive read-only access.'
+    case 'workspace_required':
+      return 'Google Meet recording import requires Google Workspace Business Standard or higher.'
+    default:
+      return message || 'Failed to load Google Meet recordings.'
+  }
+}
+
+/**
+ * Resolve a recording's transcript_state ('ready' | 'pending' | 'none') into
+ * the badge label, hover tooltip, and a color hint the panel renders.
+ * Unknown values map to the same shape as 'none'.
+ *
+ * @param {string} state
+ * @returns {{ label: string, tooltip: string, tone: 'success'|'warning'|'muted' }}
+ */
+export function googleMeetTranscriptBadge(state) {
+  switch (state) {
+    case 'ready':
+      return { label: 'Transcript', tooltip: 'Transcript available — Q&A will use it.', tone: 'success' }
+    case 'pending':
+      return { label: 'Transcript pending', tooltip: 'Google is still preparing the transcript. Try again in a few minutes.', tone: 'warning' }
+    case 'none':
+    default:
+      return { label: 'No transcript', tooltip: 'This meeting was not transcribed.', tone: 'muted' }
+  }
+}
+
+/**
+ * Empty-state copy for the recordings list. When the connection is on a
+ * non-Workspace account, returns the Workspace-tier explainer instead of the
+ * "no recordings found" line.
+ *
+ * @param {boolean|null|undefined} workspaceEligible
+ * @returns {string}
+ */
+export function googleMeetEmptyStateMessage(workspaceEligible) {
+  if (workspaceEligible === false) {
+    return "Your Google account isn't on a Workspace edition that records meetings. Recording import is available on Business Standard and higher. You can still create an empty session and upload an MP4 manually."
+  }
+  return "No Meet recordings found in the last 60 days. Recordings created in Drive's \"Meet Recordings\" folder will also appear here."
+}
+
+/**
  * Normalize the JSON body of GET /api/google-meet/status into the
  * googleMeetConnection shape the SPA stores. Returns null when the integration
  * is disabled or the user is not connected.

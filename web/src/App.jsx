@@ -20,7 +20,7 @@ import {
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
 import { shouldShowAppAuthCluster } from './headerVisibility'
-import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus } from './googleMeetMessages'
+import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus, googleMeetRecordingsErrorMessage, googleMeetTranscriptBadge, googleMeetEmptyStateMessage } from './googleMeetMessages'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
 
@@ -313,6 +313,9 @@ function App() {
   // googleMeetConnection: { google_email, google_user_id, workspace_eligible } or null
   const [googleMeetConnection, setGoogleMeetConnection] = useState(null)
   const [googleMeetConnectError, setGoogleMeetConnectError] = useState('')
+  const [googleMeetRecordings, setGoogleMeetRecordings] = useState([])
+  const [googleMeetRecordingsLoading, setGoogleMeetRecordingsLoading] = useState(false)
+  const [googleMeetRecordingsError, setGoogleMeetRecordingsError] = useState('')
 
   const setCreatorIdentity = (id) => {
     setCreatorIdentityState(id)
@@ -1712,7 +1715,37 @@ function App() {
         headers: { 'X-Creator-Identity': creatorIdentity }
       })
       setGoogleMeetConnection(null)
+      setGoogleMeetRecordings([])
     } catch (_) { /* ignore */ }
+  }
+
+  const loadGoogleMeetRecordings = async () => {
+    setGoogleMeetRecordingsLoading(true)
+    setGoogleMeetRecordingsError('')
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/google-meet/recordings`, {
+        headers: { 'X-Creator-Identity': creatorIdentity }
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setGoogleMeetRecordingsError(googleMeetRecordingsErrorMessage(data.code, data.message))
+        setGoogleMeetRecordings([])
+        return
+      }
+      const items = (data.items || []).slice()
+      // Most recent first.
+      items.sort((a, b) => {
+        const ta = a.start_time ? new Date(a.start_time).getTime() : 0
+        const tb = b.start_time ? new Date(b.start_time).getTime() : 0
+        return tb - ta
+      })
+      setGoogleMeetRecordings(items)
+    } catch (_) {
+      setGoogleMeetRecordingsError('Failed to load Google Meet recordings.')
+      setGoogleMeetRecordings([])
+    } finally {
+      setGoogleMeetRecordingsLoading(false)
+    }
   }
 
   const fetchTeamsRecordings = async () => {
@@ -4053,6 +4086,59 @@ function App() {
                     )}
                     {googleMeetConnectError && (
                       <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{googleMeetConnectError}</div>
+                    )}
+                    {googleMeetConnection && (
+                      <div style={{ marginTop: '10px' }}>
+                        <div style={{ fontWeight: 'bold', marginBottom: '10px' }}>Your Google Meet recordings</div>
+                        <div style={{ display: 'flex', gap: '10px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            onClick={loadGoogleMeetRecordings}
+                            disabled={googleMeetRecordingsLoading}
+                            style={{ padding: '4px 12px', fontSize: '13px' }}
+                          >
+                            {googleMeetRecordingsLoading ? 'Loading…' : 'Load recordings'}
+                          </button>
+                        </div>
+                        {googleMeetRecordingsError && (
+                          <div className="error" style={{ marginBottom: '10px', fontSize: '13px' }}>{googleMeetRecordingsError}</div>
+                        )}
+                        {googleMeetRecordings.length > 0 && (
+                          <div style={{ maxHeight: '280px', overflow: 'auto', border: '1px solid #ddd', borderRadius: '4px', padding: '8px', backgroundColor: '#fafafa' }}>
+                            {googleMeetRecordings.map((rec, idx) => {
+                              const badge = googleMeetTranscriptBadge(rec.transcript_state)
+                              const badgeBg = badge.tone === 'success' ? '#e8f5e9' : badge.tone === 'warning' ? '#fff8e1' : '#eeeeee'
+                              const badgeFg = badge.tone === 'success' ? '#2e7d32' : badge.tone === 'warning' ? '#f57c00' : '#666'
+                              return (
+                                <div key={`${rec.recording_name}-${idx}`} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
+                                  <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.subject || 'Google Meet recording'}</div>
+                                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
+                                    {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <span title={badge.tooltip} style={{ padding: '2px 6px', borderRadius: '3px', fontSize: '11px', backgroundColor: badgeBg, color: badgeFg }}>
+                                      {badge.label}
+                                    </span>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {!googleMeetRecordingsLoading && googleMeetRecordings.length === 0 && !googleMeetRecordingsError && (
+                          <div style={{ fontSize: '13px', color: '#666', fontStyle: 'italic' }}>
+                            {googleMeetEmptyStateMessage(googleMeetConnection.workspace_eligible)}
+                            {googleMeetConnection.workspace_eligible === false && (
+                              <>
+                                {' '}
+                                <button type="button" onClick={() => setCreateSource(CREATE_SOURCE.EMPTY)} style={{ background: 'none', border: 'none', color: 'var(--color-primary-mid)', textDecoration: 'underline', cursor: 'pointer', fontStyle: 'normal', padding: 0, fontSize: '13px' }}>
+                                  Switch to Empty session
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
