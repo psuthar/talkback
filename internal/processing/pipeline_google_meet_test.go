@@ -1,0 +1,67 @@
+package processing
+
+import (
+	"context"
+	"testing"
+
+	"github.com/psuthar/talkback/internal/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestRunGoogleMeetJob_MissingIDsFailsPermanent verifies the early-exit branch:
+// when the job has no conference_record / recording fields populated, runGoogleMeetJob
+// fails permanent with code google_meet_missing_ids and does not call out to Google.
+//
+// End-to-end coverage (HTTP-stubbed conferenceRecords/recordings/transcripts/entries +
+// Drive download + transcript parse + index) lives in the SCRUM-324 smoke test where
+// the pipeline can be driven through a httptest harness from outside the package.
+func TestRunGoogleMeetJob_MissingIDsFailsPermanent(t *testing.T) {
+	t.Parallel()
+	db, cleanup := setupProcessingTestDB(t)
+	defer cleanup()
+
+	// seedProcessingJob sets MeetingUUID + InstanceUUID = "x"; clear them to trigger
+	// the missing-ids branch.
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceGoogleMeet)
+	job.MeetingUUID = nil
+	job.InstanceUUID = nil
+
+	getToken := func(ctx context.Context, creatorIdentity string) (string, error) {
+		return "test-access-token", nil
+	}
+	err := runGoogleMeetJob(context.Background(), db, job, getToken, nil, "", nil, nil)
+	require.NoError(t, err)
+
+	updated, dbErr := db.GetSessionProcessingJobByID(context.Background(), job.ID)
+	require.NoError(t, dbErr)
+	require.NotNil(t, updated)
+	assert.Equal(t, models.ProcessingStateFailedPermanent, updated.State)
+	require.NotNil(t, updated.LastErrorCode)
+	assert.Equal(t, "google_meet_missing_ids", *updated.LastErrorCode)
+}
+
+// TestRunGoogleMeetJob_NilCreatorIdentityFailsPermanent covers the auth-precondition
+// branch: even with a non-nil token resolver, a job missing creator_identity must
+// fail permanent with code google_meet_auth.
+func TestRunGoogleMeetJob_NilCreatorIdentityFailsPermanent(t *testing.T) {
+	t.Parallel()
+	db, cleanup := setupProcessingTestDB(t)
+	defer cleanup()
+
+	_, job := seedProcessingJob(t, db, models.SessionProcessingJobSourceGoogleMeet)
+	job.CreatorIdentity = nil
+
+	getToken := func(ctx context.Context, creatorIdentity string) (string, error) {
+		return "test-access-token", nil
+	}
+	err := runGoogleMeetJob(context.Background(), db, job, getToken, nil, "", nil, nil)
+	require.NoError(t, err)
+
+	updated, dbErr := db.GetSessionProcessingJobByID(context.Background(), job.ID)
+	require.NoError(t, dbErr)
+	require.NotNil(t, updated)
+	assert.Equal(t, models.ProcessingStateFailedPermanent, updated.State)
+	require.NotNil(t, updated.LastErrorCode)
+	assert.Equal(t, "google_meet_auth", *updated.LastErrorCode)
+}
