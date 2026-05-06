@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest'
 import {
   googleMeetOAuthErrorMessage,
   googleMeetConnectionFromStatus,
+  googleMeetRecordingsErrorMessage,
+  googleMeetTranscriptBadge,
+  googleMeetEmptyStateMessage,
 } from '../googleMeetMessages'
 
 describe('googleMeetOAuthErrorMessage', () => {
@@ -84,5 +87,61 @@ describe('googleMeetConnectionFromStatus', () => {
       google_user_id: null,
       workspace_eligible: null,
     })
+  })
+})
+
+describe('googleMeetRecordingsErrorMessage', () => {
+  it('maps reconnect-flavored codes to a "disconnect and reconnect" hint', () => {
+    expect(googleMeetRecordingsErrorMessage('google_meet_not_connected', null)).toMatch(/Disconnect and reconnect/)
+    expect(googleMeetRecordingsErrorMessage('meet_auth', null)).toMatch(/Disconnect and reconnect/)
+  })
+
+  it('maps meet_missing_scopes to a Drive-readonly reconnect prompt', () => {
+    expect(googleMeetRecordingsErrorMessage('meet_missing_scopes', null)).toMatch(/Drive read-only/)
+  })
+
+  it('maps workspace_required to the Workspace-tier explainer', () => {
+    expect(googleMeetRecordingsErrorMessage('workspace_required', null)).toMatch(/Workspace Business Standard/)
+  })
+
+  it('falls back to the server message and then a generic when code is unknown', () => {
+    expect(googleMeetRecordingsErrorMessage('weird_code', 'server says')).toBe('server says')
+    expect(googleMeetRecordingsErrorMessage(null, null)).toBe('Failed to load Google Meet recordings.')
+  })
+})
+
+describe('googleMeetTranscriptBadge', () => {
+  it('returns success tone with "Transcript" label for ready', () => {
+    const b = googleMeetTranscriptBadge('ready')
+    expect(b.label).toBe('Transcript')
+    expect(b.tone).toBe('success')
+  })
+
+  it('returns warning tone with the "still preparing" tooltip for pending', () => {
+    const b = googleMeetTranscriptBadge('pending')
+    expect(b.label).toBe('Transcript pending')
+    expect(b.tone).toBe('warning')
+    expect(b.tooltip).toMatch(/still preparing/)
+  })
+
+  it('returns muted tone with "No transcript" for none and unknown values', () => {
+    expect(googleMeetTranscriptBadge('none').label).toBe('No transcript')
+    expect(googleMeetTranscriptBadge('').label).toBe('No transcript')
+    expect(googleMeetTranscriptBadge('something_else').tone).toBe('muted')
+  })
+})
+
+describe('googleMeetEmptyStateMessage', () => {
+  it('returns the Workspace-tier explainer when workspace_eligible is false', () => {
+    const msg = googleMeetEmptyStateMessage(false)
+    expect(msg).toMatch(/Workspace edition/)
+    expect(msg).toMatch(/Business Standard/)
+  })
+
+  it('returns the no-recordings-found copy for true / null / undefined', () => {
+    const generic = "No Meet recordings found in the last 60 days"
+    expect(googleMeetEmptyStateMessage(true)).toContain(generic)
+    expect(googleMeetEmptyStateMessage(null)).toContain(generic)
+    expect(googleMeetEmptyStateMessage(undefined)).toContain(generic)
   })
 })
