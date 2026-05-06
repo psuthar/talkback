@@ -83,6 +83,23 @@ export function QAPanel({
             data-testid="question-input"
             value={showVoiceConfirm ? voiceTranscribedText : questionText}
             onChange={(e) => showVoiceConfirm ? setVoiceTranscribedText(e.target.value) : setQuestionText(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter submits the question in normal Ask mode. Shift+Enter
+              // and IME composition keep default newline behavior. Voice-confirm
+              // mode is excluded so the user can still polish/edit before the
+              // explicit Confirm & Submit click.
+              if (
+                e.key === 'Enter' &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing &&
+                !showVoiceConfirm &&
+                questionText?.trim() &&
+                !loading
+              ) {
+                e.preventDefault()
+                handleAsk()
+              }
+            }}
             placeholder={showVoiceConfirm ? undefined : 'Click on the microphone or type here to ask a question'}
             rows={2}
             className={styles.questionTextarea}
