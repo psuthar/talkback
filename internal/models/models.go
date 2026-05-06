@@ -262,8 +262,9 @@ const (
 
 // SessionProcessingJobSource values for session_processing_jobs.source (must match DB CHECK constraints).
 const (
-	SessionProcessingJobSourceZoom  = "zoom"
-	SessionProcessingJobSourceTeams = "teams"
+	SessionProcessingJobSourceZoom       = "zoom"
+	SessionProcessingJobSourceTeams      = "teams"
+	SessionProcessingJobSourceGoogleMeet = "google_meet"
 )
 
 // SessionProcessingJob is the authoritative pipeline job for session import/index (Mission #4)
@@ -307,6 +308,22 @@ type TeamsConnection struct {
 	TenantID              string    `json:"tenant_id"`
 	TeamsUserID           string    `json:"teams_user_id"`
 	TeamsUserEmail        *string   `json:"teams_user_email,omitempty"`
+	AccessTokenEncrypted  []byte    `json:"-"`
+	RefreshTokenEncrypted []byte    `json:"-"`
+	ExpiresAt             time.Time `json:"expires_at"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// GoogleMeetConnection stores OAuth tokens for a creator's Google account used for Meet recording import (keyed by creator_identity_id).
+// WorkspaceEligible is set on connect via a probe call to conferenceRecords.list — nil means "not yet probed".
+type GoogleMeetConnection struct {
+	ID                    uuid.UUID `json:"id"`
+	CreatorIdentityID     string    `json:"creator_identity_id"`
+	GoogleUserID          string    `json:"google_user_id"`
+	GoogleUserEmail       *string   `json:"google_user_email,omitempty"`
+	GrantedScope          *string   `json:"granted_scope,omitempty"`
+	WorkspaceEligible     *bool     `json:"workspace_eligible,omitempty"`
 	AccessTokenEncrypted  []byte    `json:"-"`
 	RefreshTokenEncrypted []byte    `json:"-"`
 	ExpiresAt             time.Time `json:"expires_at"`
@@ -404,9 +421,10 @@ const (
 type SessionSourceProvider string
 
 const (
-	SessionSourceZoom   SessionSourceProvider = "zoom"
-	SessionSourceUpload SessionSourceProvider = "upload"
-	SessionSourceTeams  SessionSourceProvider = "teams"
+	SessionSourceZoom       SessionSourceProvider = "zoom"
+	SessionSourceUpload     SessionSourceProvider = "upload"
+	SessionSourceTeams      SessionSourceProvider = "teams"
+	SessionSourceGoogleMeet SessionSourceProvider = "google_meet"
 )
 
 // SessionPrimaryContentKind enumerates the closed set of values stored in
