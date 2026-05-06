@@ -469,6 +469,17 @@ func main() {
 		log.Println("Teams integration: ENABLE_TEAMS not set; OAuth and other /api/teams/* routes disabled (GET /api/teams/status still returns enabled:false)")
 	}
 
+	// Feature flag: Google Meet video provider (parallel to Zoom/Teams; off by default).
+	// Status endpoint registers separately under SCRUM-315; this block only wires OAuth handlers.
+	if os.Getenv("ENABLE_GOOGLE_MEET") == "true" {
+		http.HandleFunc(wrapNR("/auth/google-meet/start", corsMiddleware(h.GoogleMeetAuthStart)))
+		http.HandleFunc(wrapNR("/auth/google-meet/callback", corsMiddleware(h.GoogleMeetAuthCallback)))
+		http.HandleFunc(wrapNR("/auth/google-meet/disconnect", corsMiddleware(h.GoogleMeetAuthDisconnect)))
+		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET=true; OAuth routes registered")
+	} else {
+		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET not set; OAuth routes disabled")
+	}
+
 	// MCP StreamableHTTP handler — optional, requires TALKBACK_MCP_API_KEY.
 	// When set, mounts the MCP handler at /mcp/ with Bearer auth middleware.
 	// /mcp/healthz and /mcp/ready are unauthenticated so cloud health probes work.
