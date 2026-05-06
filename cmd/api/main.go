@@ -487,6 +487,7 @@ func main() {
 		http.HandleFunc(wrapNR("/api/google-meet/connect", corsMiddleware(h.GoogleMeetAPIConnect)))
 		http.HandleFunc(wrapNR("/api/google-meet/disconnect", corsMiddleware(h.GoogleMeetAPIDisconnect)))
 		http.HandleFunc(wrapNR("/api/google-meet/import", corsWithCredentials(h.RequireAuth(h.GoogleMeetImport))))
+		http.HandleFunc(wrapNR("/api/google-meet/recordings", corsMiddleware(h.GoogleMeetAPIRecordings)))
 		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET=true; OAuth and /api/google-meet/* routes registered")
 	} else {
 		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET not set; OAuth and other /api/google-meet/* routes disabled (GET /api/google-meet/status still returns enabled:false)")
