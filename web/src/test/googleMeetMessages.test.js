@@ -5,6 +5,8 @@ import {
   googleMeetRecordingsErrorMessage,
   googleMeetTranscriptBadge,
   googleMeetEmptyStateMessage,
+  googleMeetImportErrorMessage,
+  googleMeetImportTranscriptNote,
 } from '../googleMeetMessages'
 
 describe('googleMeetOAuthErrorMessage', () => {
@@ -143,5 +145,40 @@ describe('googleMeetEmptyStateMessage', () => {
     expect(googleMeetEmptyStateMessage(true)).toContain(generic)
     expect(googleMeetEmptyStateMessage(null)).toContain(generic)
     expect(googleMeetEmptyStateMessage(undefined)).toContain(generic)
+  })
+})
+
+describe('googleMeetImportErrorMessage', () => {
+  it('returns the duplicate-title copy on 409 when server omits message', () => {
+    expect(googleMeetImportErrorMessage(409, null)).toMatch(/already exists/)
+    expect(googleMeetImportErrorMessage(409, {})).toMatch(/already exists/)
+  })
+
+  it('uses the server message on 409 when present', () => {
+    expect(googleMeetImportErrorMessage(409, { message: 'Custom dup msg' })).toBe('Custom dup msg')
+  })
+
+  it('passes 422 server message through and falls back when missing', () => {
+    expect(googleMeetImportErrorMessage(422, { message: 'transcript_processing' })).toBe('transcript_processing')
+    expect(googleMeetImportErrorMessage(422, null)).toMatch(/could not be imported/)
+  })
+
+  it('falls back to a generic on other statuses', () => {
+    expect(googleMeetImportErrorMessage(500, null)).toBe('Failed to start import.')
+    expect(googleMeetImportErrorMessage(0, { message: 'network' })).toBe('network')
+  })
+})
+
+describe('googleMeetImportTranscriptNote', () => {
+  it("returns the no-transcript explainer only when transcript_state === 'none'", () => {
+    expect(googleMeetImportTranscriptNote('none')).toMatch(/no transcript/)
+  })
+
+  it("returns empty string for ready / pending / unknown / falsy", () => {
+    expect(googleMeetImportTranscriptNote('ready')).toBe('')
+    expect(googleMeetImportTranscriptNote('pending')).toBe('')
+    expect(googleMeetImportTranscriptNote('something_else')).toBe('')
+    expect(googleMeetImportTranscriptNote('')).toBe('')
+    expect(googleMeetImportTranscriptNote(undefined)).toBe('')
   })
 })
