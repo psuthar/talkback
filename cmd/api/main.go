@@ -228,6 +228,13 @@ func main() {
 		tok, _, err := h.GetValidTeamsAccessTokenContext(ctx, creatorIdentity)
 		return tok, err
 	}
+	getGoogleMeetToken := func(ctx context.Context, creatorIdentity string) (string, error) {
+		if os.Getenv("ENABLE_GOOGLE_MEET") != "true" {
+			return "", fmt.Errorf("google_meet disabled")
+		}
+		tok, _, err := h.GetValidGoogleMeetAccessTokenContext(ctx, creatorIdentity)
+		return tok, err
+	}
 	storagePrefix := ""
 	if store != nil {
 		storagePrefix = strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
@@ -239,7 +246,7 @@ func main() {
 	} else {
 		log.Printf("Zoom MP4 ingest: local disk (no R2; MP4 saved under sessions/{id}/videos/ for debugging)")
 	}
-	go processing.RunWorker(ctx, db, getZoomToken, getTeamsToken, store, storagePrefix, 15*time.Second, 15*time.Minute, jobProcessor, onJobReady)
+	go processing.RunWorker(ctx, db, getZoomToken, getTeamsToken, getGoogleMeetToken, store, storagePrefix, 15*time.Second, 15*time.Minute, jobProcessor, onJobReady)
 	go processing.RunReconciler(ctx, db, 20*time.Minute, 20*time.Minute)
 	log.Println("Processing worker and reconciler started")
 
