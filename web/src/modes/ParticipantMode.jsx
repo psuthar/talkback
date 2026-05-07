@@ -243,6 +243,12 @@ export function ParticipantMode({
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
   /** When opening a document from a citation, pass { page, block } so viewer can scroll to it */
   const [citationScrollTarget, setCitationScrollTarget] = useState(null)
+  // SCRUM-327: Once the user explicitly switches the center pane to a video
+  // (e.g. by clicking a video row in the sidebar), the primary-material
+  // auto-select effect must NOT later restore the primary document/link.
+  // Tracked as a ref so it survives session refetches and re-renders without
+  // forcing the auto-select effect to re-run.
+  const userSelectedVideoRef = useRef(false)
 
   const [transcriptHighlightRange, setTranscriptHighlightRange] = useState(null)
   const transcriptHighlightTimerRef = useRef(null)
@@ -266,8 +272,15 @@ export function ParticipantMode({
   // lands on the focal artifact without an extra left-panel click. kind=video
   // is the existing default. The decision lives in resolvePrimaryAutoSelection
   // so it can be unit-tested without rendering this component.
+  // SCRUM-327: reset the user-selected-video guard when switching sessions so
+  // the next session's primary-material auto-select still fires.
+  useEffect(() => {
+    userSelectedVideoRef.current = false
+  }, [currentSession?.session?.id])
+
   useEffect(() => {
     if (!hasSession) return
+    if (userSelectedVideoRef.current) return // SCRUM-327: respect user's explicit video selection
     const decision = resolvePrimaryAutoSelection(currentSession, selectedDocumentId)
     if (!decision) return
     if (decision.type === 'material') {
@@ -339,6 +352,9 @@ export function ParticipantMode({
   }
 
   const handleBackToVideo = () => {
+    // SCRUM-327: mark the user's explicit choice so the auto-select effect
+    // doesn't restore the primary document/link on a later session refetch.
+    userSelectedVideoRef.current = true
     setSelectedDocument(null)
     setSelectedDocumentId(null)
   }

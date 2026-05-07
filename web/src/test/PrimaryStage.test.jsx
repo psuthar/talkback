@@ -166,4 +166,92 @@ describe('PrimaryStage (SCRUM-273)', () => {
     expect(screen.getByText(/Transcript:/)).toBeInTheDocument()
     expect(screen.getByText(/Ready/)).toBeInTheDocument()
   })
+
+  // SCRUM-328: when the user has explicitly clicked a video row, PrimaryStage
+  // must NOT fall back to rendering the session's primary document/link even
+  // though selectedDocument is null. Without the guard the user's video
+  // choice is silently overridden and the player never renders in Creator
+  // mode (the parent passes selectedDocument=null after handleSelectVideo).
+  describe('SCRUM-328 — userSelectedVideo bypasses the primary-descriptor fallback', () => {
+    it('skips the document fallback when userSelectedVideo=true and renders the video player instead', () => {
+      render(
+        <PrimaryStage
+          selectedDocument={null}
+          userSelectedVideo={true}
+          apiBaseUrl=""
+          sessionId="s1"
+          currentSession={{
+            session: {},
+            video_sources: [{ id: 'vs-1' }],
+            materials: [{ id: 'mat-42', filename: 'spec.pdf', text_status: 'ready' }],
+            primary: { kind: 'document', id: 'mat-42' },
+          }}
+          video={{ id: 'vs-1', transcript_status: 'ready' }}
+        />,
+      )
+      expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
+      expect(screen.getByTestId('video-player')).toBeInTheDocument()
+      expect(screen.queryByTestId('document-viewer')).toBeNull()
+    })
+
+    it('skips the link fallback when userSelectedVideo=true and renders the video player instead', () => {
+      render(
+        <PrimaryStage
+          selectedDocument={null}
+          userSelectedVideo={true}
+          apiBaseUrl=""
+          sessionId="s1"
+          currentSession={{
+            session: {},
+            video_sources: [{ id: 'vs-2' }],
+            links: [{ id: 'link-7', url: 'https://example.com', title: 'ref' }],
+            primary: { kind: 'link', id: 'link-7' },
+          }}
+          video={{ id: 'vs-2', transcript_status: 'ready' }}
+        />,
+      )
+      expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
+      expect(screen.queryByTestId('document-viewer')).toBeNull()
+    })
+
+    it('still renders the document fallback when userSelectedVideo=false (existing SCRUM-284 behavior preserved)', () => {
+      render(
+        <PrimaryStage
+          selectedDocument={null}
+          userSelectedVideo={false}
+          apiBaseUrl=""
+          sessionId="s1"
+          currentSession={{
+            session: {},
+            video_sources: [{ id: 'vs-1' }],
+            materials: [{ id: 'mat-42', filename: 'spec.pdf', text_status: 'ready' }],
+            primary: { kind: 'document', id: 'mat-42' },
+          }}
+          video={{ id: 'vs-1', transcript_status: 'ready' }}
+        />,
+      )
+      expect(screen.getByTestId('document-viewer')).toBeInTheDocument()
+      expect(screen.queryByTestId('video-player-container')).toBeNull()
+    })
+
+    it('still renders an explicit selectedDocument even if userSelectedVideo=true (parent intent wins on every render)', () => {
+      // Defensive: if the parent ever passes both an explicit selectedDocument
+      // AND userSelectedVideo=true, the explicit doc selection takes
+      // precedence. This is a guardrail against accidental contradictory
+      // state in callers; in practice handleSelectDocument will reset
+      // userSelectedVideo to false.
+      render(
+        <PrimaryStage
+          selectedDocument={{ id: 'doc-explicit' }}
+          userSelectedVideo={true}
+          apiBaseUrl=""
+          sessionId="s1"
+          currentSession={{ session: {}, video_sources: [{ id: 'vs-1' }] }}
+          video={{ id: 'vs-1' }}
+        />,
+      )
+      expect(screen.getByTestId('document-viewer').textContent).toBe('doc:doc-explicit')
+      expect(screen.queryByTestId('video-player-container')).toBeNull()
+    })
+  })
 })

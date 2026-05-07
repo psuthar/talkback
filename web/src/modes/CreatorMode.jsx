@@ -224,6 +224,20 @@ export function CreatorMode({
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
+  // SCRUM-327 / SCRUM-328: Once the user explicitly switches the center pane
+  // to a video (clicking a video row), two things must not happen:
+  //   (1) the primary-material auto-select effect must not later restore the
+  //       primary document/link on a session refetch (SCRUM-327), and
+  //   (2) PrimaryStage's fall-back-to-session-primary must not silently render
+  //       the primary document instead of the chosen video (SCRUM-328).
+  // Both checks read the same flag so user intent is honored consistently.
+  const [userSelectedVideo, setUserSelectedVideo] = useState(false)
+
+  // Reset the guard when switching sessions so the next session's primary-
+  // material auto-select still fires.
+  useEffect(() => {
+    setUserSelectedVideo(false)
+  }, [currentSession?.session?.id])
 
   // SCRUM-276: when GET session reports an explicit document/link primary,
   // default the creator's center pane to that material on session load —
@@ -232,6 +246,7 @@ export function CreatorMode({
   // already chosen something else (selectedDocumentId truthy).
   useEffect(() => {
     if (!currentSession?.session?.id) return
+    if (userSelectedVideo) return // SCRUM-327: respect user's explicit video selection
     const decision = resolvePrimaryAutoSelection(currentSession, selectedDocumentId)
     if (!decision) return
     if (decision.type === 'material') {
@@ -249,17 +264,24 @@ export function CreatorMode({
       })
       setSelectedDocumentId(`link-${link.id}`)
     }
-  }, [currentSession?.session?.id, currentSession?.primary?.kind, currentSession?.primary?.id])
+  }, [currentSession?.session?.id, currentSession?.primary?.kind, currentSession?.primary?.id, userSelectedVideo])
 
   const handleSelectDocument = (doc) => {
     setSelectedDocument(doc)
     setSelectedDocumentId(doc?.id ?? doc?.transcriptId ?? (doc?.type === 'link' && doc?.id ? `link-${doc.id}` : null))
+    setUserSelectedVideo(false) // SCRUM-328: user picked a doc, drop the video-intent flag
   }
   const handleBackToVideo = () => {
+    // SCRUM-327 / SCRUM-328: mark the user's explicit video choice so neither
+    // the auto-select effect nor PrimaryStage falls back to the primary doc.
+    setUserSelectedVideo(true)
     setSelectedDocument(null)
     setSelectedDocumentId(null)
   }
   const handleSelectVideo = (v) => {
+    // SCRUM-327 / SCRUM-328: mark the user's explicit video choice so neither
+    // the auto-select effect nor PrimaryStage falls back to the primary doc.
+    setUserSelectedVideo(true)
     setSelectedDocument(null)
     setSelectedDocumentId(null)
     setSelectedVideo(v)
@@ -1842,6 +1864,7 @@ export function CreatorMode({
              session-level transcript state, processing UI). */}
           <PrimaryStage
             selectedDocument={selectedDocument}
+            userSelectedVideo={userSelectedVideo}
             apiBaseUrl={apiBaseUrl}
             sessionId={sessionId}
             sessionUpdatedVersion={sessionUpdatedVersion}
