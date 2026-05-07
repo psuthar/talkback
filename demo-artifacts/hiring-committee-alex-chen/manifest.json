@@ -1,0 +1,431 @@
+{
+  "session": {
+    "title": "Hiring Committee — Alex Chen — Senior Staff Engineer",
+    "candidate": "Alex Chen",
+    "role": "Senior Staff Engineer (L6)",
+    "team": "Platform / Notification Infrastructure",
+    "premise_path": "session_setup.md",
+    "decision": "Extend offer to Alex Chen for Senior Staff Engineer",
+    "decision_status": "conditional-pending-reference",
+    "primary_video": "videos/final_hiring_committee_debrief.metadata.json",
+    "primary_transcript": "transcripts/final_hiring_committee_debrief.transcript.md"
+  },
+  "artifacts": [
+    {
+      "name": "README",
+      "path": "README.md",
+      "type": "markdown",
+      "category": "scenario-overview",
+      "upload_area": "session-overview",
+      "purpose": "Describes the scenario, folder layout, suggested upload flow, and which artifacts are intentionally messy.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Session Setup",
+      "path": "session_setup.md",
+      "type": "markdown",
+      "category": "scenario-overview",
+      "upload_area": "session-overview",
+      "purpose": "Premise, decision, suggested participants, stance distribution, recommended UI layout.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Manifest",
+      "path": "manifest.json",
+      "type": "json",
+      "category": "scenario-overview",
+      "upload_area": "session-overview",
+      "purpose": "Machine-readable artifact registry.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Recruiter Screen — metadata",
+      "path": "videos/recruiter_screen.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Video metadata (interviewer, duration, recording links).",
+      "demo_highlight": false
+    },
+    {
+      "name": "Recruiter Screen — transcript",
+      "path": "transcripts/recruiter_screen.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "32-min phone screen. Establishes motivation, comp expectations, competing offers.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Recruiter Screen — thumbnail",
+      "path": "images/recruiter_screen_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Hiring Manager Interview — metadata",
+      "path": "videos/hiring_manager_interview.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Video metadata.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Hiring Manager Interview — transcript",
+      "path": "transcripts/hiring_manager_interview.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "47-min HM round. Honest scope/contribution distinctions; correct dedup-failure hypothesis.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Hiring Manager Interview — thumbnail",
+      "path": "images/hiring_manager_interview_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Technical Deep Dive — metadata",
+      "path": "videos/technical_deep_dive.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Video metadata.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Technical Deep Dive — transcript",
+      "path": "transcripts/technical_deep_dive.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "62-min coding + debugging round. Includes a wrong-answer-then-self-correct moment and the FCM 503-as-throttle quirk.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Technical Deep Dive — thumbnail",
+      "path": "images/technical_deep_dive_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "System Design Review — metadata",
+      "path": "videos/system_design_review.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Video metadata. References candidate_whiteboard.jpg as the Excalidraw export.",
+      "demo_highlight": false
+    },
+    {
+      "name": "System Design Review — transcript",
+      "path": "transcripts/system_design_review.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "64-min system design. Strong on practical depth; pulled split-brain answer out late under interrogation; admits no fencing implementation experience.",
+      "demo_highlight": true
+    },
+    {
+      "name": "System Design Review — thumbnail",
+      "path": "images/system_design_review_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Values & Behavioral — metadata",
+      "path": "videos/values_behavioral_interview.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Video metadata.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Values & Behavioral — transcript",
+      "path": "transcripts/values_behavioral_interview.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "48-min values round. Origin of the L5-vs-L6 disagreement; unprompted Linkerd self-critique.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Values & Behavioral — thumbnail",
+      "path": "images/values_behavioral_interview_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Compensation & Leveling Discussion — metadata",
+      "path": "videos/compensation_leveling_discussion.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Internal-only audio call metadata.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Compensation & Leveling Discussion — transcript",
+      "path": "transcripts/compensation_leveling_discussion.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "28-min internal calibration. Defines the down-level trigger; surfaces (informally) competing offer pressure.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Compensation & Leveling Discussion — thumbnail",
+      "path": "images/compensation_leveling_discussion_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Final Hiring Committee Debrief — metadata",
+      "path": "videos/final_hiring_committee_debrief.metadata.json",
+      "type": "json",
+      "category": "interview-metadata",
+      "upload_area": "videos",
+      "purpose": "Primary artifact metadata. Captures dissents, conditions, and comp guidance.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Final Hiring Committee Debrief — transcript",
+      "path": "transcripts/final_hiring_committee_debrief.transcript.md",
+      "type": "markdown",
+      "category": "transcript",
+      "upload_area": "transcripts",
+      "purpose": "PRIMARY transcript. 58-min committee debrief showing live disagreement, the two arguments that resolved it, and the conditional outcome.",
+      "demo_highlight": true,
+      "is_primary": true
+    },
+    {
+      "name": "Final Hiring Committee Debrief — thumbnail",
+      "path": "images/final_hiring_committee_debrief_thumbnail.png",
+      "type": "image/png",
+      "category": "thumbnail",
+      "upload_area": "videos",
+      "purpose": "Recording card thumbnail.",
+      "demo_highlight": false
+    },
+
+    {
+      "name": "Alex Chen Resume (PDF)",
+      "path": "documents/Alex_Chen_Resume.pdf",
+      "type": "application/pdf",
+      "category": "candidate-document",
+      "upload_area": "documents",
+      "purpose": "Polished candidate resume. Contains a small dating inconsistency (2022-present vs Jan 2023 join) that a sharp committee should catch.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Alex Chen Resume (DOCX)",
+      "path": "documents/Alex_Chen_Resume.docx",
+      "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "category": "candidate-document",
+      "upload_area": "documents",
+      "purpose": "DOCX duplicate of the resume — present to mirror real ATS workflows that store both formats.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Senior Staff Engineer JD (PDF)",
+      "path": "documents/Senior_Staff_Engineer_JD.pdf",
+      "type": "application/pdf",
+      "category": "role-document",
+      "upload_area": "documents",
+      "purpose": "Job description. Anchors role expectations, comp band, and required experience.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Senior Staff Engineer JD (DOCX)",
+      "path": "documents/Senior_Staff_Engineer_JD.docx",
+      "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "category": "role-document",
+      "upload_area": "documents",
+      "purpose": "DOCX duplicate of the JD.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Company Values",
+      "path": "documents/Company_Values.pdf",
+      "type": "application/pdf",
+      "category": "company-document",
+      "upload_area": "documents",
+      "purpose": "Five-value HR-style doc. Used by values round and committee tie-breakers.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Interview Feedback Packet",
+      "path": "documents/Interview_Feedback_Packet.pdf",
+      "type": "application/pdf",
+      "category": "scorecard-packet",
+      "upload_area": "documents",
+      "purpose": "Compiled scorecards from all five reviewers. Contains the explicit L5-vs-L6 disagreement; one reviewer left a section blank.",
+      "demo_highlight": true
+    },
+
+    {
+      "name": "Greenhouse ATS Export",
+      "path": "exports/greenhouse_export.csv",
+      "type": "text/csv",
+      "category": "ats-export",
+      "upload_area": "exports",
+      "purpose": "Stage history and recruiter notes. Real-world quirks: inconsistent capitalization, free-text recruiter notes, one typo.",
+      "demo_highlight": true
+    },
+
+    {
+      "name": "Slack — leveling debate",
+      "path": "images/slack_thread_leveling.png",
+      "type": "image/png",
+      "category": "screenshot",
+      "upload_area": "images",
+      "purpose": "Pre-committee Slack debate between Rohan and Sara on leveling. Reveals Rohan's openness to L6 if role-constraint argument lands.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Slack — PM concerns",
+      "path": "images/slack_thread_concerns.png",
+      "type": "image/png",
+      "category": "screenshot",
+      "upload_area": "images",
+      "purpose": "Jenna (PM) flags two concerns. The Linkerd-cost concern is NOT raised in any interview transcript — only here.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Slack — offer risk / competing offer",
+      "path": "images/slack_thread_offer_risk.png",
+      "type": "image/png",
+      "category": "screenshot",
+      "upload_area": "images",
+      "purpose": "Recruiter-leads private channel. Reveals informally-sourced competing-offer intel that was kept out of committee discussion.",
+      "demo_highlight": true
+    },
+
+    {
+      "name": "System Design Architecture Diagram",
+      "path": "images/system_design_architecture.png",
+      "type": "image/png",
+      "category": "diagram",
+      "upload_area": "images",
+      "purpose": "Cleaned-up two-region notification platform diagram. Used in system design round.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Candidate Whiteboard Sketch",
+      "path": "images/candidate_whiteboard.jpg",
+      "type": "image/jpeg",
+      "category": "diagram-handwritten",
+      "upload_area": "images",
+      "purpose": "Rough hand-drawn sketch from the system design round. Includes annotations like '?? fencing — TODO' and 'split-brain risk on cutover' that contrast with the polished diagram.",
+      "demo_highlight": true
+    },
+
+    {
+      "name": "Compensation Guidance Memo",
+      "path": "internal-notes/compensation_guidance.docx",
+      "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "category": "internal-memo",
+      "upload_area": "internal-notes",
+      "purpose": "HR-authored memo to committee chair. Comp band, recommended posture, risks, talking points. Includes 'do not say' guidance that surfaces hidden context.",
+      "demo_highlight": true
+    },
+    {
+      "name": "Final Committee Notes",
+      "path": "internal-notes/final_committee_notes.docx",
+      "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "category": "internal-notes",
+      "upload_area": "internal-notes",
+      "purpose": "Chair-authored summary of the committee outcome, conditions, mitigations, and onboarding plan.",
+      "demo_highlight": true
+    },
+
+    {
+      "name": "Sample TalkBack Questions",
+      "path": "generated/sample_questions.md",
+      "type": "markdown",
+      "category": "demo-enablement",
+      "upload_area": "generated",
+      "purpose": "63 demo questions grouped by intent. Marked questions are highest-leverage for live demo.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Expected Answer Guidance",
+      "path": "generated/expected_answer_guidance.md",
+      "type": "markdown",
+      "category": "demo-enablement",
+      "upload_area": "generated",
+      "purpose": "For top demo questions: ideal synthesis behavior, expected citations, weak-answer warning signs.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Demo Script",
+      "path": "generated/demo_script.md",
+      "type": "markdown",
+      "category": "demo-enablement",
+      "upload_area": "generated",
+      "purpose": "5-7 minute live demo flow. Includes pre-flight checklist and anti-patterns.",
+      "demo_highlight": false
+    },
+    {
+      "name": "Mock Video Generation Guide",
+      "path": "generated/mock_video_generation_guide.md",
+      "type": "markdown",
+      "category": "demo-enablement",
+      "upload_area": "generated",
+      "purpose": "Three approaches to producing fake-but-realistic interview videos from the transcripts (TTS pipelines, ffmpeg recipes, Zoom-style fidelity).",
+      "demo_highlight": false
+    }
+  ],
+  "demo_recommendations": {
+    "primary_video_for_synthesis": "videos/final_hiring_committee_debrief.metadata.json",
+    "primary_transcript_for_synthesis": "transcripts/final_hiring_committee_debrief.transcript.md",
+    "highlight_questions_for_live_demo": [
+      "Q4 — What is the committee's recommendation, and where do reviewers disagree?",
+      "Q26 — Should Alex be hired at L6 or L5? What's the evidence on both sides?",
+      "Q29 — What argument moved Rohan from L5 to L6?",
+      "Q16 — Compare the architecture diagram and the candidate whiteboard.",
+      "Q40 — Are there topics in Slack threads that didn't come up in any interview?",
+      "Q47 — Why did Marcus and Emily not recommend top-of-band L6 comp?",
+      "Q63 — Three months from now, Alex misses cross-team milestones — what's the most likely root cause?"
+    ],
+    "intentionally_messy_artifacts": [
+      "transcripts/technical_deep_dive.transcript.md (out-of-order edge case + self-correction)",
+      "transcripts/system_design_review.transcript.md (split-brain pulled out late)",
+      "images/candidate_whiteboard.jpg (rough hand-sketch with TODO annotations)",
+      "images/slack_thread_leveling.png (off-the-cuff debate)",
+      "images/slack_thread_concerns.png (PM concern not in any interview)",
+      "exports/greenhouse_export.csv (capitalization quirks, one typo)",
+      "documents/Interview_Feedback_Packet.pdf (one reviewer left strengths blank)",
+      "internal-notes/compensation_guidance.docx (informal voice, references competing-offer rumor)",
+      "documents/Alex_Chen_Resume.docx (subtle dating inconsistency vs the candidate's stated tenure)"
+    ]
+  }
+}

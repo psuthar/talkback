@@ -1,0 +1,75 @@
+{
+  "interview_id": "intvw_committee_debrief_alex_chen",
+  "round_name": "Final Hiring Committee Debrief",
+  "candidate": {
+    "name": "Alex Chen",
+    "role": "Senior Staff Engineer",
+    "team": "Platform / Notification Infrastructure"
+  },
+  "chair": {
+    "name": "Nathan Ross",
+    "title": "Engineering Director, Platform"
+  },
+  "voting_members": [
+    {"name": "Priya Raman", "title": "Hiring Manager", "stance": "strong-hire-l6"},
+    {"name": "Diego Alvarez", "title": "Staff Eng", "stance": "hire-l6"},
+    {"name": "Sara Okafor", "title": "Principal Eng", "stance": "strong-hire-l6"},
+    {"name": "Rohan Mehta", "title": "Senior Eng", "stance": "hire-l6-with-dissent (was L5 entering)"},
+    {"name": "Nathan Ross", "title": "Director (chair)", "stance": "hire-l6-with-dissent (was lean-no-hire entering)"}
+  ],
+  "observers": [
+    {"name": "Jenna Liu", "title": "Staff PM"},
+    {"name": "Marcus Webb", "title": "Senior Recruiter"},
+    {"name": "Emily Torres", "title": "HRBP"}
+  ],
+  "scheduled_at": "2026-04-20T15:00:00-07:00",
+  "started_at": "2026-04-20T15:00:14-07:00",
+  "ended_at": "2026-04-20T15:58:02-07:00",
+  "duration_seconds": 3468,
+  "format": "zoom-video",
+  "recording": {
+    "provider": "zoom",
+    "cloud_recording_id": "zoom_rec_a8d4f160",
+    "video_url_internal": "videos/final_hiring_committee_debrief.mp4",
+    "transcript_path": "transcripts/final_hiring_committee_debrief.transcript.md",
+    "thumbnail_path": "images/final_hiring_committee_debrief_thumbnail.png"
+  },
+  "stage": "Hiring Committee",
+  "outcome": "hire-l6-conditional",
+  "outcome_conditions": [
+    "Strong cross-team reference (Marcus to obtain on 2026-04-21)",
+    "Structured six-month review with the dedup rebuild as the success criterion"
+  ],
+  "vote_tally": {
+    "hire": 5,
+    "no_hire": 0,
+    "level": "L6 unanimous (with 2 logged dissents on quality-at-level)"
+  },
+  "logged_dissents": [
+    {
+      "member": "Rohan Mehta",
+      "concern": "Decisiveness — sees Alex as a stretch L6, would have preferred L5 if role permitted"
+    },
+    {
+      "member": "Nathan Ross",
+      "concern": "Cross-team scope ownership unverified; reference is a tie-breaker"
+    }
+  ],
+  "comp_guidance": {
+    "level": "L6",
+    "base_target": 320000,
+    "base_flex_cap": 335000,
+    "equity_grant": "L6 standard (median of band)",
+    "sign_on_target": 75000,
+    "rationale": "Median of L6 band given logged dissents — top-of-band reserved for unanimous-without-dissent committees. Flex room of 15k base permitted without comp committee re-review."
+  },
+  "tags": [
+    "primary-artifact",
+    "disagreement-named",
+    "leveling-debate-resolved-via-role-constraint",
+    "rohan-moves-l5-to-l6-mid-debate",
+    "nathan-moves-lean-no-hire-to-l6-mid-debate",
+    "conditional-on-reference"
+  ],
+  "summary": "58-minute committee debrief. Entered split: Priya/Sara strong-hire-L6, Diego hire-L6, Rohan hire-L5, Nathan lean-no-hire. Two pivots resolved the disagreement: (1) Sara argued the cost of NOT hiring (8-month rebuild slip) outweighed the marginal risk of hiring; (2) Diego pointed out that down-leveling to L5 would block Alex from leading the cross-team rebuild, so the leveling decision was constrained by role need. Outcome: hire at L6, conditional on reference and structured six-month review. Comp at median of band ($320k base) given logged dissents. THIS IS THE PRIMARY ARTIFACT FOR DEMO SYNTHESIS — it captures disagreement, evolution of stances, and the trade-offs that drove the decision."
+}

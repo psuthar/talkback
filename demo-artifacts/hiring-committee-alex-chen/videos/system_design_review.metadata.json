@@ -1,0 +1,46 @@
+{
+  "interview_id": "intvw_sys_design_alex_chen",
+  "round_name": "System Design Review",
+  "candidate": {
+    "name": "Alex Chen",
+    "role": "Senior Staff Engineer",
+    "team": "Platform / Notification Infrastructure"
+  },
+  "interviewer": {
+    "name": "Sara Okafor",
+    "title": "Principal Engineer, Distributed Systems",
+    "email": "sara.okafor@example.com"
+  },
+  "scheduled_at": "2026-03-30T11:00:00-07:00",
+  "started_at": "2026-03-30T11:00:09-07:00",
+  "ended_at": "2026-03-30T12:04:52-07:00",
+  "duration_seconds": 3883,
+  "format": "zoom-video-excalidraw",
+  "recording": {
+    "provider": "zoom",
+    "cloud_recording_id": "zoom_rec_72bc9e30",
+    "video_url_internal": "videos/system_design_review.mp4",
+    "transcript_path": "transcripts/system_design_review.transcript.md",
+    "thumbnail_path": "images/system_design_review_thumbnail.png",
+    "excalidraw_export_path": "images/candidate_whiteboard.jpg"
+  },
+  "stage": "Onsite",
+  "outcome": "advance",
+  "design_problem": "Globally-distributed notification platform. 5B sends/day at peak. Multi-region failover with 60s RTO. Exactly-once dedup within 24h. <2s e2e p99.",
+  "scorecard": {
+    "clarification_quality": "5/5",
+    "design_breadth": "4/5",
+    "design_depth": "4/5",
+    "operational_thinking": "5/5",
+    "formal_methods_depth": "2/5",
+    "overall": "Strong Hire"
+  },
+  "tags": [
+    "strong-hire",
+    "split-brain-pulled-out-late",
+    "no-fencing-experience",
+    "no-formal-methods-background",
+    "honest-about-pageform-failover-gap"
+  ],
+  "summary": "64-minute system design review for a 5B/day globally-distributed notification platform. Strong on real-world distributed systems: dedup, replication, retry, circuit breakers, capacity planning. Identified split-brain as the corner case that scares him most, but only after Sara pushed for it. Honest that he hasn't implemented fencing from scratch — Pageform's failover relies on DNS, not explicit lease/generation. Sara recommended Strong Hire at L6 with a mentorship pairing on formal methods (Devon, Principal)."
+}
