@@ -287,6 +287,52 @@ test.describe('Material upload and viewer flow', () => {
     await deleteSession(request, session.id)
   })
 
+  // SCRUM-328: in Creator mode, when the session's primary is a document,
+  // clicking a video row in the materials sidebar must render the video
+  // player. Pre-fix, PrimaryStage.jsx fell back to rendering the primary
+  // document via the SCRUM-284 fallback even after the parent cleared
+  // selectedDocument, so the video player never appeared at all.
+  test('SCRUM-328: in Creator mode, clicking a video row renders the video player even when primary is a document', async ({ page, context, request }) => {
+    const email = uniqueEmail('scrum-328-creator-video')
+    await createUserAndLoginWithId(context, request, email)
+    const session = await createSession(request, 'E2E SCRUM-328 Creator Video Click')
+
+    // Seed a text material and PATCH the session primary to it. This is the
+    // state that triggers PrimaryStage's document fallback — the bug.
+    const material = await pasteMaterial(request, session.id, 'SCRUM-328 primary doc', 'primary doc body for SCRUM-328 e2e')
+    expect(material?.id).toBeTruthy()
+    const patchRes = await request.patch(`${API_BASE}/api/sessions/${session.id}`, {
+      data: { primary: { kind: 'document', id: material.id } },
+    })
+    expect(patchRes.ok()).toBe(true)
+
+    await navigateToCreatorSession(page, session.id)
+
+    // On load, PrimaryStage renders the primary document.
+    const documentViewer = page.getByTestId('document-viewer')
+    await expect(documentViewer).toBeVisible({ timeout: 10_000 })
+
+    // Upload an MP4 so the sidebar gets a Videos row to click.
+    await uploadFile(page, MP4_FILE)
+    const videoRow = page.getByTestId('primary-video-item')
+    await expect(videoRow).toBeVisible({ timeout: 15_000 })
+
+    // Click the video row. Pre-fix: PrimaryStage saw selectedDocument=null
+    // and re-rendered the primary doc via the fallback at PrimaryStage.jsx:78
+    // — so the player never appeared. Post-fix: userSelectedVideo=true skips
+    // the fallback and the video-player-container becomes visible.
+    await videoRow.click()
+    await page.waitForLoadState('networkidle')
+
+    const videoPlayerContainer = page.getByTestId('video-player-container')
+    await expect(videoPlayerContainer).toBeVisible({ timeout: 10_000 })
+    await expect(documentViewer).toHaveCount(0)
+
+    // Cleanup
+    await loginAsAdmin(request)
+    await deleteSession(request, session.id)
+  })
+
   // SCRUM-295: creator can right-click an MP4 video row → Make primary →
   // PATCH primary kind=video succeeds via the video's file_artifact_id
   // (serialized on VideoSource as `artifact_id`). Closes the gap reported

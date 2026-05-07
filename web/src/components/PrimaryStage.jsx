@@ -31,6 +31,11 @@ import { DocumentViewer } from './DocumentViewer'
  */
 export function PrimaryStage({
 	selectedDocument,
+	// SCRUM-328: when the user has explicitly clicked a video row, suppress
+	// the "fall back to currentSession.primary as a document/link" branch
+	// below — otherwise the user's video choice is silently overridden by
+	// the session's primary descriptor and the player never renders.
+	userSelectedVideo = false,
 	apiBaseUrl,
 	sessionId,
 	sessionUpdatedVersion,
@@ -75,16 +80,22 @@ export function PrimaryStage({
 	// iframe render. Returns null silently when the descriptor points at a
 	// row that's been removed (resolver collapse) so the parent's empty-state
 	// UX still wins.
+	//
+	// SCRUM-328: skip this fallback entirely when the user has explicitly
+	// clicked a video row in the sidebar. Without the guard, a session with
+	// primary.kind=document re-renders the document here as soon as the
+	// parent clears selectedDocument (handleBackToVideo / handleSelectVideo),
+	// so the video player never appears.
 	const primaryKind = currentSession?.primary?.kind
 	const primaryId = currentSession?.primary?.id
-	if (primaryKind === 'document' && primaryId) {
+	if (!userSelectedVideo && primaryKind === 'document' && primaryId) {
 		const materials = Array.isArray(currentSession?.materials) ? currentSession.materials : []
 		const material = materials.find((m) => m && String(m.id) === String(primaryId))
 		if (material) {
 			return renderDoc(material)
 		}
 	}
-	if (primaryKind === 'link' && primaryId) {
+	if (!userSelectedVideo && primaryKind === 'link' && primaryId) {
 		const links = Array.isArray(currentSession?.links)
 			? currentSession.links
 			: (Array.isArray(currentSession?.session?.links) ? currentSession.session.links : [])
