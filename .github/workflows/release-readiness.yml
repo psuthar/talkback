@@ -81,6 +81,10 @@ jobs:
           python3 scripts/test_qa_eval_datasets.py
           python3 scripts/test_qa_eval_harness_smoke.py
 
+      - name: Test PR risk runner (SCRUM-336)
+        run: |
+          python3 scripts/test_pr_risk_run.py
+
       - name: Fetch refs for git diff
         run: git fetch --all --tags --prune || true
 
@@ -122,12 +126,15 @@ jobs:
             echo "pptx=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: PR risk scoring (release-readiness-core)
+      - name: PR risk scoring (release-readiness-core, SCRUM-336 wrapper)
         id: prrisk
         continue-on-error: true
         run: |
           mkdir -p artifacts/release-readiness
-          release-readiness-pr-risk \
+          # SCRUM-336: wraps release-readiness-pr-risk to reclassify pure-UI
+          # CreatorMode.jsx edits out of the orchestration domain. Same CLI
+          # surface; same artifact paths.
+          python3 scripts/pr_risk_run.py \
             --repo-root . \
             --base-ref "${{ steps.base.outputs.base_ref }}" \
             --output-dir artifacts/release-readiness \
