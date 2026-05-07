@@ -44,8 +44,10 @@ const (
 	envRetries                = "MARKITDOWN_SIDECAR_RETRIES"
 	envImageTimeout           = "MARKITDOWN_SIDECAR_IMAGE_TIMEOUT_S"
 	envURLTimeout             = "MARKITDOWN_SIDECAR_URL_TIMEOUT_S"
+	envFileTimeout            = "MARKITDOWN_SIDECAR_FILE_TIMEOUT_S"
 	envImageExtractionEnabled = "MARKITDOWN_IMAGE_EXTRACTION_ENABLED"
 	envURLExtractionEnabled   = "MARKITDOWN_URL_EXTRACTION_ENABLED"
+	envFileExtractionEnabled  = "MARKITDOWN_FILE_EXTRACTION_ENABLED"
 )
 
 // ImageExtractionEnabled returns true when the operator has explicitly opted
@@ -67,6 +69,18 @@ func URLExtractionEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv(envURLExtractionEnabled)), "true")
 }
 
+// FileExtractionEnabled returns true when the operator has opted in to
+// sidecar-based generic file extraction (SCRUM-332). Initially scoped to
+// CSV / XLS / XLSX uploads; the upstream MarkItDown SDK converts each to
+// a markdown table natively. Defaults to false on first ship so the
+// existing pure-Go XLSX excelize path stays active for unconfigured
+// environments. Once set to "true", the materials handler routes
+// CSV/XLS/XLSX uploads through the sidecar (assuming the client is also
+// Enabled()).
+func FileExtractionEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(envFileExtractionEnabled)), "true")
+}
+
 // Default per-operation timeouts. Image captioning involves an LLM round-trip
 // so it gets the longer budget; URL extraction is just a fetch + markdown
 // conversion. Both env-overridable.
@@ -74,6 +88,7 @@ const (
 	defaultRetries      = 1
 	defaultImageTimeout = 30 * time.Second
 	defaultURLTimeout   = 20 * time.Second
+	defaultFileTimeout  = 30 * time.Second // pandas/openpyxl/xlrd parse can be slow on large workbooks
 )
 
 // Client is safe for concurrent use; the underlying *http.Client handles
@@ -86,6 +101,7 @@ type Client struct {
 	Retries      int
 	ImageTimeout time.Duration
 	URLTimeout   time.Duration
+	FileTimeout  time.Duration
 }
 
 // ImageResult is the typed body of a successful POST /extract/image call.
@@ -103,6 +119,14 @@ type URLResult struct {
 	Title      string `json:"title"`
 	FetchedURL string `json:"fetched_url"`
 	StatusCode int    `json:"status_code"`
+}
+
+// FileResult is the typed body of a successful POST /extract/file call
+// (SCRUM-332). Used for CSV / XLS / XLSX → markdown extraction.
+type FileResult struct {
+	Text      string `json:"text"`
+	Extension string `json:"extension"`
+	Bytes     int    `json:"bytes"`
 }
 
 // SidecarError wraps the sidecar's structured error response so callers can
@@ -163,6 +187,7 @@ func NewClient() *Client {
 		Retries:      readIntEnv(envRetries, defaultRetries),
 		ImageTimeout: readDurationEnv(envImageTimeout, defaultImageTimeout),
 		URLTimeout:   readDurationEnv(envURLTimeout, defaultURLTimeout),
+		FileTimeout:  readDurationEnv(envFileTimeout, defaultFileTimeout),
 	}
 	c.HTTP = &http.Client{}
 	return c
@@ -222,6 +247,73 @@ func (c *Client) ExtractImage(ctx context.Context, body []byte, contentType stri
 	}
 
 	var out ImageResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, &SidecarError{HTTPStatus: resp.StatusCode, Code: "decode_failed", Message: err.Error(), kind: ErrSidecarUnavailable}
+	}
+	return &out, nil
+}
+
+// ExtractFile POSTs the file as multipart/form-data with a `file_extension`
+// form field so the sidecar's MarkItDown converter selects the right
+// converter (csv / xls / xlsx). The sidecar enforces its own size cap and
+// extension allowlist; callers don't need to pre-validate. SCRUM-332.
+//
+// fileExtension must be the canonical extension (e.g. ".csv", "csv",
+// ".xlsx") — leading dot optional. contentType is the upload's MIME and
+// is forwarded for telemetry; the sidecar routes by extension, not MIME.
+func (c *Client) ExtractFile(ctx context.Context, body []byte, contentType string, filename string, fileExtension string) (*FileResult, error) {
+	if !c.Enabled() {
+		return nil, &SidecarError{Code: "sidecar_disabled", Message: "MARKITDOWN_SIDECAR_URL/SECRET not configured", kind: ErrSidecarUnavailable}
+	}
+	endpoint := c.BaseURL + "/extract/file"
+
+	if filename == "" {
+		filename = "upload"
+	}
+
+	doRequest := func() (*http.Response, error) {
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filename))
+		if contentType != "" {
+			header.Set("Content-Type", contentType)
+		}
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, fmt.Errorf("create multipart part: %w", err)
+		}
+		if _, err := part.Write(body); err != nil {
+			return nil, fmt.Errorf("write multipart body: %w", err)
+		}
+		if fileExtension != "" {
+			if err := writer.WriteField("file_extension", fileExtension); err != nil {
+				return nil, fmt.Errorf("write file_extension field: %w", err)
+			}
+		}
+		if err := writer.Close(); err != nil {
+			return nil, fmt.Errorf("close multipart writer: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+		if err != nil {
+			return nil, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.Secret)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		return c.do(req, c.FileTimeout)
+	}
+
+	resp, err := c.callWithRetry(doRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if classifyErr := c.classifyError(resp, "file"); classifyErr != nil {
+		return nil, classifyErr
+	}
+
+	var out FileResult
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, &SidecarError{HTTPStatus: resp.StatusCode, Code: "decode_failed", Message: err.Error(), kind: ErrSidecarUnavailable}
 	}

@@ -72,6 +72,19 @@ func InstrumentedExtractURL(ctx context.Context, c *Client, urlStr string) (*URL
 	return res, err
 }
 
+// InstrumentedExtractFile wraps Client.ExtractFile with the same per-call
+// structured log line. SCRUM-332. Spreadsheets don't consume tokens (no
+// LLM round-trip on the sidecar side), so the tokens field is always 0.
+func InstrumentedExtractFile(ctx context.Context, c *Client, body []byte, contentType, filename, fileExtension string) (*FileResult, error) {
+	if c == nil {
+		return (&Client{}).ExtractFile(ctx, body, contentType, filename, fileExtension)
+	}
+	start := time.Now()
+	res, err := c.ExtractFile(ctx, body, contentType, filename, fileExtension)
+	logCallOutcome("markitdown.file", start, err, 0)
+	return res, err
+}
+
 func logCallOutcome(op string, start time.Time, err error, tokens int) {
 	outcome := classifyOutcome(err)
 	durMs := time.Since(start).Milliseconds()
