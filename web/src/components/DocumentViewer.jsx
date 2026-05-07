@@ -1,7 +1,13 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, lazy, Suspense } from 'react'
 import mammoth from 'mammoth'
 import { SlideDeckViewer } from './SlideDeckViewer'
 import { getMaterialTypeLabel } from '../utils/materialIcons'
+
+// SCRUM-333: lazy-load SpreadsheetViewer (and its react-markdown +
+// remark-gfm deps) so the markdown renderer only ships when a
+// spreadsheet material is actually opened. Most sessions will not
+// render this path; the deferred chunk keeps the main bundle lean.
+const SpreadsheetViewer = lazy(() => import('./SpreadsheetViewer'))
 
 const MATERIAL_CHUNK_SIZE = 1200
 const MATERIAL_CHUNK_OVERLAP = 150
@@ -57,6 +63,17 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
     contentType.includes('vnd.ms-powerpoint') ||
     contentType.includes('openxmlformats-officedocument.presentationml.presentation')
   )
+  // SCRUM-333: spreadsheet detection (CSV / XLS / XLSX). When the
+  // markitdown sidecar's /extract/file path produced extracted_text
+  // (markdown table), render via SpreadsheetViewer instead of the
+  // pre-wrap text fallback. Detection is by extension OR MIME — both
+  // signals are populated by the upload handler (SCRUM-330 / SCRUM-332).
+  const isSpreadsheet = !isTranscript && !isLink && !isImage && !isDocx && !isPdf && (
+    fn.endsWith('.csv') || fn.endsWith('.xls') || fn.endsWith('.xlsx') ||
+    contentType === 'text/csv' ||
+    contentType === 'application/vnd.ms-excel' ||
+    contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  )
   // apiBaseUrl can be '' for same-origin-relative requests; treat null/undefined as missing.
   const baseMaterialFileUrl = apiBaseUrl != null && doc?.artifact_id && doc?.id && !isTranscript && !isLink
     ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${doc.artifact_id}/materials/${doc.id}/file`
@@ -91,7 +108,7 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
     return () => { cancelled = true }
   }, [isDocx, baseMaterialFileUrl, doc?.id])
 
-  const textChunks = (bodyText && initialBlock != null && !isPdf && !isImage && !docxHtml)
+  const textChunks = (bodyText && initialBlock != null && !isPdf && !isImage && !docxHtml && !isSpreadsheet)
     ? chunkTextForDisplay(bodyText)
     : null
 
@@ -251,6 +268,13 @@ export function DocumentViewer({ doc, apiBaseUrl, sessionId, initialPage, initia
           />
         ) : isDocx && docxLoading ? (
           <div style={{ padding: '24px', color: '#666' }}>Loading document…</div>
+        ) : isSpreadsheet && bodyText ? (
+          // SCRUM-333: render markdown tables (CSV / XLS / XLSX) via the
+          // lazy-loaded SpreadsheetViewer. The Suspense fallback covers the
+          // brief moment while the chunk loads on first open.
+          <Suspense fallback={<div style={{ padding: '24px', color: '#666' }}>Loading spreadsheet…</div>}>
+            <SpreadsheetViewer markdown={bodyText} />
+          </Suspense>
         ) : textChunks && textChunks.length > 0 ? (
           <div ref={contentRef} style={{
             flex: 1,
