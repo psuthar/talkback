@@ -1,0 +1,83 @@
+/*
+ * SpreadsheetViewer styles (SCRUM-333).
+ * The viewer renders markdown emitted by the markitdown sidecar for
+ * CSV / XLS / XLSX. Layout aims for: sticky table headers, horizontal
+ * scroll for wide tables, and `## SheetName` section headings stacked
+ * vertically for multi-sheet workbooks.
+ */
+
+.viewer {
+	font-size: 14px;
+	line-height: 1.5;
+	color: #1a1a1a;
+	padding: 4px 0;
+}
+
+.viewer p {
+	margin: 8px 0;
+}
+
+.sheetHeading {
+	font-size: 16px;
+	font-weight: 600;
+	margin: 24px 0 8px;
+	padding-bottom: 4px;
+	border-bottom: 1px solid #e0e0e0;
+	color: #0d3b66;
+}
+
+.viewer .sheetHeading:first-child {
+	margin-top: 4px;
+}
+
+/* Per-table scroll container so wide tables don't push the parent pane.
+   max-height isn't set — the table grows naturally and the parent's
+   overflow auto handles vertical scroll across multiple sheets. */
+.tableScroll {
+	overflow-x: auto;
+	max-width: 100%;
+	margin-bottom: 16px;
+	border: 1px solid #e0e0e0;
+	border-radius: 4px;
+	background-color: #fff;
+}
+
+.table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 13px;
+}
+
+/* Sticky header row inside the table-scroll wrapper. */
+.thead {
+	position: sticky;
+	top: 0;
+	background-color: #f5f7fa;
+	z-index: 1;
+}
+
+.th {
+	text-align: left;
+	font-weight: 600;
+	color: #1a1a1a;
+	padding: 8px 12px;
+	border-bottom: 1px solid #d0d7e0;
+	white-space: nowrap;
+}
+
+.td {
+	padding: 6px 12px;
+	border-bottom: 1px solid #f0f2f5;
+	vertical-align: top;
+}
+
+.table tr:nth-child(even) .td {
+	background-color: #fafbfc;
+}
+
+.empty {
+	font-size: 14px;
+	color: #666;
+	font-style: italic;
+	padding: 24px 12px;
+}
