@@ -41,6 +41,21 @@ class URLExtractResult:
     status_code: int
 
 
+@dataclass(frozen=True)
+class FileExtractResult:
+    """Generic file → markdown result (SCRUM-331).
+
+    Distinct from ImageExtractResult because spreadsheet/document extraction
+    via MarkItDown's built-in converters (pandas / openpyxl / xlrd / csv)
+    does not consume LLM tokens — `tokens_used` would always be zero, so we
+    omit it instead of carrying a dead field.
+    """
+
+    text: str
+    extension: str
+    bytes_in: int
+
+
 class ExtractionError(Exception):
     """Raised when MarkItDown / the upstream LLM cannot produce a result."""
 
@@ -149,6 +164,55 @@ def _resolve_url_max_bytes(override: Optional[int]) -> int:
         except ValueError:
             pass
     return _DEFAULT_URL_MAX_BYTES
+
+
+def extract_file_to_markdown(
+    *,
+    file_bytes: bytes,
+    file_extension: str,
+) -> FileExtractResult:
+    """Convert arbitrary supported file bytes to markdown via MarkItDown (SCRUM-331).
+
+    No LLM call — MarkItDown's CSV / XLSX / XLS converters use pandas /
+    openpyxl / xlrd locally and emit deterministic markdown tables (one
+    `## SheetName` heading per sheet for multi-sheet workbooks).
+
+    Tests typically monkeypatch this function entirely. The real
+    implementation runs against the actual MarkItDown SDK so the contract
+    is exercised in pytest CI.
+    """
+    if not file_bytes:
+        raise ExtractionError("empty file body", code="empty_body")
+    extension = (file_extension or "").lower().strip()
+    if extension and not extension.startswith("."):
+        extension = "." + extension
+    if not extension:
+        raise ExtractionError("missing file extension", code="missing_extension")
+
+    try:
+        from markitdown import MarkItDown
+    except ImportError as exc:  # pragma: no cover — surfaces only if deps drift
+        raise ExtractionError(
+            f"markitdown not installed: {exc}",
+            code="dependency_missing",
+        )
+
+    converter = MarkItDown()
+    stream = io.BytesIO(file_bytes)
+    try:
+        result = converter.convert_stream(stream, file_extension=extension)
+    except Exception as exc:  # depends on MarkItDown / pandas / openpyxl internals
+        raise ExtractionError(
+            f"markitdown conversion failed: {exc}",
+            code="extraction_failed",
+        )
+
+    text = (getattr(result, "text_content", "") or "").strip()
+    return FileExtractResult(
+        text=text,
+        extension=extension,
+        bytes_in=len(file_bytes),
+    )
 
 
 def extract_url_to_markdown(

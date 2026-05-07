@@ -4,6 +4,7 @@ Public surface:
 - GET  /healthz        — unauthenticated liveness probe
 - POST /extract/image  — bearer-auth; multipart image -> markdown caption (SCRUM-300)
 - POST /extract/url    — bearer-auth; URL -> markdown via MarkItDown HTML path (SCRUM-301)
+- POST /extract/file   — bearer-auth; multipart spreadsheet -> markdown table (SCRUM-331)
 
 SCRUM-306 layers in usage telemetry.
 """
@@ -16,6 +17,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from app.extract_file import router as extract_file_router
 from app.extract_image import router as extract_image_router
 from app.extract_url import router as extract_url_router
 from app.logging_middleware import RequestLoggingMiddleware
@@ -48,6 +50,7 @@ def create_app() -> FastAPI:
 
     app.include_router(extract_image_router)
     app.include_router(extract_url_router)
+    app.include_router(extract_file_router)
     return app
 
 
