@@ -10,6 +10,37 @@ function statusColor(s) {
   return s === 'ready' ? 'var(--color-success-mid)' : s === 'pending' || s === 'processing' ? '#ff9800' : s === 'failed' ? 'var(--color-danger)' : '#666'
 }
 
+function formatBytes(n) {
+  if (n == null || Number.isNaN(n)) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+/**
+ * Format an upload-error response into a single line for the inline
+ * `Errors:` ribbon. SCRUM-334 introduced a structured 413 body for
+ * spreadsheet-too-large uploads; render those with the cap + actual
+ * sizes so the user can resize and retry. Everything else falls back
+ * to the legacy plain-text-or-statusText path.
+ */
+async function formatUploadError(res, file) {
+  if (res.status === 413) {
+    try {
+      const body = await res.clone().json()
+      if (body && body.error === 'spreadsheet_too_large') {
+        const max = body.max_bytes
+        const actual = body.actual_bytes
+        return `${file.name}: spreadsheet too large (max ${formatBytes(max)}; this file is ${formatBytes(actual)})`
+      }
+    } catch (_) {
+      // Fall through to plain-text below
+    }
+  }
+  const t = await res.text().catch(() => '')
+  return `${file.name}: ${t || res.statusText}`
+}
+
 export function SessionMaterialsTab({
   sessionId,
   materials = [],
@@ -136,8 +167,11 @@ export function SessionMaterialsTab({
           form.append('file', file)
           const res = await fetch(`${base}/sessions/${sessionId}/materials/upload`, { method: 'POST', body: form, credentials: 'include' })
           if (!res.ok) {
-            const t = await res.text()
-            errors.push(`${file.name}: ${t || res.statusText}`)
+            // SCRUM-334: spreadsheet uploads over the configured cap return
+            // HTTP 413 with a structured JSON body. Render a friendly
+            // inline error showing both the limit and the file's actual
+            // size; fall back to the legacy text-error for everything else.
+            errors.push(await formatUploadError(res, file))
           } else {
             materialsCount += 1
           }

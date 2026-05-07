@@ -302,6 +302,143 @@ func createMinimalPptx(t *testing.T, path, text string) {
 	require.NoError(t, w.Close())
 }
 
+// SCRUM-334 — spreadsheet uploads (CSV / XLS / XLSX) over the configured
+// cap return HTTP 413 with a structured JSON body so the UI can render a
+// precise error. Default cap is 5 MiB; TALKBACK_SPREADSHEET_MAX_BYTES
+// overrides the limit at runtime. These tests run with a lowered cap so
+// fixtures stay tiny.
+func TestSessionUploadMaterial_SpreadsheetSizeCap(t *testing.T) {
+	// Note: NOT t.Parallel() because t.Setenv on TALKBACK_SPREADSHEET_MAX_BYTES
+	// would race other parallel tests that read the same env (the helper is
+	// process-global). Sequential is fine — the test is small.
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	session := createTestSessionForHandlers(t, h.DB, "SCRUM-334 Size Cap Session")
+
+	// Lower the cap to 1 KiB so the over-cap fixture is trivially small.
+	t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", "1024")
+
+	uploadCSV := func(t *testing.T, payload []byte, filename string) *httptest.ResponseRecorder {
+		t.Helper()
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		fileWriter, err := writer.CreateFormFile("file", filename)
+		require.NoError(t, err)
+		_, _ = fileWriter.Write(payload)
+		require.NoError(t, writer.Close())
+		req := httptest.NewRequest(http.MethodPost, "/sessions/"+session.ID.String()+"/materials/upload", body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		h.SessionUploadMaterial(w, req)
+		return w
+	}
+
+	t.Run("CSV under cap is accepted (existing behaviour preserved)", func(t *testing.T) {
+		small := []byte("name,role\nAlex,Eng\n")
+		w := uploadCSV(t, small, "small.csv")
+		assert.Equal(t, http.StatusCreated, w.Code)
+	})
+
+	t.Run("CSV at exactly the cap is accepted", func(t *testing.T) {
+		// 1024 bytes exactly — boundary is a strict greater-than, so equality is allowed.
+		payload := bytes.Repeat([]byte("a"), 1024)
+		w := uploadCSV(t, payload, "exact.csv")
+		assert.Equal(t, http.StatusCreated, w.Code)
+	})
+
+	t.Run("CSV over cap returns 413 with structured JSON", func(t *testing.T) {
+		over := bytes.Repeat([]byte("b"), 2048)
+		w := uploadCSV(t, over, "huge.csv")
+		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+		var body map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&body)
+		require.NoError(t, err)
+		assert.Equal(t, "spreadsheet_too_large", body["error"])
+		assert.EqualValues(t, 1024, body["max_bytes"])
+		assert.EqualValues(t, 2048, body["actual_bytes"])
+	})
+
+	t.Run("XLSX over cap returns 413", func(t *testing.T) {
+		// XLSX is binary, but the cap check uses header.Size (the multipart
+		// content-length) so any 2KB payload triggers the same path. Use a
+		// raw byte sequence rather than a real workbook to keep the fixture
+		// tiny — the cap check fires before extension-based extraction.
+		over := bytes.Repeat([]byte("c"), 2048)
+		w := uploadCSV(t, over, "huge.xlsx")
+		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+		var body map[string]interface{}
+		err := json.NewDecoder(w.Body).Decode(&body)
+		require.NoError(t, err)
+		assert.Equal(t, "spreadsheet_too_large", body["error"])
+	})
+
+	t.Run("XLS over cap returns 413", func(t *testing.T) {
+		over := bytes.Repeat([]byte("d"), 2048)
+		w := uploadCSV(t, over, "legacy.xls")
+		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	})
+
+	t.Run("PDF over cap is NOT subject to the spreadsheet cap", func(t *testing.T) {
+		// The cap is scoped to .csv / .xls / .xlsx. A 2 KB PDF must NOT 413
+		// — that path stays under the existing 10 MiB multipart cap.
+		over := bytes.Repeat([]byte("e"), 2048)
+		w := uploadCSV(t, over, "doc.pdf")
+		assert.NotEqual(t, http.StatusRequestEntityTooLarge, w.Code,
+			"PDF should not hit the spreadsheet cap")
+	})
+
+	t.Run("env override raises the cap", func(t *testing.T) {
+		t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", "4096")
+		// Same 2KB CSV that 413'd at the 1KB cap now succeeds at 4KB.
+		over := bytes.Repeat([]byte("f"), 2048)
+		w := uploadCSV(t, over, "raised.csv")
+		assert.Equal(t, http.StatusCreated, w.Code)
+	})
+
+	t.Run("invalid env override falls back to default", func(t *testing.T) {
+		// Negative / non-integer values should preserve the default 5 MiB,
+		// which means a 2KB file (well under default) is accepted.
+		t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", "not-a-number")
+		small := bytes.Repeat([]byte("g"), 2048)
+		w := uploadCSV(t, small, "fallback.csv")
+		assert.Equal(t, http.StatusCreated, w.Code)
+	})
+}
+
+// Pure-unit tests for the helpers — no DB / no handler needed.
+func TestSpreadsheetMaxBytes_Defaults(t *testing.T) {
+	t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", "")
+	assert.Equal(t, defaultSpreadsheetMaxBytes, spreadsheetMaxBytes())
+}
+
+func TestSpreadsheetMaxBytes_EnvOverride(t *testing.T) {
+	t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", "10485760") // 10 MiB
+	assert.EqualValues(t, 10485760, spreadsheetMaxBytes())
+}
+
+func TestSpreadsheetMaxBytes_InvalidValuesFallBackToDefault(t *testing.T) {
+	cases := []string{"", "0", "-1", "abc", "5.5"}
+	for _, c := range cases {
+		t.Run("env="+c, func(t *testing.T) {
+			t.Setenv("TALKBACK_SPREADSHEET_MAX_BYTES", c)
+			assert.Equal(t, defaultSpreadsheetMaxBytes, spreadsheetMaxBytes())
+		})
+	}
+}
+
+func TestIsSpreadsheetExt(t *testing.T) {
+	cases := map[string]bool{
+		".csv": true, ".xls": true, ".xlsx": true,
+		".pdf": false, ".docx": false, ".png": false, "": false, ".CSV": false,
+	}
+	for ext, want := range cases {
+		t.Run(ext, func(t *testing.T) {
+			assert.Equal(t, want, isSpreadsheetExt(ext))
+		})
+	}
+}
+
 func TestDeleteSessionMaterial(t *testing.T) {
 	t.Parallel()
 	h, cleanup := setupTestHandlersParallel(t)
