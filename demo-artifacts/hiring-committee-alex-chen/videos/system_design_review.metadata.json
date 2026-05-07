@@ -13,8 +13,8 @@
   },
   "scheduled_at": "2026-03-30T11:00:00-07:00",
   "started_at": "2026-03-30T11:00:09-07:00",
-  "ended_at": "2026-03-30T12:04:52-07:00",
-  "duration_seconds": 3883,
+  "ended_at": "2026-03-30T11:15:07-07:00",
+  "duration_seconds": 898,
   "format": "zoom-video-excalidraw",
   "recording": {
     "provider": "zoom",
@@ -42,5 +42,5 @@
     "no-formal-methods-background",
     "honest-about-pageform-failover-gap"
   ],
-  "summary": "64-minute system design review for a 5B/day globally-distributed notification platform. Strong on real-world distributed systems: dedup, replication, retry, circuit breakers, capacity planning. Identified split-brain as the corner case that scares him most, but only after Sara pushed for it. Honest that he hasn't implemented fencing from scratch — Pageform's failover relies on DNS, not explicit lease/generation. Sara recommended Strong Hire at L6 with a mentorship pairing on formal methods (Devon, Principal)."
+  "summary": "64-minute system design review for a 5B/day globally-distributed notification platform. Strong on real-world distributed systems: dedup, replication, retry, circuit breakers, capacity planning. Identified split-brain as the corner case that scares him most, but only after Sara pushed for it. Honest that he hasn't implemented fencing from scratch \u2014 Pageform's failover relies on DNS, not explicit lease/generation. Sara recommended Strong Hire at L6 with a mentorship pairing on formal methods (Devon, Principal)."
 }

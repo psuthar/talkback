@@ -101,3 +101,8 @@ artifacts/release-readiness-fixture-test/
 artifacts/rr-test/
 artifacts/gap-test/
 
+# Demo dataset: rendered MP4 + WebVTT artifacts (regenerable via tools/render_videos.py; large)
+demo-artifacts/*/videos/*.mp4
+demo-artifacts/*/videos/*.vtt
+demo-artifacts/*/videos/*.tts.mp3
+

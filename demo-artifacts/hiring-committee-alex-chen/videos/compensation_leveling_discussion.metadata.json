@@ -7,14 +7,23 @@
     "team": "Platform / Notification Infrastructure"
   },
   "attendees": [
-    {"name": "Marcus Webb", "title": "Senior Recruiter"},
-    {"name": "Emily Torres", "title": "HRBP"},
-    {"name": "Priya Raman", "title": "Hiring Manager (first 10 minutes only)"}
+    {
+      "name": "Marcus Webb",
+      "title": "Senior Recruiter"
+    },
+    {
+      "name": "Emily Torres",
+      "title": "HRBP"
+    },
+    {
+      "name": "Priya Raman",
+      "title": "Hiring Manager (first 10 minutes only)"
+    }
   ],
   "scheduled_at": "2026-04-13T16:00:00-07:00",
   "started_at": "2026-04-13T16:00:08-07:00",
-  "ended_at": "2026-04-13T16:28:14-07:00",
-  "duration_seconds": 1686,
+  "ended_at": "2026-04-13T16:05:56-07:00",
+  "duration_seconds": 348,
   "format": "zoom-audio",
   "recording": {
     "provider": "zoom",
@@ -34,5 +43,5 @@
     "downlevel-trigger-condition-defined",
     "do-not-share-with-candidate"
   ],
-  "summary": "28-minute internal calibration call between recruiter Marcus Webb, HRBP Emily Torres, and (briefly) hiring manager Priya Raman. Discussed leveling split (Sara/Priya at L6, Rohan at L5), competing offer pressure (informally surfaced from a recruiter friend), and comp committee posture (top-of-band L6 only with unanimous committee, otherwise median). Defined down-level trigger: split committee → L5 instead of overpay-L6. Critical context for Alex's hiring decision."
+  "summary": "28-minute internal calibration call between recruiter Marcus Webb, HRBP Emily Torres, and (briefly) hiring manager Priya Raman. Discussed leveling split (Sara/Priya at L6, Rohan at L5), competing offer pressure (informally surfaced from a recruiter friend), and comp committee posture (top-of-band L6 only with unanimous committee, otherwise median). Defined down-level trigger: split committee \u2192 L5 instead of overpay-L6. Critical context for Alex's hiring decision."
 }
