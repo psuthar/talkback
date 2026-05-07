@@ -1211,6 +1211,20 @@ export function CreatorMode({
       form.append('file', file)
       const res = await fetch(`${base}/sessions/${sessionId}/materials/upload`, { method: 'POST', body: form, credentials: 'include' })
       if (!res.ok) {
+        // SCRUM-334: structured 413 for spreadsheet-too-large uploads.
+        if (res.status === 413) {
+          try {
+            const body = await res.clone().json()
+            if (body && body.error === 'spreadsheet_too_large') {
+              const fmt = (n) => n == null ? '' : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1024 * 1024)).toFixed(1)} MB`
+              setMaterialUploadFeedback({
+                type: 'error',
+                message: `Spreadsheet too large (max ${fmt(body.max_bytes)}; this file is ${fmt(body.actual_bytes)}).`,
+              })
+              return
+            }
+          } catch (_) { /* fall through */ }
+        }
         const t = await res.text()
         setMaterialUploadFeedback({ type: 'error', message: t || res.statusText })
         return

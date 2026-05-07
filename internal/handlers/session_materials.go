@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +23,37 @@ import (
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
 )
+
+// SCRUM-334: spreadsheet uploads have an inner 5 MiB sidecar cap (the
+// /extract/file endpoint) but the multipart limit lives at 10 MiB. A 6 MB
+// XLSX would slip past the upload step and only fail at extraction,
+// leaving the user with a stuck row and a vague failure. We cap
+// spreadsheet uploads explicitly at the handler boundary so the failure
+// is fast and the UI can show a clear error.
+const defaultSpreadsheetMaxBytes int64 = 5 << 20 // 5 MiB
+
+// spreadsheetMaxBytes returns the configured cap. Override at runtime via
+// TALKBACK_SPREADSHEET_MAX_BYTES (positive integer, bytes). Operators can
+// raise this for specific deployments without a code change. Invalid or
+// non-positive values fall back to the default.
+func spreadsheetMaxBytes() int64 {
+	raw := os.Getenv("TALKBACK_SPREADSHEET_MAX_BYTES")
+	if raw == "" {
+		return defaultSpreadsheetMaxBytes
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || v <= 0 {
+		return defaultSpreadsheetMaxBytes
+	}
+	return v
+}
+
+// isSpreadsheetExt reports whether the lower-case file extension belongs
+// to the SCRUM-329 spreadsheet allowlist (CSV / XLS / XLSX). Centralised
+// so the cap and any future helper agree.
+func isSpreadsheetExt(ext string) bool {
+	return ext == ".csv" || ext == ".xls" || ext == ".xlsx"
+}
 
 // MaterialSlidesResponse is the JSON response for GET .../materials/{material_id}/slides.
 type MaterialSlidesResponse struct {
@@ -185,6 +217,26 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	}
 	storageURL := storage.SessionArtifactPath(sessionID, filename)
 	ext := strings.ToLower(filepath.Ext(filename))
+
+	// SCRUM-334: explicit spreadsheet upload size cap. Reject early with a
+	// structured 413 so the UI can show "this spreadsheet is too large"
+	// instead of letting the file flow through the pipeline and fail
+	// later at sidecar extraction time. Returns JSON with both the cap
+	// and the actual size so the UI can render a precise error.
+	if isSpreadsheetExt(ext) {
+		cap := spreadsheetMaxBytes()
+		if header.Size > cap {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":        "spreadsheet_too_large",
+				"max_bytes":    cap,
+				"actual_bytes": header.Size,
+			})
+			return
+		}
+	}
+
 	isImage := strings.HasPrefix(contentType, "image/") ||
 		ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" || ext == ".svg" ||
 		ext == ".heic" || ext == ".heif" || ext == ".avif" || ext == ".jfif" || ext == ".tif" || ext == ".tiff" || ext == ".ico"
