@@ -1800,7 +1800,7 @@ export function CreatorMode({
                 <input
                   ref={materialFileInputRef}
                   type="file"
-                  accept=".pdf,.txt,.md,.docx,.xlsx,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,video/mp4,.mp4,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
+                  accept=".pdf,.txt,.md,.docx,.xlsx,.xls,.csv,.pptx,.jpg,.jpeg,.png,.gif,.webp,.bmp,.svg,video/mp4,.mp4,application/pdf,text/plain,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/jpeg,image/png,image/gif,image/webp,image/bmp,image/svg+xml"
                   onChange={handleMaterialFileChange}
                   disabled={materialUploading}
                   style={{ display: 'none' }}
