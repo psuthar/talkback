@@ -224,6 +224,16 @@ export function CreatorMode({
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
   const [selectedDocument, setSelectedDocument] = useState(null)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
+  // SCRUM-327: Once the user explicitly switches the center pane to a video
+  // (clicking a video row in the sidebar), the primary-material auto-select
+  // effect must NOT later restore the primary document/link on a session
+  // refetch. Tracked as a ref so it survives refetches and re-renders.
+  const userSelectedVideoRef = useRef(false)
+
+  // SCRUM-327: reset the user-selected-video guard when switching sessions.
+  useEffect(() => {
+    userSelectedVideoRef.current = false
+  }, [currentSession?.session?.id])
 
   // SCRUM-276: when GET session reports an explicit document/link primary,
   // default the creator's center pane to that material on session load —
@@ -232,6 +242,7 @@ export function CreatorMode({
   // already chosen something else (selectedDocumentId truthy).
   useEffect(() => {
     if (!currentSession?.session?.id) return
+    if (userSelectedVideoRef.current) return // SCRUM-327: respect user's explicit video selection
     const decision = resolvePrimaryAutoSelection(currentSession, selectedDocumentId)
     if (!decision) return
     if (decision.type === 'material') {
@@ -256,10 +267,16 @@ export function CreatorMode({
     setSelectedDocumentId(doc?.id ?? doc?.transcriptId ?? (doc?.type === 'link' && doc?.id ? `link-${doc.id}` : null))
   }
   const handleBackToVideo = () => {
+    // SCRUM-327: mark the user's explicit choice so the auto-select effect
+    // doesn't restore the primary document/link on a later session refetch.
+    userSelectedVideoRef.current = true
     setSelectedDocument(null)
     setSelectedDocumentId(null)
   }
   const handleSelectVideo = (v) => {
+    // SCRUM-327: mark the user's explicit choice so the auto-select effect
+    // doesn't restore the primary document/link on a later session refetch.
+    userSelectedVideoRef.current = true
     setSelectedDocument(null)
     setSelectedDocumentId(null)
     setSelectedVideo(v)
