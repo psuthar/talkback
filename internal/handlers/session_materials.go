@@ -260,11 +260,25 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	// a configured sidecar client cleanly falls back to the legacy
 	// "ready with empty text" path.
 	imageExtractionGate := isImage && markitdown.ImageExtractionEnabled() && h.Markitdown != nil && h.Markitdown.Enabled()
+	// SCRUM-332: when the operator has opted into spreadsheet ingestion via
+	// the markitdown sidecar, route CSV/XLS/XLSX through the async path so
+	// extracted_text receives a markdown table (one ## SheetName per sheet
+	// for multi-sheet XLSX). Defaults to off; existing pure-Go XLSX excelize
+	// path remains the canonical route for unconfigured environments and
+	// for .xlsx specifically when sync extraction succeeds.
+	isSpreadsheet := ext == ".csv" || ext == ".xls" || ext == ".xlsx"
+	fileExtractionGate := isSpreadsheet && markitdown.FileExtractionEnabled() && h.Markitdown != nil && h.Markitdown.Enabled()
 	switch {
 	case imageExtractionGate:
 		textStatus = models.MaterialTextStatusPending
 	case isImage:
 		textStatus = models.MaterialTextStatusReady
+	case fileExtractionGate:
+		// SCRUM-332: defer extraction to the async worker so the markitdown
+		// sidecar can produce markdown for CSV/XLS/XLSX. Pre-empts the
+		// pure-Go excelize path below for .xlsx and the "other office types"
+		// async fallback for .xls.
+		textStatus = models.MaterialTextStatusPending
 	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
 		content, err := os.ReadFile(filePath)
 		if err == nil {
@@ -349,8 +363,12 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 	// Skip the async job when text was already extracted synchronously during upload (textStatus==ready with extractedText set).
 	// SCRUM-303: image materials also need the async path when image-extraction
 	// is gated on; the worker calls the sidecar.
+	// SCRUM-332: spreadsheets (CSV/XLS/XLSX) gated on fileExtractionGate go
+	// through the same async path so the worker can call the sidecar's
+	// /extract/file endpoint and store markdown.
 	needsExtraction := (((contentType == "application/pdf" || ext == ".pdf") || isOfficeFile(ext, contentType)) ||
-		imageExtractionGate) &&
+		imageExtractionGate ||
+		fileExtractionGate) &&
 		!(textStatus == models.MaterialTextStatusReady && extractedText != nil)
 	if needsExtraction && h.JobProcessor != nil {
 		jobKey := "material_extract:" + material.ID.String()

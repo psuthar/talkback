@@ -245,6 +245,15 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 		return
 	}
 
+	// SCRUM-332: spreadsheet materials (CSV/XLS/XLSX) route through the
+	// markitdown sidecar's /extract/file endpoint. The upload handler only
+	// enqueues the job when MARKITDOWN_FILE_EXTRACTION_ENABLED is on AND
+	// the client is configured, so this branch always has a usable client.
+	if isSpreadsheetMaterial(mat) {
+		jp.handleFileExtraction(ctx, job, mat, filePath, jobStart, workerID)
+		return
+	}
+
 	// Important: for R2 presigned downloads the temp file may not preserve
 	// the original extension. Use mat metadata for routing.
 	extractStart := time.Now()
@@ -290,6 +299,143 @@ func (jp *JobProcessor) processMaterialExtractionJob(ctx context.Context, job *m
 	}
 	log.Printf("material_extract: completed material_id=%s filename=%s extract_ms=%d total_ms=%d",
 		materialID, mat.Filename, time.Since(extractStart).Milliseconds(), time.Since(jobStart).Milliseconds())
+}
+
+// isSpreadsheetMaterial reports whether the material's filename or
+// content type identifies it as a CSV / XLS / XLSX upload that should
+// route through the markitdown sidecar's /extract/file endpoint
+// (SCRUM-332). Centralized so the dispatch and any future helper agree.
+func isSpreadsheetMaterial(mat *models.Material) bool {
+	if mat == nil {
+		return false
+	}
+	fn := strings.ToLower(mat.Filename)
+	if strings.HasSuffix(fn, ".csv") || strings.HasSuffix(fn, ".xls") || strings.HasSuffix(fn, ".xlsx") {
+		return true
+	}
+	ct := strings.ToLower(mat.ContentType)
+	switch ct {
+	case "text/csv",
+		"application/vnd.ms-excel",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return true
+	}
+	return false
+}
+
+// spreadsheetExtension returns the canonical "." + ext that
+// /extract/file expects, derived from the material's filename. Returns ""
+// if the filename has no recognised spreadsheet suffix; the caller must
+// check before calling.
+func spreadsheetExtension(mat *models.Material) string {
+	if mat == nil {
+		return ""
+	}
+	fn := strings.ToLower(mat.Filename)
+	switch {
+	case strings.HasSuffix(fn, ".csv"):
+		return ".csv"
+	case strings.HasSuffix(fn, ".xlsx"):
+		return ".xlsx"
+	case strings.HasSuffix(fn, ".xls"):
+		return ".xls"
+	}
+	// Fall back to content-type based hint when filename is missing the
+	// extension (rare, but possible for renamed downloads).
+	ct := strings.ToLower(mat.ContentType)
+	switch ct {
+	case "text/csv":
+		return ".csv"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	}
+	return ""
+}
+
+// handleFileExtraction is the spreadsheet-material branch of
+// processMaterialExtractionJob (SCRUM-332). Reads the file bytes, calls
+// the sidecar's /extract/file endpoint, stores the returned markdown as
+// the material's extracted_text. Failure semantics mirror the image
+// branch: any error marks text_status=failed with a stable error_message.
+func (jp *JobProcessor) handleFileExtraction(ctx context.Context, job *models.TranscriptJob, mat *models.Material, filePath string, jobStart time.Time, workerID int) {
+	if jp.Markitdown == nil || !jp.Markitdown.Enabled() {
+		errMsg := "markitdown sidecar client not configured"
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+
+	ext := spreadsheetExtension(mat)
+	if ext == "" {
+		errMsg := "spreadsheet extension not recognised"
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+
+	body, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		errMsg := fmt.Sprintf("read spreadsheet bytes: %v", readErr)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+
+	extractStart := time.Now()
+	result, callErr := markitdown.InstrumentedExtractFile(ctx, jp.Markitdown, body, mat.ContentType, mat.Filename, ext)
+	if callErr != nil {
+		errMsg := callErr.Error()
+		if len(errMsg) > 500 {
+			errMsg = errMsg[:497] + "..."
+		}
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		log.Printf("file_extract: failed material_id=%s ext=%s err=%v", mat.ID, ext, callErr)
+		return
+	}
+
+	text := strings.TrimSpace(result.Text)
+	if text == "" {
+		errMsg := "Extraction produced empty markdown"
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+	if err := jp.db.UpdateMaterialTextStatus(ctx, mat.ID, models.MaterialTextStatusReady, &text); err != nil {
+		errMsg := fmt.Sprintf("save extracted text: %v", err)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateMaterialTextStatusWithError(ctx, mat.ID, models.MaterialTextStatusFailed, nil, &errMsg)
+		if jp.OnSessionUpdated != nil {
+			jp.OnSessionUpdated(job.SessionID)
+		}
+		return
+	}
+	if err := jp.db.CompleteTranscriptJob(ctx, job.ID, nil, nil, nil); err != nil {
+		log.Printf("Failed to complete file extraction job: %v", err)
+		return
+	}
+	if jp.OnTranscriptCompleted != nil {
+		jp.OnTranscriptCompleted(job.SessionID)
+	}
+	log.Printf("file_extract: completed material_id=%s filename=%s ext=%s extract_ms=%d total_ms=%d worker=%d",
+		mat.ID, mat.Filename, ext, time.Since(extractStart).Milliseconds(), time.Since(jobStart).Milliseconds(), workerID)
 }
 
 // handleImageExtraction is the image-material branch of
