@@ -99,6 +99,100 @@ func (db *DB) GetQuestionByID(ctx context.Context, questionID uuid.UUID) (*model
 	return question, nil
 }
 
+// GetQuestionAndReplyIDs returns the root question id followed by every direct
+// reply's id ordered by created_at. Replies are limited to direct children;
+// the schema does not support deeper nesting (parent_question_id resolves to
+// a root row, not a reply).
+//
+// The returned slice always begins with rootID for caller convenience even
+// when the question has no replies. Returns nil only on error.
+func (db *DB) GetQuestionAndReplyIDs(ctx context.Context, rootID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id
+		FROM questions
+		WHERE id = $1 OR parent_question_id = $1
+		ORDER BY (id = $1) DESC, created_at ASC
+	`, rootID)
+	if err != nil {
+		return nil, fmt.Errorf("query question and reply ids: %w", err)
+	}
+	defer rows.Close()
+
+	ids := make([]uuid.UUID, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan question id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate question ids: %w", err)
+	}
+	return ids, nil
+}
+
+// DeleteQuestionByID removes a question by id. Replies and answers cascade
+// via the existing FK ON DELETE CASCADE on questions.parent_question_id and
+// answers.question_id. Returns the number of rows affected (0 or 1) and is
+// auth-agnostic — callers must enforce authorization.
+//
+// Note: this does NOT clean up orchestration_recommendations referencing the
+// deleted question id. Use DeleteQuestionAndOrchestrationEvidenceByID for the
+// transactional cascade-plus-evidence-cleanup path.
+func (db *DB) DeleteQuestionByID(ctx context.Context, id uuid.UUID) (int64, error) {
+	tag, err := db.Pool.Exec(ctx, `DELETE FROM questions WHERE id = $1`, id)
+	if err != nil {
+		return 0, fmt.Errorf("delete question: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteQuestionAndOrchestrationEvidenceByID deletes the question (cascading
+// replies and answers via existing FKs) and atomically purges any
+// orchestration_recommendations rows whose evidence_json references any of
+// the deleted question ids. orchestration_recommendations has no FK to
+// questions, so this content-based cleanup must run in the same transaction
+// to avoid leaking deleted question text in the recommendations panel.
+//
+// Returns the rowsAffected from the question DELETE (0 or 1). The caller
+// supplies deletedIDs (root + replies, computed via GetQuestionAndReplyIDs)
+// so the broadcast payload is consistent with the cleanup set.
+func (db *DB) DeleteQuestionAndOrchestrationEvidenceByID(ctx context.Context, rootID uuid.UUID, deletedIDs []uuid.UUID) (int64, error) {
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Purge orchestration_recommendations evidence rows that reference any
+	// of the deleted question ids. The FK cascade on questions deletes
+	// answers but cannot reach orchestration_recommendations.evidence_json,
+	// which is JSONB content-based. Use @> containment over the array.
+	for _, qid := range deletedIDs {
+		// Match either {"question_id": qid} or {"source_type":"question","source_id":qid}
+		// inside the evidence_json array.
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM orchestration_recommendations
+			WHERE evidence_json @> jsonb_build_array(jsonb_build_object('question_id', $1::text))
+			   OR evidence_json @> jsonb_build_array(jsonb_build_object('source_type', 'question', 'source_id', $1::text))
+		`, qid.String()); err != nil {
+			return 0, fmt.Errorf("purge orchestration evidence for %s: %w", qid, err)
+		}
+	}
+
+	tag, err := tx.Exec(ctx, `DELETE FROM questions WHERE id = $1`, rootID)
+	if err != nil {
+		return 0, fmt.Errorf("delete question: %w", err)
+	}
+	rows := tag.RowsAffected()
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit delete-question tx: %w", err)
+	}
+	return rows, nil
+}
+
 // CountQuestionsBySessionID returns the number of questions for a session.
 func (db *DB) CountQuestionsBySessionID(ctx context.Context, sessionID uuid.UUID) (int, error) {
 	var n int
