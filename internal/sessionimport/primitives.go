@@ -217,6 +217,21 @@ func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, 
 		if !ok {
 			continue
 		}
+		// SCRUM-341: remap video_sources.file_artifact_id through the
+		// FileArtifactRemap populated by ImportPrimaryFileArtifact /
+		// (SCRUM-343) ImportFileArtifacts. Source pointer that has no remap
+		// entry (e.g. file_artifact failed to copy, or non-primary
+		// file_artifact not yet covered before SCRUM-343) is recorded as nil
+		// on the clone; never carry the source's pointer forward.
+		var fileArtifactID *uuid.UUID
+		if vs.FileArtifactID != nil {
+			if newID, ok := c.FileArtifactRemap[*vs.FileArtifactID]; ok {
+				idCopy := newID
+				fileArtifactID = &idCopy
+			} else {
+				log.Printf("sessionimport ImportVideoSources: source video_source %s file_artifact_id %s not in remap; clone left nil", vs.ID, *vs.FileArtifactID)
+			}
+		}
 		copyVS := &models.VideoSource{
 			ID:                    uuid.New(),
 			ArtifactID:            newArtifactID,
@@ -237,6 +252,7 @@ func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, 
 			TranscriptionSource:   vs.TranscriptionSource,
 			TranscriptionJobID:    nil,
 			VideoRole:             vs.VideoRole,
+			FileArtifactID:        fileArtifactID,
 		}
 		if vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
 			oldKey := *vs.StoredVideoObjectKey
