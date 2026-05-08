@@ -410,7 +410,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	_ = sessionimport.ImportFileArtifacts(ctx, c, allFAs, sourceSession.PrimaryVideoArtifactID)
 	_ = sessionimport.ImportMaterials(ctx, c, materials, sourceSessionID.String())
 	_ = sessionimport.ImportSessionLinks(ctx, c, sourceLinks)
-	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources, sourceSessionID.String())
+	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources)
 	sourceTranscripts, _ := h.DB.ListTranscriptsBySessionID(ctx, sourceSessionID)
 	if err := sessionimport.ImportTranscripts(ctx, c, sourceTranscripts); err != nil {
 		rollback("transcripts", err)

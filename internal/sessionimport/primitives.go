@@ -217,9 +217,12 @@ func ImportSessionLinks(ctx context.Context, c *Ctx, src []*models.SessionLink) 
 // text/VTT/segments. The first copied source is forced to the primary role so
 // the UI shows exactly one primary on the destination.
 //
-// srcStorageNamespace is the source session's UUID string (R2 keys embed it
-// and the legacy code uses string-replace; preserving that behavior).
-func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, srcStorageNamespace string) error {
+// SCRUM-358: the destination stored_video_object_key is rebuilt from the
+// source key's basename via storage.SessionVideoBasenameKey rather than a
+// string-replace of the source session UUID. This makes the primitive
+// session-source-agnostic — the SCRUM-350 template path can call
+// ImportVideoSources without fabricating a fake source-session namespace.
+func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource) error {
 	for i, vs := range src {
 		newArtifactID, ok := c.ArtifactRemap[vs.ArtifactID]
 		if !ok {
@@ -264,7 +267,11 @@ func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, 
 		}
 		if vs.StoredVideoObjectKey != nil && *vs.StoredVideoObjectKey != "" {
 			oldKey := *vs.StoredVideoObjectKey
-			newKey := strings.Replace(oldKey, srcStorageNamespace, c.Dst.ID.String(), 1)
+			// SCRUM-358: rebuild from basename + dst session id instead of
+			// string-replace on a source-session UUID. Produces the same
+			// shape as before (sessions/<dst>/videos/<basename>) without
+			// requiring a SourceStorageNamespace.
+			newKey := filepath.ToSlash(filepath.Join(storage.SessionStorageRoot, c.Dst.ID.String(), "videos", filepath.Base(filepath.FromSlash(oldKey))))
 			if newKey != oldKey {
 				if c.Deps.Storage != nil {
 					// SCRUM-346: prefer server-side CopyObject; fall back to Get+Put.
