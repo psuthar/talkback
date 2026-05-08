@@ -39,6 +39,63 @@ func (db *DB) CreateFileArtifact(ctx context.Context, fa *models.FileArtifact) e
 	return nil
 }
 
+// ListFileArtifactsBySessionID returns all file_artifacts whose session_id
+// matches the given session, ordered by created_at. SCRUM-343: CopySession
+// uses this to copy every session-scoped file_artifact (not just the primary
+// MP4) so video_sources.file_artifact_id remap is complete.
+func (db *DB) ListFileArtifactsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.FileArtifact, error) {
+	query := `
+		SELECT id, session_id, owner_user_id, kind, filename, content_type, size_bytes, sha256,
+			storage_provider, storage_bucket, storage_key, status, failure_reason, metadata_json, created_at, updated_at
+		FROM file_artifacts
+		WHERE session_id = $1
+		ORDER BY created_at
+	`
+	rows, err := db.Pool.Query(ctx, query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list file_artifacts: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.FileArtifact
+	for rows.Next() {
+		fa := &models.FileArtifact{}
+		var sid, ownerUserID *uuid.UUID
+		var filename, sha256, failureReason *string
+		var sizeBytes *int64
+		var kindStr, statusStr string
+		if err := rows.Scan(
+			&fa.ID,
+			&sid,
+			&ownerUserID,
+			&kindStr,
+			&filename,
+			&fa.ContentType,
+			&sizeBytes,
+			&sha256,
+			&fa.StorageProvider,
+			&fa.StorageBucket,
+			&fa.StorageKey,
+			&statusStr,
+			&failureReason,
+			&fa.MetadataJSON,
+			&fa.CreatedAt,
+			&fa.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan file_artifact: %w", err)
+		}
+		fa.Kind = models.FileArtifactKind(kindStr)
+		fa.Status = models.FileArtifactStatus(statusStr)
+		fa.SessionID = sid
+		fa.OwnerUserID = ownerUserID
+		fa.Filename = filename
+		fa.Sha256 = sha256
+		fa.SizeBytes = sizeBytes
+		fa.FailureReason = failureReason
+		out = append(out, fa)
+	}
+	return out, rows.Err()
+}
+
 // GetFileArtifactByID returns the file artifact by id, or nil if not found.
 func (db *DB) GetFileArtifactByID(ctx context.Context, id uuid.UUID) (*models.FileArtifact, error) {
 	fa := &models.FileArtifact{}
