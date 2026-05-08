@@ -1,6 +1,7 @@
 package models
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"time"
@@ -393,6 +394,50 @@ type Citation struct {
 	Label       string               `json:"label,omitempty"`       // e.g. "Transcript 01:12–04:38", "Document p. 4"
 	Excerpt     string               `json:"excerpt,omitempty"`     // first ~200 chars of chunk text
 	Navigation  *CitationNavigation  `json:"navigation,omitempty"`   // resolved target for click (url, video seek, doc page)
+}
+
+// UnmarshalJSON tolerates LLM responses that emit chunk_id or source_id as JSON
+// numbers instead of strings. Coercing both shapes to string keeps an otherwise-
+// valid answer from being discarded with "cannot unmarshal number into Go struct
+// field Citation.citations.chunk_id of type string".
+func (c *Citation) UnmarshalJSON(data []byte) error {
+	type alias Citation
+	aux := &struct {
+		ChunkID  json.RawMessage `json:"chunk_id"`
+		SourceID json.RawMessage `json:"source_id"`
+		*alias
+	}{
+		alias: (*alias)(c),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if s, ok := jsonStringOrNumber(aux.ChunkID); ok {
+		c.ChunkID = s
+	}
+	if s, ok := jsonStringOrNumber(aux.SourceID); ok {
+		c.SourceID = s
+	}
+	return nil
+}
+
+func jsonStringOrNumber(raw json.RawMessage) (string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return "", false
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return "", false
+		}
+		return s, true
+	}
+	var n json.Number
+	if err := json.Unmarshal(trimmed, &n); err == nil {
+		return n.String(), true
+	}
+	return "", false
 }
 
 type Answer struct {

@@ -54,6 +54,39 @@ func TestExtractFirstJSONObject(t *testing.T) {
 	}
 }
 
+// TestQAResponseToleratesNumericChunkID is a regression for SCRUM-359: when the LLM
+// emits chunk_id (or source_id) as a JSON number, the QA pipeline must still parse
+// the response into a usable QAResponse rather than zeroing out the answer with
+// "cannot unmarshal number into Go struct field Citation.citations.chunk_id of type string".
+func TestQAResponseToleratesNumericChunkID(t *testing.T) {
+	raw := `{"answer_status":"answered","answer_text":"The committee recommends X.","confidence":0.85,"citations":[` +
+		`{"chunk_id":42,"source_type":"material","source_id":"art-1","snippet":"recommendation X is preferred"},` +
+		`{"chunk_id":"c2","source_type":"transcript","source_id":7,"snippet":"the committee agreed"}` +
+		`]}`
+	var q QAResponse
+	if err := json.Unmarshal([]byte(raw), &q); err != nil {
+		t.Fatalf("expected lenient parse to succeed, got: %v", err)
+	}
+	if q.AnswerStatus != "answered" {
+		t.Errorf("AnswerStatus: got %q, want %q", q.AnswerStatus, "answered")
+	}
+	if len(q.Citations) != 2 {
+		t.Fatalf("expected 2 citations, got %d", len(q.Citations))
+	}
+	if q.Citations[0].ChunkID != "42" {
+		t.Errorf("citation[0].ChunkID: got %q, want %q", q.Citations[0].ChunkID, "42")
+	}
+	if q.Citations[0].SourceID != "art-1" {
+		t.Errorf("citation[0].SourceID: got %q, want %q", q.Citations[0].SourceID, "art-1")
+	}
+	if q.Citations[1].ChunkID != "c2" {
+		t.Errorf("citation[1].ChunkID: got %q, want %q", q.Citations[1].ChunkID, "c2")
+	}
+	if q.Citations[1].SourceID != "7" {
+		t.Errorf("citation[1].SourceID: got %q, want %q", q.Citations[1].SourceID, "7")
+	}
+}
+
 // TestAppendedTextAfterJSONIsHandled verifies that when the LLM returns valid JSON followed by
 // extra text (e.g. "From the slides..." or "Note: ..."), we still parse the JSON correctly and
 // do not fail with "invalid character 'f' after object key:value pair".
