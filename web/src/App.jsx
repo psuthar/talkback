@@ -3321,8 +3321,8 @@ function App() {
       {/* Google Meet import: session name + transcript-state note */}
       {googleMeetImportModalRec && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }} onClick={closeGoogleMeetImportModal}>
-          <div style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ marginTop: 0, marginBottom: '12px' }}>Import Google Meet recording</h3>
+          <div role="dialog" aria-modal="true" aria-labelledby="google-meet-import-modal-title" style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '400px', width: '90%' }} onClick={e => e.stopPropagation()}>
+            <h3 id="google-meet-import-modal-title" style={{ marginTop: 0, marginBottom: '12px' }}>Import Google Meet recording</h3>
             <p style={{ marginBottom: '12px', color: '#555', fontSize: '14px' }}>Recording: {googleMeetImportModalRec.subject || 'Untitled'}</p>
             {googleMeetImportTranscriptNote(googleMeetImportModalRec.transcript_state) && (
               <div style={{ marginBottom: '12px', fontSize: '13px', color: '#666', fontStyle: 'italic' }}>
@@ -4196,7 +4196,7 @@ function App() {
                               const badgeBg = badge.tone === 'success' ? '#e8f5e9' : badge.tone === 'warning' ? '#fff8e1' : '#eeeeee'
                               const badgeFg = badge.tone === 'success' ? '#2e7d32' : badge.tone === 'warning' ? '#f57c00' : '#666'
                               return (
-                                <div key={`${rec.recording_name}-${idx}`} style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
+                                <div key={`${rec.recording_name}-${idx}`} data-testid="google-meet-recording" style={{ padding: '10px', marginBottom: '8px', backgroundColor: '#fff', borderRadius: '4px', border: '1px solid #eee' }}>
                                   <div style={{ fontWeight: 'bold', marginBottom: '4px', fontSize: '14px' }}>{rec.subject || 'Google Meet recording'}</div>
                                   <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>
                                     {rec.start_time ? new Date(rec.start_time).toLocaleString() : '—'}
