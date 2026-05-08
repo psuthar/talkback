@@ -39,10 +39,12 @@ var (
 	}
 	// SKIP tables: must have zero rows on the clone with session_id == dst.
 	// session_memberships is special-cased (creator-only; allow exactly 1).
+	// Note: `answers` is not in the list because it has no session_id column
+	// — it cascades through questions.question_id. Since `questions` is in
+	// the SKIP list, no answer rows can leak to the clone.
 	skipTables = []string{
 		"session_invitations",
 		"questions",
-		"answers",
 		"decision_stances",
 		"orchestration_recommendations",
 		"orchestration_recommendation_status_audit",
