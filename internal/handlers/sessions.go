@@ -365,7 +365,8 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	_ = sessionimport.ImportMaterials(ctx, c, materials, sourceSessionID.String())
 	_ = sessionimport.ImportSessionLinks(ctx, c, sourceLinks)
 	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources, sourceSessionID.String())
-	_ = sessionimport.ImportTranscripts(ctx, c, nil) // SCRUM-342 will populate
+	sourceTranscripts, _ := h.DB.ListTranscriptsBySessionID(ctx, sourceSessionID)
+	_ = sessionimport.ImportTranscripts(ctx, c, sourceTranscripts)
 	_ = sessionimport.ImportSessionMetadata(ctx, c, sourceSession) // SCRUM-340 will populate
 	sessionimport.MaybeEnqueueProcessingJob(ctx, c, sourceJob, sourceSession)
 	h.triggerIndex(newSession.ID)

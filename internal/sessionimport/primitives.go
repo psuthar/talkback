@@ -413,9 +413,66 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 	return nil
 }
 
-// ImportTranscripts is a stub. SCRUM-342 will copy transcripts +
-// transcript_segments rows here.
+// ImportTranscripts copies transcripts + transcript_segments rows from the
+// source onto the destination. This is the canonical session-level transcript
+// table populated by Teams/Meet pipelines (Zoom uses the on-row video_sources
+// transcript_text). rag.IndexSession reads transcripts first before falling
+// back to video_sources, so without copying these the clone loses richer
+// segment-level anchoring.
+//
+// Whisper output is non-deterministic and ~$0.006/minute, so copying is
+// strictly better than recomputing on the clone (see plan §2). The clone
+// gets new transcript IDs and new transcript_segments rows linked to those
+// new IDs and the destination session.
+//
+// Per-row errors (one bad transcript or its segments) are non-fatal: log,
+// record in PartialFailures, and continue. SCRUM-344 promotes the whole
+// step to "fail the copy" with rollback.
 func ImportTranscripts(ctx context.Context, c *Ctx, src []*models.Transcript) error {
+	for _, t := range src {
+		newTranscript := &models.Transcript{
+			ID:           uuid.New(),
+			SessionID:    c.Dst.ID,
+			Source:       t.Source,
+			Language:     t.Language,
+			Status:       t.Status,
+			RawText:      t.RawText,
+			ErrorMessage: t.ErrorMessage,
+		}
+		if err := c.Deps.DB.CreateTranscript(ctx, newTranscript); err != nil {
+			log.Printf("sessionimport ImportTranscripts CreateTranscript: %v", err)
+			c.recordPartialFailure("transcripts")
+			continue
+		}
+		segments, err := c.Deps.DB.ListSegmentsByTranscriptID(ctx, t.ID)
+		if err != nil {
+			log.Printf("sessionimport ImportTranscripts ListSegmentsByTranscriptID: %v", err)
+			c.recordPartialFailure("transcripts")
+			continue
+		}
+		if len(segments) == 0 {
+			continue
+		}
+		// Reset IDs so InsertTranscriptSegments generates fresh ones; rewrite
+		// transcript_id and session_id for the destination.
+		newSegments := make([]models.TranscriptSegmentRow, 0, len(segments))
+		for _, s := range segments {
+			newSegments = append(newSegments, models.TranscriptSegmentRow{
+				TranscriptID: newTranscript.ID,
+				SessionID:    c.Dst.ID,
+				Idx:          s.Idx,
+				StartMs:      s.StartMs,
+				EndMs:        s.EndMs,
+				Text:         s.Text,
+				SpeakerLabel: s.SpeakerLabel,
+				SourceRef:    s.SourceRef,
+			})
+		}
+		if err := c.Deps.DB.InsertTranscriptSegments(ctx, newTranscript.ID, c.Dst.ID, newSegments); err != nil {
+			log.Printf("sessionimport ImportTranscripts InsertTranscriptSegments: %v", err)
+			c.recordPartialFailure("transcripts")
+		}
+	}
 	return nil
 }
 
