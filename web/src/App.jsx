@@ -7,6 +7,7 @@ import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
 import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
+import { ImportTemplatePage } from './components/ImportTemplatePage'
 import { SessionSkeleton } from './components/SessionSkeleton'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { isValidEmailFormat } from './utils/inviteMailto'
@@ -3126,6 +3127,13 @@ function App() {
       }
     }
   }, [wsConnected, effectiveSessionId, wsUrl])
+
+  // SCRUM-354: /import-template route — paste a v1 template descriptor and
+  // track the import job to terminal state. Page polls GET /api/import-jobs/:id
+  // every 2s until succeeded/partial/failed.
+  if (window.location.pathname.replace(/\/$/, '') === '/import-template') {
+    return <ImportTemplatePage apiBaseUrl={apiBaseUrl} authUser={authUser} />
+  }
 
   // Accept-invite page: /accept-invite?token=... (SPA route; server must serve index.html for this path)
   const acceptInvitePath = window.location.pathname.replace(/\/$/, '') === '/accept-invite'
