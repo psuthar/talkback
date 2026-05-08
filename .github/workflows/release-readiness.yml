@@ -12,14 +12,9 @@ on:
       - '.cursor/**'
       - '.epic-run/**'
       - '.claude/**'
-  push:
-    branches: [main, master]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.cursor/**'
-      - '.epic-run/**'
-      - '.claude/**'
+  # SCRUM-368: post-merge push to main re-runs the same suite that already
+  # passed on the PR. Removed to eliminate duplicate cost; re-arm via
+  # workflow_dispatch if a manual full-coverage main-branch run is needed.
   workflow_dispatch:
     inputs:
       base_ref:
@@ -74,9 +69,11 @@ jobs:
           --health-retries 5
 
     steps:
+      # SCRUM-368: shallow clone; the "Fetch refs for git diff" step below
+      # pulls only the base ref (depth 50) needed by PR-risk + path detection.
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - uses: actions/setup-go@v6
         with:
@@ -85,6 +82,18 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      # SCRUM-368: cache pip-installed readiness deps + pinned
+      # release-readiness-core. Key on the requirements file and the
+      # core-pin script (any change to either invalidates the cache).
+      - name: Cache release-readiness Python deps
+        id: rr-pip-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: rr-pip-${{ runner.os }}-py3.12-${{ hashFiles('ops/release-readiness/requirements.txt', 'scripts/release_readiness_core_pin.sh') }}
+          restore-keys: |
+            rr-pip-${{ runner.os }}-py3.12-
 
       - name: Install readiness dependencies
         run: pip install -r ops/release-readiness/requirements.txt
@@ -109,8 +118,20 @@ jobs:
         run: |
           python3 scripts/test_pr_risk_run.py
 
-      - name: Fetch refs for git diff
-        run: git fetch --all --tags --prune || true
+      # SCRUM-368: replaced `git fetch --all --tags --prune` (which pulled
+      # every remote ref + tag for a shallow-friendly diff base) with a
+      # targeted depth-50 fetch of the base ref only. Covers any reasonable
+      # PR base distance without paying for the full ref/tag set.
+      - name: Fetch base ref for git diff
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.ref }}"
+            git fetch --depth=50 origin "$BASE" || true
+          elif [ -n "${{ github.event.inputs.base_ref }}" ]; then
+            BASE="${{ github.event.inputs.base_ref }}"
+            git fetch --depth=50 origin "$BASE" || true
+          fi
 
       - name: Determine base ref
         id: base
@@ -170,7 +191,9 @@ jobs:
         env:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
           TALKBACK_RUN_LOOM_LIVE_TEST: "1"
-        run: go test ./... -count=1 -coverprofile=coverage.out
+        # SCRUM-368: -count=1 removed to allow Go test cache reuse on PR
+        # rebases / amend pushes. Coverage still captured via -coverprofile.
+        run: go test ./... -coverprofile=coverage.out
 
       # Go tests use a migrated DB (see internal/database/db_test.go). When tests pass, migrations are validated.
       # Release readiness requires explicit migrations_validated for internal/migrations/** (see ops/release-readiness/README.md).
@@ -340,8 +363,10 @@ jobs:
 
       - name: Run Playwright E2E tests
         id: playwright
-        # PPTX/material tests use 180s + poll; retries and full suite exceed 10m on CI.
-        timeout-minutes: 45
+        # SCRUM-368: tightened from 45m → 20m. Real runs finish in ~8–10m;
+        # 20m leaves headroom for slow PPTX retries without burning 35m
+        # buffer on a hung runner.
+        timeout-minutes: 20
         continue-on-error: true
         working-directory: web
         env:
