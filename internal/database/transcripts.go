@@ -38,6 +38,39 @@ func (db *DB) CreateTranscript(ctx context.Context, t *models.Transcript) error 
 	return nil
 }
 
+// ListTranscriptsBySessionID returns all transcripts for a session ordered by created_at.
+// SCRUM-342: a session can have multiple transcripts per the unique
+// constraint UNIQUE(session_id, source) — e.g. zoom + whisper rerun.
+// CopySession needs all of them to preserve canonical anchoring on the clone.
+func (db *DB) ListTranscriptsBySessionID(ctx context.Context, sessionID uuid.UUID) ([]*models.Transcript, error) {
+	query := `SELECT id, session_id, source, language, status, raw_text, error_message, created_at, updated_at
+		FROM transcripts WHERE session_id = $1 ORDER BY created_at`
+	rows, err := db.Pool.Query(ctx, query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list transcripts: %w", err)
+	}
+	defer rows.Close()
+	var out []*models.Transcript
+	for rows.Next() {
+		t := &models.Transcript{}
+		if err := rows.Scan(
+			&t.ID,
+			&t.SessionID,
+			&t.Source,
+			&t.Language,
+			&t.Status,
+			&t.RawText,
+			&t.ErrorMessage,
+			&t.CreatedAt,
+			&t.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan transcript: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // GetTranscriptBySessionID returns the transcript for a session (by source if provided).
 // If source is "", returns the first transcript for the session (e.g. zoom).
 func (db *DB) GetTranscriptBySessionID(ctx context.Context, sessionID uuid.UUID, source string) (*models.Transcript, error) {
