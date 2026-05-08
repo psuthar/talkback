@@ -297,17 +297,45 @@ func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, 
 	return nil
 }
 
-// ImportPrimaryFileArtifact copies the source primary video file_artifact
-// (R2 or local) and sets sessions.primary_video_artifact_id on the destination.
-// fa is the source file_artifact (must be ready and have a non-empty
-// StorageKey); pass nil to skip.
+// ImportFileArtifacts copies all session-scoped file_artifacts from src onto
+// the destination, copying each storage object (R2 or local) under a new key
+// and creating a new file_artifacts row with new ID and session_id == dst.
+// Builds c.FileArtifactRemap so SCRUM-341's video_sources.file_artifact_id
+// remap and SCRUM-340's primary_video_artifact_id remap can resolve through
+// the same map.
 //
-// SCRUM-343 will extend this to copy ALL session-scoped file_artifacts and
-// build c.FileArtifactRemap; today we only handle the primary so existing
-// behavior is preserved.
-func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtifact) error {
+// If a copied FA's source ID matches sourcePrimaryVideoArtifactID, also call
+// SetSessionPrimaryVideoArtifact to preserve the legacy primary path
+// (sessions.primary_video_artifact_id). The SCRUM-271 explicit primary
+// (primary_content_kind=video) is set later by ImportSessionMetadata.
+//
+// Per-row failures are non-fatal: log + recordPartialFailure; the FA is left
+// out of the remap and any remap-dependent step (video_sources.file_artifact_id)
+// will fall back to nil for that pointer.
+func ImportFileArtifacts(ctx context.Context, c *Ctx, src []*models.FileArtifact, sourcePrimaryVideoArtifactID *uuid.UUID) error {
+	for _, fa := range src {
+		newID, ok := importOneFileArtifact(ctx, c, fa)
+		if !ok {
+			continue
+		}
+		c.FileArtifactRemap[fa.ID] = newID
+		if sourcePrimaryVideoArtifactID != nil && fa.ID == *sourcePrimaryVideoArtifactID {
+			if err := c.Deps.DB.SetSessionPrimaryVideoArtifact(ctx, c.Dst.ID, &newID); err != nil {
+				log.Printf("sessionimport ImportFileArtifacts SetSessionPrimaryVideoArtifact: %v", err)
+				c.recordPartialFailure("file_artifacts")
+				continue
+			}
+			c.CopiedPrimaryVideo = true
+		}
+	}
+	return nil
+}
+
+// importOneFileArtifact copies one source FA's storage object and creates a
+// new file_artifacts row. Returns the new FA ID and ok=true on success.
+func importOneFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtifact) (uuid.UUID, bool) {
 	if fa == nil || fa.Status != models.FileArtifactStatusReady || fa.StorageKey == "" {
-		return nil
+		return uuid.Nil, false
 	}
 	filename := "video"
 	if fa.Filename != nil && *fa.Filename != "" {
@@ -317,15 +345,15 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 	switch fa.StorageProvider {
 	case "r2":
 		if c.Deps.Storage == nil {
-			return nil
+			return uuid.Nil, false
 		}
 		r2Prefix := strings.TrimSuffix(strings.TrimSpace(c.Deps.R2Prefix), "/")
 		newKey := storage.BuildArtifactStorageKey(r2Prefix, c.Dst.ID, newFAID, filename)
 		rc, err := c.Deps.Storage.Get(ctx, fa.StorageKey)
 		if err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact R2 Get %s: %v", fa.StorageKey, err)
+			log.Printf("sessionimport ImportFileArtifacts R2 Get %s: %v", fa.StorageKey, err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
 		var size int64
 		if fa.SizeBytes != nil {
@@ -334,9 +362,9 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 		_, _, err = c.Deps.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
 		_ = rc.Close()
 		if err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact R2 Put %s: %v", newKey, err)
+			log.Printf("sessionimport ImportFileArtifacts R2 Put %s: %v", newKey, err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
 		newFA := &models.FileArtifact{
 			ID:              newFAID,
@@ -353,17 +381,11 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 			Status:          models.FileArtifactStatusReady,
 		}
 		if err := c.Deps.DB.CreateFileArtifact(ctx, newFA); err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact CreateFileArtifact: %v", err)
+			log.Printf("sessionimport ImportFileArtifacts CreateFileArtifact: %v", err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
-		if err := c.Deps.DB.SetSessionPrimaryVideoArtifact(ctx, c.Dst.ID, &newFAID); err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact SetSessionPrimaryVideoArtifact: %v", err)
-			c.recordPartialFailure("file_artifacts")
-			return nil
-		}
-		c.FileArtifactRemap[fa.ID] = newFAID
-		c.CopiedPrimaryVideo = true
+		return newFAID, true
 	case "local":
 		baseName := filepath.Base(fa.StorageKey)
 		if baseName == "" || baseName == "." {
@@ -373,15 +395,15 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 		absSrc := filepath.Join(storage.UploadRoot(), filepath.FromSlash(fa.StorageKey))
 		absDst := filepath.Join(storage.UploadRoot(), filepath.FromSlash(newRelKey))
 		if err := os.MkdirAll(filepath.Dir(absDst), 0755); err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact MkdirAll: %v", err)
+			log.Printf("sessionimport ImportFileArtifacts MkdirAll: %v", err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
 		size, err := copyLocalFileWithSize(absSrc, absDst)
 		if err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact local copy %s: %v", absSrc, err)
+			log.Printf("sessionimport ImportFileArtifacts local copy %s: %v", absSrc, err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
 		newFA := &models.FileArtifact{
 			ID:              newFAID,
@@ -398,19 +420,13 @@ func ImportPrimaryFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtif
 			Status:          models.FileArtifactStatusReady,
 		}
 		if err := c.Deps.DB.CreateFileArtifact(ctx, newFA); err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact CreateFileArtifact: %v", err)
+			log.Printf("sessionimport ImportFileArtifacts CreateFileArtifact: %v", err)
 			c.recordPartialFailure("file_artifacts")
-			return nil
+			return uuid.Nil, false
 		}
-		if err := c.Deps.DB.SetSessionPrimaryVideoArtifact(ctx, c.Dst.ID, &newFAID); err != nil {
-			log.Printf("sessionimport ImportPrimaryFileArtifact SetSessionPrimaryVideoArtifact: %v", err)
-			c.recordPartialFailure("file_artifacts")
-			return nil
-		}
-		c.FileArtifactRemap[fa.ID] = newFAID
-		c.CopiedPrimaryVideo = true
+		return newFAID, true
 	}
-	return nil
+	return uuid.Nil, false
 }
 
 // ImportTranscripts copies transcripts + transcript_segments rows from the

@@ -335,12 +335,8 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceLinks, _ := h.DB.GetSessionLinksBySessionID(ctx, sourceSessionID)
 	sourceVideoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sourceSessionID)
-	var primaryFA *models.FileArtifact
-	if sourceSession.PrimaryVideoArtifactID != nil {
-		if fa, ferr := h.DB.GetFileArtifactByID(ctx, *sourceSession.PrimaryVideoArtifactID); ferr == nil {
-			primaryFA = fa
-		}
-	}
+	// SCRUM-343: load all session-scoped file_artifacts (was: only the primary).
+	allFAs, _ := h.DB.ListFileArtifactsBySessionID(ctx, sourceSessionID)
 	jobSource := string(sourceSession.SourceProvider)
 	if jobSource == "" {
 		jobSource = models.SessionProcessingJobSourceZoom
@@ -361,7 +357,7 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = sessionimport.ImportArtifacts(ctx, c, artifacts)
-	_ = sessionimport.ImportPrimaryFileArtifact(ctx, c, primaryFA)
+	_ = sessionimport.ImportFileArtifacts(ctx, c, allFAs, sourceSession.PrimaryVideoArtifactID)
 	_ = sessionimport.ImportMaterials(ctx, c, materials, sourceSessionID.String())
 	_ = sessionimport.ImportSessionLinks(ctx, c, sourceLinks)
 	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources, sourceSessionID.String())
