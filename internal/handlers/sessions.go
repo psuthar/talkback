@@ -314,10 +314,11 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newSession := &models.Session{
-		ID:        uuid.New(),
-		Title:     title,
-		CreatedBy: &createdBy,
-		Status:    models.SessionStatusOpen,
+		ID:                 uuid.New(),
+		Title:              title,
+		CreatedBy:          &createdBy,
+		Status:             models.SessionStatusOpen,
+		SourceReferenceURL: sourceSession.SourceReferenceURL, // SCRUM-340: carry framing from source; CreateSession persists at INSERT time
 	}
 	// Load source-side data slices. Errors loading artifacts are fatal (the
 	// import primitives need them); other top-level reads are best-effort.

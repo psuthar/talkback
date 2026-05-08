@@ -403,10 +403,76 @@ func ImportTranscripts(ctx context.Context, c *Ctx, src []*models.Transcript) er
 	return nil
 }
 
-// ImportSessionMetadata is a stub. SCRUM-340 will copy premise /
-// primary_decision / decision_outcome / source_reference_url and remap
-// primary_content_kind + primary_*_id pointers here.
+// ImportSessionMetadata copies session-level framing fields from the source
+// onto the destination: premise, primary_decision, decision_outcome, and the
+// explicit primary_content_kind + primary_*_id pointer (remapped through the
+// per-category remap maps populated by earlier primitives).
+//
+// source_reference_url is intentionally not handled here — it is part of
+// CreateSession's INSERT, so the orchestrator sets it on c.Dst before
+// ImportSessionRow runs.
+//
+// Failure modes:
+//   - If a primary remap lookup misses (source pointed at a child the copy
+//     could not reproduce), the clone's explicit primary is left unset and a
+//     warning is logged. The legacy SCRUM-271 resolver fallback (e.g.
+//     primary_video_artifact_id without an explicit kind) still applies.
+//   - Any DB error from UpdateSessionContext / UpdateSessionPrimary is
+//     non-fatal here and surfaces in c.PartialFailures (consumed by SCRUM-344).
 func ImportSessionMetadata(ctx context.Context, c *Ctx, src *models.Session) error {
+	if src == nil {
+		return nil
+	}
+	if src.Premise != nil || src.PrimaryDecision != nil || src.DecisionOutcome != nil {
+		if err := c.Deps.DB.UpdateSessionContext(ctx, c.Dst.ID, src.Premise, src.PrimaryDecision, src.DecisionOutcome); err != nil {
+			log.Printf("sessionimport ImportSessionMetadata UpdateSessionContext: %v", err)
+			c.recordPartialFailure("session_metadata")
+		}
+	}
+	if src.PrimaryContentKind == nil {
+		return nil
+	}
+	switch *src.PrimaryContentKind {
+	case models.SessionPrimaryContentKindVideo:
+		if src.PrimaryVideoArtifactID == nil {
+			return nil
+		}
+		newID, ok := c.FileArtifactRemap[*src.PrimaryVideoArtifactID]
+		if !ok {
+			log.Printf("sessionimport: source primary video file_artifact %s not in remap; clone explicit primary left unset", *src.PrimaryVideoArtifactID)
+			return nil
+		}
+		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindVideo, &newID); err != nil {
+			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(video): %v", err)
+			c.recordPartialFailure("session_metadata")
+		}
+	case models.SessionPrimaryContentKindDocument:
+		if src.PrimaryMaterialID == nil {
+			return nil
+		}
+		newID, ok := c.MaterialRemap[*src.PrimaryMaterialID]
+		if !ok {
+			log.Printf("sessionimport: source primary material %s not in remap; clone explicit primary left unset", *src.PrimaryMaterialID)
+			return nil
+		}
+		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindDocument, &newID); err != nil {
+			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(document): %v", err)
+			c.recordPartialFailure("session_metadata")
+		}
+	case models.SessionPrimaryContentKindLink:
+		if src.PrimarySessionLinkID == nil {
+			return nil
+		}
+		newID, ok := c.LinkRemap[*src.PrimarySessionLinkID]
+		if !ok {
+			log.Printf("sessionimport: source primary session_link %s not in remap; clone explicit primary left unset", *src.PrimarySessionLinkID)
+			return nil
+		}
+		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindLink, &newID); err != nil {
+			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(link): %v", err)
+			c.recordPartialFailure("session_metadata")
+		}
+	}
 	return nil
 }
 
