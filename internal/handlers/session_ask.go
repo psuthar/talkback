@@ -261,6 +261,16 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 			QuestionSource:   models.QuestionSourceText,
 		}
 		if err := h.DB.CreateQuestion(ctx, question); err != nil {
+			// SCRUM-366: A reply's parent_question_id can race with a
+			// concurrent DELETE of the parent. The pre-insert
+			// GetQuestionByID check passes, then the parent gets cascade-
+			// deleted, then this insert fails with FK violation 23503.
+			// Surface this as 404 (parent no longer exists), not 500.
+			if parentQuestionID != nil && pgFKViolation(err) {
+				log.Printf("SessionAsk CreateQuestion: parent_question_id FK race for parent=%s session=%s", parentQuestionID, sessionID)
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "parent question no longer exists"})
+				return
+			}
 			log.Printf("SessionAsk CreateQuestion: %v", err)
 			http.Error(w, "Failed to create question", http.StatusInternalServerError)
 			return

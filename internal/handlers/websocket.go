@@ -139,6 +139,28 @@ func (h *SessionHub) BroadcastQuestionCreated(sessionID uuid.UUID, question *mod
 	}
 }
 
+// BroadcastQuestionDeleted notifies all session subscribers (creator and
+// participant clients alike) that a top-level question and its replies have
+// been removed by a session editor. Payload includes the root question id
+// (for backwards-compatible single-id consumers) and the full deleted_ids
+// array (root + replies) so peers can render tombstones for each removed
+// card without an extra round-trip.
+func (h *SessionHub) BroadcastQuestionDeleted(sessionID, rootID uuid.UUID, deletedIDs []uuid.UUID) {
+	idStrs := make([]string, 0, len(deletedIDs))
+	for _, id := range deletedIDs {
+		idStrs = append(idStrs, id.String())
+	}
+	h.broadcast <- &SessionMessage{
+		SessionID: sessionID,
+		Type:      "question_deleted",
+		Data: map[string]interface{}{
+			"session_id":  sessionID.String(),
+			"question_id": rootID.String(),
+			"deleted_ids": idStrs,
+		},
+	}
+}
+
 // BroadcastAnswerCreated broadcasts an answer created/updated event
 func (h *SessionHub) BroadcastAnswerCreated(sessionID uuid.UUID, answer *models.Answer) {
 	h.broadcast <- &SessionMessage{

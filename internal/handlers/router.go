@@ -533,6 +533,12 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		// /sessions/{id}/questions/{questionID} - DELETE (creator/admin only; cascades replies + answers)
+		// SCRUM-366: server enforces creator-or-admin via userIsSessionEditor.
+		if parts[2] == "questions" && r.Method == http.MethodDelete {
+			h.RequireAuth(h.DeleteSessionQuestion)(w, r)
+			return
+		}
 		// /sessions/{id}/video/upload - POST (upload MP4 file)
 		if parts[2] == "video" && parts[3] == "upload" {
 			if r.Method == http.MethodPost {
