@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -352,22 +353,94 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 		Status:             models.SessionStatusOpen,
 		SourceReferenceURL: sourceSession.SourceReferenceURL, // SCRUM-340: carry framing from source; CreateSession persists at INSERT time
 	}
-	// Load source-side data slices. Errors loading artifacts are fatal (the
-	// import primitives need them); other top-level reads are best-effort.
-	artifacts, err := h.DB.GetArtifactsBySessionID(ctx, sourceSessionID)
-	if err != nil {
-		log.Printf("CopySession GetArtifactsBySessionID: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list source artifacts"})
+
+	// SCRUM-353: optional async mode. When the client passes ?async=true the
+	// handler creates an import_job, spawns the synchronous copy logic in a
+	// goroutine, and returns 202 with the job id. The synchronous default
+	// path is byte-identical to before this ticket.
+	if r.URL.Query().Get("async") == "true" {
+		descriptor, _ := json.Marshal(map[string]string{"copy_from_session_id": sourceSessionID.String()})
+		job := &models.ImportJob{
+			ID:                 uuid.New(),
+			SessionID:          &newSession.ID,
+			UserID:             &user.ID,
+			State:              models.ImportJobStateQueued,
+			TemplateDescriptor: descriptor,
+		}
+		if err := h.DB.CreateImportJob(ctx, job); err != nil {
+			log.Printf("CopySession async CreateImportJob: %v", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to enqueue copy job"})
+			return
+		}
+		go func(srcSession, dstSession *models.Session, jobID uuid.UUID) {
+			workerCtx := context.Background()
+			_ = h.DB.UpdateImportJobState(workerCtx, jobID, models.ImportJobStateRunning, nil)
+			partialFailures, criticalReason, runErr := h.copySessionRun(workerCtx, srcSession, dstSession)
+			if runErr != nil || criticalReason != "" {
+				msg := criticalReason
+				if msg == "" && runErr != nil {
+					msg = runErr.Error()
+				}
+				_ = h.DB.UpdateImportJobState(workerCtx, jobID, models.ImportJobStateFailed, &msg)
+				return
+			}
+			terminal := models.ImportJobStateSucceeded
+			if len(partialFailures) > 0 {
+				terminal = models.ImportJobStatePartial
+			}
+			_ = h.DB.UpdateImportJobState(workerCtx, jobID, terminal, nil)
+		}(sourceSession, newSession, job.ID)
+
+		// 202 Accepted with the job id; the client polls
+		// GET /api/import-jobs/:id for terminal state.
+		writeJSON(w, http.StatusAccepted, map[string]string{
+			"job_id":     job.ID.String(),
+			"session_id": newSession.ID.String(),
+		})
 		return
 	}
-	materials, err := h.DB.GetActiveMaterialsBySessionID(ctx, sourceSessionID)
-	if err != nil {
-		log.Printf("CopySession GetActiveMaterialsBySessionID: %v", err)
+
+	// Synchronous path (default).
+	partialFailures, criticalReason, runErr := h.copySessionRun(ctx, sourceSession, newSession)
+	if runErr != nil || criticalReason != "" {
+		msg := criticalReason
+		if msg == "" && runErr != nil {
+			msg = runErr.Error()
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to copy session: " + msg})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(CopySessionResponse{
+		ID:              newSession.ID.String(),
+		Title:           newSession.Title,
+		CreatedBy:       newSession.CreatedBy,
+		Status:          string(newSession.Status),
+		CreatedAt:       newSession.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		PartialFailures: partialFailures,
+	})
+}
+
+// copySessionRun is the SCRUM-353 extraction of the inner CopySession body.
+// Both the synchronous handler and the async-mode goroutine call it. Returns
+// any per-row partial failures, an optional critical-step reason (which
+// triggered a session-row rollback), and any non-rollback error from the
+// initial source-data load.
+func (h *Handlers) copySessionRun(ctx context.Context, sourceSession, newSession *models.Session) (partialFailures []string, criticalReason string, err error) {
+	sourceSessionID := sourceSession.ID
+	artifacts, loadErr := h.DB.GetArtifactsBySessionID(ctx, sourceSessionID)
+	if loadErr != nil {
+		log.Printf("copySessionRun GetArtifactsBySessionID: %v", loadErr)
+		return nil, "", loadErr
+	}
+	materials, loadErr := h.DB.GetActiveMaterialsBySessionID(ctx, sourceSessionID)
+	if loadErr != nil {
+		log.Printf("copySessionRun GetActiveMaterialsBySessionID: %v", loadErr)
 		materials = nil
 	}
 	sourceLinks, _ := h.DB.GetSessionLinksBySessionID(ctx, sourceSessionID)
 	sourceVideoSources, _ := h.DB.GetVideoSourcesBySessionID(ctx, sourceSessionID)
-	// SCRUM-343: load all session-scoped file_artifacts (was: only the primary).
 	allFAs, _ := h.DB.ListFileArtifactsBySessionID(ctx, sourceSessionID)
 	jobSource := string(sourceSession.SourceProvider)
 	if jobSource == "" {
@@ -384,27 +457,20 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	c := sessionimport.NewCtx(deps, newSession)
 
 	if err := sessionimport.ImportSessionRow(ctx, c); err != nil {
-		log.Printf("CopySession ImportSessionRow: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
-		return
+		log.Printf("copySessionRun ImportSessionRow: %v", err)
+		return nil, "", err
 	}
-	// SCRUM-344: critical-step rollback. Per-row child failures
-	// (materials/links/video_sources/file_artifacts) accumulate in
-	// c.PartialFailures and surface in the response. Failures of the
-	// session-level steps (transcripts, metadata) are critical: they leave
-	// the clone in an inconsistent state, so we delete the new session row
-	// (children cascade) and return 500.
-	rollback := func(reason string, err error) {
-		log.Printf("CopySession critical failure (%s): %v; rolling back session %s", reason, err, newSession.ID)
+	rollback := func(reason string, err error) (string, error) {
+		log.Printf("copySessionRun critical failure (%s): %v; rolling back session %s", reason, err, newSession.ID)
 		if delErr := h.DB.DeleteSession(ctx, newSession.ID); delErr != nil {
-			log.Printf("CopySession rollback DeleteSession: %v", delErr)
+			log.Printf("copySessionRun rollback DeleteSession: %v", delErr)
 		}
 		if h.Storage != nil {
 			if _, dpErr := h.Storage.DeletePrefix(ctx, "sessions/"+newSession.ID.String()+"/"); dpErr != nil {
-				log.Printf("CopySession rollback DeletePrefix: %v", dpErr)
+				log.Printf("copySessionRun rollback DeletePrefix: %v", dpErr)
 			}
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to copy session: " + reason})
+		return reason, err
 	}
 	_ = sessionimport.ImportArtifacts(ctx, c, artifacts)
 	_ = sessionimport.ImportFileArtifacts(ctx, c, allFAs, sourceSession.PrimaryVideoArtifactID)
@@ -412,27 +478,17 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	_ = sessionimport.ImportSessionLinks(ctx, c, sourceLinks)
 	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources)
 	sourceTranscripts, _ := h.DB.ListTranscriptsBySessionID(ctx, sourceSessionID)
-	if err := sessionimport.ImportTranscripts(ctx, c, sourceTranscripts); err != nil {
-		rollback("transcripts", err)
-		return
+	if importErr := sessionimport.ImportTranscripts(ctx, c, sourceTranscripts); importErr != nil {
+		reason, e := rollback("transcripts", importErr)
+		return c.PartialFailures, reason, e
 	}
-	if err := sessionimport.ImportSessionMetadata(ctx, c, sourceSession); err != nil {
-		rollback("session_metadata", err)
-		return
+	if importErr := sessionimport.ImportSessionMetadata(ctx, c, sourceSession); importErr != nil {
+		reason, e := rollback("session_metadata", importErr)
+		return c.PartialFailures, reason, e
 	}
 	sessionimport.MaybeEnqueueProcessingJob(ctx, c, sourceJob, sourceSession)
 	h.triggerIndex(newSession.ID)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(CopySessionResponse{
-		ID:              newSession.ID.String(),
-		Title:           newSession.Title,
-		CreatedBy:       newSession.CreatedBy,
-		Status:          string(newSession.Status),
-		CreatedAt:       newSession.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		PartialFailures: c.PartialFailures,
-	})
+	return c.PartialFailures, "", nil
 }
 
 // DeleteSession removes a session and all its DB/file data. Admin-only.
