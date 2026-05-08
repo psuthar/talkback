@@ -360,9 +360,12 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	// path is byte-identical to before this ticket.
 	if r.URL.Query().Get("async") == "true" {
 		descriptor, _ := json.Marshal(map[string]string{"copy_from_session_id": sourceSessionID.String()})
+		// session_id intentionally nil here: the dst session row doesn't
+		// exist yet (the worker creates it via ImportSessionRow), and
+		// import_jobs.session_id has an FK to sessions(id). The worker
+		// calls SetImportJobSessionID once the row exists.
 		job := &models.ImportJob{
 			ID:                 uuid.New(),
-			SessionID:          &newSession.ID,
 			UserID:             &user.ID,
 			State:              models.ImportJobStateQueued,
 			TemplateDescriptor: descriptor,
@@ -383,6 +386,10 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 				}
 				_ = h.DB.UpdateImportJobState(workerCtx, jobID, models.ImportJobStateFailed, &msg)
 				return
+			}
+			// Session row now exists — set the FK on the job.
+			if err := h.DB.SetImportJobSessionID(workerCtx, jobID, dstSession.ID); err != nil {
+				log.Printf("CopySession async SetImportJobSessionID: %v", err)
 			}
 			terminal := models.ImportJobStateSucceeded
 			if len(partialFailures) > 0 {
