@@ -78,13 +78,14 @@ func TestCopySession_Baseline_HappyPath(t *testing.T) {
 	// storage I/O exercised, just the DB rekey path).
 	secondaryRole := models.VideoRoleSecondary
 	srcVS := &models.VideoSource{
-		ID:           uuid.New(),
-		ArtifactID:   srcArtifact2.ID,
-		SessionID:    srcSessionID,
-		Provider:     "other",
-		PlaybackMode: "embed",
-		SourceType:   "embed_url",
-		VideoRole:    &secondaryRole,
+		ID:               uuid.New(),
+		ArtifactID:       srcArtifact2.ID,
+		SessionID:        srcSessionID,
+		Provider:         "other",
+		PlaybackMode:     "embed",
+		SourceType:       "embed_url",
+		TranscriptStatus: models.VideoTranscriptStatusMissing,
+		VideoRole:        &secondaryRole,
 	}
 	require.NoError(t, h.DB.CreateVideoSource(ctx, srcVS))
 
