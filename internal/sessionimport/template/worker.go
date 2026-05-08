@@ -124,6 +124,23 @@ func RunImportJob(ctx context.Context, deps WorkerDeps, jobID uuid.UUID, t *Temp
 		return err
 	}
 
+	// SCRUM-363: insert parsed transcript_segments. ImportTranscripts
+	// created the dst transcripts row(s); we look each up by source value
+	// and InsertTranscriptSegments against the dst transcript id.
+	for elementID, segs := range em.transcriptSegments {
+		source, ok := em.transcriptSources[elementID]
+		if !ok {
+			continue
+		}
+		dstTranscript, err := deps.DB.GetTranscriptBySessionID(ctx, dst.ID, source)
+		if err != nil || dstTranscript == nil {
+			continue
+		}
+		if err := deps.DB.InsertTranscriptSegments(ctx, dstTranscript.ID, dst.ID, segs); err != nil {
+			recordElementFailure(ctx, deps.DB, jobID, elementID, ReasonURLUnreachable, "InsertTranscriptSegments: "+err.Error())
+		}
+	}
+
 	// Apply the primary content pointer (template-level Primary translates
 	// to the primary remap, looking up the named element_id in em and
 	// chaining through c.MaterialRemap/LinkRemap to the dst row id).
@@ -168,19 +185,27 @@ func hasFailedElement(ctx context.Context, db *database.DB, jobID uuid.UUID) boo
 // elementMapping carries template element_id → synthetic dst-row id, per
 // kind. Used by applyTemplatePrimary to look up the row a template Primary
 // pointer names. SCRUM-362.
+//
+// SCRUM-363: also carries parsed transcript segments per element id, plus
+// the transcript's `source` value, so the worker can insert segments
+// against the dst transcript row after ImportTranscripts runs.
 type elementMapping struct {
-	materials    map[string]uuid.UUID
-	links        map[string]uuid.UUID
-	videoSources map[string]uuid.UUID
-	transcripts  map[string]uuid.UUID
+	materials          map[string]uuid.UUID
+	links              map[string]uuid.UUID
+	videoSources       map[string]uuid.UUID
+	transcripts        map[string]uuid.UUID
+	transcriptSources  map[string]string // element_id → transcripts.source value (for dst lookup)
+	transcriptSegments map[string][]models.TranscriptSegmentRow
 }
 
 func newElementMapping() elementMapping {
 	return elementMapping{
-		materials:    map[string]uuid.UUID{},
-		links:        map[string]uuid.UUID{},
-		videoSources: map[string]uuid.UUID{},
-		transcripts:  map[string]uuid.UUID{},
+		materials:          map[string]uuid.UUID{},
+		links:              map[string]uuid.UUID{},
+		videoSources:       map[string]uuid.UUID{},
+		transcripts:        map[string]uuid.UUID{},
+		transcriptSources:  map[string]string{},
+		transcriptSegments: map[string][]models.TranscriptSegmentRow{},
 	}
 }
 
@@ -288,22 +313,60 @@ func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre Pref
 			em.videoSources[el.ID] = vsID
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		case KindTranscript:
-			text, err := fetchTranscriptText(ctx, httpClient, deps, el)
-			if err != nil {
-				recordElementFailure(ctx, deps.DB, jobID, el.ID, ReasonURLUnreachable, err.Error())
-				continue
+			// SCRUM-363: handle text_url and segments_url separately.
+			// text_url → RawText; segments_url → parsed segments (inserted
+			// post-primitives via the dst-source lookup).
+			var rawText string
+			var parsedSegments []models.TranscriptSegmentRow
+			if el.TextURL != nil && *el.TextURL != "" {
+				body, _, fetchErr := fetchBody(ctx, httpClient, deps, *el.TextURL, MaxTranscriptBytes)
+				if fetchErr != nil {
+					recordElementFailure(ctx, deps.DB, jobID, el.ID, ReasonURLUnreachable, fetchErr.Error())
+					continue
+				}
+				rawText = string(body)
+			}
+			if el.SegmentsURL != nil && *el.SegmentsURL != "" {
+				body, _, fetchErr := fetchBody(ctx, httpClient, deps, *el.SegmentsURL, MaxTranscriptBytes)
+				if fetchErr != nil {
+					recordElementFailure(ctx, deps.DB, jobID, el.ID, ReasonURLUnreachable, fetchErr.Error())
+					continue
+				}
+				segs, parseErr := parseTranscriptSegmentsJSON(body)
+				if parseErr != nil {
+					recordElementFailure(ctx, deps.DB, jobID, el.ID, ReasonURLUnreachable, "segments_url JSON parse: "+parseErr.Error())
+					continue
+				}
+				parsedSegments = segs
+				// If no text_url was supplied, synthesize a coarse rawText
+				// from the segments so RAG indexing still has searchable
+				// content.
+				if rawText == "" {
+					var b strings.Builder
+					for i, s := range parsedSegments {
+						if i > 0 {
+							b.WriteString(" ")
+						}
+						b.WriteString(s.Text)
+					}
+					rawText = b.String()
+				}
 			}
 			source := *el.Source
-			rawText := text
+			rawTextCopy := rawText
 			txID := uuid.New()
 			src.Transcripts = append(src.Transcripts, &models.Transcript{
 				ID:        txID,
 				SessionID: c.Dst.ID,
 				Source:    source,
 				Status:    models.TranscriptStatusReady,
-				RawText:   &rawText,
+				RawText:   &rawTextCopy,
 			})
 			em.transcripts[el.ID] = txID
+			em.transcriptSources[el.ID] = source
+			if len(parsedSegments) > 0 {
+				em.transcriptSegments[el.ID] = parsedSegments
+			}
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		}
 	}
@@ -341,21 +404,38 @@ func fetchBody(ctx context.Context, client *http.Client, deps WorkerDeps, url st
 	return body, contentType, nil
 }
 
-func fetchTranscriptText(ctx context.Context, client *http.Client, deps WorkerDeps, el *Element) (string, error) {
-	url := ""
-	if el.TextURL != nil {
-		url = *el.TextURL
-	} else if el.SegmentsURL != nil {
-		url = *el.SegmentsURL
+// parseTranscriptSegmentsJSON parses an `application/json`-shaped segments
+// body per docs/specs/session-templates-v1.md:
+//
+//   [{idx, start_ms, end_ms, text, speaker_label?, source_ref?}, ...]
+//
+// Returns the parsed rows ready to InsertTranscriptSegments. The transcript_id
+// and session_id fields are NOT populated here — the worker fills them in at
+// insert time.
+func parseTranscriptSegmentsJSON(body []byte) ([]models.TranscriptSegmentRow, error) {
+	var raw []struct {
+		Idx          int     `json:"idx"`
+		StartMs      int     `json:"start_ms"`
+		EndMs        int     `json:"end_ms"`
+		Text         string  `json:"text"`
+		SpeakerLabel *string `json:"speaker_label,omitempty"`
+		SourceRef    *string `json:"source_ref,omitempty"`
 	}
-	if url == "" {
-		return "", fmt.Errorf("no transcript URL")
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
 	}
-	body, _, err := fetchBody(ctx, client, deps, url, MaxTranscriptBytes)
-	if err != nil {
-		return "", err
+	out := make([]models.TranscriptSegmentRow, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, models.TranscriptSegmentRow{
+			Idx:          r.Idx,
+			StartMs:      r.StartMs,
+			EndMs:        r.EndMs,
+			Text:         r.Text,
+			SpeakerLabel: r.SpeakerLabel,
+			SourceRef:    r.SourceRef,
+		})
 	}
-	return string(body), nil
+	return out, nil
 }
 
 // uploadMaterialBody writes the fetched body to storage under a fresh
