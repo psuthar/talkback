@@ -187,11 +187,21 @@ func copySlideAssets(ctx context.Context, c *Ctx, m, newMaterial *models.Materia
 
 // ImportSessionLinks creates a destination session_links row for each source
 // link, copying URL/title/status/extracted_text/error_message verbatim.
+//
+// CopySession callers pass slimmed-down rows from GetSessionLinksBySessionID
+// (which omits extracted_text for payload-size reasons), so we re-fetch the
+// full row via GetSessionLinkByID. SCRUM-355: template callers synthesize
+// SessionLink rows in memory; the re-fetch returns nil for those, in which
+// case we fall back to the input row directly.
 func ImportSessionLinks(ctx context.Context, c *Ctx, src []*models.SessionLink) error {
 	for _, link := range src {
 		full, err := c.Deps.DB.GetSessionLinkByID(ctx, link.ID)
-		if err != nil || full == nil {
-			continue
+		if err == nil && full != nil {
+			// Re-fetch hit — use the full DB row.
+		} else {
+			// Re-fetch miss (e.g. SCRUM-355 template path) — use the input
+			// row, which the caller is responsible for populating completely.
+			full = link
 		}
 		newLink := &models.SessionLink{
 			ID:            uuid.New(),
