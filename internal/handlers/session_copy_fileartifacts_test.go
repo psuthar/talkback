@@ -20,7 +20,6 @@ import (
 // copy path runs end-to-end without needing a fake R2 backend.
 
 func TestCopySession_NonPrimaryFileArtifacts_Copied(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	t.Setenv("TALKBACK_UPLOAD_ROOT", root)
 
@@ -67,7 +66,6 @@ func TestCopySession_NonPrimaryFileArtifacts_Copied(t *testing.T) {
 }
 
 func TestCopySession_FileArtifact_PerRowFailure_LoggedNotFatal(t *testing.T) {
-	t.Parallel()
 	root := t.TempDir()
 	t.Setenv("TALKBACK_UPLOAD_ROOT", root)
 
