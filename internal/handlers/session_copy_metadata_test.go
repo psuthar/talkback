@@ -82,12 +82,15 @@ func TestCopySession_PrimaryRemap_Document(t *testing.T) {
 	srcArtifacts, err := h.DB.GetArtifactsBySessionID(ctx, srcSessionID)
 	require.NoError(t, err)
 	require.NotEmpty(t, srcArtifacts)
+	// Filename is intentionally empty so ImportMaterials' local-file copy
+	// branch is skipped and the row import succeeds without requiring a real
+	// file on disk. The metadata-remap path is what we are testing.
 	srcMaterial := &models.Material{
 		ID:              uuid.New(),
 		ArtifactID:      srcArtifacts[0].ID,
 		SessionID:       srcSessionID,
 		Kind:            "document",
-		Filename:        "doc.pdf",
+		Filename:        "",
 		ContentType:     "application/pdf",
 		StorageProvider: "local",
 		StorageKey:      "",
@@ -174,6 +177,7 @@ func TestCopySession_PrimaryRemap_NilWhenChildMissing(t *testing.T) {
 		Filename:        "deleted.pdf",
 		ContentType:     "application/pdf",
 		StorageProvider: "local",
+		TextStatus:      "ready",
 	}
 	require.NoError(t, h.DB.CreateMaterial(ctx, srcMaterial))
 	require.NoError(t, h.DB.UpdateSessionPrimary(ctx, srcSessionID, models.SessionPrimaryContentKindDocument, &srcMaterial.ID))
