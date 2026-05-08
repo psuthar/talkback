@@ -13,6 +13,13 @@ import {
 // the spec hermetic: no Google Cloud OAuth app, no real recordings, no
 // dependency on a Workspace tenant. The integration's gated routes are
 // covered by the SCRUM-324 backend smoke tests.
+//
+// SCRUM-337: replaced ambiguous text-based locators with deterministic
+// data-testid + dialog-role scoping after the original spec flaked
+// intermittently in CI on PRs unrelated to Meet (the recording subject
+// "Customer call (no transcript)" raced the modal's "no transcript" note in
+// strict-mode getByText, and the row-scoping ../../ chain ascended past the
+// row into the recordings list and matched all three Import buttons).
 
 test.setTimeout(60_000)
 
@@ -89,54 +96,90 @@ test('From Google Meet tile renders, recordings list shows transcript-state badg
   const email = uniqueEmail('meet-e2e')
   seededUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Meet E2E User')
   await page.goto('/')
-  await page.waitForLoadState('networkidle')
 
-  // Open create-session flow.
+  // Open create-session flow. The Create button can be off-screen on first
+  // paint; wait deterministically for it before clicking. Some user states
+  // open directly into the create flow — fall back to clicking the Meet tile
+  // if the create button never becomes visible.
   const createBtn = page.getByRole('button', { name: /Create new session/i }).first()
-  if (await createBtn.isVisible().catch(() => false)) {
-    await createBtn.click()
-  }
+  await createBtn
+    .waitFor({ state: 'visible', timeout: 10_000 })
+    .then(() => createBtn.click())
+    .catch(() => {})
 
   // The "From Google Meet" tile should render because /api/google-meet/status
   // is mocked to enabled:true.
-  const meetTile = page.getByRole('button', { name: 'From Google Meet' })
+  const meetTile = page.getByRole('button', { name: 'From Google Meet', exact: true })
   await expect(meetTile).toBeVisible({ timeout: 10_000 })
   await meetTile.click()
 
   // Connected pill — workspace_eligible:true → success color, no warning text.
   await expect(page.getByText(/Connected as meet-e2e@workspace\.example/)).toBeVisible()
-  await expect(page.getByText(/Workspace Business Standard/)).not.toBeVisible()
+  await expect(page.getByText(/Workspace Business Standard/)).toHaveCount(0)
 
   // Disconnect microcopy.
   await expect(page.getByText(/Disconnecting won.t affect sessions/)).toBeVisible()
 
   // Load recordings.
-  await page.getByRole('button', { name: 'Load recordings' }).click()
+  await page.getByRole('button', { name: 'Load recordings', exact: true }).click()
 
-  // Three rows; each badge appears at least once.
-  await expect(page.getByText('Sprint demo (ready transcript)')).toBeVisible()
-  await expect(page.getByText('Standup (transcript pending)')).toBeVisible()
-  await expect(page.getByText('Customer call (no transcript)')).toBeVisible()
-  await expect(page.getByText(/^Transcript$/).first()).toBeVisible()
-  await expect(page.getByText('Transcript pending').first()).toBeVisible()
-  await expect(page.getByText('No transcript').first()).toBeVisible()
+  // Three rows; each renders a transcript-state badge.
+  const recordingRows = page.getByTestId('google-meet-recording')
+  await expect(recordingRows).toHaveCount(3)
+  await expect(recordingRows.filter({ hasText: 'Sprint demo (ready transcript)' })).toBeVisible()
+  await expect(recordingRows.filter({ hasText: 'Standup (transcript pending)' })).toBeVisible()
+  await expect(recordingRows.filter({ hasText: 'Customer call (no transcript)' })).toBeVisible()
 
-  // Open import modal on the no-transcript row — assert the Meet-specific note appears.
-  const noTranscriptRow = page.locator('text=Customer call (no transcript)').locator('..').locator('..')
-  await noTranscriptRow.getByRole('button', { name: 'Import' }).click()
-  await expect(page.getByRole('heading', { name: 'Import Google Meet recording' })).toBeVisible()
-  await expect(page.getByText(/no transcript/i)).toBeVisible()
-  await expect(page.getByText(/Q&A quality is best when a transcript is available/)).toBeVisible()
+  // Each row exposes its badge label exactly once. Scope by row to avoid
+  // racing with the import-modal note's "no transcript" copy later in the
+  // test — getByTestId('google-meet-recording').filter() bounds the search to
+  // the row that owns the badge.
+  await expect(
+    recordingRows
+      .filter({ hasText: 'Sprint demo (ready transcript)' })
+      .getByText('Transcript', { exact: true })
+  ).toBeVisible()
+  await expect(
+    recordingRows
+      .filter({ hasText: 'Standup (transcript pending)' })
+      .getByText('Transcript pending', { exact: true })
+  ).toBeVisible()
+  await expect(
+    recordingRows
+      .filter({ hasText: 'Customer call (no transcript)' })
+      .getByText('No transcript', { exact: true })
+  ).toBeVisible()
 
-  // Default session name is the recording subject.
-  const nameInput = page.getByRole('textbox')
+  // Open import modal on the no-transcript row by scoping the Import-button
+  // lookup to that row's data-testid container — not by ../../ ancestor walk.
+  const noTranscriptRow = recordingRows.filter({ hasText: 'Customer call (no transcript)' })
+  await noTranscriptRow.getByRole('button', { name: 'Import', exact: true }).click()
+
+  // Modal scopes assertions: role=dialog + aria-labelledby. All
+  // modal-internal text lookups must run through `dialog` so the recording
+  // subject text in the row outside the modal can't satisfy them.
+  const dialog = page.getByRole('dialog', { name: 'Import Google Meet recording' })
+  await expect(dialog).toBeVisible()
+
+  // Recording subject and the no-transcript note both render, but the note
+  // is unique to the modal — assert by its full sentence so it cannot match
+  // the "Customer call (no transcript)" subject text in the row behind.
+  await expect(
+    dialog.getByText(
+      "This recording has no transcript. You'll get video and AI-generated answers about anything visible on screen, but Q&A quality is best when a transcript is available."
+    )
+  ).toBeVisible()
+
+  // Default session name is the recording subject. Scope the textbox lookup
+  // to the dialog so other inputs on the page can't be selected first.
+  const nameInput = dialog.getByRole('textbox')
   await expect(nameInput).toHaveValue('Customer call (no transcript)')
 
-  // Empty name disables the Import button.
+  // Empty name disables the Import button (modal-scoped).
   await nameInput.fill('')
-  await expect(page.getByRole('button', { name: 'Import', exact: true })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeDisabled()
 
   // Cancel closes the modal.
-  await page.getByRole('button', { name: 'Cancel' }).click()
-  await expect(page.getByRole('heading', { name: 'Import Google Meet recording' })).not.toBeVisible()
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toBeHidden()
 })
