@@ -3,14 +3,35 @@ name: Release Readiness
 on:
   pull_request:
     branches: [main, master]
+    # SCRUM-348: skip the gate when the diff only touches docs/agent state
+    # (no executable behavior changes). A single non-ignored path in the same
+    # PR re-arms the workflow.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.cursor/**'
+      - '.epic-run/**'
+      - '.claude/**'
   push:
     branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.cursor/**'
+      - '.epic-run/**'
+      - '.claude/**'
   workflow_dispatch:
     inputs:
       base_ref:
         description: "Optional git base ref for manual diff comparison"
         required: false
         default: ""
+
+# SCRUM-348: cancel any in-progress run on the same ref when a new commit
+# lands, so PR rebases / amend pushes do not stack full ~5-min pipelines.
+concurrency:
+  group: release-readiness-${{ github.ref }}
+  cancel-in-progress: true
 
 # checks: write — publish "TalkBack PR Gate" (and any other Checks API steps) with success/neutral/failure.
 # Branch protection: to gate on PASS vs WARN vs BLOCK semantics, require the check named **TalkBack PR Gate**
@@ -28,6 +49,9 @@ env:
 
 jobs:
   release-readiness:
+    # SCRUM-348: skip draft PRs so iterative WIP commits do not burn minutes
+    # before the author marks the PR ready for review.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -179,8 +203,22 @@ jobs:
         working-directory: web
         run: npm ci
 
+      # SCRUM-348: cache the ~150 MB Chromium browser download keyed on
+      # web/package-lock.json so a Playwright version bump invalidates the
+      # cache automatically. Saves 30–60s per run on cache hits.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       - name: Install Playwright browsers (chromium)
         working-directory: web
+        # `playwright install` is a no-op when the browser binary is already
+        # cached, so it is safe to run unconditionally even on cache-hit.
         run: npx playwright install chromium
 
       # Validation: E2E uses preview :3000 + API :8081; VITE_API_BASE_URL + global-setup localStorage

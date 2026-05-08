@@ -7,11 +7,14 @@
 name: Observability Agent
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'   # every 60 minutes
+    # SCRUM-348: dropped from hourly to every 6 hours to keep within the
+    # 3,000-min/month included GitHub Actions budget. Cron + push to main
+    # used to double-fire; the push trigger is removed because release-readiness
+    # already runs on every merge to main and provides the same regression signal
+    # for application-layer changes. workflow_dispatch remains for manual runs.
+    - cron: '0 */6 * * *'   # every 6 hours
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
