@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -425,6 +426,7 @@ const (
 	SessionSourceUpload     SessionSourceProvider = "upload"
 	SessionSourceTeams      SessionSourceProvider = "teams"
 	SessionSourceGoogleMeet SessionSourceProvider = "google_meet"
+	SessionSourceTemplate   SessionSourceProvider = "template"
 )
 
 // SessionPrimaryContentKind enumerates the closed set of values stored in
@@ -726,4 +728,49 @@ type DecisionMakerReadiness struct {
 	DecisionMakerTotal int  `json:"decision_maker_total"`
 	DecisionMakerVoted int  `json:"decision_maker_voted"`
 	ReadyToClose       bool `json:"ready_to_close"`
+}
+
+// ImportJobState mirrors the import_jobs.state CHECK constraint values.
+type ImportJobState string
+
+const (
+	ImportJobStateQueued    ImportJobState = "queued"
+	ImportJobStateRunning   ImportJobState = "running"
+	ImportJobStateSucceeded ImportJobState = "succeeded"
+	ImportJobStatePartial   ImportJobState = "partial"
+	ImportJobStateFailed    ImportJobState = "failed"
+)
+
+// ImportElementStatus is one element's terminal state inside an ImportJob.
+type ImportElementStatus string
+
+const (
+	ImportElementStatusQueued    ImportElementStatus = "queued"
+	ImportElementStatusSucceeded ImportElementStatus = "succeeded"
+	ImportElementStatusFailed    ImportElementStatus = "failed"
+)
+
+// ImportElementResult is the per-element runtime state stored in
+// import_jobs.elements_state JSONB.
+type ImportElementResult struct {
+	Status    ImportElementStatus `json:"status"`
+	ErrorCode string              `json:"error_code,omitempty"`
+	Message   string              `json:"message,omitempty"`
+}
+
+// ImportJob is the durable record of a SCRUM-350 template-driven import.
+// SessionID is set after the worker creates the destination session row
+// (preflight runs before any writes, so a failed-preflight job has no
+// session).
+type ImportJob struct {
+	ID                 uuid.UUID                       `json:"id"`
+	SessionID          *uuid.UUID                      `json:"session_id,omitempty"`
+	UserID             *uuid.UUID                      `json:"user_id,omitempty"`
+	State              ImportJobState                  `json:"state"`
+	TemplateDescriptor json.RawMessage                 `json:"template_descriptor,omitempty"`
+	ElementsState     map[string]ImportElementResult  `json:"elements_state"`
+	ErrorMessage       *string                         `json:"error_message,omitempty"`
+	CreatedAt          time.Time                       `json:"created_at"`
+	StartedAt          *time.Time                      `json:"started_at,omitempty"`
+	CompletedAt        *time.Time                      `json:"completed_at,omitempty"`
 }

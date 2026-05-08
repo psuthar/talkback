@@ -451,6 +451,9 @@ func main() {
 	http.HandleFunc(wrapNR("/api/sessions/", corsWithCredentials(h.ApiSessionsRouterWithInvite)))
 	// Invitation resolve, accept, register-and-accept, resend, revoke
 	http.HandleFunc(wrapNR("/api/invitations/", corsWithCredentials(h.ApiInvitationsRouter)))
+	// SCRUM-357: template-driven import jobs (POST /api/import-jobs, GET /api/import-jobs/:id)
+	http.HandleFunc(wrapNR("/api/import-jobs", corsWithCredentials(h.ImportJobsRouter)))
+	http.HandleFunc(wrapNR("/api/import-jobs/", corsWithCredentials(h.ImportJobsRouter)))
 
 	// Admin user management (RequireAuth + RequireAdmin)
 	http.HandleFunc(wrapNR("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
