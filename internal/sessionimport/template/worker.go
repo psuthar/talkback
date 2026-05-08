@@ -102,8 +102,10 @@ func RunImportJob(ctx context.Context, deps WorkerDeps, jobID uuid.UUID, t *Temp
 
 	// Materialize source-side data slices from the template + preflight.
 	// Each fetch error becomes one element_failed; on success, we
-	// synthesize the corresponding *models row.
-	src := buildSourceData(ctx, deps, t, preflight, c, jobID)
+	// synthesize the corresponding *models row. The returned
+	// elementMapping carries template element_id → synthetic dst row id
+	// so applyTemplatePrimary can remap by element id (SCRUM-362).
+	src, em := buildSourceData(ctx, deps, t, preflight, c, jobID)
 
 	// Run the import primitives in the canonical order.
 	_ = sessionimport.ImportArtifacts(ctx, c, src.Artifacts)
@@ -123,9 +125,10 @@ func RunImportJob(ctx context.Context, deps WorkerDeps, jobID uuid.UUID, t *Temp
 	}
 
 	// Apply the primary content pointer (template-level Primary translates
-	// to the primary remap).
+	// to the primary remap, looking up the named element_id in em and
+	// chaining through c.MaterialRemap/LinkRemap to the dst row id).
 	if t.Primary != nil {
-		applyTemplatePrimary(ctx, deps.DB, dst.ID, t.Primary, c)
+		applyTemplatePrimary(ctx, deps.DB, dst.ID, t.Primary, em, c)
 	}
 
 	if deps.Trigger != nil {
@@ -162,10 +165,34 @@ func hasFailedElement(ctx context.Context, db *database.DB, jobID uuid.UUID) boo
 	return false
 }
 
+// elementMapping carries template element_id → synthetic dst-row id, per
+// kind. Used by applyTemplatePrimary to look up the row a template Primary
+// pointer names. SCRUM-362.
+type elementMapping struct {
+	materials    map[string]uuid.UUID
+	links        map[string]uuid.UUID
+	videoSources map[string]uuid.UUID
+	transcripts  map[string]uuid.UUID
+}
+
+func newElementMapping() elementMapping {
+	return elementMapping{
+		materials:    map[string]uuid.UUID{},
+		links:        map[string]uuid.UUID{},
+		videoSources: map[string]uuid.UUID{},
+		transcripts:  map[string]uuid.UUID{},
+	}
+}
+
 // buildSourceData fetches each element URL and synthesizes the appropriate
 // *models row into a sessionimport.SourceData. Per-element fetch errors are
 // recorded in the job and the corresponding row is omitted.
-func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre PreflightResult, c *sessionimport.Ctx, jobID uuid.UUID) sessionimport.SourceData {
+//
+// Returns the populated SourceData and an elementMapping that records
+// template element_id → synthetic dst row id for each successful element,
+// used by applyTemplatePrimary.
+func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre PreflightResult, c *sessionimport.Ctx, jobID uuid.UUID) (sessionimport.SourceData, elementMapping) {
+	em := newElementMapping()
 	src := sessionimport.SourceData{
 		Session: c.Dst, // metadata copy will read this for premise/decision/primary pointer encoding
 	}
@@ -204,8 +231,9 @@ func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre Pref
 				titleStr = *el.Title
 			}
 			size := int64(len(body))
+			matID := uuid.New()
 			src.Materials = append(src.Materials, &models.Material{
-				ID:              uuid.New(),
+				ID:              matID,
 				ArtifactID:      dstArtifactID,
 				SessionID:       c.Dst.ID,
 				Kind:            "document",
@@ -218,23 +246,27 @@ func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre Pref
 				TextStatus:      "pending",
 				Title:           &titleStr,
 			})
+			em.materials[el.ID] = matID
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		case KindLink:
+			linkID := uuid.New()
 			src.SessionLinks = append(src.SessionLinks, &models.SessionLink{
-				ID:        uuid.New(),
+				ID:        linkID,
 				SessionID: c.Dst.ID,
 				URL:       *el.URL,
 				Title:     el.Title,
 				Status:    models.SessionLinkStatusVerified,
 			})
+			em.links[el.ID] = linkID
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		case KindVideoSource:
 			provider := "other"
 			if el.Provider != nil && *el.Provider != "" {
 				provider = *el.Provider
 			}
+			vsID := uuid.New()
 			vs := &models.VideoSource{
-				ID:               uuid.New(),
+				ID:               vsID,
 				ArtifactID:       dstArtifactID,
 				SessionID:        c.Dst.ID,
 				Provider:         provider,
@@ -253,6 +285,7 @@ func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre Pref
 				vs.DurationSeconds = &ds
 			}
 			src.VideoSources = append(src.VideoSources, vs)
+			em.videoSources[el.ID] = vsID
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		case KindTranscript:
 			text, err := fetchTranscriptText(ctx, httpClient, deps, el)
@@ -262,19 +295,21 @@ func buildSourceData(ctx context.Context, deps WorkerDeps, t *Template, pre Pref
 			}
 			source := *el.Source
 			rawText := text
+			txID := uuid.New()
 			src.Transcripts = append(src.Transcripts, &models.Transcript{
-				ID:        uuid.New(),
+				ID:        txID,
 				SessionID: c.Dst.ID,
 				Source:    source,
 				Status:    models.TranscriptStatusReady,
 				RawText:   &rawText,
 			})
+			em.transcripts[el.ID] = txID
 			recordElementSuccess(ctx, deps.DB, jobID, el.ID)
 		}
 	}
 	// Ignore preflight (already validated; metadata-only).
 	_ = pre
-	return src
+	return src, em
 }
 
 // fetchBody GETs a URL with the SSRF-aware client, capping read at maxBytes.
@@ -367,36 +402,46 @@ func recordElementFailure(ctx context.Context, db *database.DB, jobID uuid.UUID,
 }
 
 // applyTemplatePrimary translates a template-level Primary to a primary
-// content pointer on the destination session. The template's element IDs
-// are not directly UUIDs; we look them up in the corresponding remap maps
-// by finding the dst row whose synthetic source ID we recorded in the
-// SourceData step.
+// content pointer on the destination session.
 //
-// MVP: this is a best-effort mapping. SCRUM-355's regression sweep tests
-// for the full primary pointer remap, but the worker doesn't currently
-// maintain a back-reference from template element ID to the dst row's
-// UUID. For correctness we re-fetch the dst materials/links/video_sources
-// and pick the first one when t.Primary points at a kind. For real
-// reliability the worker should track element_id → dst UUID, but that's
-// a v1.1 follow-up captured in SCRUM-355's docs.
-func applyTemplatePrimary(ctx context.Context, db *database.DB, sessionID uuid.UUID, p *Primary, c *sessionimport.Ctx) {
+// SCRUM-362: looks up p.Ref in the elementMapping populated by
+// buildSourceData (template element_id → synthetic *models row id), then
+// chains through c.MaterialRemap / LinkRemap (synthetic → dst row UUID)
+// to set the correct dst pointer. Replaces the SCRUM-357 MVP "first
+// material on dst" stub which couldn't distinguish between multiple
+// materials in the same template.
+//
+// If the named element didn't successfully import (no entry in em or no
+// entry in the import primitive's remap), the primary pointer is left
+// unset on the clone — matches CopySession's behavior when a primary
+// references a child the copy couldn't reproduce (SCRUM-340).
+func applyTemplatePrimary(ctx context.Context, db *database.DB, sessionID uuid.UUID, p *Primary, em elementMapping, c *sessionimport.Ctx) {
 	switch p.Kind {
 	case PrimaryKindDocument:
-		// First material on the destination becomes the primary document.
-		mats, err := db.GetActiveMaterialsBySessionID(ctx, sessionID)
-		if err != nil || len(mats) == 0 {
+		synthID, ok := em.materials[p.Ref]
+		if !ok {
 			return
 		}
-		_ = db.UpdateSessionPrimary(ctx, sessionID, models.SessionPrimaryContentKindDocument, &mats[0].ID)
+		dstID, ok := c.MaterialRemap[synthID]
+		if !ok {
+			return
+		}
+		_ = db.UpdateSessionPrimary(ctx, sessionID, models.SessionPrimaryContentKindDocument, &dstID)
 	case PrimaryKindLink:
-		links, err := db.GetSessionLinksBySessionID(ctx, sessionID)
-		if err != nil || len(links) == 0 {
+		synthID, ok := em.links[p.Ref]
+		if !ok {
 			return
 		}
-		_ = db.UpdateSessionPrimary(ctx, sessionID, models.SessionPrimaryContentKindLink, &links[0].ID)
+		dstID, ok := c.LinkRemap[synthID]
+		if !ok {
+			return
+		}
+		_ = db.UpdateSessionPrimary(ctx, sessionID, models.SessionPrimaryContentKindLink, &dstID)
 	case PrimaryKindVideo:
-		// Video primary is stored on the file_artifact, but templates use
-		// embed-mode (no FA), so this path is a no-op in v1.
+		// Video primary in v1 is stored on file_artifact, but templates use
+		// embed-mode video_sources (no FA). Once URL→MP4 ingest lands as a
+		// follow-up, this branch will look up via em.videoSources +
+		// c.VideoSourceRemap with the corresponding FA id.
 	}
 	_ = json.RawMessage(nil) // keep encoding/json import alive when this file is the only consumer
 }
