@@ -389,9 +389,17 @@ test.describe('Material upload and viewer flow', () => {
     // Upload PPTX
     await uploadFile(page, PPTX_FILE)
 
-    // PPTX → kind=document → appears in "Documents" section
+    // PPTX → kind=document → appears in "Documents" section.
+    // SCRUM-349: bumped from 15s to 30s. Under cold-start CI with LibreOffice
+    // contention from concurrent tests in the suite, the materials tree refresh
+    // after upload can race past 15s. The upload itself already completed (the
+    // helper above waitsForResponse on POST /materials/upload up to 90s); this
+    // is the time the frontend takes to refetch the session and re-render the
+    // Documents section. 30s gives a 2x buffer for the refetch path without
+    // hiding any real backend regression — that would surface as the upload
+    // POST itself failing, not as a slow tree refresh.
     const pptxItem = page.getByTestId('material-item').filter({ hasText: 'test.pptx' })
-    await expect(pptxItem).toBeVisible({ timeout: 15_000 })
+    await expect(pptxItem).toBeVisible({ timeout: 30_000 })
 
     // The item should show "Processing…" since slides manifest generation is async
     // (LibreOffice may not be installed; even if it is, it runs in a goroutine)
