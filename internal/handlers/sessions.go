@@ -206,32 +206,64 @@ type CopySessionRequest struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// CopySessionResponse is the response for POST /api/sessions/:id/copy
+// CopySessionResponse is the response for POST /api/sessions/:id/copy.
+// partial_failures (SCRUM-344) lists categories that had at least one
+// non-fatal failure during copy (e.g. one material's R2 Get failed but the
+// rest of the copy succeeded). The field is additive and omitted when empty,
+// so existing API consumers are unaffected.
 type CopySessionResponse struct {
-	ID        string  `json:"id"`
-	Title     string  `json:"title"`
-	CreatedBy *string `json:"created_by,omitempty"`
-	Status    string  `json:"status"`
-	CreatedAt string  `json:"created_at"`
+	ID              string   `json:"id"`
+	Title           string   `json:"title"`
+	CreatedBy       *string  `json:"created_by,omitempty"`
+	Status          string   `json:"status"`
+	CreatedAt       string   `json:"created_at"`
+	PartialFailures []string `json:"partial_failures,omitempty"`
 }
 
-// CopySession creates a new session with the same content as the source (Creator
-// or Admin only). Everything in the new session is a standalone copy: new IDs,
-// new storage keys, and new file paths; nothing references the source session's
-// storage or records.
+// CopySession creates a new session with the same content as the source
+// (Creator or Admin only). Everything in the new session is a standalone copy:
+// new IDs, new storage keys, and new file paths; nothing references the source
+// session's storage or records.
 //
-// The handler is a thin orchestrator: it loads source-side data slices from the
-// DB, builds an import context, and threads them through the primitives in
+// The handler is a thin orchestrator: it loads source-side data slices from
+// the DB, builds an import context, and threads them through the primitives in
 // internal/sessionimport. That package is intentionally session-source-agnostic
 // so a future Session Templates feature (SCRUM-347 spike) can reuse it.
 //
-// Currently copied: artifacts, materials (+ slide manifest/PNGs), session_links,
-// video_sources (+ stored MP4 + on-row transcript), the primary file_artifact
-// (the main video), and a fresh session_processing_jobs row when no MP4 was
-// reproduced. Questions, answers, unread state, and members are not copied.
-// Subsequent epic tickets (SCRUM-340/342/343/344/345) layer in metadata copy,
-// transcripts table, all file_artifacts, partial-failure reporting, and a
-// regression-locking test sweep. RAG is reprocessed via triggerIndex.
+// COPY (per SCRUM-338 plan):
+//   - artifacts
+//   - materials (+ slide manifest / PNGs)
+//   - session_links (+ extracted_text)
+//   - video_sources (+ stored MP4 + on-row transcript)
+//   - all session-scoped file_artifacts (not just the primary video)
+//   - transcripts + transcript_segments
+//   - session metadata: premise, primary_decision, decision_outcome,
+//     source_reference_url, primary_content_kind + primary_*_id (remapped
+//     through the per-category remap maps)
+//   - session_processing_jobs (re-enqueued only when no primary video file
+//     could be reproduced and the source had a cloud-import job)
+//
+// SKIP (intentionally — see SCRUM-338 epic non-goals):
+//   - members: session_memberships, session_invitations
+//   - user/audience-scoped data: questions, answers, decision_stances,
+//     material_views, question_views, session_participants, session_events
+//   - LLM outputs the user has acted on: orchestration_recommendations
+//     (+ status audit), sessions_primary_history
+//   - ephemeral processing state: transcript_jobs, ingestion_jobs
+//
+// RECOMPUTE: session_chunks + session_chunk_embeddings via triggerIndex
+// (cheap async embedding pass; see plan §2 for the recompute trade-off).
+//
+// Failure semantics (SCRUM-344):
+//   - Per-row child copies (materials/links/video_sources/file_artifacts/
+//     slide assets) are best-effort: per-row failures are logged and the
+//     affected category is recorded in CopySessionResponse.partial_failures
+//     so callers can surface a "your clone is missing 2 of 5 slide decks"
+//     warning. The HTTP response is 201.
+//   - Critical-step failures (ImportSessionRow, ImportTranscripts,
+//     ImportSessionMetadata) trigger a session-row delete (children cascade)
+//     plus best-effort R2 prefix delete, and return HTTP 500 — a clone
+//     missing its framing or transcript is misleading enough not to expose.
 func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -356,25 +388,50 @@ func (h *Handlers) CopySession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create session"})
 		return
 	}
+	// SCRUM-344: critical-step rollback. Per-row child failures
+	// (materials/links/video_sources/file_artifacts) accumulate in
+	// c.PartialFailures and surface in the response. Failures of the
+	// session-level steps (transcripts, metadata) are critical: they leave
+	// the clone in an inconsistent state, so we delete the new session row
+	// (children cascade) and return 500.
+	rollback := func(reason string, err error) {
+		log.Printf("CopySession critical failure (%s): %v; rolling back session %s", reason, err, newSession.ID)
+		if delErr := h.DB.DeleteSession(ctx, newSession.ID); delErr != nil {
+			log.Printf("CopySession rollback DeleteSession: %v", delErr)
+		}
+		if h.Storage != nil {
+			if _, dpErr := h.Storage.DeletePrefix(ctx, "sessions/"+newSession.ID.String()+"/"); dpErr != nil {
+				log.Printf("CopySession rollback DeletePrefix: %v", dpErr)
+			}
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to copy session: " + reason})
+	}
 	_ = sessionimport.ImportArtifacts(ctx, c, artifacts)
 	_ = sessionimport.ImportFileArtifacts(ctx, c, allFAs, sourceSession.PrimaryVideoArtifactID)
 	_ = sessionimport.ImportMaterials(ctx, c, materials, sourceSessionID.String())
 	_ = sessionimport.ImportSessionLinks(ctx, c, sourceLinks)
 	_ = sessionimport.ImportVideoSources(ctx, c, sourceVideoSources, sourceSessionID.String())
 	sourceTranscripts, _ := h.DB.ListTranscriptsBySessionID(ctx, sourceSessionID)
-	_ = sessionimport.ImportTranscripts(ctx, c, sourceTranscripts)
-	_ = sessionimport.ImportSessionMetadata(ctx, c, sourceSession) // SCRUM-340 will populate
+	if err := sessionimport.ImportTranscripts(ctx, c, sourceTranscripts); err != nil {
+		rollback("transcripts", err)
+		return
+	}
+	if err := sessionimport.ImportSessionMetadata(ctx, c, sourceSession); err != nil {
+		rollback("session_metadata", err)
+		return
+	}
 	sessionimport.MaybeEnqueueProcessingJob(ctx, c, sourceJob, sourceSession)
 	h.triggerIndex(newSession.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(CopySessionResponse{
-		ID:        newSession.ID.String(),
-		Title:     newSession.Title,
-		CreatedBy: newSession.CreatedBy,
-		Status:    string(newSession.Status),
-		CreatedAt: newSession.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:              newSession.ID.String(),
+		Title:           newSession.Title,
+		CreatedBy:       newSession.CreatedBy,
+		Status:          string(newSession.Status),
+		CreatedAt:       newSession.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		PartialFailures: c.PartialFailures,
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -441,9 +442,10 @@ func importOneFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtifact)
 // gets new transcript IDs and new transcript_segments rows linked to those
 // new IDs and the destination session.
 //
-// Per-row errors (one bad transcript or its segments) are non-fatal: log,
-// record in PartialFailures, and continue. SCRUM-344 promotes the whole
-// step to "fail the copy" with rollback.
+// SCRUM-344: any DB error here is critical. The orchestrator deletes the
+// new session row (children cascade) and returns 500 — a clone with a
+// missing or partial transcript is misleading enough that it should not
+// be exposed.
 func ImportTranscripts(ctx context.Context, c *Ctx, src []*models.Transcript) error {
 	for _, t := range src {
 		newTranscript := &models.Transcript{
@@ -456,15 +458,13 @@ func ImportTranscripts(ctx context.Context, c *Ctx, src []*models.Transcript) er
 			ErrorMessage: t.ErrorMessage,
 		}
 		if err := c.Deps.DB.CreateTranscript(ctx, newTranscript); err != nil {
-			log.Printf("sessionimport ImportTranscripts CreateTranscript: %v", err)
 			c.recordPartialFailure("transcripts")
-			continue
+			return fmt.Errorf("ImportTranscripts CreateTranscript: %w", err)
 		}
 		segments, err := c.Deps.DB.ListSegmentsByTranscriptID(ctx, t.ID)
 		if err != nil {
-			log.Printf("sessionimport ImportTranscripts ListSegmentsByTranscriptID: %v", err)
 			c.recordPartialFailure("transcripts")
-			continue
+			return fmt.Errorf("ImportTranscripts ListSegmentsByTranscriptID: %w", err)
 		}
 		if len(segments) == 0 {
 			continue
@@ -485,8 +485,8 @@ func ImportTranscripts(ctx context.Context, c *Ctx, src []*models.Transcript) er
 			})
 		}
 		if err := c.Deps.DB.InsertTranscriptSegments(ctx, newTranscript.ID, c.Dst.ID, newSegments); err != nil {
-			log.Printf("sessionimport ImportTranscripts InsertTranscriptSegments: %v", err)
 			c.recordPartialFailure("transcripts")
+			return fmt.Errorf("ImportTranscripts InsertTranscriptSegments: %w", err)
 		}
 	}
 	return nil
@@ -514,8 +514,9 @@ func ImportSessionMetadata(ctx context.Context, c *Ctx, src *models.Session) err
 	}
 	if src.Premise != nil || src.PrimaryDecision != nil || src.DecisionOutcome != nil {
 		if err := c.Deps.DB.UpdateSessionContext(ctx, c.Dst.ID, src.Premise, src.PrimaryDecision, src.DecisionOutcome); err != nil {
-			log.Printf("sessionimport ImportSessionMetadata UpdateSessionContext: %v", err)
+			// SCRUM-344: critical — clone with the wrong framing is worse than no clone.
 			c.recordPartialFailure("session_metadata")
+			return fmt.Errorf("ImportSessionMetadata UpdateSessionContext: %w", err)
 		}
 	}
 	if src.PrimaryContentKind == nil {
@@ -532,8 +533,8 @@ func ImportSessionMetadata(ctx context.Context, c *Ctx, src *models.Session) err
 			return nil
 		}
 		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindVideo, &newID); err != nil {
-			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(video): %v", err)
 			c.recordPartialFailure("session_metadata")
+			return fmt.Errorf("ImportSessionMetadata UpdateSessionPrimary(video): %w", err)
 		}
 	case models.SessionPrimaryContentKindDocument:
 		if src.PrimaryMaterialID == nil {
@@ -545,8 +546,8 @@ func ImportSessionMetadata(ctx context.Context, c *Ctx, src *models.Session) err
 			return nil
 		}
 		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindDocument, &newID); err != nil {
-			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(document): %v", err)
 			c.recordPartialFailure("session_metadata")
+			return fmt.Errorf("ImportSessionMetadata UpdateSessionPrimary(document): %w", err)
 		}
 	case models.SessionPrimaryContentKindLink:
 		if src.PrimarySessionLinkID == nil {
@@ -558,8 +559,8 @@ func ImportSessionMetadata(ctx context.Context, c *Ctx, src *models.Session) err
 			return nil
 		}
 		if err := c.Deps.DB.UpdateSessionPrimary(ctx, c.Dst.ID, models.SessionPrimaryContentKindLink, &newID); err != nil {
-			log.Printf("sessionimport ImportSessionMetadata UpdateSessionPrimary(link): %v", err)
 			c.recordPartialFailure("session_metadata")
+			return fmt.Errorf("ImportSessionMetadata UpdateSessionPrimary(link): %w", err)
 		}
 	}
 	return nil
