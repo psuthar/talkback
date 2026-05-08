@@ -81,9 +81,9 @@ func TestCopySession_Baseline_HappyPath(t *testing.T) {
 		ID:           uuid.New(),
 		ArtifactID:   srcArtifact2.ID,
 		SessionID:    srcSessionID,
-		Provider:     "embed",
+		Provider:     "other",
 		PlaybackMode: "embed",
-		SourceType:   "embed",
+		SourceType:   "embed_url",
 		VideoRole:    &secondaryRole,
 	}
 	require.NoError(t, h.DB.CreateVideoSource(ctx, srcVS))
