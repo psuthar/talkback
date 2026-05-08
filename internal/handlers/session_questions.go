@@ -13,11 +13,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/utils"
 )
+
+// pgFKViolation reports whether err is a Postgres foreign key violation
+// (SQLSTATE 23503). Used to distinguish a deleted-parent race from real
+// 5xx-class failures when CreateQuestion runs against parent_question_id.
+func pgFKViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23503"
+	}
+	return false
+}
 
 // transcribeVoiceResponse is the JSON response for voice transcription endpoints.
 type transcribeVoiceResponse struct {
@@ -719,6 +734,110 @@ func (h *Handlers) MarkQuestionViewed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to record view", http.StatusInternalServerError)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteSessionQuestion removes a top-level (root) session question and its
+// reply subtree (cascaded via existing FKs on questions.parent_question_id and
+// answers.question_id) and atomically purges any
+// orchestration_recommendations rows whose evidence_json references any of
+// the deleted question ids. Replies are not directly deletable through this
+// endpoint — DELETE on a reply id returns 400.
+//
+// Authorization (SCRUM-364 epic invariant): only global admins and session
+// creators (session_memberships.role == 'creator', including promoted
+// creators per SCRUM-227) may call this. Enforced via the existing
+// userIsSessionEditor helper. Wired in router.go via RequireAuth so an
+// unauthenticated request hits 401 before reaching this handler body.
+func (h *Handlers) DeleteSessionQuestion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// Accept both /api/sessions/{id}/questions/{qid} (router prefix retained) and
+	// the post-router-strip /sessions/{id}/questions/{qid}.
+	var sessionIDStr, questionIDStr string
+	if len(pathParts) >= 5 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "questions" {
+		sessionIDStr = pathParts[2]
+		questionIDStr = pathParts[4]
+	} else if len(pathParts) >= 4 && pathParts[0] == "sessions" && pathParts[2] == "questions" {
+		sessionIDStr = pathParts[1]
+		questionIDStr = pathParts[3]
+	} else {
+		http.Error(w, "Invalid URL path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session id"})
+		return
+	}
+	questionID, err := uuid.Parse(questionIDStr)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid question id"})
+		return
+	}
+
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+
+	canEdit, err := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if err != nil {
+		log.Printf("DeleteSessionQuestion userIsSessionEditor: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to check authorization"})
+		return
+	}
+	if !canEdit {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "only the session creator or an admin can delete a question"})
+		return
+	}
+
+	q, err := h.DB.GetQuestionByID(r.Context(), questionID)
+	if err != nil || q == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "question not found"})
+		return
+	}
+	if q.SessionID != sessionID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "question does not belong to this session"})
+		return
+	}
+	if q.ParentQuestionID != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "only top-level questions can be deleted"})
+		return
+	}
+
+	deletedIDs, err := h.DB.GetQuestionAndReplyIDs(r.Context(), questionID)
+	if err != nil {
+		log.Printf("DeleteSessionQuestion GetQuestionAndReplyIDs: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to enumerate replies"})
+		return
+	}
+
+	rows, err := h.DB.DeleteQuestionAndOrchestrationEvidenceByID(r.Context(), questionID, deletedIDs)
+	if err != nil {
+		log.Printf("DeleteSessionQuestion DeleteQuestionAndOrchestrationEvidenceByID: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete question"})
+		return
+	}
+	if rows == 0 {
+		// Lost a race with another deleter — treat as 404 for client idempotence.
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "question not found"})
+		return
+	}
+
+	if h.Hub != nil {
+		h.Hub.BroadcastQuestionDeleted(sessionID, questionID, deletedIDs)
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
