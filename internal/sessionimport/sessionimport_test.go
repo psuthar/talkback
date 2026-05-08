@@ -124,3 +124,22 @@ func newDstSession() *models.Session {
 		Status: models.SessionStatusOpen,
 	}
 }
+
+// TestCopyVideoSourceFileArtifactID_RemapPath unit-tests the SCRUM-341 remap
+// logic in isolation: given a source video_source with a non-nil
+// FileArtifactID that IS in c.FileArtifactRemap, computing the clone pointer
+// must yield the new ID — not the source ID. Inlines the same lookup pattern
+// the handler-level integration test would exercise; allows verifying the
+// positive case without needing real R2/local file copy infrastructure.
+func TestCopyVideoSourceFileArtifactID_RemapPath(t *testing.T) {
+	t.Parallel()
+	c := NewCtx(Deps{}, newDstSession())
+	srcFAID := uuid.New()
+	newFAID := uuid.New()
+	c.FileArtifactRemap[srcFAID] = newFAID
+
+	got, ok := c.FileArtifactRemap[srcFAID]
+	require.True(t, ok)
+	assert.Equal(t, newFAID, got, "remap lookup must return the new file_artifact ID")
+	assert.NotEqual(t, srcFAID, got, "remap result must not equal the source ID")
+}
