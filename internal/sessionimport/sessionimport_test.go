@@ -54,12 +54,44 @@ func TestImportTranscripts_StubIsNoOp(t *testing.T) {
 	assert.Empty(t, c.PartialFailures)
 }
 
-// TestImportSessionMetadata_StubIsNoOp confirms the SCRUM-340 stub returns
-// nil without touching the database.
-func TestImportSessionMetadata_StubIsNoOp(t *testing.T) {
+// TestImportSessionMetadata_NilSrc_NoOp confirms early-return when the
+// source session is nil (templates may construct one without a row).
+func TestImportSessionMetadata_NilSrc_NoOp(t *testing.T) {
 	t.Parallel()
 	c := NewCtx(Deps{}, newDstSession())
 	require.NoError(t, ImportSessionMetadata(context.Background(), c, nil))
+	assert.Empty(t, c.PartialFailures)
+}
+
+// TestImportSessionMetadata_NoFramingFields_NoOp confirms the primitive
+// short-circuits when src has no framing fields and no explicit primary.
+// Verifies the source-descriptor seam: no DB call, no panic, no failure.
+func TestImportSessionMetadata_NoFramingFields_NoOp(t *testing.T) {
+	t.Parallel()
+	c := NewCtx(Deps{}, newDstSession())
+	src := &models.Session{ID: uuid.New(), Title: "no framing"}
+	require.NoError(t, ImportSessionMetadata(context.Background(), c, src))
+	assert.Empty(t, c.PartialFailures)
+}
+
+// TestImportSessionMetadata_PrimaryRemapMiss_DoesNotPanic confirms that when
+// the source has an explicit primary pointer that is not in the remap, the
+// primitive logs and returns nil without touching the DB. Validates the
+// failure mode acceptance criterion without requiring a database.
+func TestImportSessionMetadata_PrimaryRemapMiss_DoesNotPanic(t *testing.T) {
+	t.Parallel()
+	c := NewCtx(Deps{}, newDstSession())
+	missingID := uuid.New()
+	kind := models.SessionPrimaryContentKindDocument
+	src := &models.Session{
+		ID:                 uuid.New(),
+		Title:              "miss",
+		PrimaryContentKind: &kind,
+		PrimaryMaterialID:  &missingID, // not in c.MaterialRemap
+	}
+	// MaterialRemap is empty, so the lookup must miss and the primitive must
+	// not call DB (Deps.DB is nil — would panic otherwise).
+	require.NoError(t, ImportSessionMetadata(context.Background(), c, src))
 	assert.Empty(t, c.PartialFailures)
 }
 
