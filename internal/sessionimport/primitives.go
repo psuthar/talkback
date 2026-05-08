@@ -86,22 +86,26 @@ func ImportMaterials(ctx context.Context, c *Ctx, src []*models.Material, srcSto
 		switch {
 		case m.StorageProvider == "r2" && m.StorageKey != "" && c.Deps.Storage != nil:
 			newKey := storage.BuildArtifactStorageKey(r2Prefix, c.Dst.ID, newArtifactID, m.Filename)
-			rc, err := c.Deps.Storage.Get(ctx, m.StorageKey)
-			if err != nil {
-				log.Printf("sessionimport ImportMaterials R2 Get %s: %v", m.StorageKey, err)
-				c.recordPartialFailure("materials")
-				continue
-			}
-			var size int64
-			if m.SizeBytes != nil {
-				size = *m.SizeBytes
-			}
-			_, _, err = c.Deps.Storage.Put(ctx, newKey, rc, m.ContentType, size)
-			_ = rc.Close()
-			if err != nil {
-				log.Printf("sessionimport ImportMaterials R2 Put %s: %v", newKey, err)
-				c.recordPartialFailure("materials")
-				continue
+			// SCRUM-346: prefer server-side CopyObject; fall back to Get+Put on error.
+			if err := c.Deps.Storage.CopyObject(ctx, m.StorageKey, newKey); err != nil {
+				log.Printf("sessionimport ImportMaterials CopyObject %s -> %s: %v; falling back to Get+Put", m.StorageKey, newKey, err)
+				rc, gerr := c.Deps.Storage.Get(ctx, m.StorageKey)
+				if gerr != nil {
+					log.Printf("sessionimport ImportMaterials R2 Get %s: %v", m.StorageKey, gerr)
+					c.recordPartialFailure("materials")
+					continue
+				}
+				var size int64
+				if m.SizeBytes != nil {
+					size = *m.SizeBytes
+				}
+				_, _, perr := c.Deps.Storage.Put(ctx, newKey, rc, m.ContentType, size)
+				_ = rc.Close()
+				if perr != nil {
+					log.Printf("sessionimport ImportMaterials R2 Put %s: %v", newKey, perr)
+					c.recordPartialFailure("materials")
+					continue
+				}
 			}
 			newMaterial.StorageKey = newKey
 		case m.StorageProvider == "local" && m.Filename != "" && srcStorageNamespace != "":
@@ -149,15 +153,18 @@ func copySlideAssets(ctx context.Context, c *Ctx, m, newMaterial *models.Materia
 		rc.Close()
 		newSlides := make([]utils.SlideManifestEntry, 0, len(manifest.Slides))
 		for _, entry := range manifest.Slides {
-			slideRc, err := c.Deps.Storage.Get(ctx, entry.StorageKey)
-			if err != nil {
-				continue
-			}
 			newSlideKey := storage.SlideImageKeyFromArtifactKey(newMaterial.StorageKey, entry.Index)
-			_, _, err = c.Deps.Storage.Put(ctx, newSlideKey, slideRc, "image/png", 0)
-			slideRc.Close()
-			if err != nil {
-				continue
+			// SCRUM-346: prefer server-side CopyObject; fall back to Get+Put.
+			if err := c.Deps.Storage.CopyObject(ctx, entry.StorageKey, newSlideKey); err != nil {
+				slideRc, gerr := c.Deps.Storage.Get(ctx, entry.StorageKey)
+				if gerr != nil {
+					continue
+				}
+				_, _, perr := c.Deps.Storage.Put(ctx, newSlideKey, slideRc, "image/png", 0)
+				slideRc.Close()
+				if perr != nil {
+					continue
+				}
 			}
 			newSlides = append(newSlides, utils.SlideManifestEntry{Index: entry.Index, StorageKey: newSlideKey})
 		}
@@ -260,12 +267,17 @@ func ImportVideoSources(ctx context.Context, c *Ctx, src []*models.VideoSource, 
 			newKey := strings.Replace(oldKey, srcStorageNamespace, c.Dst.ID.String(), 1)
 			if newKey != oldKey {
 				if c.Deps.Storage != nil {
-					rc, err := c.Deps.Storage.Get(ctx, oldKey)
-					if err == nil {
-						_, _, err = c.Deps.Storage.Put(ctx, newKey, rc, "video/mp4", 0)
-						rc.Close()
-						if err == nil {
-							copyVS.StoredVideoObjectKey = &newKey
+					// SCRUM-346: prefer server-side CopyObject; fall back to Get+Put.
+					if err := c.Deps.Storage.CopyObject(ctx, oldKey, newKey); err == nil {
+						copyVS.StoredVideoObjectKey = &newKey
+					} else {
+						rc, gerr := c.Deps.Storage.Get(ctx, oldKey)
+						if gerr == nil {
+							_, _, perr := c.Deps.Storage.Put(ctx, newKey, rc, "video/mp4", 0)
+							rc.Close()
+							if perr == nil {
+								copyVS.StoredVideoObjectKey = &newKey
+							}
 						}
 					}
 				}
@@ -350,22 +362,26 @@ func importOneFileArtifact(ctx context.Context, c *Ctx, fa *models.FileArtifact)
 		}
 		r2Prefix := strings.TrimSuffix(strings.TrimSpace(c.Deps.R2Prefix), "/")
 		newKey := storage.BuildArtifactStorageKey(r2Prefix, c.Dst.ID, newFAID, filename)
-		rc, err := c.Deps.Storage.Get(ctx, fa.StorageKey)
-		if err != nil {
-			log.Printf("sessionimport ImportFileArtifacts R2 Get %s: %v", fa.StorageKey, err)
-			c.recordPartialFailure("file_artifacts")
-			return uuid.Nil, false
-		}
-		var size int64
-		if fa.SizeBytes != nil {
-			size = *fa.SizeBytes
-		}
-		_, _, err = c.Deps.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
-		_ = rc.Close()
-		if err != nil {
-			log.Printf("sessionimport ImportFileArtifacts R2 Put %s: %v", newKey, err)
-			c.recordPartialFailure("file_artifacts")
-			return uuid.Nil, false
+		// SCRUM-346: prefer server-side CopyObject; fall back to Get+Put on error.
+		if err := c.Deps.Storage.CopyObject(ctx, fa.StorageKey, newKey); err != nil {
+			log.Printf("sessionimport ImportFileArtifacts CopyObject %s -> %s: %v; falling back to Get+Put", fa.StorageKey, newKey, err)
+			rc, gerr := c.Deps.Storage.Get(ctx, fa.StorageKey)
+			if gerr != nil {
+				log.Printf("sessionimport ImportFileArtifacts R2 Get %s: %v", fa.StorageKey, gerr)
+				c.recordPartialFailure("file_artifacts")
+				return uuid.Nil, false
+			}
+			var size int64
+			if fa.SizeBytes != nil {
+				size = *fa.SizeBytes
+			}
+			_, _, perr := c.Deps.Storage.Put(ctx, newKey, rc, fa.ContentType, size)
+			_ = rc.Close()
+			if perr != nil {
+				log.Printf("sessionimport ImportFileArtifacts R2 Put %s: %v", newKey, perr)
+				c.recordPartialFailure("file_artifacts")
+				return uuid.Nil, false
+			}
 		}
 		newFA := &models.FileArtifact{
 			ID:              newFAID,

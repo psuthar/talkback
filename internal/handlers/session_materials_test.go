@@ -619,8 +619,9 @@ func (m *mockStorage) Get(_ context.Context, _ string) (io.ReadCloser, error) { 
 func (m *mockStorage) Head(_ context.Context, _ string) (bool, int64, string, error) {
 	return false, 0, "", nil
 }
-func (m *mockStorage) Delete(_ context.Context, _ string) error { return nil }
-func (m *mockStorage) DeletePrefix(_ context.Context, _ string) (int, error) { return 0, nil }
+func (m *mockStorage) Delete(_ context.Context, _ string) error                   { return nil }
+func (m *mockStorage) DeletePrefix(_ context.Context, _ string) (int, error)      { return 0, nil }
+func (m *mockStorage) CopyObject(_ context.Context, _, _ string) error            { return nil }
 
 func TestTryGenerateAndStoreSlidesParallelUpload(t *testing.T) {
 	t.Parallel()

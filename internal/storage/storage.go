@@ -20,6 +20,13 @@ type Interface interface {
 	Head(ctx context.Context, key string) (exists bool, size int64, contentType string, err error)
 	// Delete removes the object.
 	Delete(ctx context.Context, key string) error
+	// CopyObject performs a server-side copy from srcKey to dstKey within the
+	// same backend, avoiding the GET+PUT round-trip through the API server.
+	// On R2/S3 this maps to CopyObject (or UploadPartCopy for objects >5GB).
+	// Used by CopySession (SCRUM-346) for materials, slide PNGs, video files,
+	// and file_artifacts where src and dst live in the same bucket. Callers
+	// should fall back to Get+Put on error or when the backend cannot copy.
+	CopyObject(ctx context.Context, srcKey, dstKey string) error
 	// DeletePrefix removes all objects whose keys start with the given prefix (e.g. "sessions/{sessionID}/").
 	// Returns the number of objects deleted. Used for session deletion.
 	DeletePrefix(ctx context.Context, prefix string) (deleted int, err error)

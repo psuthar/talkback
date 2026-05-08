@@ -288,5 +288,126 @@ func (c *Client) deleteByPrefix(ctx context.Context, fullPrefix string) (deleted
 }
 
 
+// CopyObject performs a server-side copy within the same R2 bucket. For
+// objects ≤5 GB the single-part S3 CopyObject is used; for larger objects
+// CopyObject (S3 spec) errors with EntityTooLarge, so we fall through to a
+// multipart UploadPartCopy. This eliminates the GET+PUT stream-through that
+// CopySession used to do for every R2 asset (SCRUM-346).
+//
+// srcKey and dstKey are passed through c.key() to honor the bucket prefix,
+// matching the rest of the client's contract.
+func (c *Client) CopyObject(ctx context.Context, srcKey, dstKey string) error {
+	srcK := c.key(srcKey)
+	dstK := c.key(dstKey)
+	// CopySource is "<bucket>/<key>" URL-escaped; the SDK handles escaping.
+	src := c.cfg.Bucket + "/" + srcK
+	_, err := c.client.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket:     aws.String(c.cfg.Bucket),
+		Key:        aws.String(dstK),
+		CopySource: aws.String(src),
+	})
+	if err == nil {
+		return nil
+	}
+	// EntityTooLarge → object exceeds 5 GB single-part copy limit; fall back
+	// to multipart copy. Match liberally on the error string because the SDK
+	// returns the AWS error wrapped.
+	if strings.Contains(err.Error(), "EntityTooLarge") || strings.Contains(err.Error(), "InvalidRequest") {
+		return c.copyObjectMultipart(ctx, srcK, dstK)
+	}
+	return fmt.Errorf("r2 CopyObject: %w", err)
+}
+
+// copyObjectMultipart copies an object >5 GB via initiate + UploadPartCopy +
+// complete. Part size is 100 MB; AWS allows up to 10 000 parts so this scales
+// to 1 TB which exceeds R2's per-object cap. Failure aborts the multipart
+// upload to avoid leaking incomplete parts.
+func (c *Client) copyObjectMultipart(ctx context.Context, srcK, dstK string) error {
+	const partSize int64 = 100 * 1024 * 1024 // 100 MB
+	exists, size, _, err := c.headByKey(ctx, srcK)
+	if err != nil {
+		return fmt.Errorf("r2 CopyObject (multipart) head: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("r2 CopyObject (multipart): source not found")
+	}
+	create, err := c.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(c.cfg.Bucket),
+		Key:    aws.String(dstK),
+	})
+	if err != nil {
+		return fmt.Errorf("r2 CopyObject (multipart) create: %w", err)
+	}
+	uploadID := aws.ToString(create.UploadId)
+	abort := func() {
+		_, _ = c.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+			Bucket:   aws.String(c.cfg.Bucket),
+			Key:      aws.String(dstK),
+			UploadId: aws.String(uploadID),
+		})
+	}
+	src := c.cfg.Bucket + "/" + srcK
+	var parts []types.CompletedPart
+	var partNum int32 = 1
+	for offset := int64(0); offset < size; offset += partSize {
+		end := offset + partSize - 1
+		if end >= size {
+			end = size - 1
+		}
+		out, err := c.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+			Bucket:          aws.String(c.cfg.Bucket),
+			Key:             aws.String(dstK),
+			UploadId:        aws.String(uploadID),
+			CopySource:      aws.String(src),
+			CopySourceRange: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end)),
+			PartNumber:      aws.Int32(partNum),
+		})
+		if err != nil {
+			abort()
+			return fmt.Errorf("r2 UploadPartCopy part %d: %w", partNum, err)
+		}
+		parts = append(parts, types.CompletedPart{
+			ETag:       out.CopyPartResult.ETag,
+			PartNumber: aws.Int32(partNum),
+		})
+		partNum++
+	}
+	_, err = c.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(c.cfg.Bucket),
+		Key:             aws.String(dstK),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
+	})
+	if err != nil {
+		abort()
+		return fmt.Errorf("r2 CompleteMultipartUpload: %w", err)
+	}
+	return nil
+}
+
+// headByKey is like Head but accepts an already-prefixed key (used by
+// internal multipart helpers that have already called c.key()).
+func (c *Client) headByKey(ctx context.Context, fullKey string) (exists bool, size int64, contentType string, err error) {
+	out, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(c.cfg.Bucket),
+		Key:    aws.String(fullKey),
+	})
+	if err != nil {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "404") {
+			return false, 0, "", nil
+		}
+		return false, 0, "", err
+	}
+	s := int64(0)
+	if out.ContentLength != nil {
+		s = *out.ContentLength
+	}
+	ct := ""
+	if out.ContentType != nil {
+		ct = *out.ContentType
+	}
+	return true, s, ct, nil
+}
+
 // Ensure Client implements storage.Interface.
 var _ storage.Interface = (*Client)(nil)
