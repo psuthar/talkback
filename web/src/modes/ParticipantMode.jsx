@@ -43,6 +43,8 @@ export function ParticipantMode({
   unreadQuestionIds = [],
   markQuestionViewed,
   fetchSessionQuestions,
+  canDeleteQuestions = false,
+  requestDeleteQuestion,
   loading,
   apiBaseUrl,
   creatorIdentity,
@@ -775,6 +777,8 @@ export function ParticipantMode({
             unreadQuestionIds={unreadQuestionIds}
             markQuestionViewed={markQuestionViewed}
             sessionId={currentSession.session?.id}
+            canDeleteQuestions={canDeleteQuestions}
+            requestDeleteQuestion={requestDeleteQuestion}
             loading={loading}
             questionText={questionText}
             setQuestionText={setQuestionText}

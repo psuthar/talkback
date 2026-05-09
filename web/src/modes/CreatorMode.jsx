@@ -125,6 +125,8 @@ export function CreatorMode({
   unreadQuestionIds = [],
   markQuestionViewed,
   fetchSessionQuestions,
+  canDeleteQuestions = false,
+  requestDeleteQuestion,
   loading,
   apiBaseUrl,
   creatorIdentity,
@@ -2211,6 +2213,30 @@ export function CreatorMode({
                       const isExpanded = questionCardsExpanded[q.id] === true
                       const hasReplies = (byParent[q.id]?.length ?? 0) > 0
                       const showReplies = isExpanded && hasReplies
+                      // SCRUM-367: peer tombstone for ~10s after question_deleted WS event.
+                      if (q._tombstone) {
+                        return (
+                          <div
+                            key={q.id}
+                            data-testid="question-tombstone"
+                            style={{
+                              marginBottom: depth === 0 ? '8px' : 0,
+                              padding: '12px 15px',
+                              border: '1px dashed #bbb',
+                              borderRadius: '5px',
+                              color: '#777',
+                              fontStyle: 'italic',
+                              fontSize: '13px',
+                              backgroundColor: '#fafafa',
+                              ...(depth > 0 && { marginLeft: 28 }),
+                              opacity: 0.7,
+                              transition: 'opacity 0.6s ease',
+                            }}
+                          >
+                            This question was deleted by the creator
+                          </div>
+                        )
+                      }
                       return (
                         <div key={q.id} style={{ marginBottom: depth === 0 ? '8px' : 0 }}>
                           <div style={{
@@ -2468,6 +2494,33 @@ export function CreatorMode({
                                   </>
                                 )}
                               </div>
+                              {/* SCRUM-367: kebab menu — root question only, creator/admin only. */}
+                              {depth === 0 && canDeleteQuestions && requestDeleteQuestion && (
+                                <button
+                                  type="button"
+                                  data-testid={`question-kebab-${q.id}`}
+                                  aria-label="Question actions"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    requestDeleteQuestion(q.id)
+                                  }}
+                                  style={{
+                                    flexShrink: 0,
+                                    marginLeft: 'auto',
+                                    marginTop: 0,
+                                    padding: '4px 8px',
+                                    fontSize: '16px',
+                                    background: 'none',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    color: '#666',
+                                    lineHeight: 1,
+                                  }}
+                                  title="Delete question"
+                                >
+                                  ⋮
+                                </button>
+                              )}
                             </div>
                           </div>
                           {showReplies && (
