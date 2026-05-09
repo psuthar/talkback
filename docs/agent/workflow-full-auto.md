@@ -69,14 +69,29 @@ On confirmed gate pass:
 
 - Call `merge_pull_request` with `merge_method: squash`.
 - Remote branch: rely on auto-delete if configured; otherwise delete manually in GitHub UI.
-- Local cleanup:
+- Local cleanup — choose the path that matches how implementation actually happened:
 
-```
-git checkout main
-git fetch --prune origin
-git pull --ff-only origin main
-git branch -D feat/<ticket-number>
-```
+  **Common steps (always run, in the main checkout):**
+
+  ```
+  git checkout main
+  git fetch --prune origin
+  git pull --ff-only origin main
+  ```
+
+  **If implementation ran in the main checkout** (no worktree was created for this ticket):
+
+  ```
+  git branch -D feat/<ticket-number>
+  ```
+
+  **If implementation ran in a git worktree** — for example, when the user explicitly asked for a worktree, when CLAUDE.md / project memory directed one, or when EnterWorktree was used (visible as a `.worktrees/<ticket-number>` entry in `git worktree list`) — also do:
+
+  1. ExitWorktree (action: `keep` or `remove`) to return the session to the main checkout. Never run worktree-removal commands while the session is still inside the worktree.
+  2. `git worktree remove .worktrees/<ticket-number>` to drop the directory and its registration.
+  3. `git branch -D feat/<ticket-number>` (squash-merge orphans the local commit, so `-d` will refuse — `-D` is correct).
+
+  If `git worktree remove` refuses because of untracked files left in the worktree (test scratch, generated artifacts, downloaded fixtures), inspect them first via `cd .worktrees/<ticket-number> && git status --short`. If every untracked path is either also present (and ignored) in the main checkout or is plainly disposable scratch, re-run with `--force` and note in the closure comment which untracked paths were force-removed so any genuinely-needed file is not lost silently. Only escalate to `--force` after that inspection — never as a reflex.
 
 - Before transitioning Jira to Done, verify the ticket already has the structured implementation comment required by `docs/agent/workflow-jira.md`.
   - If missing, post that comment first and only then continue.
