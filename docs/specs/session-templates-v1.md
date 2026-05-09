@@ -241,6 +241,14 @@ After SCRUM-358 lands, `ImportVideoSources` no longer requires `SourceStorageNam
 
 ## Worked example
 
+The canonical, runnable example is in [`psuthar/talkback-templates`](https://github.com/psuthar/talkback-templates) — a public repo with one full hiring-committee session (6 materials: PDF, DOCX, CSV, PNG) plus the markdown / Pillow sources used to generate the binaries. Reference its template by URL when authoring your own:
+
+```
+https://psuthar.github.io/talkback-templates/hiring-committee/template.json
+```
+
+A minimal at-a-glance shape (full schema and per-kind details above):
+
 ```json
 {
   "version": 1,
@@ -248,28 +256,88 @@ After SCRUM-358 lands, `ImportVideoSources` no longer requires `SourceStorageNam
   "premise": "Are we on track to ship feature X this quarter?",
   "primary_decision": "Ship / hold / extend by 2 weeks.",
   "elements": [
-    {
-      "kind": "material",
-      "id": "agenda",
-      "title": "Agenda",
+    { "kind": "material", "id": "agenda", "title": "Agenda",
       "url": "https://templates.example.com/weekly/agenda.pdf",
-      "content_type": "application/pdf"
-    },
-    {
-      "kind": "link",
-      "id": "decision-policy",
-      "title": "Decision policy",
-      "url": "https://wiki.example.com/decision-policy"
-    },
-    {
-      "kind": "video_source",
-      "id": "session-recording",
-      "embed_url": "https://recordings.example.com/embed/abc123"
-    }
+      "content_type": "application/pdf" },
+    { "kind": "link", "id": "decision-policy", "title": "Decision policy",
+      "url": "https://wiki.example.com/decision-policy" },
+    { "kind": "video_source", "id": "session-recording",
+      "embed_url": "https://recordings.example.com/embed/abc123" }
   ],
-  "primary": {
-    "kind": "document",
-    "ref": "agenda"
-  }
+  "primary": { "kind": "document", "ref": "agenda" }
 }
 ```
+
+## Authoring a template
+
+This section is the end-to-end recipe for taking an idea ("here's a decision I want a TalkBack session for") to a populated session in the UI. The schema sections above describe what a template must look like; this section describes what to do with one.
+
+### 1. Where to host the template JSON and its referenced materials
+
+Recommended: a small public GitHub repo published via [GitHub Pages](https://pages.github.com/). The canonical example lives at [`psuthar/talkback-templates`](https://github.com/psuthar/talkback-templates) — fork it, replace `hiring-committee/` with your own scenario, push, enable Pages, and your URLs are live within a minute. Pages serves every file extension we use with the correct MIME type out of the box.
+
+**Pin to a stable URL.** GitHub Pages always serves the current state of `main`; if you want versioned URLs, version the directory (`hiring-committee-v2/`) rather than mutate the existing one, since outstanding TalkBack sessions reference the URL.
+
+### 2. Hosts that DON'T work, and why
+
+The TalkBack template worker stores the **HTTP-observed** Content-Type on the resulting `materials` row (see `internal/sessionimport/template/worker.go` — `observedCT` from the response headers wins over the template's declared `content_type`, which is validation-only). A wrong Content-Type lands materials mis-classified with no surfaced error.
+
+| Host | Symptom | Verdict |
+|---|---|---|
+| `raw.githubusercontent.com/...` | Every file served as `text/plain; charset=utf-8`, regardless of extension. | ❌ Out for binaries. |
+| Gist raw URLs | Same `text/plain` behavior. | ❌ Same problem. |
+| `cdn.jsdelivr.net/gh/...@<tag>/...` | Correct MIME for PDF / PNG / CSV / TXT, but **HTTP 403 Forbidden on Office formats** (`.docx`, `.xlsx`, `.pptx`) per their content policy. | ⚠️ Works only when no Office files. |
+| **GitHub Pages** | Correct MIME for every file extension we use. | ✅ Recommended. |
+
+### 3. Pre-flight Content-Type check
+
+Before submitting an import, run this one-liner against your hosted `template.json`:
+
+```bash
+for url in $(jq -r '.elements[].url // empty' template.json); do
+  printf '%-100s  %s\n' "$url" "$(curl -sI -L "$url" | awk -F': ' 'tolower($1)=="content-type"{print $2}')"
+done
+```
+
+Every URL must respond with the Content-Type the v1 allowlist expects (`application/pdf`, the openxmlformats DOCX/XLSX/PPTX MIMEs, `text/csv`, `text/plain`, `image/png`, `image/jpeg`). Any `text/plain` for a binary means a wrong host.
+
+### 4. Trigger an import
+
+The import endpoint is `POST /api/import-jobs` with the template descriptor as the request body:
+
+```bash
+curl -sf -X POST "https://your-talkback.example.com/api/import-jobs" \
+  -H "Cookie: <your TalkBack session cookie>" \
+  -H "Content-Type: application/json" \
+  --data-binary "$(curl -sL https://psuthar.github.io/talkback-templates/hiring-committee/template.json)"
+```
+
+Notes:
+
+- Authentication is required (`UserFromContext`); the calling user must have a role that allows session creation (`GlobalRole.CanCreateSessions()`).
+- The body must be the descriptor JSON itself, not a `{"template_url": ...}` envelope. The endpoint validates the body in two passes: schema validation (the same `ParseAndValidate` documented above) and a synchronous preflight pass that fetches every referenced URL with SSRF protection and confirms reachability + size limits. **A non-empty error response means zero DB writes have occurred** — the destination session row is created only by the worker after preflight passes.
+- See `docs/superpowers/specs/2026-05-08-session-template-http-import-design.md` for the full design rationale and the SSRF / size-limit defaults.
+
+### 5. Response and polling
+
+A successful submit returns HTTP 202 with the new job's id (and the destination session id, if the worker has already created the row):
+
+```json
+{ "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479" }
+```
+
+Validation or preflight failures return HTTP 400 with a structured `errors[]` array using the reason codes documented in `### Schema validator reason codes` (schema layer) plus the preflight-stage codes `url_unreachable`, `content_type_mismatch`, `body_too_large`, `redirect_loop`, `auth_required`, and `private_ip_blocked`.
+
+Poll the job state at `GET /api/import-jobs/<job_id>`:
+
+```bash
+curl -sf "https://your-talkback.example.com/api/import-jobs/<job_id>" \
+  -H "Cookie: <your TalkBack session cookie>" | jq '.state, .elements_state'
+```
+
+`state` is one of `queued`, `running`, `succeeded`, `partial`, `failed`. Per-element results live under `elements_state` keyed by the element id; each entry has a `status`, an optional `error_code`, and a human `message`. A terminal state of `succeeded` means every element was imported; `partial` means at least one element failed but the destination session was created and other elements landed; `failed` is a hard failure.
+
+### 6. End-to-end runnable reference
+
+[`psuthar/talkback-templates`](https://github.com/psuthar/talkback-templates) is the live example used to validate this section. Walk it end-to-end (host check → import → poll → verify the session in the UI) before authoring your own; it's the fastest path to a working baseline.
