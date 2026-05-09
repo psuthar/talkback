@@ -1,0 +1,128 @@
+name: Release Readiness (docs skip-hint)
+
+# SCRUM-377: branch protection on main requires `release-readiness` and
+# `TalkBack PR Gate` status checks. Both are emitted by
+# .github/workflows/release-readiness.yml, which (per SCRUM-348) skips
+# `**/*.md` and the docs/cursor/epic-run/claude path roots so doc PRs
+# don't burn CI minutes. Side effect: doc-only PRs trigger no checks
+# and are blocked permanently absent admin override (hit during the
+# SCRUM-372 epic on PR #335).
+#
+# This workflow is the inverse: it runs ONLY when at least one of those
+# docs paths changes, double-checks no non-docs path also changed
+# (mixed PRs are deferred to the real workflow), and then publishes the
+# two required checks with conclusion=success and a clear "skipped
+# because docs-only" message.
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '**/*.md'
+      - 'docs/**'
+      - '.cursor/**'
+      - '.epic-run/**'
+      - '.claude/**'
+
+# Cancel any in-progress run on the same ref so PR rebases / amend
+# pushes don't stack runs. Mirrors the pattern in release-readiness.yml.
+concurrency:
+  group: release-readiness-docs-skip-hint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+
+jobs:
+  publish-skip-hint:
+    # Skip drafts so iterative WIP commits don't burn cycles before the
+    # author marks the PR ready for review. Mirrors release-readiness.yml.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # Mirror SCRUM-368's targeted fetch (depth-50 of the base ref) so
+      # `git diff` against the PR base resolves on a shallow clone.
+      - name: Fetch base ref for git diff
+        shell: bash
+        run: git fetch --depth=50 origin "${{ github.event.pull_request.base.ref }}" || true
+
+      # Mixed-PR safety: if ANY changed path isn't in the docs allowlist,
+      # exit without publishing. The real release-readiness.yml will run
+      # for that PR (its paths-ignore won't match) and its checks will
+      # land normally. Without this guard a sneaky mixed PR could pass
+      # branch protection on the strength of the skip-hint alone.
+      - name: Confirm docs-only diff
+        id: docs_only
+        shell: bash
+        run: |
+          BASE="origin/${{ github.event.pull_request.base.ref }}"
+          CHANGED=$(git diff --name-only "$BASE" HEAD 2>/dev/null || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No file diff detected; refusing to publish skip-hint."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Each line: keep only paths that DON'T match the docs allowlist.
+          # Allowlist must stay in sync with the `paths:` trigger above and
+          # with release-readiness.yml's paths-ignore.
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '(^docs/|^\.cursor/|^\.epic-run/|^\.claude/|\.md$)' || true)
+          if [ -n "$NON_DOCS" ]; then
+            echo "::group::Non-docs paths changed; deferring to release-readiness.yml"
+            echo "$NON_DOCS"
+            echo "::endgroup::"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::group::Docs-only diff confirmed"
+            echo "$CHANGED"
+            echo "::endgroup::"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish skip-hint checks (release-readiness + TalkBack PR Gate)
+        if: steps.docs_only.outputs.publish == 'true'
+        uses: actions/github-script@v8
+        env:
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const headSha = context.payload.pull_request.head.sha;
+            const runUrl = (process.env.GITHUB_RUN_URL || '').trim();
+            const summary = [
+              'Docs-only PR — paths match the `paths-ignore` filter in `.github/workflows/release-readiness.yml` (SCRUM-348).',
+              'The full release-readiness pipeline correctly skipped to save CI minutes; this skip-hint stands in for the required status checks so docs PRs can merge without admin override.',
+            ].join('\n\n');
+            const text = [
+              '### Why this check exists',
+              '',
+              'Branch protection on `main` requires the `release-readiness` and `TalkBack PR Gate` status checks. The full release-readiness workflow is configured to skip `**/*.md`, `docs/**`, `.cursor/**`, `.epic-run/**`, and `.claude/**` paths so docs-only PRs don\'t burn CI minutes (SCRUM-348).',
+              '',
+              'Without an alternative producer for those two checks, doc PRs would be blocked indefinitely. SCRUM-377 added this workflow to publish them with `conclusion: success` whenever the PR diff is exclusively docs paths.',
+              '',
+              `### Workflow run`,
+              '',
+              runUrl || '(run URL unavailable)',
+            ].join('\n');
+            for (const name of ['release-readiness', 'TalkBack PR Gate']) {
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name,
+                head_sha: headSha,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `${name}: skipped (docs-only PR)`,
+                  summary,
+                  text,
+                },
+                ...(runUrl ? { details_url: runUrl } : {}),
+              });
+              console.log(`Published skip-hint check: ${name}`);
+            }
