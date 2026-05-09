@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import styles from './QAHistory.module.css'
 import { MicIcon } from './icons/MicIcon'
+import { TrashIcon } from './icons/TrashIcon'
 import { PolishButton } from './PolishButton'
 
 const ANSWER_STATUS_LABELS = {
@@ -270,30 +271,30 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
               {isUnread && (
                 <span className={styles.qaCardNewBadge}>New</span>
               )}
-              {/* SCRUM-367: kebab also visible while collapsed for root cards. */}
+              {/* SCRUM-370: trash icon also visible while collapsed for root cards. */}
               {!isReply && canDeleteQuestions && onRequestDelete && (
                 <button
                   type="button"
-                  data-testid={`question-kebab-${q.id}`}
-                  aria-label="Question actions"
+                  data-testid={`delete-question-trigger-${q.id}`}
+                  aria-label="Delete question"
                   onClick={(e) => {
                     e.stopPropagation()
                     onRequestDelete(q.id)
                   }}
-                  title="Delete question"
                   style={{
                     flexShrink: 0,
                     marginLeft: 'auto',
-                    padding: '0 8px',
-                    fontSize: '16px',
+                    padding: '4px 8px',
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
                     color: '#666',
-                    lineHeight: 1,
+                    lineHeight: 0,
+                    display: 'inline-flex',
+                    alignItems: 'center',
                   }}
                 >
-                  ⋮
+                  <TrashIcon />
                 </button>
               )}
             </div>
@@ -327,30 +328,30 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                     Reply
                   </button>
                 )}
-                {/* SCRUM-367: kebab menu — root question only, creator/admin only. */}
+                {/* SCRUM-370: trash icon — root question only, creator/admin only. */}
                 {!isReply && canDeleteQuestions && onRequestDelete && (
                   <button
                     type="button"
-                    data-testid={`question-kebab-${q.id}`}
-                    aria-label="Question actions"
+                    data-testid={`delete-question-trigger-${q.id}`}
+                    aria-label="Delete question"
                     onClick={(e) => {
                       e.stopPropagation()
                       onRequestDelete(q.id)
                     }}
-                    title="Delete question"
                     style={{
                       flexShrink: 0,
                       marginLeft: '6px',
                       padding: '4px 8px',
-                      fontSize: '16px',
                       background: 'none',
                       border: 'none',
                       cursor: 'pointer',
                       color: '#666',
-                      lineHeight: 1,
+                      lineHeight: 0,
+                      display: 'inline-flex',
+                      alignItems: 'center',
                     }}
                   >
-                    ⋮
+                    <TrashIcon />
                   </button>
                 )}
               </div>

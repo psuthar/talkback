@@ -8,6 +8,7 @@ import { resolvePrimaryAutoSelection } from '../components/sessionPrimaryAutoSel
 import { AddContentSection } from '../components/AddContentSection'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
+import { TrashIcon } from '../components/icons/TrashIcon'
 import { OrchestrationRecCard } from '../components/OrchestrationRecCard'
 import { OrchestrationRecGroup } from '../components/OrchestrationRecGroup'
 import { OrchestrationPanelHeader } from '../components/OrchestrationPanelHeader'
@@ -2494,12 +2495,12 @@ export function CreatorMode({
                                   </>
                                 )}
                               </div>
-                              {/* SCRUM-367: kebab menu — root question only, creator/admin only. */}
+                              {/* SCRUM-370: trash icon — root question only, creator/admin only. */}
                               {depth === 0 && canDeleteQuestions && requestDeleteQuestion && (
                                 <button
                                   type="button"
-                                  data-testid={`question-kebab-${q.id}`}
-                                  aria-label="Question actions"
+                                  data-testid={`delete-question-trigger-${q.id}`}
+                                  aria-label="Delete question"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     requestDeleteQuestion(q.id)
@@ -2509,16 +2510,16 @@ export function CreatorMode({
                                     marginLeft: 'auto',
                                     marginTop: 0,
                                     padding: '4px 8px',
-                                    fontSize: '16px',
                                     background: 'none',
                                     border: 'none',
                                     cursor: 'pointer',
                                     color: '#666',
-                                    lineHeight: 1,
+                                    lineHeight: 0,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
                                   }}
-                                  title="Delete question"
                                 >
-                                  ⋮
+                                  <TrashIcon />
                                 </button>
                               )}
                             </div>
