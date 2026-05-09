@@ -325,11 +325,44 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 		textStatus = models.MaterialTextStatusPending
 	case isImage:
 		textStatus = models.MaterialTextStatusReady
+	case (ext == ".csv" || contentType == "text/csv") && filePath != "":
+		// SCRUM-371: CSV is parsed synchronously via Go's stdlib so the
+		// markitdown sidecar isn't a hard dependency for this format
+		// (production was leaving CSVs stuck in `pending` whenever the
+		// sidecar wasn't configured — the previous fileExtractionGate
+		// path was the only one that handled .csv at all). On success
+		// we land at ready+text. On parse failure we fall back to the
+		// sidecar if it's enabled (preserves the existing async path
+		// semantics) and only land at `failed` when neither route is
+		// available — never silent `pending`.
+		if data, readErr := os.ReadFile(filePath); readErr == nil {
+			if md, csvErr := utils.CSVToMarkdown(data, utils.DefaultCSVMarkdownMaxBytes); csvErr == nil {
+				textStatus = models.MaterialTextStatusReady
+				extractedText = &md
+				log.Printf("SessionUploadMaterial: extracted %s text synchronously via CSVToMarkdown (%d bytes, no async job needed)", filename, len(md))
+			} else if fileExtractionGate {
+				// Sync failed but sidecar is wired up — defer to the
+				// existing async route. The downstream needsExtraction
+				// predicate sees fileExtractionGate==true + textStatus
+				// pending and enqueues the worker job as it always did.
+				textStatus = models.MaterialTextStatusPending
+				log.Printf("SessionUploadMaterial: CSV sync extraction failed for %s (%v); deferring to markitdown sidecar", filename, csvErr)
+			} else {
+				textStatus = models.MaterialTextStatusFailed
+				s := fmt.Sprintf("csv extraction failed: %v", csvErr)
+				errMsg = &s
+			}
+		} else {
+			textStatus = models.MaterialTextStatusFailed
+			s := readErr.Error()
+			errMsg = &s
+		}
 	case fileExtractionGate:
 		// SCRUM-332: defer extraction to the async worker so the markitdown
 		// sidecar can produce markdown for CSV/XLS/XLSX. Pre-empts the
 		// pure-Go excelize path below for .xlsx and the "other office types"
-		// async fallback for .xls.
+		// async fallback for .xls. SCRUM-371 carved .csv out of this case;
+		// only .xls and .xlsx now land here.
 		textStatus = models.MaterialTextStatusPending
 	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
 		content, err := os.ReadFile(filePath)
