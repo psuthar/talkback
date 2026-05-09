@@ -106,14 +106,28 @@ test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word di
 
   const QUESTION_TEXT = 'Quarterly revenue for Q3?'
   const seeded = await askQuestion(request, session.id, QUESTION_TEXT)
-  const { answer_id } = await getQuestionByText(request, session.id, QUESTION_TEXT)
-  expect(answer_id, 'expected an answer for the seeded question').toBeTruthy()
+
+  // The /ask endpoint's RAG-generated answer can come back with status='not_covered'
+  // in CI (timing of material indexing + LLM stubs). UpdateAnswerConfirmed rejects
+  // anything that isn't 'answered' with a 400, which makes the spec flaky.
+  // POST a manual answer (status='answered' by default) — this replaces the auto
+  // answer with a deterministic one we can confirm.
+  const manualRes = await request.post(`${API_BASE}/sessions/${session.id}/questions/${seeded.id}/answers`, {
+    data: { answer_text: 'Q3 sales were 4.2M dollars.', status: 'answered' },
+  })
+  if (!manualRes.ok()) {
+    throw new Error(`POST /sessions/${session.id}/questions/${seeded.id}/answers failed: ${manualRes.status()} ${await manualRes.text()}`)
+  }
+  const answer_id = (await manualRes.json()).id as string
+  expect(answer_id).toBeTruthy()
 
   // The answer-confirm route lives under SessionsRouter (no /api/ prefix).
   const confirmRes = await request.patch(`${API_BASE}/sessions/${session.id}/answers/${answer_id}/confirm`, {
     data: { confirmed: true },
   })
-  expect(confirmRes.ok()).toBe(true)
+  if (!confirmRes.ok()) {
+    throw new Error(`PATCH /sessions/${session.id}/answers/${answer_id}/confirm failed: ${confirmRes.status()} ${await confirmRes.text()}`)
+  }
 
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
