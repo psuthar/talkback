@@ -14,15 +14,14 @@ import {
   uniqueEmail,
 } from './fixtures'
 
-// SCRUM-367 — creator can delete a top-level question via kebab → modal with undo and live peer tombstone.
+// SCRUM-367 (initial delivery) + SCRUM-370 (trash icon, immediate-delete) — creator/admin can
+// delete a top-level question via trash icon → modal → confirm. DELETE fires immediately on
+// confirm; no undo window. Peer viewers see the question_deleted WS broadcast and render a
+// ~10s tombstone before the row is dropped.
 //
-// Each spec creates and tears down its own users/session so they can run independently. We use 60s
-// timeout because some specs cross multiple browser contexts and synchronous /ask calls.
+// Each spec creates and tears down its own users/session so they can run independently.
 test.setTimeout(60_000)
 
-// Helper: synchronously ask a question against the session and return the question object the
-// server persisted. The /api/sessions/:id/ask path is synchronous in this codebase — the Q+A
-// pair is in the database before the response returns, so the next GET /questions sees both rows.
 async function askQuestion(
   request: import('@playwright/test').APIRequestContext,
   sessionId: string,
@@ -33,7 +32,6 @@ async function askQuestion(
   })
   expect(res.ok()).toBe(true)
   const body = await res.json()
-  // Server returns { question, answer, ... } or { id, question_text } depending on shape — handle both.
   const q = body?.question ?? body
   return { id: q.id, question_text: q.question_text ?? text }
 }
@@ -54,52 +52,8 @@ async function getQuestionByText(
   return { id: q!.id, answer_id: a?.id }
 }
 
-// --- Spec 1: creator delete-undo (5s window) — question stays after Undo ---
-test('creator delete-undo: kebab → modal → confirm → Undo within 5s → question stays', async ({ page, context, request }) => {
-  const email = uniqueEmail('q-delete-undo')
-  const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Undo Creator')
-  const session = await createSession(request, 'QA Delete Undo E2E')
-  await pasteMaterial(request, session.id, 'Material', 'The board approved Project Alpha at 1.2M.')
-
-  const QUESTION_TEXT = 'What did the board approve?'
-  const seeded = await askQuestion(request, session.id, QUESTION_TEXT)
-
-  await page.goto(`/?session=${session.id}&mode=edit`)
-  await page.waitForLoadState('networkidle')
-
-  // CreatorMode renders its own thread tree (no question-item testid). The kebab
-  // testid is question-kebab-<id>. Use that as the stable selector.
-  const kebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(kebab).toBeVisible({ timeout: 15_000 })
-  await kebab.click()
-  const modal = page.getByTestId('delete-question-modal')
-  await expect(modal).toBeVisible()
-
-  // Confirm — optimistic remove + Undo toast.
-  await page.getByTestId('delete-question-confirm').click()
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
-  await expect(kebab).toHaveCount(0)
-
-  // Undo within 5s — question reappears.
-  await page.getByTestId('delete-question-undo-btn').click()
-  await expect(page.getByTestId('delete-question-undo-toast')).toHaveCount(0)
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toBeVisible({ timeout: 5_000 })
-
-  // Server-side: question still exists (no DELETE was fired).
-  const verify = await request.get(`${API_BASE}/sessions/${session.id}/questions`)
-  expect(verify.ok()).toBe(true)
-  const verifyBody = await verify.json()
-  const stillThere = (verifyBody.questions || []).find((q: { question_text: string }) => q.question_text === QUESTION_TEXT)
-  expect(stillThere).toBeTruthy()
-
-  // Cleanup
-  await loginAsAdmin(request)
-  await deleteSession(request, session.id)
-  await deleteUserViaAdmin(request, userId)
-})
-
-// --- Spec 2: creator confirm-delete past 5s → removed; reload → still gone ---
-test('creator confirm-delete: past 5s → question removed; reload → still gone', async ({ page, context, request }) => {
+// --- Spec 1: creator confirm-delete fires DELETE immediately; row stays gone after reload ---
+test('creator confirm-delete: confirm → DELETE fires immediately → row gone; reload → still gone', async ({ page, context, request }) => {
   const email = uniqueEmail('q-delete-confirm')
   const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Confirm Creator')
   const session = await createSession(request, 'QA Delete Confirm E2E')
@@ -111,24 +65,26 @@ test('creator confirm-delete: past 5s → question removed; reload → still gon
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
 
-  const kebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(kebab).toBeVisible({ timeout: 15_000 })
-  await kebab.click()
+  const trigger = page.getByTestId(`delete-question-trigger-${seeded.id}`)
+  await expect(trigger).toBeVisible({ timeout: 15_000 })
+  await trigger.click()
   await expect(page.getByTestId('delete-question-modal')).toBeVisible()
+
+  // Confirm: DELETE should fire immediately (no undo window).
+  const deletePromise = page.waitForResponse(
+    (resp) => resp.url().includes(`/sessions/${session.id}/questions/${seeded.id}`) && resp.request().method() === 'DELETE'
+  )
   await page.getByTestId('delete-question-confirm').click()
+  const deleteResp = await deletePromise
+  expect(deleteResp.status()).toBe(204)
 
-  // Wait for the 5s undo window to elapse so the DELETE actually fires.
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
-  await page.waitForTimeout(5500)
-  await expect(page.getByTestId('delete-question-undo-toast')).toHaveCount(0)
-
-  // Card stays gone for the originating client.
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toHaveCount(0)
+  // Trigger gone for the originating client.
+  await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
   // Reload — server confirms it really was deleted.
   await page.reload()
   await page.waitForLoadState('networkidle')
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toHaveCount(0)
+  await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
   const verify = await request.get(`${API_BASE}/sessions/${session.id}/questions`)
   expect(verify.ok()).toBe(true)
@@ -136,14 +92,13 @@ test('creator confirm-delete: past 5s → question removed; reload → still gon
   const stillThere = (verifyBody.questions || []).find((q: { question_text: string }) => q.question_text === QUESTION_TEXT)
   expect(stillThere).toBeFalsy()
 
-  // Cleanup
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
 })
 
-// --- Spec 3: confirmed-answer cascade requires type-to-confirm input ---
-test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word disables Delete', async ({ page, context, request }) => {
+// --- Spec 2: confirmed-answer cascade requires type-to-confirm input ---
+test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word disables Delete; correct word fires DELETE', async ({ page, context, request }) => {
   const email = uniqueEmail('q-delete-confirmed')
   const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Confirmed Creator')
   const session = await createSession(request, 'QA Delete Confirmed-answer E2E')
@@ -154,7 +109,6 @@ test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word di
   const { answer_id } = await getQuestionByText(request, session.id, QUESTION_TEXT)
   expect(answer_id, 'expected an answer for the seeded question').toBeTruthy()
 
-  // Mark the answer confirmed=true (creator-only endpoint; this user IS the creator).
   const confirmRes = await request.patch(`${API_BASE}/api/sessions/${session.id}/answers/${answer_id}/confirm`, {
     data: { confirmed: true },
   })
@@ -163,38 +117,39 @@ test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word di
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
 
-  const kebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(kebab).toBeVisible({ timeout: 15_000 })
-  await kebab.click()
+  const trigger = page.getByTestId(`delete-question-trigger-${seeded.id}`)
+  await expect(trigger).toBeVisible({ timeout: 15_000 })
+  await trigger.click()
   const modal = page.getByTestId('delete-question-modal')
   await expect(modal).toBeVisible()
 
-  // Type-to-confirm input must be present.
   const input = page.getByTestId('delete-question-type-confirm')
   await expect(input).toBeVisible()
   const confirmBtn = page.getByTestId('delete-question-confirm')
   await expect(confirmBtn).toBeDisabled()
 
-  // Wrong word: still disabled.
   await input.fill('nope')
   await expect(confirmBtn).toBeDisabled()
 
-  // Correct word ("Quarterly") — case-insensitive — enables Delete.
+  // Correct first word ("Quarterly") — case-insensitive — enables Delete.
   await input.fill('quarterly')
   await expect(confirmBtn).toBeEnabled()
+
+  const deletePromise = page.waitForResponse(
+    (resp) => resp.url().includes(`/sessions/${session.id}/questions/${seeded.id}`) && resp.request().method() === 'DELETE'
+  )
   await confirmBtn.click()
+  const deleteResp = await deletePromise
+  expect(deleteResp.status()).toBe(204)
 
-  // Optimistic remove + undo toast.
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toHaveCount(0)
+  await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
-  // Cleanup
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
 })
 
-// --- Spec 4: peer tombstone via WS — second context sees tombstone without refresh ---
+// --- Spec 3: peer tombstone via WS — second context sees tombstone without refresh ---
 test('peer tombstone via WS: participant in second context sees tombstone within WS-latency budget', async ({ page, context, request, browser }) => {
   const creatorEmail = uniqueEmail('q-delete-peer-creator')
   const creatorId = await createUserAndLoginWithId(context, request, creatorEmail, 'SmokePass123!', 'Peer Creator')
@@ -204,7 +159,6 @@ test('peer tombstone via WS: participant in second context sees tombstone within
   const QUESTION_TEXT = 'What were the highlights this quarter?'
   const seeded = await askQuestion(request, session.id, QUESTION_TEXT)
 
-  // --- Participant: separate browser context, separate API context for invitation accept ---
   const participantEmail = uniqueEmail('q-delete-peer-participant')
   const participantApi = await playwrightApiRequest.newContext()
   const pSignup = await participantApi.post(`${API_BASE}/api/auth/signup`, {
@@ -216,14 +170,12 @@ test('peer tombstone via WS: participant in second context sees tombstone within
   await participantApi.post(`${API_BASE}/api/auth/login`, {
     data: { email: participantEmail, password: 'SmokePass123!' },
   })
-  // Invite + accept so the participant has session access.
   const inv = await createInvitation(request, session.id, participantEmail, 'participant')
   const tokenQs = inv.accept_url.includes('?') ? inv.accept_url.split('?')[1] : ''
   const token = new URLSearchParams(tokenQs).get('token')
   const accept = await participantApi.post(`${API_BASE}/api/invitations/accept`, { data: { token } })
   expect(accept.ok()).toBe(true)
 
-  // Build a separate browser context for the participant and inject their cookies.
   const participantBrowserCtx = await browser.newContext()
   const loginRes = await participantApi.post(`${API_BASE}/api/auth/login`, {
     data: { email: participantEmail, password: 'SmokePass123!' },
@@ -233,28 +185,21 @@ test('peer tombstone via WS: participant in second context sees tombstone within
   await peerPage.goto(`/?session=${session.id}&mode=view`)
   await peerPage.waitForLoadState('networkidle')
 
-  // Both pages now see the question — peer uses QAHistory which sets data-testid="question-item".
   await expect(peerPage.locator('[data-testid="question-item"]').filter({ hasText: QUESTION_TEXT }).first()).toBeVisible({ timeout: 15_000 })
 
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
-  const creatorKebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(creatorKebab).toBeVisible({ timeout: 15_000 })
+  const creatorTrigger = page.getByTestId(`delete-question-trigger-${seeded.id}`)
+  await expect(creatorTrigger).toBeVisible({ timeout: 15_000 })
 
-  // Creator confirms delete.
-  await creatorKebab.click()
+  await creatorTrigger.click()
   await page.getByTestId('delete-question-confirm').click()
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
 
-  // Wait past the 5s undo window so the DELETE fires and the WS broadcast lands at the peer.
-  await page.waitForTimeout(5500)
-
-  // Peer should now show a tombstone for the question.
+  // DELETE fires immediately; the WS broadcast lands at the peer once the server processes it.
   const tombstone = peerPage.getByTestId('question-tombstone').first()
   await expect(tombstone).toBeVisible({ timeout: 8_000 })
   await expect(tombstone).toContainText(/deleted/i)
 
-  // Cleanup
   await participantBrowserCtx.close()
   await participantApi.dispose()
   await loginAsAdmin(request)
@@ -263,8 +208,8 @@ test('peer tombstone via WS: participant in second context sees tombstone within
   await deleteUserViaAdmin(request, participantId)
 })
 
-// --- Spec 5: participant has no kebab on any question ---
-test('participant view: no kebab affordance is shown on any question', async ({ page, context, request, browser }) => {
+// --- Spec 4: participant has no trash icon on any question ---
+test('participant view: no delete affordance is shown on any question', async ({ page, context, request, browser }) => {
   const creatorEmail = uniqueEmail('q-delete-noperm-creator')
   const creatorId = await createUserAndLoginWithId(context, request, creatorEmail, 'SmokePass123!', 'NoPerm Creator')
   const session = await createSession(request, 'QA Delete No-Permission E2E')
@@ -273,7 +218,6 @@ test('participant view: no kebab affordance is shown on any question', async ({ 
   const QUESTION_TEXT = 'A participant-visible question'
   await askQuestion(request, session.id, QUESTION_TEXT)
 
-  // Participant signs up and accepts the invite.
   const participantEmail = uniqueEmail('q-delete-noperm-participant')
   const participantApi = await playwrightApiRequest.newContext()
   const pSignup = await participantApi.post(`${API_BASE}/api/auth/signup`, {
@@ -300,14 +244,11 @@ test('participant view: no kebab affordance is shown on any question', async ({ 
   await participantPage.goto(`/?session=${session.id}&mode=view`)
   await participantPage.waitForLoadState('networkidle')
 
-  // Question card is visible to the participant.
   const card = participantPage.locator('[data-testid="question-item"]').filter({ hasText: QUESTION_TEXT }).first()
   await expect(card).toBeVisible({ timeout: 15_000 })
-  // Kebab must NOT exist for participants.
-  const kebabCount = await participantPage.locator('[data-testid^="question-kebab-"]').count()
-  expect(kebabCount).toBe(0)
+  const triggerCount = await participantPage.locator('[data-testid^="delete-question-trigger-"]').count()
+  expect(triggerCount).toBe(0)
 
-  // Cleanup
   await partCtx.close()
   await participantApi.dispose()
   await loginAsAdmin(request)
@@ -316,8 +257,8 @@ test('participant view: no kebab affordance is shown on any question', async ({ 
   await deleteUserViaAdmin(request, participantId)
 })
 
-// --- Spec 6: reply has no kebab in creator view ---
-test('reply has no kebab in creator view (only root cards)', async ({ page, context, request }) => {
+// --- Spec 5: reply has no trash icon in creator view ---
+test('reply has no delete affordance in creator view (only root cards)', async ({ page, context, request }) => {
   const email = uniqueEmail('q-delete-reply')
   const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Reply Creator')
   const session = await createSession(request, 'QA Delete Reply E2E')
@@ -334,31 +275,25 @@ test('reply has no kebab in creator view (only root cards)', async ({ page, cont
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
 
-  // Root card has a kebab.
-  const rootCardKebab = page.locator(`[data-testid="question-kebab-${root.id}"]`)
-  await expect(rootCardKebab).toBeVisible({ timeout: 15_000 })
+  const rootTrigger = page.locator(`[data-testid="delete-question-trigger-${root.id}"]`)
+  await expect(rootTrigger).toBeVisible({ timeout: 15_000 })
 
-  // Get the reply ID via the API response (parent_question_id linkage) and assert no kebab on it.
   const replyBody = await replyRes.json()
   const replyId = (replyBody?.question?.id ?? replyBody?.id) as string
   expect(replyId).toBeTruthy()
-  // The reply card is hidden by default until root is expanded; expand it first.
-  // The CreatorMode toggle button is the ▼/▷ next to the root card. Click it.
   const expandBtn = page.locator(`button[aria-label="Expand"]`).first()
   if (await expandBtn.isVisible({ timeout: 1_000 }).catch(() => false)) {
     await expandBtn.click()
   }
-  // Reply kebab must NOT exist.
-  await expect(page.locator(`[data-testid="question-kebab-${replyId}"]`)).toHaveCount(0)
+  await expect(page.locator(`[data-testid="delete-question-trigger-${replyId}"]`)).toHaveCount(0)
 
-  // Cleanup
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
 })
 
-// --- Spec 7: error path — server returns 404 (already deleted) → optimistic stays committed ---
-test('error path: server returns 404 (already deleted) → optimistic removal stays committed', async ({ page, context, request }) => {
+// --- Spec 6: error path — server returns 404 (already deleted) → optimistic stays committed, no error toast ---
+test('error path: server returns 404 (already deleted) → row stays gone, no error toast', async ({ page, context, request }) => {
   const email = uniqueEmail('q-delete-404')
   const userId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', '404 Creator')
   const session = await createSession(request, 'QA Delete 404 E2E')
@@ -367,8 +302,7 @@ test('error path: server returns 404 (already deleted) → optimistic removal st
   const QUESTION_TEXT = 'Already-deleted-elsewhere question'
   const seeded = await askQuestion(request, session.id, QUESTION_TEXT)
 
-  // Pre-route: stub the DELETE to return 404 from the network layer so the client hits the
-  // 404 branch even though the question is still in the DB on this run.
+  // Stub the DELETE to return 404 from the network layer.
   await page.route(`**/api/sessions/${session.id}/questions/${seeded.id}`, async (route) => {
     if (route.request().method() === 'DELETE') {
       await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'gone' }) })
@@ -380,28 +314,29 @@ test('error path: server returns 404 (already deleted) → optimistic removal st
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
 
-  const kebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(kebab).toBeVisible({ timeout: 15_000 })
-  await kebab.click()
+  const trigger = page.getByTestId(`delete-question-trigger-${seeded.id}`)
+  await expect(trigger).toBeVisible({ timeout: 15_000 })
+  await trigger.click()
+
+  const deletePromise = page.waitForResponse(
+    (resp) => resp.url().includes(`/sessions/${session.id}/questions/${seeded.id}`) && resp.request().method() === 'DELETE'
+  )
   await page.getByTestId('delete-question-confirm').click()
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
+  const deleteResp = await deletePromise
+  expect(deleteResp.status()).toBe(404)
 
-  // Wait past 5s for the DELETE to fire and return 404.
-  await page.waitForTimeout(5500)
-  // Optimistic removal is committed; no error toast.
+  // Optimistic removal stays committed; no error toast on 404.
   await expect(page.getByTestId('delete-question-error-toast')).toHaveCount(0)
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toHaveCount(0)
+  await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
-  // Cleanup (server still has the row — admin teardown drops the session).
   await page.unroute(`**/api/sessions/${session.id}/questions/${seeded.id}`)
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
 })
 
-// --- Spec 8 (auth-scope): global admin who is NOT the session creator can delete ---
-test('global admin (not session creator) sees the kebab and can delete a root question', async ({ page, context, request, browser }) => {
-  // Creator owns the session.
+// --- Spec 7 (auth-scope): global admin who is NOT the session creator can delete ---
+test('global admin (not session creator) sees the delete affordance and can delete a root question', async ({ page, context, request }) => {
   const creatorEmail = uniqueEmail('q-delete-admin-creator')
   const creatorApi = await playwrightApiRequest.newContext()
   const cSignup = await creatorApi.post(`${API_BASE}/api/auth/signup`, {
@@ -419,7 +354,6 @@ test('global admin (not session creator) sees the kebab and can delete a root qu
   const QUESTION_TEXT = 'Question deletable by admin only'
   const seeded = await askQuestion(creatorApi, session.id, QUESTION_TEXT)
 
-  // Admin signs into the page browser. Reuse the bootstrap admin (matches teardown).
   const adminLoginRes = await request.post(`${API_BASE}/api/auth/login`, {
     data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD },
   })
@@ -428,29 +362,29 @@ test('global admin (not session creator) sees the kebab and can delete a root qu
   }
   await injectCookiesFromResponse(context, adminLoginRes)
 
-  // Admin opens the session in edit mode. Server treats admin as a session editor.
   await page.goto(`/?session=${session.id}&mode=edit`)
   await page.waitForLoadState('networkidle')
 
-  const kebab = page.getByTestId(`question-kebab-${seeded.id}`)
-  await expect(kebab).toBeVisible({ timeout: 15_000 })
-  await kebab.click()
+  const trigger = page.getByTestId(`delete-question-trigger-${seeded.id}`)
+  await expect(trigger).toBeVisible({ timeout: 15_000 })
+  await trigger.click()
   await expect(page.getByTestId('delete-question-modal')).toBeVisible()
+
+  const deletePromise = page.waitForResponse(
+    (resp) => resp.url().includes(`/sessions/${session.id}/questions/${seeded.id}`) && resp.request().method() === 'DELETE'
+  )
   await page.getByTestId('delete-question-confirm').click()
-  await expect(page.getByTestId('delete-question-undo-toast')).toBeVisible()
+  const deleteResp = await deletePromise
+  expect(deleteResp.status()).toBe(204)
 
-  // Wait past 5s — server-side DELETE fires under admin auth.
-  await page.waitForTimeout(5500)
-  await expect(page.getByTestId(`question-kebab-${seeded.id}`)).toHaveCount(0)
+  await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
-  // Verify server-side deletion via creator's API context.
   const verify = await creatorApi.get(`${API_BASE}/sessions/${session.id}/questions`)
   expect(verify.ok()).toBe(true)
   const verifyBody = await verify.json()
   const stillThere = (verifyBody.questions || []).find((q: { question_text: string }) => q.question_text === QUESTION_TEXT)
   expect(stillThere).toBeFalsy()
 
-  // Cleanup
   await creatorApi.dispose()
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
