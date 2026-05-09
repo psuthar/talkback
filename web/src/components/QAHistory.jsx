@@ -201,7 +201,7 @@ function InlineReplyForm({
   )
 }
 
-function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, collapsed = false, onToggle, creatorDisplayName, replyingToQuestionId, inlineReplyProps, replyCount = 0 }) {
+function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, collapsed = false, onToggle, creatorDisplayName, replyingToQuestionId, inlineReplyProps, replyCount = 0, canDeleteQuestions = false, onRequestDelete }) {
   const answerFromLabel = (() => {
     if (!q.answer) return null
     if (q.answer.model && q.answer.model !== 'manual') {
@@ -212,6 +212,29 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
   const confirmedByLabel = creatorDisplayName || null
   const isReply = depth > 0
   const replyIndentPx = 28
+  // SCRUM-367: peer tombstone — render placeholder instead of full card.
+  if (q._tombstone) {
+    return (
+      <div
+        data-testid="question-tombstone"
+        style={{
+          marginBottom: '15px',
+          marginLeft: isReply ? replyIndentPx : 0,
+          padding: '12px 15px',
+          border: '1px dashed #bbb',
+          borderRadius: '5px',
+          color: '#777',
+          fontStyle: 'italic',
+          fontSize: '13px',
+          backgroundColor: '#fafafa',
+          opacity: 0.7,
+          transition: 'opacity 0.6s ease',
+        }}
+      >
+        This question was deleted by the creator
+      </div>
+    )
+  }
   return (
     <div
       data-testid="question-item"
@@ -247,6 +270,32 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
               {isUnread && (
                 <span className={styles.qaCardNewBadge}>New</span>
               )}
+              {/* SCRUM-367: kebab also visible while collapsed for root cards. */}
+              {!isReply && canDeleteQuestions && onRequestDelete && (
+                <button
+                  type="button"
+                  data-testid={`question-kebab-${q.id}`}
+                  aria-label="Question actions"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRequestDelete(q.id)
+                  }}
+                  title="Delete question"
+                  style={{
+                    flexShrink: 0,
+                    marginLeft: 'auto',
+                    padding: '0 8px',
+                    fontSize: '16px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#666',
+                    lineHeight: 1,
+                  }}
+                >
+                  ⋮
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -276,6 +325,32 @@ function QACard({ q, isUnread = false, onCitationClick, onReply, depth = 0, coll
                     className={styles.qaCardReplyBtn}
                   >
                     Reply
+                  </button>
+                )}
+                {/* SCRUM-367: kebab menu — root question only, creator/admin only. */}
+                {!isReply && canDeleteQuestions && onRequestDelete && (
+                  <button
+                    type="button"
+                    data-testid={`question-kebab-${q.id}`}
+                    aria-label="Question actions"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRequestDelete(q.id)
+                    }}
+                    title="Delete question"
+                    style={{
+                      flexShrink: 0,
+                      marginLeft: '6px',
+                      padding: '4px 8px',
+                      fontSize: '16px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#666',
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⋮
                   </button>
                 )}
               </div>
@@ -346,7 +421,7 @@ function countReplies(byParent, rootId) {
   return n
 }
 
-function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, onReply, depth = 0, expandedCards = {}, onToggleCard, creatorDisplayName, replyingToQuestionId, inlineReplyProps }) {
+function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, onReply, depth = 0, expandedCards = {}, onToggleCard, creatorDisplayName, replyingToQuestionId, inlineReplyProps, canDeleteQuestions = false, onRequestDelete }) {
   const isRootLevel = depth === 0
   return (
     <>
@@ -371,6 +446,8 @@ function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, 
               replyingToQuestionId={replyingToQuestionId}
               inlineReplyProps={inlineReplyProps}
               replyCount={isRootLevel ? replyCount : 0}
+              canDeleteQuestions={canDeleteQuestions}
+              onRequestDelete={onRequestDelete}
             />
             {showReplies && hasReplies && (
               <div className={styles.threadRepliesIndent}>
@@ -386,6 +463,8 @@ function ThreadList({ roots, byParent, unreadQuestionIds = [], onCitationClick, 
                   creatorDisplayName={creatorDisplayName}
                   replyingToQuestionId={replyingToQuestionId}
                   inlineReplyProps={inlineReplyProps}
+                  canDeleteQuestions={canDeleteQuestions}
+                  onRequestDelete={onRequestDelete}
                 />
               </div>
             )}
@@ -425,7 +504,9 @@ export function QAHistory({
   polishQuestionText,
   voicePolishing,
   voicePolishMode,
-  askQuestionFeedback
+  askQuestionFeedback,
+  canDeleteQuestions = false,
+  requestDeleteQuestion
 }) {
   // Per-question collapse/expand. Answered cards default to expanded on first load.
   const [expandedCards, setExpandedCards] = useState({})
@@ -532,6 +613,8 @@ export function QAHistory({
         creatorDisplayName={creatorDisplayName}
         replyingToQuestionId={replyingToQuestionId}
         inlineReplyProps={inlineReplyProps}
+        canDeleteQuestions={canDeleteQuestions}
+        onRequestDelete={requestDeleteQuestion}
       />
     </div>
   )

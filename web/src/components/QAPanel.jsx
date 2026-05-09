@@ -9,6 +9,8 @@ export function QAPanel({
   unreadQuestionIds = [],
   markQuestionViewed,
   sessionId,
+  canDeleteQuestions = false,
+  requestDeleteQuestion,
   loading,
   questionText,
   setQuestionText,
@@ -172,6 +174,8 @@ export function QAPanel({
           markQuestionViewed={markQuestionViewed}
           sessionId={sessionId}
           readOnly={false}
+          canDeleteQuestions={canDeleteQuestions}
+          requestDeleteQuestion={requestDeleteQuestion}
           currentAskerName={currentAskerName}
           onCitationClick={onCitationClick}
           onReply={setReplyingToQuestionId ? (q) => setReplyingToQuestionId(q.id) : undefined}

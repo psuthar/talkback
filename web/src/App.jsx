@@ -9,6 +9,7 @@ import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { ImportTemplatePage } from './components/ImportTemplatePage'
 import { SessionSkeleton } from './components/SessionSkeleton'
+import { DeleteQuestionModal } from './components/DeleteQuestionModal'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { isValidEmailFormat } from './utils/inviteMailto'
 import { roleLabel } from './utils/roleLabels'
@@ -233,6 +234,19 @@ function App() {
   const [mockQuestions, setMockQuestions] = useState([]) // In-memory mock questions (not persisted)
   const [mockQuestionLoading, setMockQuestionLoading] = useState(false)
   const [confirmingAnswerId, setConfirmingAnswerId] = useState(null)
+  // SCRUM-367: question deletion (creator/admin only — UI gate; server enforces).
+  // pendingDeleteQuestionIds: question IDs the originating client filters out optimistically while the
+  // 5s undo window is open. Stored as the *full cascade* (root + replies) so any tab on this client
+  // hides every affected card — undo restores all of them.
+  const [pendingDeleteQuestionIds, setPendingDeleteQuestionIds] = useState(() => new Set())
+  // tombstoneQuestionIds: peer client tombstone window after question_deleted WS event.
+  const [tombstoneQuestionIds, setTombstoneQuestionIds] = useState(() => new Set())
+  // deleteUndoToast: { rootId, deletedIds, replyCount, timeoutId } shown for 5s.
+  const [deleteUndoToast, setDeleteUndoToast] = useState(null)
+  // deleteModalState: { rootId, replyCount, deletedIds, hasConfirmedAnswer } when open.
+  const [deleteModalState, setDeleteModalState] = useState(null)
+  // deleteErrorToast: { message, retryFn } for transient delete failures (network, 403).
+  const [deleteErrorToast, setDeleteErrorToast] = useState(null)
   const [videoFile, setVideoFile] = useState(null) // MP4 file for upload
   const [videoFileUploading, setVideoFileUploading] = useState(false)
   const [loomVideoSource, setLoomVideoSource] = useState(null) // Video source that requires upload (Loom)
@@ -2882,6 +2896,161 @@ function App() {
     } catch (_) { /* ignore */ }
   }, [apiBaseUrl, effectiveParticipantRefForQuestions])
 
+  // SCRUM-367: collect every descendant question id (including the root) for cascade delete.
+  // The peer broadcast carries deleted_ids[]; the originating client computes the same locally
+  // so its optimistic remove + undo restore acts on the full cascade.
+  const collectCascadeIds = useCallback((rootId) => {
+    if (!rootId) return []
+    const byParent = {}
+    for (const q of questions) {
+      const pid = q.parent_question_id ?? null
+      if (pid != null) {
+        if (!byParent[pid]) byParent[pid] = []
+        byParent[pid].push(q.id)
+      }
+    }
+    const out = [rootId]
+    const stack = [rootId]
+    while (stack.length) {
+      const id = stack.pop()
+      const children = byParent[id] || []
+      for (const c of children) {
+        out.push(c)
+        stack.push(c)
+      }
+    }
+    return out
+  }, [questions])
+
+  const cascadeHasConfirmedAnswer = useCallback((ids) => {
+    if (!ids || ids.length === 0) return false
+    const set = new Set(ids.map(String))
+    return questions.some((q) => set.has(String(q.id)) && q.answer && q.answer.confirmed === true)
+  }, [questions])
+
+  // Open the delete confirmation modal for a top-level (root) question.
+  const requestDeleteQuestion = useCallback((rootId) => {
+    if (!rootId) return
+    const ids = collectCascadeIds(rootId)
+    const root = questions.find((q) => String(q.id) === String(rootId))
+    if (!root) return
+    setDeleteModalState({
+      rootId,
+      rootQuestion: root,
+      deletedIds: ids,
+      replyCount: Math.max(0, ids.length - 1),
+      hasConfirmedAnswer: cascadeHasConfirmedAnswer(ids),
+    })
+  }, [collectCascadeIds, cascadeHasConfirmedAnswer, questions])
+
+  const cancelDeleteQuestion = useCallback(() => {
+    setDeleteModalState(null)
+  }, [])
+
+  // Run the actual DELETE call after the 5s undo grace expires (or on toast close).
+  const fireDeleteRequest = useCallback(async (sid, rootId, deletedIds) => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/sessions/${sid}/questions/${rootId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.status === 204) {
+        // Server confirmed; clear pending IDs (own WS event is ignored by us via the same set).
+        setPendingDeleteQuestionIds((prev) => {
+          const next = new Set(prev)
+          for (const id of deletedIds) next.delete(String(id))
+          return next
+        })
+        // Drop the rows from the canonical questions array so refetches don't re-add them.
+        setQuestions((prev) => prev.filter((q) => !deletedIds.some((id) => String(id) === String(q.id))))
+        return
+      }
+      if (res.status === 404) {
+        // Already gone elsewhere — keep optimistic removal, refetch to reconcile.
+        setPendingDeleteQuestionIds((prev) => {
+          const next = new Set(prev)
+          for (const id of deletedIds) next.delete(String(id))
+          return next
+        })
+        setQuestions((prev) => prev.filter((q) => !deletedIds.some((id) => String(id) === String(q.id))))
+        return
+      }
+      if (res.status === 403) {
+        // Restore optimistic removal so the user sees the question again.
+        setPendingDeleteQuestionIds((prev) => {
+          const next = new Set(prev)
+          for (const id of deletedIds) next.delete(String(id))
+          return next
+        })
+        setDeleteErrorToast({ message: "You don't have permission to delete this." })
+        setTimeout(() => setDeleteErrorToast(null), 5000)
+        return
+      }
+      // Other server error — restore optimistic removal and surface error.
+      setPendingDeleteQuestionIds((prev) => {
+        const next = new Set(prev)
+        for (const id of deletedIds) next.delete(String(id))
+        return next
+      })
+      setDeleteErrorToast({
+        message: "Couldn't delete — please try again.",
+        retryFn: () => fireDeleteRequest(sid, rootId, deletedIds),
+      })
+    } catch (_) {
+      // Network failure — restore and offer Retry.
+      setPendingDeleteQuestionIds((prev) => {
+        const next = new Set(prev)
+        for (const id of deletedIds) next.delete(String(id))
+        return next
+      })
+      setDeleteErrorToast({
+        message: "Couldn't delete — check your connection.",
+        retryFn: () => {
+          // Re-add to pending while retry is in flight (consistent UX).
+          setPendingDeleteQuestionIds((prev) => {
+            const next = new Set(prev)
+            for (const id of deletedIds) next.add(String(id))
+            return next
+          })
+          fireDeleteRequest(sid, rootId, deletedIds)
+        },
+      })
+    }
+  }, [apiBaseUrl])
+
+  // Confirm-delete: optimistic remove + 5s undo timer + DELETE on expiry.
+  const confirmDeleteQuestion = useCallback(() => {
+    if (!deleteModalState) return
+    const sid = currentSession?.session?.id || currentSession?.id
+    const { rootId, deletedIds, replyCount } = deleteModalState
+    setDeleteModalState(null)
+    if (!sid || !rootId || !deletedIds?.length) return
+    // Optimistic remove for the originating client only (peer clients react to WS).
+    setPendingDeleteQuestionIds((prev) => {
+      const next = new Set(prev)
+      for (const id of deletedIds) next.add(String(id))
+      return next
+    })
+    // 5s undo timer fires the DELETE.
+    const timeoutId = setTimeout(() => {
+      setDeleteUndoToast(null)
+      fireDeleteRequest(sid, rootId, deletedIds)
+    }, 5000)
+    setDeleteUndoToast({ rootId, deletedIds, replyCount, timeoutId })
+  }, [deleteModalState, currentSession, fireDeleteRequest])
+
+  const undoDeleteQuestion = useCallback(() => {
+    if (!deleteUndoToast) return
+    const { deletedIds, timeoutId } = deleteUndoToast
+    if (timeoutId) clearTimeout(timeoutId)
+    setPendingDeleteQuestionIds((prev) => {
+      const next = new Set(prev)
+      for (const id of deletedIds) next.delete(String(id))
+      return next
+    })
+    setDeleteUndoToast(null)
+  }, [deleteUndoToast])
+
   const sessionId = currentSession?.session?.id || currentSession?.id
   const hasValidSession = currentSession && sessionId
 
@@ -3074,8 +3243,35 @@ function App() {
         }
       }
       maybeBumpOrchestrationRefresh()
+    } else if (message.type === 'question_deleted' && data) {
+      // SCRUM-367: peer-side tombstone-then-fade for the cascade.
+      // Originating client already removed optimistically; ignore if the IDs are
+      // still in pendingDeleteQuestionIds.
+      const deletedIds = Array.isArray(data.deleted_ids) ? data.deleted_ids : []
+      const rootId = data.question_id
+      const idsToTombstone = deletedIds.length > 0 ? deletedIds : (rootId ? [rootId] : [])
+      if (idsToTombstone.length === 0) return
+      // Skip if this is our own deletion echo (still pending).
+      const allOurs = idsToTombstone.every((id) => pendingDeleteQuestionIds.has(String(id)))
+      if (allOurs) return
+      console.log('WebSocket: Question deleted, tombstoning ids:', idsToTombstone)
+      setTombstoneQuestionIds((prev) => {
+        const next = new Set(prev)
+        for (const id of idsToTombstone) next.add(String(id))
+        return next
+      })
+      // After ~10s fade, remove from questions state and tombstone set.
+      setTimeout(() => {
+        setTombstoneQuestionIds((prev) => {
+          const next = new Set(prev)
+          for (const id of idsToTombstone) next.delete(String(id))
+          return next
+        })
+        setQuestions((prev) => prev.filter((q) => !idsToTombstone.some((id) => String(id) === String(q.id))))
+      }, 10000)
+      maybeBumpOrchestrationRefresh()
     }
-  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, currentSession, isParticipantMode, viewMode, setStanceVersion, setCurrentSession, setSessionMode, setMySessions])
+  }, [effectiveSessionId, fetchSessionQuestions, refetchSession, fetchSessionInvitations, currentSession?.session?.id, currentSession?.id, currentSession, isParticipantMode, viewMode, setStanceVersion, setCurrentSession, setSessionMode, setMySessions, pendingDeleteQuestionIds])
 
   // Clear all question state when session changes so we never show the previous session's questions
   useEffect(() => {
@@ -3089,12 +3285,38 @@ function App() {
     setOrchestrationRefreshTrigger(0)
   }, [effectiveSessionId])
 
+  // SCRUM-367: filter out optimistically-removed questions for the originating client and
+  // mark peer-tombstoned ones with a _tombstone flag so QAHistory can render the placeholder.
+  // Also clear session-level deletion state when the session changes.
+  useEffect(() => {
+    setPendingDeleteQuestionIds(new Set())
+    setTombstoneQuestionIds(new Set())
+    setDeleteModalState(null)
+    setDeleteUndoToast(null)
+    setDeleteErrorToast(null)
+  }, [effectiveSessionId])
+
   // Server questions + mock, sorted by created_at. No optimistic pending so only one entry per question.
   const displayQuestions = useMemo(() => {
     const combined = [...questions, ...mockQuestions]
+      .filter((q) => !pendingDeleteQuestionIds.has(String(q.id)))
+      .map((q) => tombstoneQuestionIds.has(String(q.id)) ? { ...q, _tombstone: true } : q)
     combined.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
     return combined
-  }, [questions, mockQuestions])
+  }, [questions, mockQuestions, pendingDeleteQuestionIds, tombstoneQuestionIds])
+
+  // SCRUM-367: client-side gate for the kebab affordance. Mirrors the server's
+  // userIsSessionEditor (admin OR session creator). Promoted creators are not
+  // distinguished here — the server enforces the boundary; UI hiding is convenience only.
+  const canDeleteQuestions = useMemo(() => {
+    if (!authUser) return false
+    if (authUser.global_role === 'admin') return true
+    const createdBy = currentSession?.session?.created_by
+    if (createdBy && authUser.email && String(createdBy).toLowerCase() === String(authUser.email).toLowerCase()) {
+      return true
+    }
+    return false
+  }, [authUser, currentSession?.session?.created_by])
 
   // Resolve selected video from session using ref (user's chosen id) so selection survives refetches; sync ref when we fall back to primary
   useEffect(() => {
@@ -4441,6 +4663,8 @@ function App() {
               unreadQuestionIds={unreadQuestionIds}
               markQuestionViewed={markQuestionViewed}
               fetchSessionQuestions={fetchSessionQuestions}
+              canDeleteQuestions={canDeleteQuestions}
+              requestDeleteQuestion={requestDeleteQuestion}
               loading={loading}
               apiBaseUrl={apiBaseUrl}
               creatorIdentity={creatorIdentity}
@@ -4493,6 +4717,8 @@ function App() {
                 unreadQuestionIds={unreadQuestionIds}
                 markQuestionViewed={markQuestionViewed}
                 fetchSessionQuestions={fetchSessionQuestions}
+                canDeleteQuestions={canDeleteQuestions}
+                requestDeleteQuestion={requestDeleteQuestion}
                 loading={loading}
                 apiBaseUrl={apiBaseUrl}
                 creatorIdentity={creatorIdentity}
@@ -4548,6 +4774,103 @@ function App() {
       )}
 
       </>
+      )}
+      {/* SCRUM-367: cascade-aware delete confirmation modal (root question only). */}
+      {deleteModalState && (
+        <DeleteQuestionModal
+          question={deleteModalState.rootQuestion}
+          replyCount={deleteModalState.replyCount}
+          hasConfirmedAnswer={deleteModalState.hasConfirmedAnswer}
+          onCancel={cancelDeleteQuestion}
+          onConfirm={confirmDeleteQuestion}
+        />
+      )}
+      {/* SCRUM-367: 5s undo toast after optimistic remove. */}
+      {deleteUndoToast && (
+        <div
+          data-testid="delete-question-undo-toast"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: '32px',
+            transform: 'translateX(-50%)',
+            padding: '12px 18px',
+            background: '#323232',
+            color: '#fff',
+            borderRadius: '6px',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+            zIndex: 1200,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px',
+            fontSize: '14px',
+          }}
+        >
+          <span>Question deleted.</span>
+          <button
+            type="button"
+            data-testid="delete-question-undo-btn"
+            onClick={undoDeleteQuestion}
+            style={{
+              background: 'transparent',
+              color: 'var(--color-primary-bg)',
+              border: 'none',
+              padding: '4px 8px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '14px',
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
+      {/* SCRUM-367: error toast for transient delete failures. */}
+      {deleteErrorToast && (
+        <div
+          data-testid="delete-question-error-toast"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: '32px',
+            transform: 'translateX(-50%)',
+            padding: '12px 18px',
+            background: 'var(--color-danger-mid)',
+            color: '#fff',
+            borderRadius: '6px',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+            zIndex: 1200,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px',
+            fontSize: '14px',
+          }}
+        >
+          <span>{deleteErrorToast.message}</span>
+          {deleteErrorToast.retryFn && (
+            <button
+              type="button"
+              data-testid="delete-question-retry-btn"
+              onClick={() => {
+                const fn = deleteErrorToast.retryFn
+                setDeleteErrorToast(null)
+                fn?.()
+              }}
+              style={{
+                background: 'transparent',
+                color: '#fff',
+                border: '1px solid #fff',
+                padding: '4px 10px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                borderRadius: '4px',
+              }}
+            >
+              Retry
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
