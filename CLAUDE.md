@@ -13,6 +13,10 @@ This is the repository entrypoint for agent behavior. Keep this file concise and
 - Subagent and test routing: `docs/agent/subagent-routing.md`
 - Rule ownership map: `docs/agent/rule-ownership.md`
 
+## Feature Specs
+
+- Session templates (v1) — schema, validation, authoring guide: `docs/specs/session-templates-v1.md` (canonical example: [psuthar/talkback-templates](https://github.com/psuthar/talkback-templates))
+
 ## Global Non-negotiables
 
 1. Follow Jira sequence: In Progress before implementation work, In Review after PR, Done only on successful FULL_AUTO merge.
