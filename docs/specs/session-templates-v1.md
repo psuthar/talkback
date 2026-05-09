@@ -1,8 +1,8 @@
 # Session Templates — v1 Schema Specification
 
-**Status:** Draft (SCRUM-351)
+**Status:** v1 (shipped)
 **Owner:** SCRUM-350 epic
-**Consumed by:** SCRUM-352 (preflight), SCRUM-357 (job model), SCRUM-358 (storage refactor)
+**Implemented across:** SCRUM-351 (schema), SCRUM-352 (preflight), SCRUM-357 (worker + import job model), SCRUM-358 (storage refactor), SCRUM-362 (top-level metadata + primary pointer), SCRUM-363 (element-shape variants + segments_url)
 
 A session template is a JSON descriptor that materializes a fresh session by fetching public HTTP(S) references and threading them through the existing `internal/sessionimport` primitives. Templates and `CopySession` share the same destination-side primitives via the `SourceData` adapter seam.
 
@@ -204,6 +204,8 @@ type ValidationError struct {
 | `video_source_url_missing` | Neither `embed_url` nor `video_url` supplied. |
 | `transcript_url_missing` | Neither `text_url` nor `segments_url` supplied. |
 | `provider_unsupported` | `video_source.provider` not in the constraint allowlist. |
+| `descriptor_too_large` | Template descriptor body exceeds 256 KiB (`MaxDescriptorBytes` in `internal/sessionimport/template/template.go`). |
+| `too_many_elements` | More than 100 elements in `elements[]` (`MaxElements`). |
 
 The preflight stage (SCRUM-352) emits its own reason codes (`url_unreachable`, `content_type_mismatch`, `body_too_large`, `redirect_loop`, `auth_required`, `private_ip_blocked`, …); the schema validator does not.
 
