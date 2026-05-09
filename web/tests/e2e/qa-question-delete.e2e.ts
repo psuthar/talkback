@@ -109,7 +109,8 @@ test('confirmed-answer cascade: modal shows type-to-confirm input; wrong word di
   const { answer_id } = await getQuestionByText(request, session.id, QUESTION_TEXT)
   expect(answer_id, 'expected an answer for the seeded question').toBeTruthy()
 
-  const confirmRes = await request.patch(`${API_BASE}/api/sessions/${session.id}/answers/${answer_id}/confirm`, {
+  // The answer-confirm route lives under SessionsRouter (no /api/ prefix).
+  const confirmRes = await request.patch(`${API_BASE}/sessions/${session.id}/answers/${answer_id}/confirm`, {
     data: { confirmed: true },
   })
   expect(confirmRes.ok()).toBe(true)
@@ -302,8 +303,9 @@ test('error path: server returns 404 (already deleted) → row stays gone, no er
   const QUESTION_TEXT = 'Already-deleted-elsewhere question'
   const seeded = await askQuestion(request, session.id, QUESTION_TEXT)
 
-  // Stub the DELETE to return 404 from the network layer.
-  await page.route(`**/api/sessions/${session.id}/questions/${seeded.id}`, async (route) => {
+  // Stub the DELETE to return 404. App.jsx fetches `${apiBaseUrl}/sessions/...` (no /api/ prefix),
+  // so the route glob must match that shape.
+  await page.route(`**/sessions/${session.id}/questions/${seeded.id}`, async (route) => {
     if (route.request().method() === 'DELETE') {
       await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'gone' }) })
       return
@@ -329,7 +331,7 @@ test('error path: server returns 404 (already deleted) → row stays gone, no er
   await expect(page.getByTestId('delete-question-error-toast')).toHaveCount(0)
   await expect(page.getByTestId(`delete-question-trigger-${seeded.id}`)).toHaveCount(0)
 
-  await page.unroute(`**/api/sessions/${session.id}/questions/${seeded.id}`)
+  await page.unroute(`**/sessions/${session.id}/questions/${seeded.id}`)
   await loginAsAdmin(request)
   await deleteSession(request, session.id)
   await deleteUserViaAdmin(request, userId)
