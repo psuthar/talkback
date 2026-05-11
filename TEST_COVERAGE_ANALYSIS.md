@@ -34,7 +34,7 @@ Most tests have positive cases, but several areas are missing negative test case
 
 ### ⚠️ **video_sources_test.go** - NEEDS IMPROVEMENT
 - **TestCreateVideoSource**: ✅ Positive only
-  - ✅ Creates with loom provider
+  - ✅ Creates with embed mode
   - ✅ Creates with zoom provider
   - ❌ Missing: Negative tests (invalid artifact_id, invalid provider, missing required fields)
 - **TestGetVideoSourceByArtifactID**: ✅ Positive + ✅ Negative
@@ -68,7 +68,7 @@ Most tests have positive cases, but several areas are missing negative test case
   - ✅ Returns 400 for invalid artifact id
   - ✅ Returns 404 for non-existent artifact
 - **TestAttachVideoURL**: ✅ Positive + ✅ Negative
-  - ✅ Attaches video URL with loom provider
+  - ✅ Attaches video URL with default provider
   - ✅ Returns 400 when video_url is missing
   - ⚠️ Missing: Invalid artifact_id, invalid provider, non-existent artifact
 

@@ -668,7 +668,7 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 		defer cleanup()
 		log.Printf("Using local file: %s", tempFile)
 	} else if strings.HasPrefix(job.SourceURL, "http://") || strings.HasPrefix(job.SourceURL, "https://") {
-		// Direct HTTP(S) URL (e.g. R2 presigned GET) - download without Loom resolver
+		// Direct HTTP(S) URL (e.g. R2 presigned GET) - download directly.
 		jobIDStr := job.ID.String()
 		var downloadErr error
 		tempFile, cleanup, downloadErr = jp.service.DownloadMedia(ctx, job.SourceURL, jobIDStr)
@@ -682,44 +682,11 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 		defer cleanup()
 		log.Printf("Downloaded media from URL for transcription")
 	} else {
-		// Remote URL - resolve and download (Loom logic)
-		resolver := NewLoomResolver()
-		info, resolveErr := resolver.ResolveMedia(ctx, job.SourceURL, job.LoomPassword)
-		if resolveErr != nil {
-			log.Printf("Failed to resolve Loom URL: %v", resolveErr)
-			errMsg := fmt.Sprintf("Failed to resolve Loom URL: %v", resolveErr)
-			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
-			return
-		}
-		if info.MediaURL == "" {
-			errMsg := "Unable to resolve downloadable media URL - video may be private"
-			log.Printf("%s", errMsg)
-			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
-			return
-		}
-		if strings.Contains(info.MediaURL, ".m3u8") || strings.Contains(info.MediaURL, "playlist") {
-			errMsg := "Loom returned an HLS playlist (.m3u8) URL which Whisper API cannot process. This video may only be available in streaming format. Please upload the transcript manually, or contact Loom to request direct MP4 access for this video."
-			log.Printf("%s (URL: %s)", errMsg, info.MediaURL)
-			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
-			return
-		}
-		if err := jp.db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusDownloading, &info.MediaURL); err != nil {
-			log.Printf("Failed to update job progress: %v", err)
-		}
-		jobIDStr := job.ID.String()
-		var downloadErr error
-		tempFile, cleanup, downloadErr = jp.service.DownloadMedia(ctx, info.MediaURL, jobIDStr)
-		if downloadErr != nil {
-			log.Printf("Failed to download media: %v", downloadErr)
-			errMsg := fmt.Sprintf("Failed to download media: %v", downloadErr)
-			jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
-			jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
-			return
-		}
-		defer cleanup()
+		errMsg := fmt.Sprintf("Unsupported source URL scheme for transcript job: %s", job.SourceURL)
+		log.Printf("%s", errMsg)
+		jp.db.FailTranscriptJob(ctx, job.ID, errMsg)
+		jp.db.UpdateVideoSourceIngestionStatus(ctx, job.VideoSourceID, models.VideoTranscriptStatusFailed, &errMsg)
+		return
 	}
 
 	// Update status to transcribing
@@ -801,11 +768,10 @@ func (jp *JobProcessor) processJob(ctx context.Context, job *models.TranscriptJo
 }
 
 // ProcessTranscriptJob is a convenience function to process a transcript job
-// This should be called from handlers to enqueue a job
-// password is optional and used for password-protected Loom videos
-func ProcessTranscriptJob(ctx context.Context, db *database.DB, videoSourceID uuid.UUID, sessionID uuid.UUID, loomURL string, password *string, processor *JobProcessor) error {
+// This should be called from handlers to enqueue a job for the given source URL.
+func ProcessTranscriptJob(ctx context.Context, db *database.DB, videoSourceID uuid.UUID, sessionID uuid.UUID, sourceURL string, processor *JobProcessor) error {
 	// Check for existing job with same key (idempotency)
-	jobKey := GenerateJobKey(videoSourceID.String(), loomURL)
+	jobKey := GenerateJobKey(videoSourceID.String(), sourceURL)
 	existingJob, err := db.GetTranscriptJobByKey(ctx, jobKey)
 	if err != nil && err.Error() != "failed to get transcript job by key: no rows in result set" {
 		return fmt.Errorf("failed to check for existing job: %w", err)
@@ -814,11 +780,11 @@ func ProcessTranscriptJob(ctx context.Context, db *database.DB, videoSourceID uu
 	// If job exists and is not failed, don't create duplicate
 	if existingJob != nil {
 		if existingJob.Status == models.TranscriptJobStatusCompleted {
-			log.Printf("Job already completed for video %s, URL %s", videoSourceID, loomURL)
+			log.Printf("Job already completed for video %s, URL %s", videoSourceID, sourceURL)
 			return nil
 		}
 		if existingJob.Status != models.TranscriptJobStatusFailed {
-			log.Printf("Job already in progress for video %s, URL %s (status: %s)", videoSourceID, loomURL, existingJob.Status)
+			log.Printf("Job already in progress for video %s, URL %s (status: %s)", videoSourceID, sourceURL, existingJob.Status)
 			return nil
 		}
 	}
@@ -829,10 +795,9 @@ func ProcessTranscriptJob(ctx context.Context, db *database.DB, videoSourceID uu
 		VideoSourceID: videoSourceID,
 		SessionID:     sessionID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     loomURL,
+		SourceURL:     sourceURL,
 		JobKey:        jobKey,
 		QueuedAt:      time.Now(),
-		LoomPassword:  password,
 	}
 
 	if err := db.CreateTranscriptJob(ctx, job); err != nil {

@@ -92,18 +92,6 @@ func (h *Handlers) ArtifactsRouter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 6 {
-		// /artifacts/{id}/video/{video_id}/transcript-job/regenerate
-		if parts[2] == "video" && parts[4] == "transcript-job" && parts[5] == "regenerate" {
-			if r.Method == http.MethodPost {
-				h.RegenerateTranscript(w, r)
-				return
-			}
-		}
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	http.Error(w, "Invalid path", http.StatusNotFound)
 }
 

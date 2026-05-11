@@ -29,7 +29,7 @@ const baseProps = {
 function makeSession(videoOverrides = {}) {
   const video = {
     id: 'vs-1',
-    provider: 'loom',
+    provider: 'other',
     original_url: null,
     stored_video_object_key: null,
     display_title: null,

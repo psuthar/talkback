@@ -27,10 +27,10 @@ func TestCreateTranscriptJob(t *testing.T) {
 			ID:         uuid.New(),
 			ArtifactID: artifact.ID,
 			SessionID:  session.ID,
-			Provider:   "loom",
-			VideoURL:   "https://www.loom.com/share/test",
+			Provider:   "other",
+			VideoURL:   "https://example.com/share/test",
 			PlaybackMode: "embed",
-			EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+			EmbedURL:     stringPtr("https://example.com/embed/test"),
 			TranscriptStatus: models.VideoTranscriptStatusMissing,
 		}
 		err := db.CreateVideoSource(ctx, videoSource)
@@ -41,7 +41,7 @@ func TestCreateTranscriptJob(t *testing.T) {
 			VideoSourceID: videoSource.ID,
 			SessionID:     session.ID,
 			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test",
+			SourceURL:     "https://example.com/share/test",
 			JobKey:        "test-job-key-1",
 		}
 
@@ -56,10 +56,10 @@ func TestCreateTranscriptJob(t *testing.T) {
 			ID:         uuid.New(),
 			ArtifactID: artifact.ID,
 			SessionID:  session.ID,
-			Provider:   "loom",
-			VideoURL:   "https://www.loom.com/share/test2",
+			Provider:   "other",
+			VideoURL:   "https://example.com/share/test2",
 			PlaybackMode: "embed",
-			EmbedURL:     stringPtr("https://www.loom.com/embed/test2"),
+			EmbedURL:     stringPtr("https://example.com/embed/test2"),
 			TranscriptStatus: models.VideoTranscriptStatusMissing,
 		}
 		err := db.CreateVideoSource(ctx, videoSource)
@@ -71,9 +71,9 @@ func TestCreateTranscriptJob(t *testing.T) {
 			VideoSourceID:   videoSource.ID,
 			SessionID:       session.ID,
 			Status:          models.TranscriptJobStatusDownloading,
-			SourceURL:       "https://www.loom.com/share/test2",
+			SourceURL:       "https://example.com/share/test2",
 			JobKey:          "test-job-key-2",
-			ResolvedMediaURL: stringPtr("https://cdn.loom.com/videos/test.mp4"),
+			ResolvedMediaURL: stringPtr("https://cdn.example.com/videos/test.mp4"),
 			StartedAt:       &now,
 			WhisperModel:    stringPtr("whisper-1"),
 			DetectedLanguage: stringPtr("en"),
@@ -90,10 +90,10 @@ func TestCreateTranscriptJob(t *testing.T) {
 			ID:         uuid.New(),
 			ArtifactID: artifact.ID,
 			SessionID:  session.ID,
-			Provider:   "loom",
-			VideoURL:   "https://www.loom.com/share/test3",
+			Provider:   "other",
+			VideoURL:   "https://example.com/share/test3",
 			PlaybackMode: "embed",
-			EmbedURL:     stringPtr("https://www.loom.com/embed/test3"),
+			EmbedURL:     stringPtr("https://example.com/embed/test3"),
 			TranscriptStatus: models.VideoTranscriptStatusMissing,
 		}
 		err := db.CreateVideoSource(ctx, videoSource)
@@ -104,7 +104,7 @@ func TestCreateTranscriptJob(t *testing.T) {
 			VideoSourceID: videoSource.ID,
 			SessionID:     session.ID,
 			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test3",
+			SourceURL:     "https://example.com/share/test3",
 			JobKey:        "duplicate-key",
 		}
 		err = db.CreateTranscriptJob(ctx, job1)
@@ -115,7 +115,7 @@ func TestCreateTranscriptJob(t *testing.T) {
 			VideoSourceID: videoSource.ID,
 			SessionID:     session.ID,
 			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test3",
+			SourceURL:     "https://example.com/share/test3",
 			JobKey:        "duplicate-key", // Same key
 		}
 		err = db.CreateTranscriptJob(ctx, job2)
@@ -138,10 +138,10 @@ func TestGetTranscriptJob(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -153,7 +153,7 @@ func TestGetTranscriptJob(t *testing.T) {
 			VideoSourceID: videoSource.ID,
 			SessionID:     session.ID,
 			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test",
+			SourceURL:     "https://example.com/share/test",
 			JobKey:        "test-job-key-get",
 		}
 		err := db.CreateTranscriptJob(ctx, job)
@@ -167,41 +167,6 @@ func TestGetTranscriptJob(t *testing.T) {
 		assert.Equal(t, job.Status, retrieved.Status)
 		assert.Equal(t, job.SourceURL, retrieved.SourceURL)
 		assert.Equal(t, job.JobKey, retrieved.JobKey)
-		assert.Equal(t, job.LoomPassword, retrieved.LoomPassword) // Verify password field (nil in this case)
-	})
-
-	t.Run("retrieves transcript job with password", func(t *testing.T) {
-		videoSourceWithPassword := &models.VideoSource{
-			ID:         uuid.New(),
-			ArtifactID: artifact.ID,
-			SessionID:  session.ID,
-			Provider:   "loom",
-			VideoURL:   "https://www.loom.com/share/test-password",
-			PlaybackMode: "embed",
-			EmbedURL:     stringPtr("https://www.loom.com/embed/test-password"),
-			TranscriptStatus: models.VideoTranscriptStatusMissing,
-		}
-		err := db.CreateVideoSource(ctx, videoSourceWithPassword)
-		require.NoError(t, err)
-
-		password := "test-retrieve-password"
-		jobWithPassword := &models.TranscriptJob{
-			ID:            uuid.New(),
-			VideoSourceID: videoSourceWithPassword.ID,
-			SessionID:     session.ID,
-			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test-password",
-			JobKey:        "test-job-key-password-retrieve",
-			LoomPassword:  &password,
-		}
-
-		err = db.CreateTranscriptJob(ctx, jobWithPassword)
-		require.NoError(t, err)
-
-		retrieved, err := db.GetTranscriptJob(ctx, jobWithPassword.ID)
-		require.NoError(t, err)
-		assert.NotNil(t, retrieved.LoomPassword)
-		assert.Equal(t, password, *retrieved.LoomPassword)
 	})
 
 	t.Run("returns error for non-existent job", func(t *testing.T) {
@@ -226,10 +191,10 @@ func TestGetTranscriptJobByKey(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -241,7 +206,7 @@ func TestGetTranscriptJobByKey(t *testing.T) {
 			VideoSourceID: videoSource.ID,
 			SessionID:     session.ID,
 			Status:        models.TranscriptJobStatusQueued,
-			SourceURL:     "https://www.loom.com/share/test",
+			SourceURL:     "https://example.com/share/test",
 			JobKey:        "test-job-key-by-key",
 		}
 		err := db.CreateTranscriptJob(ctx, job)
@@ -274,10 +239,10 @@ func TestUpdateTranscriptJobStatus(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -288,7 +253,7 @@ func TestUpdateTranscriptJobStatus(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-update",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
@@ -330,10 +295,10 @@ func TestUpdateTranscriptJobStarted(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -344,7 +309,7 @@ func TestUpdateTranscriptJobStarted(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-started",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
@@ -373,10 +338,10 @@ func TestUpdateTranscriptJobProgress(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -387,13 +352,13 @@ func TestUpdateTranscriptJobProgress(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-progress",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
 	require.NoError(t, err)
 
-	resolvedURL := "https://cdn.loom.com/videos/resolved.mp4"
+	resolvedURL := "https://cdn.example.com/videos/resolved.mp4"
 	err = db.UpdateTranscriptJobProgress(ctx, job.ID, models.TranscriptJobStatusTranscribing, &resolvedURL)
 	require.NoError(t, err)
 
@@ -418,10 +383,10 @@ func TestCompleteTranscriptJob(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -432,7 +397,7 @@ func TestCompleteTranscriptJob(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-complete",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
@@ -471,10 +436,10 @@ func TestFailTranscriptJob(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -485,7 +450,7 @@ func TestFailTranscriptJob(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-fail",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
@@ -517,10 +482,10 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test1",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test1",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test1"),
+		EmbedURL:     stringPtr("https://example.com/embed/test1"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource1)
@@ -530,10 +495,10 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test2",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test2",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test2"),
+		EmbedURL:     stringPtr("https://example.com/embed/test2"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource2)
@@ -545,7 +510,7 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 		VideoSourceID: videoSource1.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test1",
+		SourceURL:     "https://example.com/share/test1",
 		JobKey:        "test-job-key-1",
 	}
 	err = db.CreateTranscriptJob(ctx, job1)
@@ -556,7 +521,7 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 		VideoSourceID: videoSource1.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusCompleted,
-		SourceURL:     "https://www.loom.com/share/test1",
+		SourceURL:     "https://example.com/share/test1",
 		JobKey:        "test-job-key-2",
 	}
 	err = db.CreateTranscriptJob(ctx, job2)
@@ -568,7 +533,7 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 		VideoSourceID: videoSource2.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test2",
+		SourceURL:     "https://example.com/share/test2",
 		JobKey:        "test-job-key-3",
 	}
 	err = db.CreateTranscriptJob(ctx, job3)
@@ -596,10 +561,10 @@ func TestGetTranscriptJobsByVideoSource(t *testing.T) {
 			ID:         uuid.New(),
 			ArtifactID: artifact.ID,
 			SessionID:  session.ID,
-			Provider:   "loom",
-			VideoURL:   "https://www.loom.com/share/empty",
+			Provider:   "other",
+			VideoURL:   "https://example.com/share/empty",
 			PlaybackMode: "embed",
-			EmbedURL:     stringPtr("https://www.loom.com/embed/empty"),
+			EmbedURL:     stringPtr("https://example.com/embed/empty"),
 			TranscriptStatus: models.VideoTranscriptStatusMissing,
 		}
 		err := db.CreateVideoSource(ctx, emptyVideoSource)
@@ -625,10 +590,10 @@ func TestUpdateVideoSourceTranscriptionJob(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)
@@ -639,7 +604,7 @@ func TestUpdateVideoSourceTranscriptionJob(t *testing.T) {
 		VideoSourceID: videoSource.ID,
 		SessionID:     session.ID,
 		Status:        models.TranscriptJobStatusQueued,
-		SourceURL:     "https://www.loom.com/share/test",
+		SourceURL:     "https://example.com/share/test",
 		JobKey:        "test-job-key-update-video",
 	}
 	err = db.CreateTranscriptJob(ctx, job)
@@ -668,10 +633,10 @@ func TestUpdateVideoSourceTranscriptionSource(t *testing.T) {
 		ID:         uuid.New(),
 		ArtifactID: artifact.ID,
 		SessionID:  session.ID,
-		Provider:   "loom",
-		VideoURL:   "https://www.loom.com/share/test",
+		Provider:   "other",
+		VideoURL:   "https://example.com/share/test",
 		PlaybackMode: "embed",
-		EmbedURL:     stringPtr("https://www.loom.com/embed/test"),
+		EmbedURL:     stringPtr("https://example.com/embed/test"),
 		TranscriptStatus: models.VideoTranscriptStatusMissing,
 	}
 	err = db.CreateVideoSource(ctx, videoSource)

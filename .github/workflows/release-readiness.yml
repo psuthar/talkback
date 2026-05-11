@@ -238,7 +238,6 @@ jobs:
         continue-on-error: true
         env:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
-          TALKBACK_RUN_LOOM_LIVE_TEST: "1"
         # SCRUM-368: -count=1 removed to allow Go test cache reuse on PR
         # rebases / amend pushes. Coverage still captured via -coverprofile.
         run: go test ./... -coverprofile=coverage.out

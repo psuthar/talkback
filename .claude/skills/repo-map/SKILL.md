@@ -35,7 +35,7 @@ Claude should produce:
    Known limitations, areas that are brittle or hard to extend, migration or deployment considerations (e.g. upload root under `internal/handlers/sessions/`).
 
 8. **Likely extension points for new features**  
-   Where decision intelligence, participant simulation, new providers (Loom, Teams), or observability/agent work would attach (sessions schema, handlers, frontend modes).
+   Where decision intelligence, participant simulation, new providers (Teams, Google Meet), or observability/agent work would attach (sessions schema, handlers, frontend modes).
 
 ---
 

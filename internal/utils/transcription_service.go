@@ -13,10 +13,9 @@ import (
 
 // TranscriptionService orchestrates the full transcription workflow
 type TranscriptionService struct {
-	resolver   *LoomResolver
 	transcriber *WhisperTranscriber
-	client     *http.Client
-	tempDir    string
+	client      *http.Client
+	tempDir     string
 }
 
 // NewTranscriptionService creates a new transcription service
@@ -28,7 +27,6 @@ func NewTranscriptionService() *TranscriptionService {
 	}
 
 	return &TranscriptionService{
-		resolver:   NewLoomResolver(),
 		transcriber: NewWhisperTranscriber(),
 		client: &http.Client{
 			Timeout: 30 * time.Minute, // Allow time for large file downloads
@@ -43,7 +41,7 @@ func NewTranscriptionService() *TranscriptionService {
 func (s *TranscriptionService) DownloadMedia(ctx context.Context, mediaURL string, jobID string) (string, func(), error) {
 	// Check if URL is an HLS playlist - Whisper doesn't support these
 	if strings.Contains(mediaURL, ".m3u8") || strings.Contains(mediaURL, "/hls/") || (strings.Contains(mediaURL, "playlist") && strings.Contains(mediaURL, ".m3u8")) {
-		return "", nil, fmt.Errorf("HLS playlist (.m3u8) URLs are not supported by Whisper API. This Loom video only provides HLS streaming format. Solutions: 1) Upload transcript manually via the UI, 2) Use a different video that has direct MP4 access, 3) Convert HLS to MP4 using ffmpeg and upload the MP4 file")
+		return "", nil, fmt.Errorf("HLS playlist (.m3u8) URLs are not supported by Whisper API. Please upload the MP4 directly or convert HLS to MP4 using ffmpeg before upload")
 	}
 
 	// Determine file extension from URL or default to .mp4
@@ -135,47 +133,6 @@ func (s *TranscriptionService) DownloadMedia(ctx context.Context, mediaURL strin
 	}
 
 	return tempFile, cleanup, nil
-}
-
-// TranscribeLoomVideo orchestrates the full transcription workflow for a Loom video
-// password is optional and used for password-protected videos
-func (s *TranscriptionService) TranscribeLoomVideo(ctx context.Context, loomURL string, password *string) (*WhisperTranscriptionResult, error) {
-	// Step 1: Resolve Loom URL to media URL
-	info, err := s.resolver.ResolveMedia(ctx, loomURL, password)
-	if err != nil {
-		// Return the error from resolver (it already includes helpful context)
-		return nil, fmt.Errorf("failed to resolve Loom URL: %w", err)
-	}
-
-	if info.MediaURL == "" {
-		return nil, fmt.Errorf("unable to resolve downloadable media URL - video may be private or use streaming. Please upload transcript manually or configure Loom API key if available")
-	}
-
-	if info.RequiresAuth {
-		return nil, fmt.Errorf("video requires authentication - cannot download. Please upload transcript manually or configure Loom API authentication")
-	}
-
-	// Step 2: Download media (temporary file)
-	// Use a temporary ID for the job
-	jobID := fmt.Sprintf("transcript_%d", time.Now().Unix())
-	tempFile, cleanup, err := s.DownloadMedia(ctx, info.MediaURL, jobID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download media: %w", err)
-	}
-	defer cleanup()
-
-	// Step 3: Transcribe using Whisper
-	result, err := s.transcriber.TranscribeFile(ctx, tempFile, "", "verbose_json", []string{"segment"})
-	if err != nil {
-		return nil, fmt.Errorf("failed to transcribe: %w", err)
-	}
-
-	// Add duration if available
-	if info.DurationSeconds != nil {
-		result.Duration = float64(*info.DurationSeconds)
-	}
-
-	return result, nil
 }
 
 // parseSize parses a size string like "500MB" or "1GB" to bytes

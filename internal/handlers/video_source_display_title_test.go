@@ -20,12 +20,12 @@ func createTestVideoSourceForTitle(t *testing.T, db *database.DB, sessionID uuid
 	ctx := context.Background()
 	artifact, err := db.CreateArtifact(ctx, sessionID, "test video artifact", nil)
 	require.NoError(t, err)
-	embedURL := "https://loom.com/share/abc"
+	embedURL := "https://example.com/share/abc"
 	vs := &models.VideoSource{
 		ID:               uuid.New(),
 		ArtifactID:       artifact.ID,
 		SessionID:        sessionID,
-		Provider:         "loom",
+		Provider:         "other",
 		VideoURL:         embedURL,
 		PlaybackMode:     "embed",
 		EmbedURL:         &embedURL,

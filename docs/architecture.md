@@ -69,7 +69,7 @@ flowchart TB
 | **Object storage** | Cloudflare R2 (or local disk) | Video files, uploads, presigned PUT/GET; optional `STORAGE_DRIVER=r2` |
 | **Transcription** | OpenAI Whisper (via utils) | Transcript jobs; job processor runs in API process with configurable workers |
 | **Q&A** | OpenAI API | RAG answers over session content (internal/rag) |
-| **Video pipeline** | Unified flow (see below) | Two inputs: (1) Provider import: get video + native transcript or Whisper fallback; (2) User upload: Whisper on file. Both emit video + transcript. Extensible to Loom, Google Meet, Teams. |
+| **Video pipeline** | Unified flow (see below) | Two inputs: (1) Provider import: get video + native transcript or Whisper fallback; (2) User upload: Whisper on file. Both emit video + transcript. Extensible to Google Meet, Teams. |
 | **Zoom** | Zoom OAuth 2.0 + Cloud Recording API | Provider import: download MP4, prefer Zoom VTT transcript; Whisper fallback when transcript missing (planned). |
 | **Email** | Resend (optional) or mailto | Invitation emails; `RESEND_API_KEY` for sending |
 | **APM** | New Relic (optional) | Wrapped routes and custom attributes when keys set |
@@ -92,7 +92,7 @@ There is a **single conceptual flow** for video: two input mechanisms, one outco
 
 | Input | How video is obtained | How transcript is obtained | Outcome |
 |-------|------------------------|-----------------------------|---------|
-| **Provider import** | System downloads the recording from the provider (Zoom today; future: Loom, Google Meet, Teams). | Prefer **native transcript** from the provider; if unavailable or not ready → **Whisper** on the downloaded video. | Video file + transcript linked (e.g. `video_sources` + transcript). |
+| **Provider import** | System downloads the recording from the provider (Zoom today; future: Google Meet, Teams). | Prefer **native transcript** from the provider; if unavailable or not ready → **Whisper** on the downloaded video. | Video file + transcript linked (e.g. `video_sources` + transcript). |
 | **User upload** | User uploads an MP4 (or other video) directly. | **Whisper** on the stored file. | Same: video file + transcript linked. |
 
 So there are effectively **three runtime cases**, all emitting the same artifact:
@@ -101,14 +101,14 @@ So there are effectively **three runtime cases**, all emitting the same artifact
 2. **Zoom (or future provider) without transcript** — Download video → run **Whisper** on the stored file → link transcript to that video.
 3. **User upload (MP4)** — Store uploaded file → run **Whisper** → link transcript to that video.
 
-The architecture is built so that **any new provider** (Loom, Google Meet, Microsoft Teams) follows the same path as Zoom: try video + native transcript first; if transcript is missing or not ready, run Whisper on the stored video. No extra product behavior is required beyond implementing that contract.
+The architecture is built so that **any new provider** (Google Meet, Microsoft Teams) follows the same path as Zoom: try video + native transcript first; if transcript is missing or not ready, run Whisper on the stored video. No extra product behavior is required beyond implementing that contract.
 
 ### Provider path (Zoom today; extensible)
 
-For provider-based imports (Zoom now; Loom / Google / Teams later), the flow is:
+For provider-based imports (Zoom now; Google / Teams later), the flow is:
 
 1. **Resolve & download video** — Use provider API to get the recording and download the video file (e.g. MP4). Store it (R2 or local) and associate it with the session (e.g. `file_artifacts`, `session.primary_video_artifact_id`).
-2. **Resolve transcript** — Try to get a **native transcript** from the provider (e.g. Zoom VTT, future Loom/Google/Teams captions). If available and ready, download and parse it.
+2. **Resolve transcript** — Try to get a **native transcript** from the provider (e.g. Zoom VTT, future Google/Teams captions). If available and ready, download and parse it.
 3. **Fallback: Whisper** — If the provider does not offer a transcript or it is not ready, run **Whisper** on the stored video file and use that as the transcript.
 4. **Emit** — Persist the video file reference and the transcript (with segments if available), linked to the session via `video_sources` (and related tables). The session then has one video + transcript pair.
 
@@ -121,9 +121,9 @@ New providers plug in by implementing this contract; the rest of the app (playba
 3. Enqueue a **transcript job**; the job processor runs **Whisper** on the stored file.
 4. On completion, save the transcript on that video source. Result: same as provider path — video file with transcript linked.
 
-### Extensibility (Loom, Google Meet, Teams)
+### Extensibility (Google Meet, Teams)
 
-The pipeline is designed so that **Loom, Google Meet, Microsoft Teams** (and similar) can be added as additional **provider** sources without changing the overall flow:
+The pipeline is designed so that **Google Meet, Microsoft Teams** (and similar) can be added as additional **provider** sources without changing the overall flow:
 
 - Each new provider implements: (1) resolve recording URL, (2) download video, (3) try to fetch native transcript/captions, (4) if no transcript → enqueue Whisper job on the stored video, (5) write transcript (native or Whisper) onto the same video entity.
 - The rest of the stack (job processor for Whisper, `video_sources`, RAG, playback) is shared. No need to implement these providers now; the architecture is intended to support them when needed.
@@ -146,7 +146,7 @@ The pipeline is designed so that **Loom, Google Meet, Microsoft Teams** (and sim
 - **internal/rag** — Indexing and Q&A over session content
 - **internal/storage** — Upload root; **internal/storage/r2** — R2 client and presigning
 - **internal/email** — Resend sender for invite emails
-- **internal/utils** — Job processor, Whisper transcriber, Zoom client, Loom resolver
+- **internal/utils** — Job processor, Whisper transcriber, Zoom client
 
 ## MCP Phase 4 — cross-session intelligence
 

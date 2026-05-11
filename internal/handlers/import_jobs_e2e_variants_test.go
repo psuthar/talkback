@@ -46,18 +46,18 @@ func TestTemplateImport_E2E_VideoSource_Variants(t *testing.T) {
 	require.NoError(t, err)
 
 	// One video_source with video_url + provider + duration_seconds.
-	loomProvider := "loom"
+	provider := "other"
 	dur := 1800
-	videoURL := srv.URL + "/loom/abc123"
+	videoURL := srv.URL + "/video/abc123"
 	tmpl := &template.Template{
 		Version: 1,
 		Title:   "Video Source Variants",
 		Elements: []template.Element{
 			{
 				Kind:            template.KindVideoSource,
-				ID:              "loom-rec",
+				ID:              "video-rec",
 				VideoURL:        &videoURL,
-				Provider:        &loomProvider,
+				Provider:        &provider,
 				DurationSeconds: &dur,
 			},
 		},
@@ -86,7 +86,7 @@ func TestTemplateImport_E2E_VideoSource_Variants(t *testing.T) {
 	require.Len(t, dstVS, 1)
 	vs := dstVS[0]
 	assert.Equal(t, videoURL, vs.VideoURL, "video_url must round-trip when set instead of embed_url")
-	assert.Equal(t, loomProvider, vs.Provider, "provider must round-trip")
+	assert.Equal(t, provider, vs.Provider, "provider must round-trip")
 	require.NotNil(t, vs.DurationSeconds)
 	assert.Equal(t, dur, *vs.DurationSeconds, "duration_seconds must round-trip")
 }

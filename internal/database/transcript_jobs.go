@@ -17,8 +17,8 @@ func (db *DB) CreateTranscriptJob(ctx context.Context, job *models.TranscriptJob
 		INSERT INTO transcript_jobs (
 			id, video_source_id, material_id, session_link_id, session_id, status, source_url, job_key,
 			error_message, resolved_media_url, queued_at, started_at, completed_at,
-			whisper_model, detected_language, duration_seconds, loom_password
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			whisper_model, detected_language, duration_seconds
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING queued_at
 	`
 	var videoSourceID *uuid.UUID
@@ -50,7 +50,6 @@ func (db *DB) CreateTranscriptJob(ctx context.Context, job *models.TranscriptJob
 		job.WhisperModel,
 		job.DetectedLanguage,
 		job.DurationSeconds,
-		job.LoomPassword,
 	).Scan(&job.QueuedAt)
 	
 	if err != nil {
@@ -63,16 +62,15 @@ func (db *DB) CreateTranscriptJob(ctx context.Context, job *models.TranscriptJob
 func (db *DB) GetTranscriptJob(ctx context.Context, jobID uuid.UUID) (*models.TranscriptJob, error) {
 	job := &models.TranscriptJob{}
 	query := `
-		SELECT 
+		SELECT
 			id, video_source_id, material_id, session_link_id, session_id, status, error_message, source_url,
 			resolved_media_url, queued_at, started_at, completed_at,
-			whisper_model, detected_language, duration_seconds, job_key, loom_password
+			whisper_model, detected_language, duration_seconds, job_key
 		FROM transcript_jobs
 		WHERE id = $1
 	`
 	var videoSourceIDPtr *uuid.UUID
 	var startedAt, completedAt sql.NullTime
-	var loomPassword sql.NullString
 	err := db.Pool.QueryRow(ctx, query, jobID).Scan(
 		&job.ID,
 		&videoSourceIDPtr,
@@ -90,7 +88,6 @@ func (db *DB) GetTranscriptJob(ctx context.Context, jobID uuid.UUID) (*models.Tr
 		&job.DetectedLanguage,
 		&job.DurationSeconds,
 		&job.JobKey,
-		&loomPassword,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -107,9 +104,6 @@ func (db *DB) GetTranscriptJob(ctx context.Context, jobID uuid.UUID) (*models.Tr
 	if completedAt.Valid {
 		job.CompletedAt = &completedAt.Time
 	}
-	if loomPassword.Valid {
-		job.LoomPassword = &loomPassword.String
-	}
 	return job, nil
 }
 
@@ -117,10 +111,10 @@ func (db *DB) GetTranscriptJob(ctx context.Context, jobID uuid.UUID) (*models.Tr
 func (db *DB) GetTranscriptJobByKey(ctx context.Context, jobKey string) (*models.TranscriptJob, error) {
 	job := &models.TranscriptJob{}
 	query := `
-		SELECT 
+		SELECT
 			id, video_source_id, material_id, session_link_id, session_id, status, error_message, source_url,
 			resolved_media_url, queued_at, started_at, completed_at,
-			whisper_model, detected_language, duration_seconds, job_key, loom_password
+			whisper_model, detected_language, duration_seconds, job_key
 		FROM transcript_jobs
 		WHERE job_key = $1
 		ORDER BY queued_at DESC
@@ -128,7 +122,6 @@ func (db *DB) GetTranscriptJobByKey(ctx context.Context, jobKey string) (*models
 	`
 	var videoSourceIDPtr *uuid.UUID
 	var startedAt, completedAt sql.NullTime
-	var loomPassword sql.NullString
 	err := db.Pool.QueryRow(ctx, query, jobKey).Scan(
 		&job.ID,
 		&videoSourceIDPtr,
@@ -146,7 +139,6 @@ func (db *DB) GetTranscriptJobByKey(ctx context.Context, jobKey string) (*models
 		&job.DetectedLanguage,
 		&job.DurationSeconds,
 		&job.JobKey,
-		&loomPassword,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -162,9 +154,6 @@ func (db *DB) GetTranscriptJobByKey(ctx context.Context, jobKey string) (*models
 	}
 	if completedAt.Valid {
 		job.CompletedAt = &completedAt.Time
-	}
-	if loomPassword.Valid {
-		job.LoomPassword = &loomPassword.String
 	}
 	return job, nil
 }
@@ -250,10 +239,10 @@ func (db *DB) FailTranscriptJob(ctx context.Context, jobID uuid.UUID, errorMsg s
 func (db *DB) GetQueuedOrStaleTranscriptJobs(ctx context.Context, staleThreshold time.Duration) ([]*models.TranscriptJob, error) {
 	cutoff := time.Now().Add(-staleThreshold)
 	query := `
-		SELECT 
+		SELECT
 			id, video_source_id, material_id, session_link_id, session_id, status, error_message, source_url,
 			resolved_media_url, queued_at, started_at, completed_at,
-			whisper_model, detected_language, duration_seconds, job_key, loom_password
+			whisper_model, detected_language, duration_seconds, job_key
 		FROM transcript_jobs
 		WHERE status = $1
 		   OR (status IN ($2, $3, $4) AND started_at IS NOT NULL AND started_at < $5)
@@ -273,7 +262,6 @@ func (db *DB) GetQueuedOrStaleTranscriptJobs(ctx context.Context, staleThreshold
 		job := &models.TranscriptJob{}
 		var videoSourceIDPtr *uuid.UUID
 		var startedAt, completedAt sql.NullTime
-		var loomPassword sql.NullString
 		err := rows.Scan(
 			&job.ID,
 			&videoSourceIDPtr,
@@ -291,7 +279,6 @@ func (db *DB) GetQueuedOrStaleTranscriptJobs(ctx context.Context, staleThreshold
 			&job.DetectedLanguage,
 			&job.DurationSeconds,
 			&job.JobKey,
-			&loomPassword,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan transcript job: %w", err)
@@ -304,9 +291,6 @@ func (db *DB) GetQueuedOrStaleTranscriptJobs(ctx context.Context, staleThreshold
 		}
 		if completedAt.Valid {
 			job.CompletedAt = &completedAt.Time
-		}
-		if loomPassword.Valid {
-			job.LoomPassword = &loomPassword.String
 		}
 		jobs = append(jobs, job)
 	}

@@ -47,10 +47,6 @@ export DATABASE_URL=postgres://talkback:talkback@localhost:5432/talkback?sslmode
 go test ./...
 ```
 
-### Loom live integration test
-
-`internal/utils` includes an optional test that calls Loom’s real GraphQL API. It runs only when **`TALKBACK_RUN_LOOM_LIVE_TEST=1`** (GitHub Actions sets this) or is skipped otherwise. Use `go test -short ./...` if you want a fast run and to skip other short-mode tests consistently with prior usage.
-
 ### Run tests with coverage
 ```bash
 go test -cover ./...

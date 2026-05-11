@@ -121,7 +121,6 @@ export function CreatorMode({
   handleVideoTimeUpdate,
   getVideoEmbedUrl,
   transcriptJobs,
-  regenerateTranscript,
   questions,
   unreadQuestionIds = [],
   markQuestionViewed,

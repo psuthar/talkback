@@ -102,7 +102,7 @@ func TestResetAllData(t *testing.T) {
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         "https://example.com/video",
 			TranscriptStatus: models.VideoTranscriptStatusReady,
 		}

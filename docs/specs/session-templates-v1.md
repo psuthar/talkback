@@ -118,7 +118,7 @@ A reference to a hosted video. v1 supports embed-mode only (`playback_mode = "em
 | `embed_url` | one of {embed_url, video_url} | Iframe-embeddable URL. |
 | `video_url` | one of {embed_url, video_url} | Direct URL surfaced to UI. |
 | `duration_seconds` | no | Optional metadata. |
-| `provider` | no | Defaults to `"other"`. Must be in the existing video_sources_provider_check allowlist (`loom`, `zoom`, `other`, `teams`, `google_meet`). |
+| `provider` | no | Defaults to `"other"`. Must be in the existing video_sources_provider_check allowlist (`zoom`, `other`, `teams`, `google_meet`). |
 
 **Limits:** `playback_mode` is forced to `embed`; `source_type` is forced to `embed_url`; `transcript_status` defaults to `missing`.
 

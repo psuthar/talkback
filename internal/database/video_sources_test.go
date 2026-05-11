@@ -23,13 +23,13 @@ func TestCreateVideoSource(t *testing.T) {
 	artifact, err := db.CreateArtifact(ctx, session.ID, "Video Test Artifact", nil)
 	require.NoError(t, err)
 
-	t.Run("creates video source with loom provider (embed mode)", func(t *testing.T) {
-		embedURL := "https://www.loom.com/share/example"
+	t.Run("creates video source with embed mode", func(t *testing.T) {
+		embedURL := "https://example.com/share/example"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,
@@ -91,12 +91,12 @@ func TestCreateVideoSource(t *testing.T) {
 
 	t.Run("returns error for non-existent artifact_id", func(t *testing.T) {
 		nonExistentArtifactID := uuid.New()
-		embedURL := "https://www.loom.com/share/example"
+		embedURL := "https://example.com/share/example"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       nonExistentArtifactID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,
@@ -113,7 +113,7 @@ func TestCreateVideoSource(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid provider enum value", func(t *testing.T) {
-		embedURL := "https://www.loom.com/share/example"
+		embedURL := "https://example.com/share/example"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
@@ -131,12 +131,12 @@ func TestCreateVideoSource(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid transcript_status enum value", func(t *testing.T) {
-		embedURL := "https://www.loom.com/share/example"
+		embedURL := "https://example.com/share/example"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,
@@ -169,12 +169,12 @@ func TestGetVideoSourceByArtifactID(t *testing.T) {
 
 	t.Run("returns video source for artifact", func(t *testing.T) {
 		// Create video source
-		embedURL := "https://www.loom.com/share/test"
+		embedURL := "https://example.com/share/test"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,
@@ -209,12 +209,12 @@ func TestUpdateVideoSourceTranscript(t *testing.T) {
 
 	t.Run("updates transcript and sets status to ready", func(t *testing.T) {
 		// Create video source
-		embedURL := "https://www.loom.com/share/test"
+		embedURL := "https://example.com/share/test"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,

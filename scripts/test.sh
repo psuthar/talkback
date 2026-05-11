@@ -13,7 +13,7 @@ sleep 2
 
 export DATABASE_URL="${DATABASE_URL:-postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable}"
 
-# Default to full suite; pass -short to skip opt-in tests like Loom live (when unset).
+# Default to full suite; pass -short to skip opt-in tests (when unset).
 if [[ "$#" -eq 0 ]]; then
   set -- -p 1 ./...
 fi

@@ -76,7 +76,6 @@ func MaterialSupportsDerivedSlideDeck(m *Material) bool {
 type VideoProvider string
 
 const (
-	VideoProviderLoom  VideoProvider = "loom"
 	VideoProviderZoom  VideoProvider = "zoom"
 	VideoProviderTeams VideoProvider = "teams"
 	VideoProviderOther VideoProvider = "other"
@@ -127,7 +126,7 @@ type VideoSource struct {
 	TranscriptStatus      VideoTranscriptStatus `json:"transcript_status"`
 	TranscriptText        *string               `json:"transcript_text,omitempty"`
 	AutoTranscribeEnabled bool                  `json:"auto_transcribe_enabled,omitempty"`
-	TranscriptionSource   *string               `json:"transcription_source,omitempty"` // 'manual', 'loom_api', 'whisper', 'zoom_api'
+	TranscriptionSource   *string               `json:"transcription_source,omitempty"` // 'manual', 'whisper', 'zoom_api'
 	TranscriptionJobID    *uuid.UUID            `json:"transcription_job_id,omitempty"`
 	RawVTT                *string               `json:"raw_vtt,omitempty"`             // Original VTT from Zoom (optional)
 	TranscriptSegments    []TranscriptSegment   `json:"transcript_segments,omitempty"` // Normalized start/end/text (optional)
@@ -201,7 +200,7 @@ type FileArtifact struct {
 type Transcript struct {
 	ID           uuid.UUID        `json:"id"`
 	SessionID    uuid.UUID        `json:"session_id"`
-	Source       string           `json:"source"` // "zoom", "loom", "whisper", "manual"
+	Source       string           `json:"source"` // "zoom", "whisper", "manual"
 	Language     *string          `json:"language,omitempty"`
 	Status       TranscriptStatus `json:"status"`
 	RawText      *string          `json:"raw_text,omitempty"`
@@ -568,8 +567,7 @@ type TranscriptJob struct {
 	WhisperModel     *string             `json:"whisper_model,omitempty"`
 	DetectedLanguage *string             `json:"detected_language,omitempty"`
 	DurationSeconds  *int                `json:"duration_seconds,omitempty"`
-	JobKey           string              `json:"job_key"`                 // For idempotency: hash(video_source_id + source_url)
-	LoomPassword     *string             `json:"loom_password,omitempty"` // Password for password-protected Loom videos (not logged, used only during resolution)
+	JobKey           string              `json:"job_key"` // For idempotency: hash(video_source_id + source_url)
 }
 
 // Mission #3: Session-scoped RAG chunks and embeddings
