@@ -967,11 +967,45 @@ jobs:
           fi
           echo "TalkBack PR Gate: ok (PASS or WARN)"
 
-      # SCRUM-382: previously this job had a workflow step that POSTed the gate
-      # outcome to a Claude routine via its API trigger. claude.ai's API is
-      # fronted by Cloudflare managed challenge; GitHub Actions runners cannot
-      # pass the challenge, so the curl returned HTTP 403 with the Cloudflare
-      # block page. We pivoted to a "GitHub event" trigger on the routine
-      # itself — Claude's GitHub App subscribes directly to workflow_run
-      # webhooks on this repo, no curl step in this workflow needed. See
-      # docs/agent/pr-gate-webhook.md.
+      # SCRUM-382: apply a pr-gate:<status> label to the PR so the Claude PR
+      # Gate routine (subscribed to pull_request.labeled events) fires after the
+      # gate decides. Previous revisions tried (a) a curl POST to claude.ai's
+      # API trigger — blocked by Cloudflare managed challenge from Actions
+      # runners; and (b) a workflow_run GitHub-event trigger on the routine —
+      # not exposed in Claude's routine UI event list (only PR/issue/release
+      # events are selectable). Labels are: the only PR-event surface that
+      # CI can drive deterministically. See docs/agent/pr-gate-webhook.md.
+      - name: Apply pr-gate:<status> label for Claude routine
+        if: always() && github.event_name == 'pull_request' && hashFiles('artifacts/pr-gate-summary.json') != ''
+        continue-on-error: true
+        shell: bash
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          summary_path="artifacts/pr-gate-summary.json"
+          final_gate=$(jq -r '.final_gate.status // "unknown"' "$summary_path" | tr '[:upper:]' '[:lower:]')
+          case "$final_gate" in
+            pass|warn|block) target_label="pr-gate:${final_gate}" ;;
+            *)               target_label="pr-gate:unknown" ;;
+          esac
+          # Make sure all three labels exist with stable colors (idempotent).
+          declare -A label_colors=([pr-gate:pass]=0E8A16 [pr-gate:warn]=FBCA04 [pr-gate:block]=B60205 [pr-gate:unknown]=BFD4F2)
+          for lbl in "${!label_colors[@]}"; do
+            gh label create "$lbl" -R "$REPO" --color "${label_colors[$lbl]}" --description "TalkBack PR Gate outcome (Claude routine trigger)" 2>/dev/null || true
+          done
+          # Remove any stale pr-gate:* labels so re-runs always emit a fresh labeled event.
+          existing=$(gh pr view "$PR_NUMBER" -R "$REPO" --json labels --jq '.labels[].name' | grep '^pr-gate:' || true)
+          for old in $existing; do
+            if [[ "$old" != "$target_label" ]]; then
+              gh pr edit "$PR_NUMBER" -R "$REPO" --remove-label "$old" || true
+            fi
+          done
+          # If the desired label is already on the PR, remove-then-add so a labeled event fires.
+          if echo "$existing" | grep -qx "$target_label"; then
+            gh pr edit "$PR_NUMBER" -R "$REPO" --remove-label "$target_label" || true
+          fi
+          gh pr edit "$PR_NUMBER" -R "$REPO" --add-label "$target_label"
+          echo "Applied label $target_label to PR #$PR_NUMBER."
