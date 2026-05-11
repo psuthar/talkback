@@ -2,6 +2,8 @@
 
 Source of truth: This file owns FULL_AUTO merge-gate polling, merge rules, cleanup, and Jira Done transition requirements.
 
+> **In progress (SCRUM-381):** push-based gate handling via a Claude routine is being built out as an alternative to the polling cadence described below. See [`pr-gate-webhook.md`](pr-gate-webhook.md). Until that epic's cutover ticket (SCRUM-386) lands, the polling rules in this file remain authoritative.
+
 ## Core Rule
 
 Use GitHub MCP `pull_request_read`: **`get_check_runs`** for **TalkBack PR Gate** (PASS = `conclusion: success`) and **`method: get`** for **`mergeable_state`**. Both are required for merge; see **Stop polling when the gate is not PASS** below. Do not use legacy combined status as a parallel source of truth for mergeability.

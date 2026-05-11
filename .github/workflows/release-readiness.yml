@@ -966,3 +966,62 @@ jobs:
             exit 1
           fi
           echo "TalkBack PR Gate: ok (PASS or WARN)"
+
+      # SCRUM-382: notify the Claude PR Gate routine that the gate has decided.
+      # Push-based replacement for the 30s polling that FULL_AUTO would otherwise
+      # do. The routine receives final_gate.status, mergeable_state, and the top
+      # pr_risk factors; this slice's routine only logs receipt. Subsequent slices
+      # extend the routine to send push notifications (SCRUM-383), post Jira halt
+      # comments on WARN/BLOCK (SCRUM-384), and auto-merge on PASS+clean (SCRUM-385).
+      # See docs/agent/pr-gate-webhook.md.
+      - name: Notify Claude PR Gate routine
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        shell: bash
+        env:
+          CLAUDE_TRIGGER_TOKEN: ${{ secrets.CLAUDE_TRIGGER_TOKEN }}
+          ROUTINE_ID: ${{ vars.CLAUDE_PR_GATE_ROUTINE_ID }}
+          PR_NUMBER: ${{ github.event.number }}
+          HEAD_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [[ -z "${ROUTINE_ID:-}" || -z "${CLAUDE_TRIGGER_TOKEN:-}" ]]; then
+            echo "::notice::Skipping Claude PR Gate notify — CLAUDE_PR_GATE_ROUTINE_ID var or CLAUDE_TRIGGER_TOKEN secret not configured. See docs/agent/pr-gate-webhook.md."
+            exit 0
+          fi
+          summary_path="artifacts/pr-gate-summary.json"
+          if [[ ! -f "$summary_path" ]]; then
+            echo "::notice::Skipping Claude PR Gate notify — pr-gate-summary.json not produced this run."
+            exit 0
+          fi
+          final_gate=$(jq -r '.final_gate.status // "unknown"' "$summary_path")
+          pr_risk_top=$(jq -c '.pr_risk.top_risk_factors // []' "$summary_path")
+          mergeable=$(gh pr view "$PR_NUMBER" -R "$REPO" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || echo "unknown")
+          payload=$(jq -nc \
+            --arg pr "$PR_NUMBER" \
+            --arg sha "$HEAD_SHA" \
+            --arg repo "$REPO" \
+            --arg gate "$final_gate" \
+            --arg ms "${mergeable:-unknown}" \
+            --argjson tops "$pr_risk_top" \
+            '{pr_number: $pr, head_sha: $sha, repository: $repo, final_gate: $gate, mergeable_state: $ms, top_risk_factors: $tops}')
+          echo "Posting to routine $ROUTINE_ID:"
+          echo "$payload" | jq .
+          http_status=$(curl --silent --show-error \
+            --write-out '%{http_code}' \
+            --output /tmp/claude-trigger-response.json \
+            -H "Authorization: Bearer $CLAUDE_TRIGGER_TOKEN" \
+            -H "Content-Type: application/json" \
+            -X POST "https://claude.ai/api/v1/code/triggers/${ROUTINE_ID}/run" \
+            -d "$payload" || echo "000")
+          if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
+            echo "Claude PR Gate routine triggered (HTTP $http_status)."
+          else
+            echo "::warning::Claude PR Gate routine trigger returned HTTP $http_status."
+          fi
+          if [[ -s /tmp/claude-trigger-response.json ]]; then
+            echo "Response body:"
+            cat /tmp/claude-trigger-response.json
+          fi
