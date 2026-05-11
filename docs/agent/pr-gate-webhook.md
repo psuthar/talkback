@@ -13,21 +13,31 @@ GitHub release-readiness workflow
   │
   ├─ writes  artifacts/pr-gate-summary.json
   ├─ publishes  TalkBack PR Gate check
-  └─ Step: "Notify Claude PR Gate routine"
-        │
-        │  POST https://claude.ai/api/v1/code/triggers/<id>/run
-        │  payload: { pr_number, head_sha, repository, final_gate,
-        │             mergeable_state, top_risk_factors }
-        ▼
-  Claude routine (claude.ai/code/triggers/<id>)
-        │
-        │  reads payload, decides terminal action
-        ▼
+  └─ emits  workflow_run.completed event
+                  │
+                  │ (GitHub webhook fan-out via Claude GitHub App)
+                  ▼
+          Claude routine (subscribed to workflow_run events on this repo)
+                  │
+                  │ reads webhook payload, decides terminal action
+                  ▼
   Slice 1 (now):  posts a "received" comment on the PR
   Slice 2:        + push notification
-  Slice 3:        + structured halt comment on Jira (WARN/BLOCK)
+  Slice 3:        + downloads pr-gate-summary.json from the run's artifacts;
+                    posts structured halt comment on Jira (WARN/BLOCK)
   Slice 4:        + auto-merge + Done transition (PASS+clean)
 ```
+
+### Why GitHub event, not API trigger
+
+Slice 1 was originally designed to use the routine's "Call via API" trigger,
+POSTed from a step in `release-readiness.yml`. That doesn't work: claude.ai's
+API is fronted by Cloudflare managed challenge, and GitHub Actions runners
+cannot pass the challenge — the curl returns HTTP 403 with the CF block page.
+
+Pivoted to **GitHub event trigger** on the routine: Claude's GitHub App
+subscribes to repository webhooks directly, bypassing the public claude.ai
+API path entirely. No workflow step, no shared secret, no curl.
 
 ## Slice status
 
@@ -41,148 +51,151 @@ GitHub release-readiness workflow
 
 ## One-time setup (repo admin)
 
-### 1. Create the Claude routine
+### 1. Install the Claude GitHub App on `psuthar/talkback`
 
-Either via the claude.ai UI (Settings → Code → Triggers → New) or via the
-`RemoteTrigger create` API. Use these settings:
+Go to <https://github.com/apps/claude> (or whichever app name appears on the
+Authorized GitHub Apps tab of your account) and install it on the
+`psuthar/talkback` repo. The Claude Code "Routines" UI cannot list repos
+until the GitHub App has actual installation access on them.
 
-- **Name:** `TalkBack PR Gate handler (psuthar/talkback)`
-- **Schedule:** none (manual / API-triggered only)
-- **Source:** `https://github.com/psuthar/talkback`
-- **Model:** `claude-sonnet-4-6` (or whatever is current)
-- **Allowed tools (Slice 1 only):** `mcp__github__add_issue_comment` — nothing else.
-  Subsequent slices expand this list deliberately.
+### 2. Create the Claude routine
+
+Via the claude.ai UI at <https://claude.ai/code/routines> (form-driven path)
+or `RemoteTrigger create` (API path — see the troubleshooting note below).
+
+- **Name:** `TalkBack PR Gate handler (psuthar/talkback) — Slice 1`
+- **Source / repository:** `psuthar/talkback`
+- **Model:** any (Slice 1 is tiny; Sonnet is sufficient)
+- **Trigger:** **GitHub event** — filter so it fires on `workflow_run`
+  completed events. If the UI exposes finer event-type controls, scope it
+  to `workflow_run` only.
+- **Permissions:** the per-repo permissions panel — leave
+  "Allow unrestricted git push" **off**. Slice 1 only posts a PR comment.
 - **Prompt:** copy verbatim from [Slice 1 prompt](#slice-1-routine-prompt) below.
 
-After create, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
+After save, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
 
-### 2. Mint a trigger token
+### 3. Verify
 
-In claude.ai Settings → Code → API tokens, create a token scoped to
-**Run triggers only**. Copy the token — it won't be shown again.
+Open any PR; let `release-readiness` complete. Within ~60 seconds of the
+workflow finishing, you should see a comment on the PR posted by the routine
+confirming receipt of the `workflow_run.completed` event. If you don't see
+one:
 
-### 3. Configure GitHub repo
-
-In **Settings → Secrets and variables → Actions**:
-
-- **Repository variable** `CLAUDE_PR_GATE_ROUTINE_ID` = the routine ID from step 1.
-- **Repository secret** `CLAUDE_TRIGGER_TOKEN` = the token from step 2.
-
-### 4. Verify
-
-Open any PR; let `release-readiness` complete. Inside ~30 seconds of the gate
-finishing, you should see a comment on the PR posted by the routine confirming
-receipt of the event. If you don't see one:
-
-- Workflow logs → expand **Notify Claude PR Gate routine** step. The HTTP status
-  and any response body are echoed there.
-- A `notice::Skipping Claude PR Gate notify` line means the var or secret isn't
-  set on this repo yet (graceful skip — the workflow itself doesn't fail).
+- Routine session log in claude.ai → Routines → your routine → **Runs**.
+  Failures and stdout/stderr from the routine's session are captured there.
+- If no run was triggered, the GitHub App probably doesn't have webhook
+  delivery enabled for `workflow_run` events on this repo. Re-check the
+  app's repository access in GitHub Settings.
 
 ## Slice 1 routine prompt
 
-Copy this verbatim into the routine. The placeholders in braces are populated
-by the run-body payload (see [Payload contract](#payload-contract)).
+Copy this verbatim into the routine.
 
 ```
-You received a TalkBack PR Gate event. The run body contains:
-  pr_number, head_sha, repository, final_gate, mergeable_state, top_risk_factors
+You are the TalkBack PR Gate webhook handler (Slice 1, SCRUM-382). You're
+invoked by a GitHub webhook delivery — specifically a `workflow_run.completed`
+event from `psuthar/talkback`.
 
-Post a single comment on PR {pr_number} in repository {repository} with this body
-(substituting the actual values):
+This slice's only job is to prove the trigger plumbing works by posting a
+"webhook received" comment on the PR. No decisions, no merge, no Jira write,
+no notifications. Subsequent slices (SCRUM-383/384/385) replace this prompt
+with progressively richer logic.
 
-> TalkBack PR Gate webhook received.
-> final_gate: {final_gate}
-> mergeable_state: {mergeable_state}
-> head_sha: {head_sha}
-> top_risk_factors: {top_risk_factors}
+Filter rules (silently exit if any fails — many workflow_run events are
+unrelated):
 
-Do not merge the PR.
-Do not transition any Jira ticket.
-Do not send any notification.
-After the comment is posted, exit.
+1. The event's `workflow_run.name` must equal "Release Readiness".
+2. The event's `workflow_run.event` must equal "pull_request".
+3. The event's `workflow_run.pull_requests` array must have at least one
+   entry. Use the first entry's number as the PR number.
+
+Extract from the payload:
+
+  pr_number  = workflow_run.pull_requests[0].number
+  head_sha   = workflow_run.head_sha
+  conclusion = workflow_run.conclusion   (success | failure | neutral | …)
+  run_id     = workflow_run.id
+  run_url    = workflow_run.html_url
+
+Run exactly one command (substituting the actual values):
+
+  gh pr comment <pr_number> -R psuthar/talkback --body \
+    "TalkBack PR Gate webhook received (via workflow_run event).
+workflow_run.conclusion: <conclusion>
+head_sha: <head_sha>
+run_id: <run_id>
+run_url: <run_url>"
+
+After the comment is posted (or the gh command errors), report the outcome
+in one short sentence and exit. Do not merge the PR. Do not transition any
+Jira ticket. Do not send notifications.
 ```
 
 ## Payload contract
 
-The workflow step (`Notify Claude PR Gate routine` in
-`.github/workflows/release-readiness.yml`) POSTs this JSON shape:
+The routine receives GitHub's standard `workflow_run` webhook payload. The
+fields the Slice 1 prompt uses are all on the top-level `workflow_run`
+object — full GitHub schema:
+<https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run>.
 
-```json
-{
-  "pr_number": "382",
-  "head_sha": "abc123…",
-  "repository": "psuthar/talkback",
-  "final_gate": "PASS | WARN | BLOCK | unknown",
-  "mergeable_state": "clean | behind | blocked | unstable | unknown | …",
-  "top_risk_factors": ["Large diff", "Large frontend change"]
-}
-```
-
-Field sources:
-
-- `pr_number` — `github.event.number` (workflow context)
-- `head_sha` — `github.sha`
-- `repository` — `github.repository`
-- `final_gate` — `final_gate.status` from `artifacts/pr-gate-summary.json`
-- `mergeable_state` — `gh pr view <pr> --json mergeStateStatus` (lowercase string)
-- `top_risk_factors` — `pr_risk.top_risk_factors[]` from `pr-gate-summary.json`
-
-When the summary file isn't present (e.g. an early gate failure), the workflow
-step skips with `::notice` and the routine is not invoked.
-
-## Manual test (curl)
-
-Once the routine and secrets are configured, test the trigger without waiting
-for a real PR:
+Future slices will additionally call:
 
 ```bash
-curl --silent --show-error \
-  -H "Authorization: Bearer $CLAUDE_TRIGGER_TOKEN" \
-  -H "Content-Type: application/json" \
-  -X POST "https://claude.ai/api/v1/code/triggers/$CLAUDE_PR_GATE_ROUTINE_ID/run" \
-  -d '{
-    "pr_number": "999",
-    "head_sha": "deadbeef",
-    "repository": "psuthar/talkback",
-    "final_gate": "WARN",
-    "mergeable_state": "blocked",
-    "top_risk_factors": ["Large diff", "Large frontend change"]
-  }'
+gh run download <workflow_run.id> -R psuthar/talkback -n release-readiness
+jq '.final_gate.status, .pr_risk.top_risk_factors' artifacts/pr-gate-summary.json
 ```
 
-A 2xx response confirms the trigger fired. The routine itself runs
-asynchronously; you should see a comment on PR #999 within ~30 seconds. (If PR
-#999 doesn't exist, the routine will error in its own session log — that's fine
-for a smoke test.)
+…to extract the same fields the original API-trigger payload contained.
 
 ## Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|
-| `::notice::Skipping Claude PR Gate notify — … not configured` | The `CLAUDE_TRIGGER_TOKEN` secret or `CLAUDE_PR_GATE_ROUTINE_ID` variable is missing on the repo. |
-| `HTTP 401` in the workflow step | Token is invalid or revoked. Mint a new one and update the secret. |
-| `HTTP 404` from the trigger endpoint | The routine ID is wrong, or the routine was deleted. Re-run `RemoteTrigger list` or check claude.ai → Code → Triggers. |
-| Workflow step succeeds but no PR comment appears | The routine ran but the prompt or tool allow-list is wrong. Check the routine's session log in claude.ai. |
-| Comment appears on every push, not just gate completion | Misconfiguration — the trigger step should only run after `Enforce TalkBack PR gate outcome`. Check the workflow's `if:` guard. |
+| No comment on any PR after `release-readiness` completes | Routine isn't subscribed to `workflow_run` events on this repo, or the Claude GitHub App lost installation. Check claude.ai → Routines → your routine → Runs tab. |
+| Routine runs but errors with "Could not resolve workflow_run.name" | The event payload schema changed, or the routine prompt's filter is too strict. Inspect the Run page for the actual payload received. |
+| Routine posts on every PR including ones where the gate hasn't completed | The `workflow_run.conclusion` filter wasn't checked. Tighten the routine's filter logic. |
+| Comment appears but on a stale PR | `workflow_run.pull_requests[0]` doesn't always point at the open PR for the head_sha — particularly for force-pushed branches. Cross-reference `workflow_run.head_branch` with the PR's head ref before commenting. (Out of Slice 1 scope; address in Slice 3 if observed.) |
 
 ## Authorization scope
 
-The Slice 1 routine has a deliberately tight allow-list — comment-write on
-PRs, nothing else. Each subsequent slice expands the list:
+The Slice 1 routine has a deliberately tight scope — comment-write on PRs
+in `psuthar/talkback`, nothing else. Each subsequent slice expands the scope
+explicitly:
 
 | Slice | Adds |
 |-------|------|
-| 2 | `PushNotification` |
-| 3 | `mcp__atlassian__jira_add_comment`, `mcp__github__pull_request_read` |
-| 4 | `mcp__github__merge_pull_request`, `mcp__atlassian__jira_transition_issue` |
+| 2 | Push notification capability |
+| 3 | Artifact download from workflow runs (`gh run download`), Jira comment write |
+| 4 | PR merge (`gh pr merge`), Jira transition write |
 
-Keep the allow-list as narrow as possible at each slice so a misbehaving
-routine cannot exceed the slice's intended blast radius.
+Keep the scope as narrow as possible at each slice so a misbehaving routine
+cannot exceed its intended blast radius.
+
+## Why not the workflow-step approach we shipped originally?
+
+The original Slice 1 design (revision-1 of SCRUM-382) had a step in
+`.github/workflows/release-readiness.yml` that posted a pre-extracted payload
+to `https://claude.ai/api/v1/code/triggers/<id>/run`. That step has been
+removed. The pivot rationale:
+
+1. **Cloudflare managed challenge** on claude.ai blocks headless curl from
+   GitHub Actions runners. The step worked locally and got HTTP 403 + a
+   challenge page in CI.
+2. **No shared secret needed.** Removing the workflow step removes the
+   `CLAUDE_TRIGGER_TOKEN` secret and `CLAUDE_PR_GATE_ROUTINE_ID` variable from
+   the repo's config surface. The Claude GitHub App authorization is the
+   single source of trust.
+3. **Simpler workflow.** One less step to maintain in
+   `release-readiness.yml`.
+
+The trade-off — the routine must fetch the gate summary itself in later
+slices, rather than receiving it pre-extracted — is small (one
+`gh run download` call) and is captured in the Slice 3 ticket.
 
 ## References
 
 - Epic: SCRUM-381 (PR Gate Automation)
-- Workflow change: `.github/workflows/release-readiness.yml` (step `Notify Claude PR Gate routine`)
 - FULL_AUTO policy: `docs/agent/workflow-full-auto.md`
-- Epic-run policy: `docs/agent/workflow-epic-run.md` (will be updated in SCRUM-386)
+- Epic-run policy: `docs/agent/workflow-epic-run.md` (updated in SCRUM-386)
+- GitHub `workflow_run` event schema: <https://docs.github.com/en/webhooks/webhook-events-and-payloads#workflow_run>
