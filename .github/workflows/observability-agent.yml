@@ -78,7 +78,6 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: postgres://talkback:talkback@localhost:5432/talkback?sslmode=disable
-          TALKBACK_RUN_LOOM_LIVE_TEST: "1"
         run: go test ./...
 
       - name: Generate smoke traffic (optional)

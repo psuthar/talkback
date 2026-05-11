@@ -507,14 +507,13 @@ func (h *Handlers) ServeMaterialFile(w http.ResponseWriter, r *http.Request) {
 }
 
 type AttachVideoURLRequest struct {
-	Provider        string  `json:"provider"`
-	VideoURL        string  `json:"video_url"`     // Deprecated: backward compatibility
-	PlaybackMode    string  `json:"playback_mode"` // 'embed' or 'direct'
-	EmbedURL        string  `json:"embed_url"`     // For embed mode
-	MediaURL        string  `json:"media_url"`     // For direct mode (MP4/WebM)
-	PosterURL       string  `json:"poster_url"`    // Optional poster image
-	DurationSeconds *int    `json:"duration_seconds,omitempty"`
-	LoomPassword    *string `json:"loom_password,omitempty"` // Optional password for password-protected Loom videos
+	Provider        string `json:"provider"`
+	VideoURL        string `json:"video_url"`     // Deprecated: backward compatibility
+	PlaybackMode    string `json:"playback_mode"` // 'embed' or 'direct'
+	EmbedURL        string `json:"embed_url"`     // For embed mode
+	MediaURL        string `json:"media_url"`     // For direct mode (MP4/WebM)
+	PosterURL       string `json:"poster_url"`    // Optional poster image
+	DurationSeconds *int   `json:"duration_seconds,omitempty"`
 }
 
 func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
@@ -628,57 +627,6 @@ func (h *Handlers) AttachVideoURL(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating video source: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to attach video URL: %v", err), http.StatusInternalServerError)
 		return
-	}
-
-	// Auto-transcribe Loom videos using Whisper
-	// First try Loom API if available (faster), otherwise use Whisper
-	if req.Provider == "loom" {
-		loomURL := videoURL
-		if req.EmbedURL != "" {
-			loomURL = req.EmbedURL
-		}
-
-		// Try Loom API first if available (faster)
-		if utils.CanFetchLoomTranscript() {
-			log.Printf("Attempting to fetch transcript from Loom API for video: %s", loomURL)
-			transcript, err := utils.FetchLoomTranscript(r.Context(), loomURL)
-			if err == nil && transcript != "" {
-				// Successfully fetched from Loom API - save directly
-				if err := h.DB.UpdateVideoSourceTranscript(r.Context(), videoSource.ID, transcript); err != nil {
-					log.Printf("Failed to save transcript from Loom API: %v", err)
-				} else {
-					log.Printf("Successfully fetched and saved transcript from Loom API")
-					h.DB.UpdateVideoSourceTranscriptionSource(r.Context(), videoSource.ID, "loom_api")
-					// Fetch updated video source to include transcript in response
-					updatedVideoSource, err := h.DB.GetVideoSourceByID(r.Context(), videoSource.ID)
-					if err == nil {
-						videoSource = updatedVideoSource
-					}
-				}
-			} else {
-				log.Printf("Loom API transcript fetch failed or unavailable, will try Whisper auto-transcription")
-			}
-		}
-
-		// Enqueue Whisper-based auto-transcription job (if not already completed via Loom API)
-		if videoSource.TranscriptStatus == models.VideoTranscriptStatusMissing {
-			if h.JobProcessor != nil {
-				log.Printf("Enqueueing Whisper auto-transcription job for Loom video: %s", loomURL)
-				if err := utils.ProcessTranscriptJob(r.Context(), h.DB, videoSource.ID, artifact.SessionID, loomURL, req.LoomPassword, h.JobProcessor); err != nil {
-					log.Printf("Failed to enqueue transcript job (non-fatal): %v", err)
-					// Don't fail the request - transcript can be added manually later
-				} else {
-					log.Printf("Transcript job enqueued successfully")
-					// Set status to pending to indicate transcription is in progress
-					videoSource.TranscriptStatus = models.VideoTranscriptStatusPending
-					// Enable auto-transcribe flag
-					videoSource.AutoTranscribeEnabled = true
-					// Note: We don't update the DB here because the job will update it when it starts
-				}
-			} else {
-				log.Printf("Job processor not available - cannot auto-transcribe")
-			}
-		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1035,90 +983,6 @@ func (h *Handlers) GetTranscriptJob(w http.ResponseWriter, r *http.Request) {
 		"video_source_id": videoSource.ID.String(),
 		"job":             job,
 		"status":          string(job.Status),
-	})
-}
-
-// RegenerateTranscript triggers a new transcription job for a video source
-func (h *Handlers) RegenerateTranscript(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract artifact ID and video ID from URL path
-	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(pathParts) < 6 || pathParts[0] != "artifacts" || pathParts[2] != "video" || pathParts[4] != "transcript-job" || pathParts[5] != "regenerate" {
-		http.Error(w, "Invalid URL path", http.StatusBadRequest)
-		return
-	}
-
-	videoID, err := uuid.Parse(pathParts[3])
-	if err != nil {
-		http.Error(w, "Invalid video ID", http.StatusBadRequest)
-		return
-	}
-
-	// Get video source
-	videoSource, err := h.DB.GetVideoSourceByID(r.Context(), videoID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Video source not found: %v", err), http.StatusNotFound)
-		return
-	}
-
-	// Only allow regeneration for Loom videos
-	if videoSource.Provider != "loom" {
-		http.Error(w, "Regeneration only supported for Loom videos", http.StatusBadRequest)
-		return
-	}
-
-	// Get artifact to retrieve session_id
-	artifact, err := h.DB.GetArtifact(r.Context(), videoSource.ArtifactID)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Artifact not found: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Get Loom URL (prefer embed_url, fallback to video_url)
-	loomURL := videoSource.VideoURL
-	if videoSource.EmbedURL != nil && *videoSource.EmbedURL != "" {
-		loomURL = *videoSource.EmbedURL
-	}
-
-	if loomURL == "" {
-		http.Error(w, "No Loom URL found for this video source", http.StatusBadRequest)
-		return
-	}
-
-	// Enqueue new transcription job
-	if h.JobProcessor == nil {
-		http.Error(w, "Job processor not available", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Get password from existing job if available, otherwise use nil
-	var password *string
-	if videoSource.TranscriptionJobID != nil {
-		existingJob, err := h.DB.GetTranscriptJob(r.Context(), *videoSource.TranscriptionJobID)
-		if err == nil && existingJob != nil && existingJob.LoomPassword != nil {
-			password = existingJob.LoomPassword
-		}
-	}
-
-	if err := utils.ProcessTranscriptJob(r.Context(), h.DB, videoSource.ID, artifact.SessionID, loomURL, password, h.JobProcessor); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to enqueue transcript job: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Update video source status to pending
-	if err := h.DB.UpdateVideoSourceTranscriptStatus(r.Context(), videoSource.ID, models.VideoTranscriptStatusPending); err != nil {
-		log.Printf("Warning: Failed to update video source status: %v", err)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{
-		"status":  "accepted",
-		"message": "Transcription job queued successfully",
 	})
 }
 

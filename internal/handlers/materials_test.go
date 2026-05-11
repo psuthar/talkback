@@ -162,12 +162,12 @@ func TestUploadTranscript(t *testing.T) {
 	artifact, err := db.CreateArtifact(ctx, session.ID, "Transcript Test", nil)
 	require.NoError(t, err)
 
-		embedURL := "https://www.loom.com/share/test"
+		embedURL := "https://example.com/share/test"
 		videoSource := &models.VideoSource{
 			ID:               uuid.New(),
 			ArtifactID:       artifact.ID,
 			SessionID:        session.ID,
-			Provider:         "loom",
+			Provider:         "other",
 			VideoURL:         embedURL,
 			PlaybackMode:     "embed",
 			EmbedURL:         &embedURL,

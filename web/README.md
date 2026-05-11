@@ -47,7 +47,7 @@ A minimal single-page React application for interacting with the TalkBack API.
    - Click "Upload Material"
 
 4. **Attach Video URL**
-   - Select a provider (Loom, Zoom, Other)
+   - Select a provider (Zoom, Teams, Google Meet, Other)
    - Enter the video URL
    - Click "Attach Video"
    - The video ID will be stored for transcript submission

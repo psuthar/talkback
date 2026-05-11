@@ -70,7 +70,6 @@ var materialContentTypes = map[string]bool{
 // Allowed video_source providers — must match the
 // video_sources_provider_check constraint exactly.
 var videoSourceProviders = map[string]bool{
-	"loom":        true,
 	"zoom":        true,
 	"other":       true,
 	"teams":       true,

@@ -203,12 +203,12 @@ func TestGetSession(t *testing.T) {
 	err = db.CreateMaterial(ctx, material)
 	require.NoError(t, err)
 
-	embedURL := "https://loom.com/share/test"
+	embedURL := "https://example.com/share/test"
 	videoSource := &models.VideoSource{
 		ID:               uuid.New(),
 		ArtifactID:       artifact1.ID,
 		SessionID:        session.ID,
-		Provider:         string(models.VideoProviderLoom),
+		Provider:         string(models.VideoProviderOther),
 		VideoURL:         embedURL,
 		PlaybackMode:     "embed",
 		EmbedURL:         &embedURL,

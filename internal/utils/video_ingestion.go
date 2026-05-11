@@ -2,6 +2,8 @@ package utils
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,11 +15,12 @@ import (
 	"github.com/psuthar/talkback/internal/storage"
 )
 
-// IsLoomShareURL checks if a URL is a Loom share URL
-func IsLoomShareURL(url string) bool {
-	urlLower := strings.ToLower(url)
-	return strings.Contains(urlLower, "loom.com/share/") || 
-		   strings.Contains(urlLower, "www.loom.com/share/")
+// GenerateJobKey creates an idempotency key for transcript jobs
+// Format: hash(video_source_id + source_url)
+func GenerateJobKey(videoSourceID, sourceURL string) string {
+	data := fmt.Sprintf("%s:%s", videoSourceID, sourceURL)
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
 }
 
 // ProbeMediaURL performs a HEAD request to check if a URL is a direct media file

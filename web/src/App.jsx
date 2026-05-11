@@ -138,7 +138,7 @@ function App() {
   const [artifactDescription, setArtifactDescription] = useState('')
   const [materialFiles, setMaterialFiles] = useState([]) // Array of File objects for multiple uploads
   const [uploadedMaterials, setUploadedMaterials] = useState([]) // Array of successfully uploaded materials
-  const [videoProvider, setVideoProvider] = useState('loom')
+  const [videoProvider, setVideoProvider] = useState('other')
   const [videoUrl, setVideoUrl] = useState('')
   const [playbackMode, setPlaybackMode] = useState('embed') // 'embed' or 'direct'
   const [embedUrl, setEmbedUrl] = useState('')
@@ -243,7 +243,6 @@ function App() {
   const [deleteErrorToast, setDeleteErrorToast] = useState(null)
   const [videoFile, setVideoFile] = useState(null) // MP4 file for upload
   const [videoFileUploading, setVideoFileUploading] = useState(false)
-  const [loomVideoSource, setLoomVideoSource] = useState(null) // Video source that requires upload (Loom)
   const [transcriptFile, setTranscriptFile] = useState(null) // MP4 file for transcript upload
   const [transcriptFileUploading, setTranscriptFileUploading] = useState(false)
   const [apiHealth, setApiHealth] = useState(null) // null = unknown, true = healthy, false = unhealthy
@@ -372,25 +371,11 @@ function App() {
     voiceChunksRef.current = []
   }
 
-  // Convert Loom share URL to embed URL
-  const getLoomEmbedUrl = (shareUrl) => {
-    if (!shareUrl) return null
-    // Extract video ID from Loom share URL
-    // Format: https://www.loom.com/share/{video-id}
-    const match = shareUrl.match(/loom\.com\/share\/([a-zA-Z0-9]+)/)
-    if (match && match[1]) {
-      return `https://www.loom.com/embed/${match[1]}`
-    }
-    return null
-  }
-
   // Get embed URL based on provider
   const getVideoEmbedUrl = (video) => {
     if (!video || !video.video_url) return null
-    
+
     switch (video.provider) {
-      case 'loom':
-        return getLoomEmbedUrl(video.video_url)
       case 'zoom':
         // Zoom videos might need different handling
         return video.video_url
@@ -408,9 +393,7 @@ function App() {
   const handleVideoPlay = () => {
     const iframe = document.getElementById('video-player-iframe')
     if (iframe && iframe.contentWindow) {
-      // For Loom, we can't directly control playback via iframe
-      // The iframe has its own controls
-      // For other providers, we might need different approaches
+      // The iframe has its own controls; provider-specific control is not supported here.
     }
   }
 
@@ -852,13 +835,6 @@ function App() {
     setMaterialFiles(prev => prev.filter((_, i) => i !== index))
   }
 
-  // Helper function to detect Loom share URLs
-  const isLoomShareURL = (url) => {
-    if (!url) return false
-    const urlLower = url.toLowerCase()
-    return urlLower.includes('loom.com/share/') || urlLower.includes('www.loom.com/share/')
-  }
-
   // Helper function to detect direct MP4 URLs
   const isDirectMediaURL = (url) => {
     if (!url) return false
@@ -896,18 +872,14 @@ function App() {
       }
 
       const data = await response.json()
-      
+
       if (data.requires_upload) {
-        // Loom URL - store video source and show guidance
-        setLoomVideoSource(data.video_source)
-        setAttachVideoFeedback({ type: 'info', message: data.message || 'Loom share URLs require manual upload. Please download the MP4 from Loom and upload it using the file input above.' })
+        setAttachVideoFeedback({ type: 'info', message: data.message || 'This URL requires manual upload. Please upload the MP4 directly.' })
       } else {
-        // Direct URL - success
-        setLoomVideoSource(null) // Clear any previous Loom source
         setAttachVideoFeedback({ type: 'success', message: data.message || 'Video ingested successfully. Transcription will begin shortly.' })
         setVideoUrl('') // Clear URL field
       }
-      
+
       // Refresh session to get updated video sources
       if (currentSession) {
         await openSession(sessionId)
@@ -936,12 +908,6 @@ function App() {
     }
 
     // Smart URL detection
-    if (isLoomShareURL(urlToCheck)) {
-      // Loom share URL - use smart ingestion endpoint
-      await ingestVideoFromURL(urlToCheck)
-      return
-    }
-
     if (isDirectMediaURL(urlToCheck)) {
       // Direct media URL - use smart ingestion endpoint
       await ingestVideoFromURL(urlToCheck)
@@ -1229,8 +1195,8 @@ function App() {
       const data = await response.json()
       setAttachVideoFeedback({ type: 'success', message: data.message || 'Video uploaded successfully. Transcription will begin shortly.' })
       setVideoFile(null)
-      setLoomVideoSource(null) // Clear Loom source if video was uploaded
-      
+
+
       // Refresh session to get updated video sources
       if (currentSession) {
         await openSession(sessionId)
@@ -1239,46 +1205,6 @@ function App() {
       setAttachVideoFeedback({ type: 'error', message: `Failed to upload video: ${err.message}` })
     } finally {
       setVideoFileUploading(false)
-      setLoading(false)
-    }
-  }
-
-  const regenerateTranscript = async (videoId) => {
-    if (!artifactId || !videoId) {
-      return
-    }
-
-    setAttachVideoFeedback({ type: 'info', message: 'Regenerating transcript...' })
-    setLoading(true)
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/artifacts/${artifactId}/video/${videoId}/transcript-job/regenerate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      if (!response.ok) {
-        const text = await response.text()
-        try {
-          const json = JSON.parse(text)
-          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${JSON.stringify(json, null, 2)}` })
-        } catch {
-          setAttachVideoFeedback({ type: 'error', message: `Error ${response.status}: ${text}` })
-        }
-        return
-      }
-
-      const data = await response.json()
-      setAttachVideoFeedback({ type: 'success', message: data.message || 'Transcript regeneration started' })
-      
-      // Refresh session to get updated status
-      if (currentSession) {
-        const sessionId = currentSession.session ? currentSession.session.id : currentSession.id
-        await openSession(sessionId)
-      }
-    } catch (err) {
-      setAttachVideoFeedback({ type: 'error', message: `Failed to regenerate transcript: ${err.message}` })
-    } finally {
       setLoading(false)
     }
   }
@@ -4594,7 +4520,6 @@ function App() {
               handleVideoTimeUpdate={handleVideoTimeUpdate}
               getVideoEmbedUrl={getVideoEmbedUrl}
               transcriptJobs={transcriptJobs}
-              regenerateTranscript={regenerateTranscript}
               questions={displayQuestions}
               unreadQuestionIds={unreadQuestionIds}
               markQuestionViewed={markQuestionViewed}

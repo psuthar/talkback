@@ -108,8 +108,8 @@ Retrieve an artifact with its associated materials and video sources.
     {
       "id": "uuid-string",
       "artifact_id": "uuid-string",
-      "provider": "loom",
-      "video_url": "https://www.loom.com/share/...",
+      "provider": "other",
+      "video_url": "https://example.com/video.mp4",
       "transcript_status": "ready",
       "transcript_text": "Transcript content...",
       "created_at": "2025-12-30T13:00:00Z",
@@ -182,14 +182,15 @@ Attach a video URL to an artifact.
 **Request Body:**
 ```json
 {
-  "provider": "loom",  // or "zoom" or "other"
-  "video_url": "https://www.loom.com/share/example-video-id"
+  "provider": "other",  // or "zoom" or "other"
+  "video_url": "https://example.com/video.mp4"
 }
 ```
 
 **Provider Values:**
-- `loom` - Loom video
 - `zoom` - Zoom recording
+- `teams` - Microsoft Teams recording
+- `google_meet` - Google Meet recording
 - `other` - Other video provider
 
 **Response:** `201 Created`
@@ -197,8 +198,8 @@ Attach a video URL to an artifact.
 {
   "id": "uuid-string",
   "artifact_id": "uuid-string",
-  "provider": "loom",
-  "video_url": "https://www.loom.com/share/example-video-id",
+  "provider": "other",
+  "video_url": "https://example.com/video.mp4",
   "transcript_status": "missing",
   "transcript_text": null,
   "created_at": "2025-12-30T13:00:00Z",
@@ -235,8 +236,8 @@ Upload or paste a transcript for a video source.
 {
   "id": "uuid-string",
   "artifact_id": "uuid-string",
-  "provider": "loom",
-  "video_url": "https://www.loom.com/share/example-video-id",
+  "provider": "other",
+  "video_url": "https://example.com/video.mp4",
   "transcript_status": "ready",
   "transcript_text": "This is the full transcript text...",
   "created_at": "2025-12-30T13:00:00Z",
@@ -282,8 +283,8 @@ Upload or paste a transcript for a video source.
    ```bash
    POST /artifacts/{artifact_id}/video
    {
-     "provider": "loom",
-     "video_url": "https://www.loom.com/share/..."
+     "provider": "other",
+     "video_url": "https://example.com/video.mp4"
    }
    ```
    → Returns video source ID

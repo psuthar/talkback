@@ -326,10 +326,10 @@ func TestAttachVideoURL(t *testing.T) {
 	artifact, err := h.DB.CreateArtifact(context.Background(), session.ID, "Video Test Artifact", nil)
 	require.NoError(t, err)
 
-	t.Run("attaches video URL with loom provider", func(t *testing.T) {
+	t.Run("attaches video URL with default provider", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":  "loom",
-			"video_url": "https://www.loom.com/share/example",
+			"provider":  "other",
+			"video_url": "https://example.com/share/example",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
@@ -342,17 +342,17 @@ func TestAttachVideoURL(t *testing.T) {
 		var videoSource map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
 		require.NoError(t, err)
-		assert.Equal(t, "loom", videoSource["provider"])
-		assert.Equal(t, "https://www.loom.com/share/example", videoSource["video_url"])
+		assert.Equal(t, "other", videoSource["provider"])
+		assert.Equal(t, "https://example.com/share/example", videoSource["video_url"])
 		// Should default to embed mode
 		assert.Equal(t, "embed", videoSource["playback_mode"])
 	})
 
 	t.Run("attaches video URL with embed mode (new format)", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":      "loom",
+			"provider":      "other",
 			"playback_mode": "embed",
-			"embed_url":     "https://www.loom.com/share/embed-example",
+			"embed_url":     "https://example.com/share/embed-example",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
@@ -365,7 +365,7 @@ func TestAttachVideoURL(t *testing.T) {
 		var videoSource map[string]interface{}
 		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
 		require.NoError(t, err)
-		assert.Equal(t, "loom", videoSource["provider"])
+		assert.Equal(t, "other", videoSource["provider"])
 		assert.Equal(t, "embed", videoSource["playback_mode"])
 		assert.NotNil(t, videoSource["embed_url"])
 	})
@@ -398,7 +398,7 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("returns 400 when embed_url is missing for embed mode", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider":      "loom",
+			"provider":      "other",
 			"playback_mode": "embed",
 		}
 		body, _ := json.Marshal(reqBody)
@@ -444,7 +444,7 @@ func TestAttachVideoURL(t *testing.T) {
 
 	t.Run("returns 400 when video_url is missing (backward compatibility)", func(t *testing.T) {
 		reqBody := map[string]interface{}{
-			"provider": "loom",
+			"provider": "other",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
@@ -456,30 +456,4 @@ func TestAttachVideoURL(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("attaches Loom video with password", func(t *testing.T) {
-		password := "test-password-123"
-		reqBody := map[string]interface{}{
-			"provider":      "loom",
-			"playback_mode": "embed",
-			"embed_url":     "https://www.loom.com/share/password-test",
-			"loom_password": password,
-		}
-		body, _ := json.Marshal(reqBody)
-		req := httptest.NewRequest(http.MethodPost, "/artifacts/"+artifact.ID.String()+"/video", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		h.AttachVideoURL(w, req)
-
-		assert.Equal(t, http.StatusCreated, w.Code)
-		var videoSource map[string]interface{}
-		err := json.Unmarshal(w.Body.Bytes(), &videoSource)
-		require.NoError(t, err)
-		assert.Equal(t, "loom", videoSource["provider"])
-		assert.Equal(t, "embed", videoSource["playback_mode"])
-
-		// Verify password is stored in job (if job processor is available)
-		// Note: In test setup, JobProcessor is nil, so job won't be created
-		// But the request should still succeed
-	})
 }

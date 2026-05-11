@@ -45,7 +45,7 @@ Config file: `web/playwright.config.ts` (see `examples.md`).
 - Works with Vite dev server out of the box
 - Native network interception (`page.route`, `waitForResponse`)
 - API request context for backend seeding without a browser
-- No iframe restrictions for the Loom embeds TalkBack uses
+- No iframe restrictions for the third-party embeds TalkBack uses
 
 ---
 

@@ -368,7 +368,7 @@ export function Html5VideoPlayer({
   )
 }
 
-// Embed Player Adapter (for Loom/Zoom iframes)
+// Embed Player Adapter (for provider iframes)
 export function EmbedPlayer({ 
   embedUrl, 
   onEvent,
@@ -472,28 +472,6 @@ function isZoomEmbedUrl(url) {
   return url.includes('zoom.us') || url.includes('zoom.com')
 }
 
-// Helper function to convert Loom share URL to embed URL
-function getLoomEmbedUrl(shareUrl) {
-  if (!shareUrl || typeof shareUrl !== 'string') return null
-  
-  // If it's already an embed URL, return as-is
-  if (shareUrl.includes('loom.com/embed/')) {
-    return shareUrl
-  }
-  
-  // Extract video ID from Loom share URL
-  // Format: https://www.loom.com/share/{video-id} or http://www.loom.com/share/{video-id}
-  // Video IDs can contain alphanumeric characters
-  const match = shareUrl.match(/loom\.com\/share\/([a-zA-Z0-9]+)/)
-  if (match && match[1]) {
-    return `https://www.loom.com/embed/${match[1]}`
-  }
-  
-  // If no match, return null instead of the original URL to avoid X-Frame-Options errors
-  console.warn('Failed to convert Loom share URL to embed URL:', shareUrl)
-  return null
-}
-
 // Main Video Player Component. Pass sessionId + apiBaseUrl for Zoom so video plays in-app via backend proxy.
 // When primaryVideoAccessUrl is set (R2 presigned URL from session.primary_video_artifact_id), it is used for playback.
 export function VideoPlayer({ 
@@ -514,17 +492,9 @@ export function VideoPlayer({
   if (!video) return null
 
   const playbackMode = video.playback_mode || 'embed'
-  
-  // For embed mode, convert Loom share URLs to embed URLs
-  let embedUrl = video.embed_url || (video.video_url && playbackMode === 'embed' ? video.video_url : null)
-  
-  // Always convert Loom share URLs to embed URLs (even if embed_url is already set)
-  if (embedUrl && video.provider === 'loom' && playbackMode === 'embed') {
-    const convertedUrl = getLoomEmbedUrl(embedUrl)
-    // If conversion fails, set to null to prevent invalid URLs from being used
-    embedUrl = convertedUrl || null
-  }
-  
+
+  const embedUrl = video.embed_url || (video.video_url && playbackMode === 'embed' ? video.video_url : null)
+
   // Prefer in-app MP4 playback: use primary stream only when this video is the primary; otherwise use media_url or session stream for uploads.
   // apiBaseUrl can be '' for same-origin-relative requests; build relative stream URLs in that case.
   const baseForSessions = (apiBaseUrl ?? '').replace(/\/$/, '').replace(/\/api\/?$/, '')
@@ -542,7 +512,7 @@ export function VideoPlayer({
 
   const isRenderingPrimaryVideo = !!isPrimaryR2Video
 
-  // Always use the same in-app MP4 player when we have a playable URL (any source: Zoom import, Loom, upload, etc.).
+  // Always use the same in-app MP4 player when we have a playable URL (any source: Zoom import, direct upload, etc.).
   if (mediaUrl) {
     return (
       <Html5VideoPlayer

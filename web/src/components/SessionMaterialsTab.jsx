@@ -351,7 +351,7 @@ export function SessionMaterialsTab({
       <div style={{ marginBottom: 20 }}>
         <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>Add video URL</label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-          <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://www.loom.com/share/... or https://example.com/video.mp4" style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }} />
+          <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)} placeholder="https://example.com/video.mp4" style={{ flex: 1, minWidth: 200, padding: '8px 12px', borderRadius: 6, border: '1px solid #ccc', boxSizing: 'border-box' }} />
           <button type="button" onClick={addVideoUrl} disabled={videoUrlAdding || !sessionId || !videoUrl.trim()} style={{ padding: '8px 14px', borderRadius: 6, border: 'none', backgroundColor: 'var(--color-success-mid)', color: '#fff', cursor: videoUrlAdding || !sessionId || !videoUrl.trim() ? 'not-allowed' : 'pointer', fontWeight: 500 }}>
             {videoUrlAdding ? 'Adding…' : 'Add'}
           </button>

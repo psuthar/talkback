@@ -62,47 +62,6 @@ func (h *Handlers) IngestVideoFromURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if it's a Loom share URL
-	if utils.IsLoomShareURL(req.URL) {
-		// Create artifact for this video
-		artifact, err := h.DB.CreateArtifact(r.Context(), sessionID, "Loom Video", nil)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create artifact: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		// Create video source as embed-only (no download/transcription)
-		videoID := uuid.New()
-		embedURL := req.URL
-		videoSource := &models.VideoSource{
-			ID:            videoID,
-			ArtifactID:    artifact.ID,
-			SessionID:     sessionID,
-			Provider:      "loom",
-			PlaybackMode:  "embed",
-			EmbedURL:      &embedURL,
-			SourceType:    models.VideoSourceTypeEmbedURL,
-			OriginalURL:   &req.URL,
-			TranscriptStatus: models.VideoTranscriptStatusMissing,
-		}
-
-		if err := h.DB.CreateVideoSource(r.Context(), videoSource); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create video source: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		response := IngestVideoFromURLResponse{
-			VideoSource:   videoSource,
-			RequiresUpload: true,
-			Message:       "We can't transcribe a Loom share page directly. Please download the MP4 from Loom and upload it here — once uploaded, we'll transcribe it automatically.",
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
 	// Probe URL to check if it's a direct media file
 	isMedia, contentType, err := utils.ProbeMediaURL(r.Context(), req.URL)
 	if err != nil {

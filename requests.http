@@ -59,8 +59,8 @@ POST {{baseUrl}}/artifacts/{{artifactId}}/video
 Content-Type: application/json
 
 {
-  "provider": "loom",
-  "video_url": "https://www.loom.com/share/example-video-id"
+  "provider": "other",
+  "video_url": "https://example.com/share/example-video-id"
 }
 
 ### Attach Video URL (Embed Mode - New Format)
@@ -68,9 +68,9 @@ POST {{baseUrl}}/artifacts/{{artifactId}}/video
 Content-Type: application/json
 
 {
-  "provider": "loom",
+  "provider": "other",
   "playback_mode": "embed",
-  "embed_url": "https://www.loom.com/share/example-video-id"
+  "embed_url": "https://example.com/share/example-video-id"
 }
 
 ### Attach Video URL (Direct MP4 Mode)
