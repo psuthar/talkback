@@ -3,9 +3,9 @@
 Push-based handling of TalkBack PR Gate outcomes. Replaces 30-second polling
 in `implement SCRUM-XXX FULL_AUTO`. Epic: SCRUM-381.
 
-This document covers Slices 1–2 (SCRUM-382, SCRUM-383, plus the
-SCRUM-387 correction). It is updated in place as later slices land — see
-the **Slice status** table.
+This document covers Slices 1–3 (SCRUM-382, SCRUM-383, SCRUM-384, plus
+the SCRUM-387 correction). It is updated in place as later slices land —
+see the **Slice status** table.
 
 ## How it fits together
 
@@ -29,12 +29,16 @@ labels starts-with "pr-gate:")
         ▼
   Slice 1:        posts a "received" comment on the PR (with idempotency
                   marker so re-runs for the same head_sha don't double-post)
-  Slice 2 (now):  + comment body restructured so its second line is the
-                    outcome headline; claude.ai's run-completion notification
-                    (configured at Settings → General → Notifications)
-                    carries that headline to the user's device
-  Slice 3:        + downloads pr-gate-summary.json from the run's artifacts;
-                    posts structured halt comment on Jira (WARN/BLOCK)
+  Slice 2:        + comment body restructured so its second line is the
+                  outcome headline; claude.ai's run-completion notification
+                  (configured at Settings → General → Notifications)
+                  carries that headline to the user's device
+  Slice 3 (now):  + on WARN/BLOCK only: downloads pr-gate-summary.json from
+                  the release-readiness workflow's artifacts, extracts the
+                  gate signals (pr_risk band/score/factors, release_readiness
+                  status), and posts a structured halt comment on the Jira
+                  ticket linked from the PR title's SCRUM-XXX key (via the
+                  Atlassian connector). PASS / UNKNOWN skip the Jira step.
   Slice 4:        + auto-merge + Done transition (PASS+clean)
 ```
 
@@ -62,8 +66,8 @@ with a label-prefix filter and reads the outcome from the label name.
 | Slice | Ticket | Routine capability | State |
 |-------|--------|--------------------|-------|
 | 1 | SCRUM-382 | Logs receipt by commenting on the PR. No decisions, no merge, no Jira write. | Done |
-| 2 | SCRUM-383 / SCRUM-387 | + comment body formatted for notification surface (claude.ai run-completion delivers the alert); + idempotency dedup keyed on `head_sha` | Current |
-| 3 | SCRUM-384 | + structured halt comment on linked Jira ticket (WARN/BLOCK) | Pending |
+| 2 | SCRUM-383 / SCRUM-387 | + comment body formatted for notification surface (claude.ai run-completion delivers the alert); + idempotency dedup keyed on `head_sha` | Done |
+| 3 | SCRUM-384 | + on WARN/BLOCK only: downloads `pr-gate-summary.json` from the workflow artifacts and posts a structured halt comment on the linked Jira ticket (Atlassian connector required) | Current |
 | 4 | SCRUM-385 | + auto-merge and Done transition on PASS+clean | Pending |
 | 5 | SCRUM-386 | Cut over FULL_AUTO / epic-run docs; remove polling | Pending |
 
@@ -94,11 +98,20 @@ or `RemoteTrigger create` (API path — see the troubleshooting note below).
   `pr-gate:block`, `pr-gate:unknown`.
 - **Permissions:** the per-repo permissions panel — leave
   "Allow unrestricted git push" **off**.
-- **Tool allow-list:** Slice 2 requires `Bash` only (for `gh`). The
-  routine UI doesn't expose per-routine tool toggles; the cloud-routine
-  default allow-list (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
-  `WebFetch`, `WebSearch`) is broader than the minimum but fine — none of
-  the unused tools are exercised by the prompt below.
+- **Tool allow-list:** Slice 3 requires `Bash` (for `gh pr comment`,
+  `gh pr view`, `gh run list`, `gh run download`) and the Atlassian
+  connector (see below). The routine UI doesn't expose per-routine tool
+  toggles; the cloud-routine default allow-list is broader than the
+  minimum but fine — none of the unused tools are exercised by the
+  prompt below.
+- **Connectors (NEW for Slice 3):** add the **Atlassian** connector via
+  claude.ai → Routines → routine → **Connectors** tab → **Add connector** →
+  Atlassian. Authorize the routine for the Jira instance at
+  `suthar-team.atlassian.net` (or whatever Jira host your tickets live in).
+  Once added, `mcp__atlassian__jira_*` tools become available to the
+  routine. **Without this connector, Slice 3's Jira halt comment will
+  fail gracefully** and the routine will fall through with a `notice` —
+  the PR comment from Slice 1+2 is still posted.
 - **Notifications:** ensure the relevant toggles are on at
   <https://claude.ai/settings/general> → Notifications section, especially
   **Response completions** and **Code notifications**. See the
@@ -113,20 +126,24 @@ After save, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
 Open any PR; let `release-readiness` complete. After the gate decides, the
 workflow's last step applies one of `pr-gate:pass` / `pr-gate:warn` /
 `pr-gate:block` / `pr-gate:unknown` to the PR — visible immediately in the
-PR's labels strip. Within ~60 seconds of that label appearing, two things
-should happen:
+PR's labels strip. Within ~60–90 seconds of that label appearing, the
+routine should produce:
 
-1. A comment with `<!-- pr-gate-routine head=… -->` (first line) appears
-   on the PR. Its second line is the outcome headline, e.g.
+1. A PR comment with `<!-- pr-gate-routine head=… -->` (first line) and
+   the outcome headline (second line), e.g.
    `PR Gate: WARN — PR #344 (803b903)`.
-2. claude.ai surfaces the run-completion notification on whatever channels
-   you have enabled (browser push, mobile app, email — see
-   <https://claude.ai/settings/general>). The routine's last message in
-   that notification is the outcome headline above.
+2. A claude.ai run-completion notification carrying the outcome headline
+   (configured channels per Settings → General → Notifications).
+3. **On WARN or BLOCK only:** a structured halt comment on the Jira
+   ticket whose key appears in the PR title (e.g. `SCRUM-388` from
+   `SCRUM-388: …`). The Jira comment lists the gate signals (pr_risk
+   band/score, top risk factors, release_readiness status,
+   mergeable_state) and three resume options. PASS and UNKNOWN do NOT
+   produce a Jira comment.
 
 A re-run of `release-readiness` against the same head_sha should NOT
-produce a second comment or a second notification — the idempotency marker
-on the comment is the dedupe key.
+produce a second PR comment, a second notification, or a second Jira
+comment — the idempotency marker on the PR comment is the dedupe key.
 
 If you don't see the expected outputs:
 
@@ -139,31 +156,47 @@ If you don't see the expected outputs:
   notification toggles at <https://claude.ai/settings/general> are off, or
   your device doesn't have the Anthropic mobile app / browser push
   configured. See the [Notifications](#notifications) section below.
+- If the PR comment posted but the Jira halt comment didn't (on
+  WARN/BLOCK), the Atlassian connector probably isn't added to the
+  routine, or its authorization expired. claude.ai → Routines → your
+  routine → **Connectors** tab → confirm Atlassian is present and active.
+  See [Troubleshooting](#troubleshooting) below.
 
 ## Current routine prompt
 
-This is the live prompt (Slices 1+2). Copy verbatim into the routine.
+This is the live prompt (Slices 1+2+3). Copy verbatim into the routine.
 
-The prompt does one thing — post a PR comment whose headline (second
-line) is the outcome summary. claude.ai's run-completion notification
-surfaces the routine's final emitted sentence; the prompt instructs the
-routine to emit the same headline at exit so the notification's preview
-text matches the PR comment. There is no separate `PushNotification`
-step — cloud routines don't have access to that tool, and the comment
-body + run-completion notification cover the delivery surface.
+The prompt does up to three things:
+
+1. **Always:** post a PR comment whose headline (second line) is the
+   outcome summary. claude.ai's run-completion notification surfaces
+   the routine's final emitted sentence; the prompt instructs the
+   routine to emit the same headline at exit so the notification's
+   preview text matches the PR comment.
+2. **WARN or BLOCK only:** download `pr-gate-summary.json` from the
+   `release-readiness` workflow's artifacts, extract gate signals, and
+   post a structured halt comment on the linked Jira ticket via the
+   Atlassian connector.
+3. **Never:** merge the PR or transition Jira state — those land in
+   Slice 4 (SCRUM-385).
 
 ```
-You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383,
-revised by SCRUM-387). You're invoked by a GitHub webhook — specifically
-a `pull_request.labeled` event from `psuthar/talkback` where the applied
-label name starts with `pr-gate:`.
+You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383 +
+SCRUM-384, revised by SCRUM-387). You're invoked by a GitHub webhook —
+specifically a `pull_request.labeled` event from `psuthar/talkback` where
+the applied label name starts with `pr-gate:`.
 
-Your job: post a PR comment that confirms the webhook fired and surfaces
-the gate outcome. The comment body's headline (second line) doubles as
-the notification text — claude.ai's run-completion notification carries
-the routine's final sentence to the user's enabled channels.
+Your job:
 
-No Jira write, no merge — those land in Slices 3+4 (SCRUM-384, SCRUM-385).
+  1. Always: post a PR comment that confirms the webhook fired and
+     surfaces the gate outcome. The comment body's headline (second
+     line) doubles as the notification text.
+  2. On WARN or BLOCK only: download the release-readiness workflow's
+     pr-gate-summary.json artifact, extract gate signals, and post a
+     structured halt comment on the linked Jira ticket via the
+     mcp__atlassian__jira_add_comment tool.
+
+No merge, no Jira state transition — those land in Slice 4 (SCRUM-385).
 
 Filter rules (silently exit if any fails — the routine's trigger filter
 should already enforce these, but defense in depth):
@@ -174,6 +207,8 @@ should already enforce these, but defense in depth):
 Extract from the payload:
 
   pr_number  = pull_request.number
+  pr_title   = pull_request.title
+  pr_url     = pull_request.html_url
   head_sha   = pull_request.head.sha
   short_sha  = first 7 chars of head_sha
   outcome    = the part of label.name after "pr-gate:"
@@ -202,8 +237,8 @@ Pick the headline and guidance line by outcome:
   unknown → headline: "PR Gate: UNKNOWN — PR #<pr_number> (<short_sha>)"
             guidance: "Gate status not determined; see workflow run."
 
-Post the comment. The marker MUST be the first line of the body so the
-idempotency check above finds it on re-runs.
+Step 1 — Post the PR comment. The marker MUST be the first line of the
+body so the idempotency check above finds it on re-runs.
 
   gh pr comment <pr_number> -R psuthar/talkback --body \
     "<!-- pr-gate-routine head=<head_sha> -->
@@ -213,10 +248,91 @@ idempotency check above finds it on re-runs.
 
 Details: label=<label.name>, head_sha=<head_sha>"
 
-Then emit the headline verbatim as your final sentence and exit. The
-final sentence is what claude.ai's run-completion notification displays
-on the user's device. Do not merge the PR. Do not transition any Jira
-ticket.
+Step 2 — Jira halt comment (WARN or BLOCK only). On PASS or UNKNOWN,
+skip this entire step and go to the final exit.
+
+  2a. Extract the Jira key from the PR title — first match of the regex
+      `SCRUM-[0-9]+`. If no match, log a notice ("no Jira key in PR
+      title; skipping Jira step") and continue to final exit. The PR
+      comment from Step 1 is still the user's signal.
+
+      jira_key=$(echo "<pr_title>" | grep -oE 'SCRUM-[0-9]+' | head -1)
+
+  2b. Find the release-readiness workflow run id for this head_sha.
+      Sometimes the docs-skip-hint workflow is the one that ran instead
+      — try it as a fallback. If neither found, log + skip Jira step
+      (PR comment already posted).
+
+      run_id=$(gh run list -R psuthar/talkback --commit <head_sha> \
+        --workflow "Release Readiness" --json databaseId \
+        --jq '.[0].databaseId')
+      if [ -z "$run_id" ]; then
+        echo "No release-readiness run found for head_sha=<head_sha>; skipping Jira step."
+        # Continue to final exit.
+      fi
+
+  2c. Download the artifact (idempotent — overwrites prior dir):
+
+      rm -rf /tmp/gate-<head_sha> && mkdir -p /tmp/gate-<head_sha>
+      gh run download "$run_id" -R psuthar/talkback \
+        -n release-readiness -D /tmp/gate-<head_sha>
+      summary_path="/tmp/gate-<head_sha>/artifacts/pr-gate-summary.json"
+      if [ ! -f "$summary_path" ]; then
+        echo "pr-gate-summary.json not in artifact; skipping Jira step."
+        # Continue to final exit.
+      fi
+
+  2d. Extract fields:
+
+      final_gate_status=$(jq -r '.final_gate.status // "unknown"' "$summary_path")
+      pr_risk_band=$(jq -r '.pr_risk.band // "unknown"' "$summary_path")
+      pr_risk_score=$(jq -r '.pr_risk.score // "?"' "$summary_path")
+      pr_risk_confidence=$(jq -r '.pr_risk.confidence // "?"' "$summary_path")
+      top_risk_factors=$(jq -r '.pr_risk.top_risk_factors // [] | join(", ")' "$summary_path")
+      rr_status=$(jq -r '.release_readiness.status // "unknown"' "$summary_path")
+      rr_score=$(jq -r '.release_readiness.score // "?"' "$summary_path")
+      rr_warnings=$(jq -r '.release_readiness.warnings // 0' "$summary_path")
+      rr_blockers=$(jq -r '.release_readiness.blockers // 0' "$summary_path")
+      mergeable=$(gh pr view <pr_number> -R psuthar/talkback \
+        --json mergeStateStatus --jq .mergeStateStatus)
+
+  2e. Post the Jira halt comment via mcp__atlassian__jira_add_comment.
+      Call with issueKey=<jira_key> and a body of the form:
+
+          FULL_AUTO HALT — TalkBack PR Gate: <UPPERCASE_OUTCOME>
+
+          PR: <pr_url>
+          Head SHA: <head_sha>
+
+          Gate signals (from artifacts/pr-gate-summary.json):
+          - final_gate: <final_gate_status>
+          - pr_risk: band=<pr_risk_band>, score=<pr_risk_score>, confidence=<pr_risk_confidence>
+          - top_risk_factors: [<top_risk_factors>]
+          - release_readiness: <rr_status> (score <rr_score>/100, <rr_warnings> warnings, <rr_blockers> blockers)
+          - mergeable_state: <mergeable>
+
+          Resume options:
+          1. Manual squash-merge to accept the risk (same playbook used
+             in SCRUM-366 / 367 / 370).
+          2. Push additional commits to address the signals;
+             release-readiness re-runs and the routine posts an updated
+             comment if the outcome changes.
+          3. Cancel and re-evaluate.
+
+          Auto-posted by Claude routine (Slice 3, SCRUM-384). Re-runs on
+          the same head_sha are deduped via the PR comment marker —
+          this Jira comment is posted at most once per head_sha.
+
+      If the call errors (Atlassian connector missing or auth expired),
+      log the error and continue to final exit — do NOT crash the
+      routine. The PR comment is still the fallback signal.
+
+Final exit:
+
+  Emit the headline (from the outcome map above) verbatim as the
+  routine's last sentence and exit. The final sentence is what
+  claude.ai's run-completion notification displays on the user's
+  device. Do not merge the PR. Do not transition any Jira ticket.
 ```
 
 ## Payload contract
@@ -225,26 +341,26 @@ The routine receives GitHub's standard `pull_request` webhook payload with
 `action: "labeled"`. Schema:
 <https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request>.
 
-Fields the current prompt (Slices 1+2) uses:
+Fields the current prompt (Slices 1+2+3) uses:
 
 | Field | Source |
 |-------|--------|
 | `action` | top-level — must be `"labeled"` |
 | `label.name` | the freshly-applied label, e.g. `pr-gate:warn` |
 | `pull_request.number` | the PR number |
+| `pull_request.title` | parsed for the `SCRUM-XXX` Jira key (Slice 3) |
+| `pull_request.html_url` | included in the Jira halt comment (Slice 3) |
 | `pull_request.head.sha` | head SHA at the moment the label was applied; also used as the idempotency dedupe key |
 
-Future slices will additionally call:
+Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
+`gh run download` from the `release-readiness` workflow:
 
-```bash
-# Look up the release-readiness run for this head SHA.
-run_id=$(gh run list -R psuthar/talkback --commit <head_sha> \
-  --workflow "Release Readiness" --json databaseId --jq '.[0].databaseId')
-gh run download "$run_id" -R psuthar/talkback -n release-readiness
-jq '.final_gate.status, .pr_risk.top_risk_factors' artifacts/pr-gate-summary.json
-```
-
-…to extract the same fields the original API-trigger payload contained.
+| JSON path | Used for |
+|-----------|----------|
+| `.final_gate.status` | Echoed in the Jira halt comment. |
+| `.pr_risk.band`, `.pr_risk.score`, `.pr_risk.confidence` | Same — risk-scoring summary. |
+| `.pr_risk.top_risk_factors[]` | Joined comma-separated for the Jira halt comment. |
+| `.release_readiness.status`, `.release_readiness.score`, `.release_readiness.warnings`, `.release_readiness.blockers` | Same. |
 
 ## Troubleshooting
 
@@ -258,6 +374,8 @@ jq '.final_gate.status, .pr_risk.top_risk_factors' artifacts/pr-gate-summary.jso
 | Comment appears but no claude.ai notification arrives | The notification toggles at <https://claude.ai/settings/general> are off (Response completions + Code notifications), or no delivery target is configured (browser push not granted, mobile app not installed, email disabled). See [Notifications](#notifications). |
 | GitHub notifications never arrive for routine comments | Expected. GitHub does not notify users about their own actions, and the routine runs as the routine owner. Rely on claude.ai notifications. |
 | Comment fires twice on the same head_sha | The idempotency check's `gh pr view --json comments --jq …` didn't match the marker. Common cause: the marker line isn't the first line of the body, or the head_sha format drifted (use full 40-char SHA on both sides, never the short form). Inspect the routine's Run log for the value of `existing`. |
+| Jira halt comment never appears on WARN/BLOCK | One of: (a) Atlassian connector not added to the routine — claude.ai → Routines → routine → Connectors tab → Add connector → Atlassian, then authorize the Jira host; (b) authorization expired — reconnect; (c) PR title doesn't contain a `SCRUM-XXX` key — the routine logs "no Jira key in PR title; skipping Jira step" and falls through; (d) the release-readiness artifact wasn't produced this run (e.g., docs-skip-hint workflow ran instead) — the routine logs "No release-readiness run found" or "pr-gate-summary.json not in artifact" and falls through. In every fall-through case the PR comment from Step 1 is still posted. |
+| Jira halt comment posted on PASS | Shouldn't happen — Slice 3 only posts on WARN or BLOCK. Inspect the routine's Run log: if `outcome` was parsed as `warn`/`block` for a PR that actually passed, the label-application step in the workflow may have mis-classified. Check `artifacts/pr-gate-summary.json` for the run and the workflow's `case "$final_gate"` branch. |
 
 ## Authorization scope
 
@@ -267,14 +385,16 @@ can't exceed its slice's intended blast radius.
 | Slice | State | Tools required (cumulative) | New capability granted |
 |-------|-------|------------------------------|------------------------|
 | 1 | Done | `Bash` (for `gh pr comment`, `gh pr view`) | Comment-write on PRs in `psuthar/talkback`. |
-| 2 | Current | (no new tools) | Notification surface via the existing comment-write tool + claude.ai's run-completion notification setting. See [Notifications](#notifications). |
-| 3 | Pending | (still `Bash`; uses `gh run download` + `mcp__atlassian__jira_*` if configured) | Artifact download from workflow runs; Jira comment write. |
+| 2 | Done | (no new tools) | Notification surface via the existing comment-write tool + claude.ai's run-completion notification setting. See [Notifications](#notifications). |
+| 3 | Current | + `gh run list` / `gh run download` (still `Bash`); + Atlassian connector for `mcp__atlassian__jira_add_comment` | Artifact read from the `release-readiness` workflow + Jira comment-write on the linked ticket (WARN/BLOCK only). |
 | 4 | Pending | + `gh pr merge`, Jira transition write | PR merge + Jira Done transition. |
 
-The routine UI doesn't expose per-tool toggles. The deployed routine's
-allow-list (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`,
-`WebSearch`) is broader than the minimum, but only `Bash` is exercised by
-the current prompt; the rest are dormant.
+The routine UI doesn't expose per-tool Bash toggles. The deployed routine's
+default allow-list (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`,
+`WebFetch`, `WebSearch`) is broader than the minimum but only `Bash` is
+exercised by the current prompt. MCP tools (e.g. `mcp__atlassian__jira_*`)
+become available only when the corresponding connector is added on the
+routine's **Connectors** tab.
 
 ## Notifications
 
