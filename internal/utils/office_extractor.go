@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/extrame/xls"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -31,6 +32,8 @@ func (defaultOfficeExtractor) ExtractText(filePath string) (string, error) {
 		return extractDocx(filePath)
 	case ".xlsx":
 		return extractXlsx(filePath)
+	case ".xls":
+		return extractXls(filePath)
 	case ".pptx":
 		return extractPptx(filePath)
 	default:
@@ -139,6 +142,58 @@ func extractXlsx(filePath string) (string, error) {
 
 	if len(parts) == 0 {
 		return "", fmt.Errorf("xlsx text extraction produced no text")
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// maxXlsRows caps how many rows extractXls pulls into memory across all
+// sheets — a guard against a maliciously huge legacy workbook. (.xls is
+// a 16-bit format, so a single sheet tops out at 65 536 rows; this still
+// caps multi-sheet workbooks.)
+const maxXlsRows = 200_000
+
+// extractXls reads a legacy binary .xls workbook (BIFF / OLE2 compound
+// document, MIME application/vnd.ms-excel) and returns its text content
+// in the same shape as extractXlsx: within a row, non-empty cell values
+// joined by tabs; rows joined by newlines; all sheets concatenated in
+// order. Uses github.com/extrame/xls (pure Go — no markitdown sidecar
+// dependency, mirroring the .csv/.xlsx synchronous paths). Wrapped in a
+// recover because the third-party parser can panic on malformed input
+// and this runs on arbitrary user uploads.
+func extractXls(filePath string) (text string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			text = ""
+			err = fmt.Errorf("xls parse panicked: %v", r)
+		}
+	}()
+
+	wb, openErr := xls.Open(filePath, "utf-8")
+	if openErr != nil {
+		return "", fmt.Errorf("open xls: %w", openErr)
+	}
+	if wb == nil {
+		// xls.OpenReader returns (nil, nil) when the OLE container has no
+		// Workbook/Book stream — i.e. the bytes aren't a real .xls.
+		return "", fmt.Errorf("open xls: not a valid .xls workbook")
+	}
+
+	var parts []string
+	for _, row := range wb.ReadAllCells(maxXlsRows) {
+		var rowParts []string
+		for _, cell := range row {
+			cell = strings.TrimSpace(cell)
+			if cell != "" {
+				rowParts = append(rowParts, cell)
+			}
+		}
+		if len(rowParts) > 0 {
+			parts = append(parts, strings.Join(rowParts, "\t"))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "", fmt.Errorf("xls text extraction produced no text")
 	}
 	return strings.Join(parts, "\n"), nil
 }

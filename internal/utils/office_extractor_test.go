@@ -163,3 +163,56 @@ func TestDefaultOfficeExtractor_ExtractText_Docx(t *testing.T) {
 		t.Errorf("expected Office text: %q", text)
 	}
 }
+
+// SCRUM-395: pure-Go legacy .xls (BIFF / OLE2) extraction. Fixture is the
+// same 2-sheet workbook used by the e2e suite (web/tests/e2e/fixtures/test.xls),
+// copied into testdata/ so the Go test doesn't reach outside the module.
+// Sheets: "Roster" [name,role / Alex Chen,Senior Staff Engineer / Priya Raman,Hiring Manager]
+//         "Notes"  [topic,summary / culture,... / scope,leads notification platform]
+func TestExtractXls(t *testing.T) {
+	text, err := extractXls(filepath.Join("testdata", "test.xls"))
+	if err != nil {
+		t.Fatalf("extractXls: %v", err)
+	}
+	for _, want := range []string{
+		"name", "role", "Alex Chen", "Senior Staff Engineer", "Priya Raman", "Hiring Manager",
+		"topic", "summary", "culture", "candidate values written communication",
+		"scope", "leads notification platform",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("extracted .xls text missing %q\n--- got ---\n%s", want, text)
+		}
+	}
+	// Within-row cells are tab-joined (parity with extractXlsx).
+	if !strings.Contains(text, "Alex Chen\tSenior Staff Engineer") {
+		t.Errorf("expected tab-joined row; got %q", text)
+	}
+}
+
+// A non-.xls payload with a .xls name must surface an error, not a panic or
+// silent empty result — extractXls runs on arbitrary user uploads.
+func TestExtractXls_NotARealXls(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "fake.xls")
+	if err := os.WriteFile(f, []byte("name,role\nAlex,Eng\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := extractXls(f)
+	if err == nil {
+		t.Fatalf("expected error for non-OLE2 bytes named .xls; got text=%q", text)
+	}
+	if text != "" {
+		t.Errorf("expected empty text on error; got %q", text)
+	}
+}
+
+// DefaultOfficeExtractor must route .xls to the BIFF reader.
+func TestDefaultOfficeExtractor_Xls(t *testing.T) {
+	text, err := DefaultOfficeExtractor.ExtractText(filepath.Join("testdata", "test.xls"))
+	if err != nil {
+		t.Fatalf("ExtractText(.xls): %v", err)
+	}
+	if !strings.Contains(text, "Alex Chen") || !strings.Contains(text, "leads notification platform") {
+		t.Errorf("expected legacy .xls content via DefaultOfficeExtractor; got %q", text)
+	}
+}

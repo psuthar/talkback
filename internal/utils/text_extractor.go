@@ -19,7 +19,7 @@ func ExtractTextFromFile(filePath string) (string, error) {
 		return extractTextFile(filePath)
 	case ".pdf":
 		return extractPDF(filePath)
-	case ".docx", ".xlsx", ".pptx":
+	case ".docx", ".xlsx", ".xls", ".pptx":
 		return DefaultOfficeExtractor.ExtractText(filePath)
 	default:
 		// For now, try to read as text
@@ -42,7 +42,7 @@ func ExtractTextFromFileWithMeta(filePath string, originalFilename string, origi
 		return extractTextFile(filePath)
 	case ".pdf":
 		return extractPDF(filePath)
-	case ".docx", ".xlsx", ".pptx":
+	case ".docx", ".xlsx", ".xls", ".pptx":
 		// Do not delegate to DefaultOfficeExtractor here: that implementation
 		// routes by filePath extension, which may be wrong for temp downloads.
 		switch ext {
@@ -50,6 +50,8 @@ func ExtractTextFromFileWithMeta(filePath string, originalFilename string, origi
 			return extractDocx(filePath)
 		case ".xlsx":
 			return extractXlsx(filePath)
+		case ".xls":
+			return extractXls(filePath)
 		case ".pptx":
 			return extractPptx(filePath)
 		}
@@ -65,7 +67,12 @@ func ExtractTextFromFileWithMeta(filePath string, originalFilename string, origi
 	if strings.Contains(ct, "wordprocessingml") || ext == ".doc" || ext == ".docx" {
 		return extractDocx(filePath)
 	}
-	if strings.Contains(ct, "spreadsheetml") || ext == ".xls" || ext == ".xlsx" {
+	if ext == ".xls" || strings.Contains(ct, "vnd.ms-excel") || ct == "application/msexcel" {
+		// Legacy binary Excel — distinct format from .xlsx; excelize can't
+		// read it. Pure-Go BIFF reader.
+		return extractXls(filePath)
+	}
+	if strings.Contains(ct, "spreadsheetml") || ext == ".xlsx" {
 		return extractXlsx(filePath)
 	}
 	if strings.Contains(ct, "presentationml") || strings.Contains(ct, "powerpoint") || ext == ".ppt" || ext == ".pptx" {
