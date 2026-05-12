@@ -1,11 +1,14 @@
 # PR Gate Webhook → Claude Routine
 
-Push-based handling of TalkBack PR Gate outcomes. Replaces 30-second polling
-in `implement SCRUM-XXX FULL_AUTO`. Epic: SCRUM-381.
+> **Optional path — opt-in via `FULL_AUTO_WEBHOOK` (SCRUM-392).** This path is **not** the default. Each `pull_request.labeled` and `pull_request.closed` event the routine subscribes to consumes one of your daily claude.ai routine runs (~15/day on the default plan), which is below normal dev volume. The default `implement SCRUM-XX FULL_AUTO` uses the **polling path** documented in [`workflow-full-auto.md`](workflow-full-auto.md) and consumes no claude.ai quota.
+>
+> Use this path by invoking `implement SCRUM-XX FULL_AUTO_WEBHOOK` (note the trailing `_WEBHOOK`). The agent then skips polling, lets the routine merge in the cloud, and only runs local cleanup + a brief closure comment. Same PR / Jira outputs as the polling path; different execution surface.
+>
+> To enable cleanly: in claude.ai → Routines → "TalkBack PR Gate handler" → set status to **Active**. To disable cleanly (avoid accidental quota consumption while you're on the polling default): set status to **Inactive**.
 
-This document covers Slices 1–4 (SCRUM-382, SCRUM-383, SCRUM-384,
-SCRUM-385, plus the SCRUM-387 correction). It is updated in place as
-later slices land — see the **Slice status** table.
+Push-based handling of TalkBack PR Gate outcomes via Claude routines, originally introduced as the default in SCRUM-381–SCRUM-391 and demoted to opt-in in SCRUM-392 once the daily-quota cost was understood.
+
+This document covers Slices 1–6 (SCRUM-382, SCRUM-383, SCRUM-384, SCRUM-385, SCRUM-386, plus the SCRUM-387 correction, SCRUM-390 enrichment, and SCRUM-391 CLOSE FLOW). It is updated in place as later slices land — see the **Slice status** table.
 
 ## How it fits together
 

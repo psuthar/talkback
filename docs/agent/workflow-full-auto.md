@@ -2,39 +2,22 @@
 
 Source of truth: This file owns FULL_AUTO merge-gate handling, merge rules, cleanup, and Jira Done transition requirements for `psuthar/talkback`.
 
-## Default path: webhook routine (SCRUM-381)
+## Two invocation keywords (SCRUM-392)
 
-After pushing the PR and transitioning Jira to **In Review**, the agent's active merge work is **done**. A deployed Claude routine handles the gate → merge → Jira Done flow. **Do not poll** the gate or `mergeable_state` from the agent's session.
+| Keyword | Default? | Path | Quota cost |
+|---|---|---|---|
+| `implement SCRUM-XX FULL_AUTO` | **Yes** | Agent polls gate + `mergeable_state` every 30s, merges via `merge_pull_request`, transitions Jira to Done itself. | None — runs in your local Claude Code session. |
+| `implement SCRUM-XX FULL_AUTO_WEBHOOK` | No (opt-in) | A deployed Claude routine subscribes to `pull_request.labeled` + `pull_request.closed`, merges in the cloud, transitions Jira. See [`pr-gate-webhook.md`](pr-gate-webhook.md). | Each event consumes 1 routine run from your claude.ai daily quota (~15/day on the default plan). |
 
-The routine (defined in [`pr-gate-webhook.md`](pr-gate-webhook.md)) fires when `release-readiness.yml` applies a `pr-gate:<status>` label to the PR. It:
+The two paths produce the **same PR / Jira outputs** (PR Gate comment, Jira completion comment, Done transition) — the only differences are who executes the merge and whether the close-out runs in the cloud or in your local session.
 
-- Posts a PR comment with the outcome headline (always).
-- **On WARN/BLOCK** — posts a structured halt comment on the linked Jira ticket and exits. PR stays open; Jira stays **In Review**. Human acts manually.
-- **On PASS + `mergeable_state: clean`** — pre-merge-guards (re-reads PR state at merge moment), squash-merges via `gh pr merge --squash --delete-branch`, posts a Jira completion comment, transitions the linked ticket to **Done** via the Atlassian connector's transition-issue tool.
-- **On manual squash-merge of a WARN/BLOCK PR (SCRUM-391, "CLOSE FLOW"):** the routine also subscribes to `pull_request.closed` with `merged=true`. When a human squash-merges a halted PR, the routine posts a "FULL_AUTO COMPLETE (manual override)" Jira comment naming the bypassed gate outcome and the merging user, then transitions Jira to **Done**. Operator's only step is clicking "Squash and merge" in GitHub; Jira close-out is automatic. (Idempotency dedupes against PASS auto-merges so the same PR doesn't get double-closed.)
+This file documents the **default polling path** first. The webhook path is documented in [`pr-gate-webhook.md`](pr-gate-webhook.md).
 
-### Agent's post-push responsibilities
-
-After pushing the PR and Jira → In Review:
-
-1. **Stop active work.** Do not poll. The routine will fire when the gate decides (typically within ~60s of `release-readiness` completing).
-2. Optionally do **one** confirmation read after a reasonable wait (~5–10 minutes total budget — enough for the gate to run and the routine to act). One read, not a polling loop. If the PR is merged, proceed to local cleanup below. If still open, treat it as either: routine halted at WARN/BLOCK (Jira comment will say so), or routine errored (fall back to the **Manual-merge fallback path** at the bottom of this doc).
-3. **Local cleanup after the routine merges.** Run the worktree-FF / branch-delete sequence in **Merge, Cleanup, and Done Transition** below. (The routine can't touch the developer's local filesystem; that's the agent's job.)
-4. **Closure Jira comment.** The routine already posted a completion comment and transitioned to Done. The agent's job: post a separate **closure comment** documenting local-side cleanup (primary-tree FF outcome, worktree removed, branch deleted). Keep brief; don't repeat what the routine already covered.
-
-### When the routine can't merge
-
-- Routine halted at WARN/BLOCK → routine has posted a Jira halt comment with three resume options. Agent does not merge; PR stays open. Human decides whether to squash-merge manually (typical override path for diff-size WARN) or push fixes. **If the human squash-merges manually:** the routine's CLOSE FLOW (SCRUM-391) fires on the close event, posts a "manual override" Jira completion comment + transitions Jira to **Done** automatically. The agent's job on the next `finish SCRUM-XXX` is then just **local cleanup** — FF primary tree's main, `git worktree remove`, `git branch -D feat/SCRUM-XXX` — and a brief closure Jira comment noting the local-side outcomes.
-- Routine errored before merging → fall back to the **Manual-merge fallback path** below.
-- Routine not configured (e.g., different repo, connector lost auth) → use the fallback path as the primary.
-
-The fallback path retains the original polling-based merge behavior intact; the cutover does not remove it, only demotes it from default to fallback.
-
-## Core Rule (fallback path)
+## Core Rule (default — polling path)
 
 Use GitHub MCP `pull_request_read`: **`get_check_runs`** for **TalkBack PR Gate** (PASS = `conclusion: success`) and **`method: get`** for **`mergeable_state`**. Both are required for merge; see **Stop polling when the gate is not PASS** below. Do not use legacy combined status as a parallel source of truth for mergeability.
 
-## Hard Stop Conditions (fallback path)
+## Hard Stop Conditions
 
 Do not proceed to merge/Jira Done unless both are true:
 
@@ -47,9 +30,7 @@ If either merge condition fails, stop FULL_AUTO: PR remains open, Jira remains I
 
 GitHub Checks use `conclusion`, not the PR comment table. In this repo, unified gate **PASS** maps to check `conclusion: success`. **WARN** maps to `conclusion: action_required` (human review / attention needed); that is **not** PASS. See `scripts/pr_gate_check_payload.py`.
 
-## Polling Policy (fallback path only)
-
-The polling cadence below applies **only** when falling back to the manual-merge path (routine unavailable, routine errored before merging, or repo without the routine configured). For the default routine-driven path in `psuthar/talkback`, the agent does not poll — see the top section.
+## Polling Policy
 
 Each poll cycle must read **both** check runs (for TalkBack PR Gate) and PR details (for `mergeable_state`). Order: use `pull_request_read` with `get_check_runs` first, then `method: get` for mergeability.
 
@@ -83,23 +64,34 @@ Merge-state table:
 | `clean` | continue only after confirming TalkBack PR Gate success |
 | `dirty` | stop; merge conflicts |
 
-## Pre-merge Guard (Mandatory, both paths)
+## Pre-merge Guard (Mandatory)
 
-The routine itself implements this guard internally (see `pr-gate-webhook.md` Step 3a). For the fallback path, the agent must run it manually before `merge_pull_request`:
+Before calling `merge_pull_request`:
 
 1. Confirm TalkBack PR Gate success via `pull_request_read` with `get_check_runs`.
 2. Immediately re-read PR with `pull_request_read` (`method: get`).
 3. Merge only if `mergeable_state` is still `clean`.
 
-Never merge based on stale earlier reads.
+Never merge based on stale earlier reads. A `clean` read from minutes earlier is not sufficient — the immediate pre-merge read is required every time.
+
+## WARN / BLOCK handling (polling path)
+
+When the gate completes with `conclusion: action_required` (WARN) or `failure` (BLOCK):
+
+1. **Stop polling immediately.** Do not wait for the budget to expire.
+2. Post a Jira halt comment on the linked ticket summarizing: gate signals from the workflow artifacts (PR Risk band/score, top risk factors, Release Readiness status, mergeable_state), resume options (manual squash-merge to override; push fixes to address signals; cancel).
+3. Leave the PR **open** and Jira in **In Review**.
+4. End the session. The human decides whether to squash-merge manually (override) or push fixes.
+
+**Resume after fixes:** on the next `implement SCRUM-XX FULL_AUTO` / `continue` / `finish` in the same branch, restart the poll loop from scratch — re-read both gate and `mergeable_state`.
+
+**Resume after manual squash-merge** (WARN override): on the next `finish SCRUM-XXX`, the agent reads the PR state, sees `MERGED`, and runs the close-out below (Jira Done transition + local cleanup + closure comment). Under the **default polling path**, Jira Done is transitioned by the agent on the next session — there is no cloud automation watching for the close event. (The webhook path's SCRUM-391 CLOSE FLOW handles this in the cloud; you opt in via `FULL_AUTO_WEBHOOK` when you want it.)
 
 ## Merge, Cleanup, and Done Transition
 
-The local cleanup steps below apply to **both** paths — the routine handles the cloud-side merge + Jira transition, but only the local agent can touch the developer's worktree and primary checkout. For the fallback path, the agent additionally performs the `merge_pull_request` call before these steps.
+On confirmed merge (after `merge_pull_request` returns success, or after a manual squash-merge detected via `pull_request_read`):
 
-On confirmed merge (routine-driven or fallback path):
-
-- **Fallback path only:** call `merge_pull_request` with `merge_method: squash` after the pre-merge guard above. Routine path: the routine has already merged; skip this.
+- Call `merge_pull_request` with `merge_method: squash` (if not already merged by the user).
 - Remote branch: rely on auto-delete if configured; otherwise delete manually in GitHub UI.
 - Local cleanup — choose the path that matches how implementation actually happened:
 
@@ -116,7 +108,7 @@ On confirmed merge (routine-driven or fallback path):
 
   1. ExitWorktree (action: `keep` or `remove`) to return the session to the main checkout. Never run worktree-removal commands while the session is still inside the worktree.
 
-  2. **Fast-forward the primary tree's `main` — safety-gated, mandatory for worktree runs.** The agent operated in a worktree, so the user's primary checkout is now stale relative to the merged state. Bring it up to date so no manual `git pull` is needed after close-out. All three conditions must hold; on any failure, **skip the FF and surface a notice** in the closure comment — do not force, rebase, or stash.
+  2. **Fast-forward the primary tree's `main` — safety-gated, mandatory for worktree runs (SCRUM-388).** The agent operated in a worktree, so the user's primary checkout is now stale relative to the merged state. Bring it up to date so no manual `git pull` is needed after close-out. All three conditions must hold; on any failure, **skip the FF and surface a notice** in the closure comment — do not force, rebase, or stash.
 
      a. Primary tree's current branch is `main`:
         `git -C <primary> branch --show-current` returns `main`.
@@ -138,13 +130,13 @@ On confirmed merge (routine-driven or fallback path):
 
 - Before transitioning Jira to Done, verify the ticket already has the structured implementation comment required by `docs/agent/workflow-jira.md`.
   - If missing, post that comment first and only then continue.
-- **Fallback path only:** transition Jira ticket to Done. Routine path: the routine has already transitioned to Done; skip this.
+- **Transition Jira ticket to Done** via `mcp__atlassian__jira_transition_issue` (target status name "Done").
 - Post a final closure Jira comment confirming FULL_AUTO completion with:
   1. merged PR URL,
   2. merge/landing commit SHA on `main`,
   3. local/remote branch cleanup result,
   4. primary-tree FF outcome — one of: "FF'd to `<sha>`", "skipped — primary on `<branch>`", "skipped — primary has WIP on `main`", "skipped — `--ff-only` refused (divergence)". Omit this item only if implementation ran in the main checkout (no worktree was used).
-  5. routine vs fallback path indicator — one of: "routine merged + transitioned to Done at `<time>`", "fallback path (routine halted/errored — reason)".
+  5. path indicator — `"polling path (default)"`.
   6. any residual risk or follow-up note.
 
 ## Git Push Authentication Note
@@ -154,3 +146,17 @@ If HTTPS push fails non-interactively (`could not read Username ... Device not c
 - Configure `gh auth login` + `gh auth setup-git`, or use SSH remote.
 - If needed, push from integrated terminal, then continue PR workflow through GitHub MCP.
 
+## Optional path: webhook routine (opt-in via `FULL_AUTO_WEBHOOK`)
+
+**Quota note:** Each `pull_request.labeled` and `pull_request.closed` event the routine subscribes to consumes one of your daily claude.ai routine runs (~15/day on the default plan). For normal dev volume — multiple PRs per day, each with re-runs of `release-readiness` cycling labels, plus close events — this exceeds the default quota. Default to the polling path above; opt in to the webhook path only on PRs where the cost is justified.
+
+Invoke with `implement SCRUM-XX FULL_AUTO_WEBHOOK` (note the trailing `_WEBHOOK`). The agent's behavior changes:
+
+- After pushing the PR and Jira → In Review, **stop active work**. Do not poll. The routine fires on the gate-applied label (typically within ~60s of `release-readiness` completing).
+- Optionally do **one** confirmation read after ~5–10 min. If the PR is merged, run the local cleanup (FF + worktree remove + branch -D) and post the closure comment. If still open, the routine likely halted at WARN/BLOCK (its Jira halt comment will say so) — fall back to the polling path's WARN/BLOCK handling (above).
+- The routine handles the cloud-side merge, the Jira completion comment, and the Done transition. The agent's only job is the local cleanup + a brief closure comment naming `"webhook path (FULL_AUTO_WEBHOOK)"` as the path indicator.
+- Manual squash-merge override of WARN/BLOCK: the routine's CLOSE FLOW (SCRUM-391) fires on the `pull_request.closed` event and auto-posts the override Jira completion + Done transition. The agent's job on the next `finish SCRUM-XXX` is just local cleanup.
+
+Full routine prompt, payload contract, and setup instructions: [`pr-gate-webhook.md`](pr-gate-webhook.md).
+
+**To enable the webhook path:** in claude.ai → Routines → "TalkBack PR Gate handler" → set status to **Active**, and confirm both `Pull request labeled` and `Pull request closed` event subscriptions are present (per SCRUM-391). To disable cleanly (avoid accidental quota consumption while you're using polling), set the routine to **Inactive**.

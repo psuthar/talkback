@@ -30,33 +30,33 @@ Default execution is sequential. A ticket may run in parallel batch only when:
 
 Consecutive parallel-eligible tickets run as a batch and must resolve before moving on.
 
-## Per-ticket flow with the webhook routine (default)
+## Per-ticket flow (default — polling path)
 
-After SCRUM-386, per-ticket FULL_AUTO inside an epic uses the routine-driven path described in [`workflow-full-auto.md`](workflow-full-auto.md) and [`pr-gate-webhook.md`](pr-gate-webhook.md). For each child ticket:
+Per SCRUM-392, per-ticket FULL_AUTO inside an epic uses the **polling path** described in [`workflow-full-auto.md`](workflow-full-auto.md). The agent drives merge + Jira Done from its own session; no cloud routine is involved by default. For each child ticket:
 
 1. Run `implement <KEY> FULL_AUTO` per the standard ticket workflow.
 2. Push PR + transition Jira to **In Review**.
-3. **Stop active polling.** The routine merges on PASS+clean and transitions the child's Jira ticket to Done, or posts a Jira halt comment on WARN/BLOCK.
-4. Do one confirmation read after a brief wait (~5–10 minutes) — same single-check pattern as standalone FULL_AUTO. Then either advance to local cleanup (routine merged) or HALT the epic (routine posted a halt comment).
+3. **Poll** TalkBack PR Gate + `mergeable_state` every 30s on a 40-min budget. Merge via `merge_pull_request` when both PASS+clean (with the mandatory pre-merge guard re-read). Post the structured Jira completion comment and transition the child's Jira ticket to **Done**.
+4. On WARN/BLOCK: stop polling immediately, post the structured Jira halt comment, leave PR open + Jira In Review, **HALT the epic** (do not start the next child).
 5. Move on to the next child only when the previous one is merged + Jira Done. Do not start `feat/<next>` until that's confirmed.
 
-The polling-based merge path is the fallback when the routine can't fire — see [`workflow-full-auto.md`](workflow-full-auto.md) "Manual-merge fallback path."
+The webhook routine path remains available as an opt-in alternative on a per-epic basis: `run epic SCRUM-XX FULL_AUTO_WEBHOOK` / `continue epic SCRUM-XX FULL_AUTO_WEBHOOK`. Each child ticket inside that epic runs as `implement <KEY> FULL_AUTO_WEBHOOK`, which delegates merge + Jira Done to the deployed routine (consumes quota per [`pr-gate-webhook.md`](pr-gate-webhook.md)). The polling-default is the right choice unless the operator explicitly wants the webhook behavior and has quota budget.
 
 ## Halt and Resume
 
 Automation HALTs when:
 
-- The routine posts a Jira halt comment (WARN/BLOCK), or
-- The fallback path's mergeability/gate polling does not resolve to PASS in budget, or
-- Final Gate is WARN/BLOCK/missing/unreadable on the fallback path.
+- The agent's polling resolves to WARN/BLOCK (gate completes non-`success`), or
+- The polling budget expires without `mergeable_state` reaching `clean` while the gate is PASS, or
+- (Webhook path only) the routine posts a Jira halt comment.
 
 On resume (`continue epic ...`), agent must re-read Jira children (`statusCategory != Done`) as source of truth and reconcile:
 
-- already Done: skip (routine likely handled it — verify merge SHA from the routine's completion comment).
-- merged but Jira not Done: transition Jira + cleanup (rare; usually means routine merged but its Jira transition errored — Atlassian connector issue).
-- open PR with routine halt comment (WARN/BLOCK): halt again at the epic level; do not start the next ticket.
-- open PR with no routine activity at all: routine isn't firing — fall back to the polling path from `workflow-full-auto.md` and proceed.
-- not started: run `implement <KEY> FULL_AUTO` under epic rules.
+- already Done: skip (the prior ticket's close-out completed normally).
+- merged but Jira not Done: transition Jira + run local cleanup (rare; usually a partial close-out from a prior interrupted session).
+- open PR with halt comment (WARN/BLOCK): halt again at the epic level; do not start the next ticket. Same applies whether the halt comment came from the polling path (agent-posted) or the webhook path (routine-posted).
+- open PR with no halt comment and gate still in progress: resume polling.
+- not started: run `implement <KEY> FULL_AUTO` (or `FULL_AUTO_WEBHOOK` if the epic was invoked with that suffix) under epic rules.
 
 Git hygiene before next ticket: fetch/checkout/pull `main` so branch starts from current main. (The SCRUM-388 FF rule on the prior ticket's close-out should have already done this for the developer's primary tree, but verify before proceeding.)
 
