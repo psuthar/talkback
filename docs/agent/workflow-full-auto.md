@@ -11,6 +11,7 @@ The routine (defined in [`pr-gate-webhook.md`](pr-gate-webhook.md)) fires when `
 - Posts a PR comment with the outcome headline (always).
 - **On WARN/BLOCK** — posts a structured halt comment on the linked Jira ticket and exits. PR stays open; Jira stays **In Review**. Human acts manually.
 - **On PASS + `mergeable_state: clean`** — pre-merge-guards (re-reads PR state at merge moment), squash-merges via `gh pr merge --squash --delete-branch`, posts a Jira completion comment, transitions the linked ticket to **Done** via the Atlassian connector's transition-issue tool.
+- **On manual squash-merge of a WARN/BLOCK PR (SCRUM-391, "CLOSE FLOW"):** the routine also subscribes to `pull_request.closed` with `merged=true`. When a human squash-merges a halted PR, the routine posts a "FULL_AUTO COMPLETE (manual override)" Jira comment naming the bypassed gate outcome and the merging user, then transitions Jira to **Done**. Operator's only step is clicking "Squash and merge" in GitHub; Jira close-out is automatic. (Idempotency dedupes against PASS auto-merges so the same PR doesn't get double-closed.)
 
 ### Agent's post-push responsibilities
 
@@ -23,7 +24,7 @@ After pushing the PR and Jira → In Review:
 
 ### When the routine can't merge
 
-- Routine halted at WARN/BLOCK → routine has posted a Jira halt comment with three resume options. Agent does not merge; PR stays open. Human decides whether to squash-merge manually (typical override path for diff-size WARN) or push fixes.
+- Routine halted at WARN/BLOCK → routine has posted a Jira halt comment with three resume options. Agent does not merge; PR stays open. Human decides whether to squash-merge manually (typical override path for diff-size WARN) or push fixes. **If the human squash-merges manually:** the routine's CLOSE FLOW (SCRUM-391) fires on the close event, posts a "manual override" Jira completion comment + transitions Jira to **Done** automatically. The agent's job on the next `finish SCRUM-XXX` is then just **local cleanup** — FF primary tree's main, `git worktree remove`, `git branch -D feat/SCRUM-XXX` — and a brief closure Jira comment noting the local-side outcomes.
 - Routine errored before merging → fall back to the **Manual-merge fallback path** below.
 - Routine not configured (e.g., different repo, connector lost auth) → use the fallback path as the primary.
 
