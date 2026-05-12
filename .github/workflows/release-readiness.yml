@@ -985,6 +985,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          # SCRUM-394: only wake the PR Gate webhook routine for PRs that opted
+          # in via FULL_AUTO_WEBHOOK. The opt-in signal is the literal
+          # HTML-comment marker "<!-- full-auto-webhook -->" the implementing
+          # agent puts in the PR body (see docs/agent/workflow-full-auto.md and
+          # docs/agent/pr-gate-webhook.md). PRs without it are handled by the
+          # polling path (implement SCRUM-XX FULL_AUTO) and must not consume a
+          # claude.ai routine run, so we skip the label entirely. Read the body
+          # fresh (not from the event payload) so a post-trigger edit is honored.
+          pr_body=$(gh pr view "$PR_NUMBER" -R "$REPO" --json body --jq '.body // ""')
+          if ! printf '%s' "$pr_body" | grep -qF '<!-- full-auto-webhook -->'; then
+            echo "No <!-- full-auto-webhook --> marker in PR #$PR_NUMBER body; skipping pr-gate label (polling path)."
+            exit 0
+          fi
           summary_path="artifacts/pr-gate-summary.json"
           final_gate=$(jq -r '.final_gate.status // "unknown"' "$summary_path" | tr '[:upper:]' '[:lower:]')
           case "$final_gate" in

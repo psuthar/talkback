@@ -4,7 +4,9 @@
 >
 > Use this path by invoking `implement SCRUM-XX FULL_AUTO_WEBHOOK` (note the trailing `_WEBHOOK`). The agent then skips polling, lets the routine merge in the cloud, and only runs local cleanup + a brief closure comment. Same PR / Jira outputs as the polling path; different execution surface.
 >
-> To enable cleanly: in claude.ai → Routines → "TalkBack PR Gate handler" → set status to **Active**. To disable cleanly (avoid accidental quota consumption while you're on the polling default): set status to **Inactive**.
+> **Per-PR opt-in marker (SCRUM-394).** `release-readiness.yml` applies the `pr-gate:<status>` label — the routine's only trigger — **only** for PRs whose body contains the literal HTML comment `<!-- full-auto-webhook -->`. The implementing agent adds that line to the PR body when invoked with `FULL_AUTO_WEBHOOK`. PRs without the marker still get the `TalkBack PR Gate` check published, but no `pr-gate:*` label and no routine run. This is what keeps the polling-path default at zero routine-quota cost and stops the routine from racing the polling agent's own merge.
+>
+> To enable cleanly: in claude.ai → Routines → "TalkBack PR Gate handler" → set status to **Active**. To disable cleanly (avoid accidental quota consumption while you're on the polling default): set status to **Inactive**. (The marker gate makes "disable" mostly unnecessary — an un-marked PR can't wake the routine even if it's Active — but Inactive is still the belt-and-suspenders option.)
 
 Push-based handling of TalkBack PR Gate outcomes via Claude routines, originally introduced as the default in SCRUM-381–SCRUM-391 and demoted to opt-in in SCRUM-392 once the daily-quota cost was understood.
 
@@ -18,6 +20,11 @@ GitHub release-readiness workflow
   ├─ writes  artifacts/pr-gate-summary.json
   ├─ publishes  TalkBack PR Gate check
   └─ "Apply pr-gate:<status> label" step
+        │
+        │ SCRUM-394 gate: skip unless the PR body contains the literal
+        │ "<!-- full-auto-webhook -->" marker. PRs without it are handled by
+        │ the polling path and never reach the routine — the check is still
+        │ published, but no pr-gate:* label is applied.
         │
         │ gh pr edit --remove-label pr-gate:<prev> --add-label pr-gate:<new>
         ▼
@@ -162,11 +169,13 @@ After save, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
 
 ### 3. Verify
 
-Open any PR; let `release-readiness` complete. After the gate decides, the
-workflow's last step applies one of `pr-gate:pass` / `pr-gate:warn` /
-`pr-gate:block` / `pr-gate:unknown` to the PR — visible immediately in the
-PR's labels strip. Within ~60–90 seconds of that label appearing, the
-routine should produce:
+Open a PR **whose body contains the `<!-- full-auto-webhook -->` marker**
+(SCRUM-394) — a normal PR without it will not get a `pr-gate:*` label and so
+won't exercise the routine. Let `release-readiness` complete. After the gate
+decides, the workflow's last step applies one of `pr-gate:pass` /
+`pr-gate:warn` / `pr-gate:block` / `pr-gate:unknown` to the PR — visible
+immediately in the PR's labels strip. Within ~60–90 seconds of that label
+appearing, the routine should produce:
 
 1. A PR comment with `<!-- pr-gate-routine head=… -->` (first line) followed
    by a body that mirrors the `github-actions[bot]` "PR Gate Summary" comment
@@ -751,7 +760,7 @@ Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
 
 | Symptom | Likely cause |
 |---------|--------------|
-| `pr-gate:<status>` label never appears on the PR | The workflow step `Apply pr-gate:<status> label for Claude routine` either failed or skipped. Check the `release-readiness` job log for the step (look for "Applied label pr-gate:..."). Most common skip: `artifacts/pr-gate-summary.json` wasn't produced this run. |
+| `pr-gate:<status>` label never appears on the PR | The workflow step `Apply pr-gate:<status> label for Claude routine` either failed or skipped. Check the `release-readiness` job log for the step. **Most common (and expected for the polling default):** the PR body has no `<!-- full-auto-webhook -->` marker, so the step logs `No <!-- full-auto-webhook --> marker in PR #… body; skipping pr-gate label (polling path).` and exits — that's working as designed (SCRUM-394). If you *did* opt in via `FULL_AUTO_WEBHOOK`, confirm the marker is in the PR **body** verbatim (`gh pr view <n> --json body`) — a typo, a stray space inside the comment, or putting it in a commit message / PR comment instead of the body all defeat the grep. Other skips: `artifacts/pr-gate-summary.json` wasn't produced this run. |
 | Label appears but no routine comment follows | Routine isn't subscribed to `Pull request labeled` on this repo, or the Claude GitHub App lost installation, or the label-prefix filter excluded the label. Check claude.ai → Routines → your routine → **Runs** tab. |
 | Routine runs but errors with "Could not resolve label.name" | The event payload schema changed, or the routine prompt's filter is too strict. Inspect the Run page for the actual payload received. |
 | Routine posts on PRs where the gate didn't actually run | Some other automation added a `pr-gate:*` label. Tighten the workflow step's label set (only the 4 documented values) or scope the routine's filter to the exact 4 labels via "is one of". |
