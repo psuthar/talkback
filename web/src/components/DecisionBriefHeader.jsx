@@ -138,7 +138,7 @@ export function DecisionBriefHeader({ premise, decision, decisionOutcome, readin
         )}
         {hasDecision && (
           <div className={styles.briefRow}>
-            <span className={styles.briefLabel}>Decision</span>
+            <span className={styles.briefLabel}>Decision to be made</span>
             <span className={styles.briefDecisionText}>{decision}</span>
           </div>
         )}
