@@ -23,7 +23,7 @@ This is the repository entrypoint for agent behavior. Keep this file concise and
 2. Work from `feat/<ticket-number>` branches; do not implement directly on `main`.
 3. Keep changes minimal, scoped, and backward-compatible unless ticket scope requires otherwise.
 4. Do not skip required tests; apply repository testing policy before commit and before completion.
-5. For FULL_AUTO, obey TalkBack PR Gate PASS (`conclusion: success`) and `mergeable_state` clean before merge; **stop polling** when the gate completes non-PASS (see `docs/agent/workflow-full-auto.md`).
+5. For FULL_AUTO (default polling path), obey TalkBack PR Gate PASS (`conclusion: success`) and `mergeable_state` clean before merge; **stop polling immediately** when the gate completes non-PASS. The opt-in `FULL_AUTO_WEBHOOK` variant delegates merge to a deployed routine (see `docs/agent/workflow-full-auto.md` and `docs/agent/pr-gate-webhook.md`).
 6. Use GitHub MCP for PR lifecycle automation; avoid shell-based PR creation/edit when MCP tools are available.
 
 ## Karpathy-style Guardrails
@@ -47,7 +47,9 @@ When asked to implement a Jira ticket:
 6. Run validations and resolve failures.
 7. Push and create PR to `main`.
 8. Transition Jira to In Review and post structured completion comment (delivered outcomes + exact validations + risks/follow-ups).
-9. If FULL_AUTO was requested, follow `docs/agent/workflow-full-auto.md` — for `psuthar/talkback` the default is routine-driven (push, In Review, stop polling; the routine merges and transitions Jira on PASS, or posts a Jira halt comment on WARN/BLOCK). Local cleanup (worktree FF + branch delete) is still the agent's job; post the final FULL_AUTO closure comment summarizing local-side outcomes.
+9. If FULL_AUTO was requested, follow `docs/agent/workflow-full-auto.md`. Two invocation keywords exist:
+   - **`implement SCRUM-XX FULL_AUTO`** (default) — polling path. Agent polls the gate + `mergeable_state` every 30s on a 40-min budget, calls `merge_pull_request` on PASS+clean (with mandatory pre-merge guard re-read), posts the Jira completion comment, transitions Jira to Done, and runs local cleanup (worktree FF per SCRUM-388 + branch -D). Post a final closure Jira comment naming `"polling path (default)"` as the path indicator. **No claude.ai routine quota consumed.**
+   - **`implement SCRUM-XX FULL_AUTO_WEBHOOK`** (opt-in) — webhook routine path. Push + Jira In Review, then stop active work and let the deployed routine merge in the cloud. Agent does only local cleanup + closure comment naming `"webhook path (FULL_AUTO_WEBHOOK)"`. Each `pull_request.labeled` / `pull_request.closed` event consumes one of ~15 daily claude.ai routine runs — use only when quota allows.
 
 ## Planning Mode Reminder
 
