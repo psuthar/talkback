@@ -1009,3 +1009,5 @@ jobs:
           fi
           gh pr edit "$PR_NUMBER" -R "$REPO" --add-label "$target_label"
           echo "Applied label $target_label to PR #$PR_NUMBER."
+
+# SCRUM-382: empty touch to force release-readiness re-trigger after paths-ignore evaluation
