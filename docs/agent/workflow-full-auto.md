@@ -73,25 +73,36 @@ On confirmed gate pass:
 - Remote branch: rely on auto-delete if configured; otherwise delete manually in GitHub UI.
 - Local cleanup — choose the path that matches how implementation actually happened:
 
-  **Common steps (always run, in the main checkout):**
+  **If implementation ran in the main checkout** (no worktree was created for this ticket):
 
   ```
   git checkout main
   git fetch --prune origin
   git pull --ff-only origin main
-  ```
-
-  **If implementation ran in the main checkout** (no worktree was created for this ticket):
-
-  ```
   git branch -D feat/<ticket-number>
   ```
 
-  **If implementation ran in a git worktree** — for example, when the user explicitly asked for a worktree, when CLAUDE.md / project memory directed one, or when EnterWorktree was used (visible as a `.worktrees/<ticket-number>` entry in `git worktree list`) — also do:
+  **If implementation ran in a git worktree** — for example, when the user explicitly asked for a worktree, when CLAUDE.md / project memory directed one, or when EnterWorktree was used (visible as a `.worktrees/<ticket-number>` entry in `git worktree list`) — run these steps in order:
 
   1. ExitWorktree (action: `keep` or `remove`) to return the session to the main checkout. Never run worktree-removal commands while the session is still inside the worktree.
-  2. `git worktree remove .worktrees/<ticket-number>` to drop the directory and its registration.
-  3. `git branch -D feat/<ticket-number>` (squash-merge orphans the local commit, so `-d` will refuse — `-D` is correct).
+
+  2. **Fast-forward the primary tree's `main` — safety-gated, mandatory for worktree runs.** The agent operated in a worktree, so the user's primary checkout is now stale relative to the merged state. Bring it up to date so no manual `git pull` is needed after close-out. All three conditions must hold; on any failure, **skip the FF and surface a notice** in the closure comment — do not force, rebase, or stash.
+
+     a. Primary tree's current branch is `main`:
+        `git -C <primary> branch --show-current` returns `main`.
+     b. Primary tree has no tracked-file modifications or staged changes (untracked files are fine — they're the user's own scratch state):
+        `git -C <primary> status --porcelain | grep -vE '^\?\?'` returns empty.
+     c. The FF itself succeeds:
+        ```
+        git -C <primary> fetch origin --prune
+        git -C <primary> pull --ff-only origin main
+        ```
+
+     If (a) fails, the user is on an in-progress feature branch — note "primary tree on `<branch>`; skipped FF" and move on. If (b) fails, the user has WIP on `main` — note "primary tree has tracked modifications; skipped FF" and move on. If (c) fails (rare; only happens if `main` diverged for some reason), note "FF refused (divergence); skipped" and move on. Never attempt recovery; the user can pull manually with full context.
+
+  3. `git worktree remove .worktrees/<ticket-number>` to drop the directory and its registration.
+
+  4. `git branch -D feat/<ticket-number>` (squash-merge orphans the local commit, so `-d` will refuse — `-D` is correct).
 
   If `git worktree remove` refuses because of untracked files left in the worktree (test scratch, generated artifacts, downloaded fixtures), inspect them first via `cd .worktrees/<ticket-number> && git status --short`. If every untracked path is either also present (and ignored) in the main checkout or is plainly disposable scratch, re-run with `--force` and note in the closure comment which untracked paths were force-removed so any genuinely-needed file is not lost silently. Only escalate to `--force` after that inspection — never as a reflex.
 
@@ -102,7 +113,8 @@ On confirmed gate pass:
   1. merged PR URL,
   2. merge/landing commit SHA on `main`,
   3. local/remote branch cleanup result,
-  4. any residual risk or follow-up note.
+  4. primary-tree FF outcome — one of: "FF'd to `<sha>`", "skipped — primary on `<branch>`", "skipped — primary has WIP on `main`", "skipped — `--ff-only` refused (divergence)". Omit this item only if implementation ran in the main checkout (no worktree was used).
+  5. any residual risk or follow-up note.
 
 ## Git Push Authentication Note
 
