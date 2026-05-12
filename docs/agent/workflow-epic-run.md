@@ -30,28 +30,35 @@ Default execution is sequential. A ticket may run in parallel batch only when:
 
 Consecutive parallel-eligible tickets run as a batch and must resolve before moving on.
 
+## Per-ticket flow with the webhook routine (default)
+
+After SCRUM-386, per-ticket FULL_AUTO inside an epic uses the routine-driven path described in [`workflow-full-auto.md`](workflow-full-auto.md) and [`pr-gate-webhook.md`](pr-gate-webhook.md). For each child ticket:
+
+1. Run `implement <KEY> FULL_AUTO` per the standard ticket workflow.
+2. Push PR + transition Jira to **In Review**.
+3. **Stop active polling.** The routine merges on PASS+clean and transitions the child's Jira ticket to Done, or posts a Jira halt comment on WARN/BLOCK.
+4. Do one confirmation read after a brief wait (~5–10 minutes) — same single-check pattern as standalone FULL_AUTO. Then either advance to local cleanup (routine merged) or HALT the epic (routine posted a halt comment).
+5. Move on to the next child only when the previous one is merged + Jira Done. Do not start `feat/<next>` until that's confirmed.
+
+The polling-based merge path is the fallback when the routine can't fire — see [`workflow-full-auto.md`](workflow-full-auto.md) "Manual-merge fallback path."
+
 ## Halt and Resume
 
 Automation HALTs when:
 
-- mergeability/gate polling does not resolve to required pass state in budget, or
-- Final Gate is WARN/BLOCK/missing/unreadable.
-
-Active polling continuity rule (mandatory):
-
-- While a ticket PR is in active gate polling (checks queued/in-progress or mergeable not yet terminal), continue polling; do not stop for checkpoint/progress convenience updates.
-- Do not require a user "continue epic" message to resume an in-flight poll loop.
-- Only stop polling on terminal outcomes: PASS and merged path, explicit HALT condition, or user interruption.
+- The routine posts a Jira halt comment (WARN/BLOCK), or
+- The fallback path's mergeability/gate polling does not resolve to PASS in budget, or
+- Final Gate is WARN/BLOCK/missing/unreadable on the fallback path.
 
 On resume (`continue epic ...`), agent must re-read Jira children (`statusCategory != Done`) as source of truth and reconcile:
 
-- already Done: skip
-- merged but Jira not Done: transition Jira + cleanup
-- open PR still WARN/BLOCK: halt again
-- open PR now PASS: resume polling and merge
-- not started: run `implement <KEY> FULL_AUTO` under epic rules
+- already Done: skip (routine likely handled it — verify merge SHA from the routine's completion comment).
+- merged but Jira not Done: transition Jira + cleanup (rare; usually means routine merged but its Jira transition errored — Atlassian connector issue).
+- open PR with routine halt comment (WARN/BLOCK): halt again at the epic level; do not start the next ticket.
+- open PR with no routine activity at all: routine isn't firing — fall back to the polling path from `workflow-full-auto.md` and proceed.
+- not started: run `implement <KEY> FULL_AUTO` under epic rules.
 
-Git hygiene before next ticket: fetch/checkout/pull `main` so branch starts from current main.
+Git hygiene before next ticket: fetch/checkout/pull `main` so branch starts from current main. (The SCRUM-388 FF rule on the prior ticket's close-out should have already done this for the developer's primary tree, but verify before proceeding.)
 
 Stale state file rule: if `.epic-run/SCRUM-XX.json` exists and not complete, use `continue epic` instead of `run epic`.
 

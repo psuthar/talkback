@@ -47,7 +47,7 @@ When asked to implement a Jira ticket:
 6. Run validations and resolve failures.
 7. Push and create PR to `main`.
 8. Transition Jira to In Review and post structured completion comment (delivered outcomes + exact validations + risks/follow-ups).
-9. If FULL_AUTO was requested, execute `docs/agent/workflow-full-auto.md` (verify structured Jira comment exists before Done transition, then post final FULL_AUTO closure comment).
+9. If FULL_AUTO was requested, follow `docs/agent/workflow-full-auto.md` — for `psuthar/talkback` the default is routine-driven (push, In Review, stop polling; the routine merges and transitions Jira on PASS, or posts a Jira halt comment on WARN/BLOCK). Local cleanup (worktree FF + branch delete) is still the agent's job; post the final FULL_AUTO closure comment summarizing local-side outcomes.
 
 ## Planning Mode Reminder
 
