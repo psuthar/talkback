@@ -357,12 +357,36 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			s := readErr.Error()
 			errMsg = &s
 		}
+	case ext == ".xls" && filePath != "":
+		// SCRUM-395: legacy binary .xls (MIME application/vnd.ms-excel) is a
+		// different format from .xlsx — excelize can't read it, isOfficeFile()
+		// doesn't recognize it, and it used to fall through every case and sit
+		// in text_status=pending forever (no async job was ever enqueued). Parse
+		// it synchronously via the pure-Go BIFF reader, mirroring the .csv
+		// (SCRUM-371) and .xlsx synchronous paths — no markitdown-sidecar
+		// dependency. Placed before fileExtractionGate so .xls always uses the
+		// native path. On extraction failure, land at `failed` with a clear
+		// error_message — never silent `pending`.
+		extracted, exErr := utils.ExtractTextFromFileWithMeta(filePath, filename, contentType)
+		if exErr == nil && strings.TrimSpace(extracted) != "" {
+			textStatus = models.MaterialTextStatusReady
+			extractedText = &extracted
+			log.Printf("SessionUploadMaterial: extracted %s text synchronously via pure-Go xls reader (%d bytes, no async job needed)", filename, len(extracted))
+		} else {
+			textStatus = models.MaterialTextStatusFailed
+			s := "xls extraction failed"
+			if exErr != nil {
+				s = fmt.Sprintf("xls extraction failed: %v", exErr)
+			} else {
+				s = "xls extraction produced no text"
+			}
+			errMsg = &s
+		}
 	case fileExtractionGate:
 		// SCRUM-332: defer extraction to the async worker so the markitdown
-		// sidecar can produce markdown for CSV/XLS/XLSX. Pre-empts the
-		// pure-Go excelize path below for .xlsx and the "other office types"
-		// async fallback for .xls. SCRUM-371 carved .csv out of this case;
-		// only .xls and .xlsx now land here.
+		// sidecar can produce markdown. Pre-empts the pure-Go excelize path
+		// below for .xlsx. SCRUM-371 carved .csv out of this case and SCRUM-395
+		// carved .xls out (native pure-Go path above); only .xlsx now lands here.
 		textStatus = models.MaterialTextStatusPending
 	case contentType == "text/plain" || ext == ".txt" || ext == ".md":
 		content, err := os.ReadFile(filePath)
@@ -400,11 +424,22 @@ func (h *Handlers) SessionUploadMaterial(w http.ResponseWriter, r *http.Request)
 			textStatus = models.MaterialTextStatusPending
 		}
 	case isOfficeFile(ext, contentType):
-		// Other office types (e.g. .ppt, .xls): extraction runs async via job processor.
+		// Other OOXML office types matched by content-type (not by the explicit
+		// extension list above): extraction runs async via job processor.
 		textStatus = models.MaterialTextStatusPending
 	case isVideoForTranscription(ext, contentType):
 		// Video: transcript is handled by VideoSource + job; material is just the file reference — show ready so it doesn't stay "pending"
 		textStatus = models.MaterialTextStatusReady
+	default:
+		// SCRUM-395 fail-safe: any upload that matched no extraction path above
+		// (e.g. legacy .ppt / .doc, which have no pure-Go text extractor, or any
+		// unrecognized format) would otherwise be created with the initial
+		// text_status=pending and never transition — the UI shows a permanent
+		// "Processing…" spinner with no error. Mark it failed with a clear
+		// reason instead. (Slide derivation for .ppt still runs below.)
+		textStatus = models.MaterialTextStatusFailed
+		s := fmt.Sprintf("no text-extraction handler for this file type (ext=%q, content-type=%q)", ext, contentType)
+		errMsg = &s
 	}
 
 	titleFromForm := r.FormValue("title")
