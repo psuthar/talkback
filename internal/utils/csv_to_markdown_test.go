@@ -197,3 +197,90 @@ func TestCSVToMarkdown_ParseError(t *testing.T) {
 		t.Fatalf("LazyQuotes accepted input but markdown is empty")
 	}
 }
+
+// SCRUM-396: RowsToMarkdownTable is the table-rendering core shared by
+// CSVToMarkdown and the synchronous .xls/.xlsx extractors.
+
+func TestRowsToMarkdownTable_HeaderSeparatorBody(t *testing.T) {
+	rows := [][]string{{"name", "role"}, {"Alex", "Eng"}, {"Jordan", "SRE"}}
+	got := RowsToMarkdownTable(rows, 0)
+	want := "| name | role |\n| --- | --- |\n| Alex | Eng |\n| Jordan | SRE |\n"
+	if got != want {
+		t.Fatalf("RowsToMarkdownTable mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestRowsToMarkdownTable_RaggedRowsRightPadded(t *testing.T) {
+	rows := [][]string{{"a", "b", "c"}, {"1"}, {"x", "y"}}
+	got := RowsToMarkdownTable(rows, 0)
+	want := "| a | b | c |\n| --- | --- | --- |\n| 1 |  |  |\n| x | y |  |\n"
+	if got != want {
+		t.Fatalf("ragged-row padding mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestRowsToMarkdownTable_EscapesPipeAndNewline(t *testing.T) {
+	rows := [][]string{{"h1", "h2"}, {"a|b", "line1\nline2"}}
+	got := RowsToMarkdownTable(rows, 0)
+	if !strings.Contains(got, `a\|b`) {
+		t.Errorf("expected escaped pipe; got %q", got)
+	}
+	if !strings.Contains(got, "line1<br>line2") {
+		t.Errorf("expected newline → <br>; got %q", got)
+	}
+}
+
+func TestRowsToMarkdownTable_SizeCapTruncates(t *testing.T) {
+	rows := [][]string{{"h"}}
+	for i := 0; i < 1000; i++ {
+		rows = append(rows, []string{strings.Repeat("x", 50)})
+	}
+	got := RowsToMarkdownTable(rows, 512) // tiny cap
+	if !strings.HasPrefix(got, "| h |\n| --- |\n") {
+		t.Fatalf("expected header+separator preserved; got %q", got[:min(80, len(got))])
+	}
+	if !strings.Contains(got, "more rows omitted") {
+		t.Errorf("expected truncation footer; got %q", got)
+	}
+	if len(got) > 1024 {
+		t.Errorf("output not capped: %d bytes", len(got))
+	}
+}
+
+func TestRowsToMarkdownTable_EmptyInputs(t *testing.T) {
+	if RowsToMarkdownTable(nil, 0) != "" {
+		t.Error("nil rows should yield empty string")
+	}
+	if RowsToMarkdownTable([][]string{}, 0) != "" {
+		t.Error("empty rows should yield empty string")
+	}
+	if RowsToMarkdownTable([][]string{{}}, 0) != "" {
+		t.Error("a single zero-column row should yield empty string")
+	}
+}
+
+func TestTrimEmptyEdgeRows(t *testing.T) {
+	in := [][]string{
+		{"", "  "},
+		nil,
+		{"name", "role"},
+		{"", ""},
+		{"Alex", "Eng"},
+		{"  "},
+		nil,
+	}
+	got := trimEmptyEdgeRows(in)
+	want := [][]string{{"name", "role"}, {"", ""}, {"Alex", "Eng"}}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %d want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if strings.Join(got[i], "|") != strings.Join(want[i], "|") {
+			t.Errorf("row %d: got %v want %v", i, got[i], want[i])
+		}
+	}
+	// Interior blank row preserved.
+	if strings.TrimSpace(strings.Join(got[1], "")) != "" {
+		t.Errorf("expected interior blank row preserved, got %v", got[1])
+	}
+}

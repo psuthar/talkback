@@ -112,7 +112,13 @@ func extractDocx(filePath string) (string, error) {
 	return strings.Join(paragraphs, "\n\n"), nil
 }
 
-// extractXlsx reads a .xlsx and extracts cell text from all sheets.
+// extractXlsx reads a .xlsx and renders each sheet as a GitHub-flavored
+// markdown table (SCRUM-396), so the SpreadsheetViewer displays a real table
+// instead of a run-on paragraph. A workbook with a single non-empty sheet
+// yields just the table; with two or more, each table is preceded by a
+// `## SheetName` heading (the shape SpreadsheetViewer already styles for
+// multi-sheet workbooks). The first row of each sheet is treated as the
+// header. Sheets with no data are skipped.
 func extractXlsx(filePath string) (string, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
@@ -120,30 +126,34 @@ func extractXlsx(filePath string) (string, error) {
 	}
 	defer f.Close()
 
-	var parts []string
+	type sheetTable struct {
+		name  string
+		table string
+	}
+	var tables []sheetTable
 	for _, name := range f.GetSheetList() {
 		rows, err := f.GetRows(name)
 		if err != nil {
 			continue
 		}
-		for _, row := range rows {
-			var rowParts []string
-			for _, cell := range row {
-				cell = strings.TrimSpace(cell)
-				if cell != "" {
-					rowParts = append(rowParts, cell)
-				}
-			}
-			if len(rowParts) > 0 {
-				parts = append(parts, strings.Join(rowParts, "\t"))
-			}
+		table := RowsToMarkdownTable(trimEmptyEdgeRows(rows), DefaultCSVMarkdownMaxBytes)
+		if strings.TrimSpace(table) == "" {
+			continue
 		}
+		tables = append(tables, sheetTable{name: name, table: table})
 	}
-
-	if len(parts) == 0 {
+	if len(tables) == 0 {
 		return "", fmt.Errorf("xlsx text extraction produced no text")
 	}
-	return strings.Join(parts, "\n"), nil
+
+	if len(tables) == 1 {
+		return tables[0].table, nil
+	}
+	var sections []string
+	for _, t := range tables {
+		sections = append(sections, "## "+t.name+"\n\n"+t.table)
+	}
+	return strings.Join(sections, "\n\n"), nil
 }
 
 // maxXlsRows caps how many rows extractXls pulls into memory across all
@@ -153,13 +163,21 @@ func extractXlsx(filePath string) (string, error) {
 const maxXlsRows = 200_000
 
 // extractXls reads a legacy binary .xls workbook (BIFF / OLE2 compound
-// document, MIME application/vnd.ms-excel) and returns its text content
-// in the same shape as extractXlsx: within a row, non-empty cell values
-// joined by tabs; rows joined by newlines; all sheets concatenated in
-// order. Uses github.com/extrame/xls (pure Go — no markitdown sidecar
-// dependency, mirroring the .csv/.xlsx synchronous paths). Wrapped in a
-// recover because the third-party parser can panic on malformed input
-// and this runs on arbitrary user uploads.
+// document, MIME application/vnd.ms-excel) and renders it as a GitHub-flavored
+// markdown table (SCRUM-396) — the same shape extractXlsx and CSVToMarkdown
+// produce, so the SpreadsheetViewer shows a table. Uses github.com/extrame/xls
+// (pure Go — no markitdown sidecar dependency, mirroring the .csv/.xlsx
+// synchronous paths). The first row is treated as the header.
+//
+// Multi-sheet limitation: extrame/xls's safe bulk read (WorkBook.ReadAllCells)
+// flattens every sheet into one row stream — there is no panic-safe per-sheet
+// row API (WorkSheet.Row(i) dereferences a nil entry for unused indices). So a
+// multi-sheet .xls renders as a single table with later sheets appended below
+// the first (their header rows appear as body rows). Multi-sheet .xls is rare;
+// proper `## SheetName` sectioning for it is a possible follow-up.
+//
+// Wrapped in a recover because the third-party BIFF parser can panic on
+// malformed input and this runs on arbitrary user uploads.
 func extractXls(filePath string) (text string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -178,24 +196,12 @@ func extractXls(filePath string) (text string, err error) {
 		return "", fmt.Errorf("open xls: not a valid .xls workbook")
 	}
 
-	var parts []string
-	for _, row := range wb.ReadAllCells(maxXlsRows) {
-		var rowParts []string
-		for _, cell := range row {
-			cell = strings.TrimSpace(cell)
-			if cell != "" {
-				rowParts = append(rowParts, cell)
-			}
-		}
-		if len(rowParts) > 0 {
-			parts = append(parts, strings.Join(rowParts, "\t"))
-		}
-	}
-
-	if len(parts) == 0 {
+	rows := trimEmptyEdgeRows(wb.ReadAllCells(maxXlsRows))
+	md := RowsToMarkdownTable(rows, DefaultCSVMarkdownMaxBytes)
+	if strings.TrimSpace(md) == "" {
 		return "", fmt.Errorf("xls text extraction produced no text")
 	}
-	return strings.Join(parts, "\n"), nil
+	return md, nil
 }
 
 // ExtractPptxTextPerSlide returns text for each slide in order (slide 1, 2, 3, ...).

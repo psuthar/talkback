@@ -8,9 +8,14 @@ import (
 	"strings"
 )
 
-// SCRUM-371: synchronous CSV → markdown rendering for the materials
-// upload path. Avoids the markitdown sidecar dependency that previously
-// left CSV uploads stuck in `pending` when the sidecar was disabled.
+// SCRUM-371: synchronous CSV → markdown rendering for the materials upload
+// path. Avoids the markitdown sidecar dependency that previously left CSV
+// uploads stuck in `pending` when the sidecar was disabled.
+//
+// SCRUM-396: the table-rendering core was lifted out into RowsToMarkdownTable
+// so the synchronous .xls / .xlsx extractors emit the same GitHub-flavored
+// markdown table the SpreadsheetViewer expects, rather than tab-joined plain
+// text (which react-markdown renders as one run-on paragraph).
 
 // ErrEmptyCSV is returned by CSVToMarkdown when the input contains no
 // parseable rows (zero bytes, only whitespace, or only a single trailing
@@ -23,28 +28,20 @@ var ErrEmptyCSV = errors.New("csv input is empty")
 // the same number without copy-pasting.
 const DefaultCSVMarkdownMaxBytes = 1 << 20 // 1 MiB
 
-// CSVToMarkdown parses raw CSV bytes and renders them as a
-// GitHub-flavored markdown table. The first row becomes the header.
+// CSVToMarkdown parses raw CSV bytes and renders them as a GitHub-flavored
+// markdown table via RowsToMarkdownTable. The first row becomes the header.
 //
-// Behavior:
+// CSV-specific behavior:
 //   - LazyQuotes: tolerates bare quote characters mid-field (real-world
 //     CSVs are messy).
-//   - FieldsPerRecord: -1: ragged rows are accepted; shorter rows are
-//     right-padded with empty cells to the max width.
-//   - Per-cell escape: `|` → `\|` (so a stray pipe doesn't break the
-//     grid), `\n` → `<br>` (GFM doesn't allow real newlines in cells),
-//     `\r` dropped (csv.Reader normalises line endings already; defence
-//     in depth).
-//   - Size cap: when the rendered output would exceed maxBytes, stops
-//     appending body rows and appends a `… (N more rows)` footer. The
-//     returned error is nil — truncation is graceful, not an error.
+//   - FieldsPerRecord: -1: ragged rows are accepted (RowsToMarkdownTable
+//     right-pads shorter rows to the widest row).
 //
 // Returns (markdown, nil) on success, ("", ErrEmptyCSV) on empty input,
-// and ("", err) on a structural parse error.
+// and ("", err) on a structural parse error. Truncation when the output
+// would exceed maxBytes is graceful (a `… (N more rows omitted)` footer),
+// not an error — see RowsToMarkdownTable.
 func CSVToMarkdown(data []byte, maxBytes int) (string, error) {
-	if maxBytes <= 0 {
-		maxBytes = DefaultCSVMarkdownMaxBytes
-	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		return "", ErrEmptyCSV
 	}
@@ -56,8 +53,30 @@ func CSVToMarkdown(data []byte, maxBytes int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("csv parse: %w", err)
 	}
-	if len(rows) == 0 {
+
+	md := RowsToMarkdownTable(rows, maxBytes)
+	if md == "" {
 		return "", ErrEmptyCSV
+	}
+	return md, nil
+}
+
+// RowsToMarkdownTable renders [][]string rows as a GitHub-flavored markdown
+// table: the first row is the header, followed by an alignment separator
+// (`| --- | --- | …`) and the body rows. The table width is the widest row;
+// shorter rows are right-padded with empty cells. Each cell is escaped so a
+// stray `|` or newline can't corrupt the grid (see escapeCell). When the
+// rendered output would exceed maxBytes, body rows stop being appended and a
+// `_… (N more rows omitted)_` footer is added — truncation is graceful, not an
+// error. Returns "" when rows is empty or has zero columns; the caller decides
+// how to surface that (CSVToMarkdown maps it to ErrEmptyCSV; the office
+// extractors treat it as "this sheet produced no text").
+func RowsToMarkdownTable(rows [][]string, maxBytes int) string {
+	if maxBytes <= 0 {
+		maxBytes = DefaultCSVMarkdownMaxBytes
+	}
+	if len(rows) == 0 {
+		return ""
 	}
 
 	maxCols := 0
@@ -67,7 +86,7 @@ func CSVToMarkdown(data []byte, maxBytes int) (string, error) {
 		}
 	}
 	if maxCols == 0 {
-		return "", ErrEmptyCSV
+		return ""
 	}
 
 	var b strings.Builder
@@ -91,9 +110,8 @@ func CSVToMarkdown(data []byte, maxBytes int) (string, error) {
 	}
 	b.WriteString("\n")
 
-	// Body rows — stop appending when the next row would push us over
-	// the cap; emit a truncation footer that names the omitted count.
-	headerSize := b.Len()
+	// Body rows — stop appending when the next row would push us over the cap;
+	// emit a truncation footer that names the omitted count.
 	rendered := 0
 	for i, row := range rows[1:] {
 		// Estimate the size of this row so we don't blow past the cap.
@@ -104,31 +122,53 @@ func CSVToMarkdown(data []byte, maxBytes int) (string, error) {
 				rowEstimate += len(escapeCell(row[j]))
 			}
 		}
-		rowEstimate += 1 // trailing "\n"
+		rowEstimate++ // trailing "\n"
 
-		// Always emit at least the header + separator (already in b).
-		// If even the first body row would overflow, we still keep the
-		// footer instead of producing an oversized output.
+		// Always emit at least the header + separator (already in b). If even
+		// the first body row would overflow, we still keep the footer instead
+		// of producing an oversized output.
 		footer := fmt.Sprintf("\n_… (%d more rows omitted)_\n", len(rows)-1-rendered)
 		if b.Len()+rowEstimate+len(footer) > maxBytes && rendered > 0 {
 			b.WriteString(fmt.Sprintf("\n_… (%d more rows omitted)_\n", len(rows)-1-i))
-			return b.String(), nil
+			return b.String()
 		}
 		writeRow(row)
 		rendered++
 	}
-
-	// Defence in depth: if the header alone overflowed (pathological
-	// 1000-column header), we still return what we have and signal no
-	// error — caller can decide how to surface a "header too wide" case.
-	_ = headerSize
-	return b.String(), nil
+	return b.String()
 }
 
-// escapeCell makes a CSV cell safe to drop into a GFM table cell. Only
-// touches the three characters that would corrupt the grid; leaves
-// backslash and other markdown metacharacters alone (the cell content
-// is human-readable extracted text, not markdown the user authored).
+// trimEmptyEdgeRows drops leading and trailing rows whose every cell is blank
+// (after trimming whitespace). Spreadsheet readers commonly return such rows —
+// excelize.GetRows includes empty rows before the first cell with data, and
+// extrame/xls's ReadAllCells sizes its result by MaxRow and leaves nil rows
+// for unused indices. Trimming them keeps the first real row as the table
+// header rather than an all-empty header. Interior blank rows are preserved
+// (they're a real empty row in the sheet).
+func trimEmptyEdgeRows(rows [][]string) [][]string {
+	rowBlank := func(r []string) bool {
+		for _, c := range r {
+			if strings.TrimSpace(c) != "" {
+				return false
+			}
+		}
+		return true
+	}
+	i := 0
+	for i < len(rows) && rowBlank(rows[i]) {
+		i++
+	}
+	j := len(rows)
+	for j > i && rowBlank(rows[j-1]) {
+		j--
+	}
+	return rows[i:j]
+}
+
+// escapeCell makes a cell value safe to drop into a GFM table cell. Only
+// touches the three characters that would corrupt the grid; leaves backslash
+// and other markdown metacharacters alone (the cell content is human-readable
+// extracted text, not markdown the user authored).
 func escapeCell(s string) string {
 	if s == "" {
 		return ""
