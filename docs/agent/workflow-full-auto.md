@@ -7,7 +7,7 @@ Source of truth: This file owns FULL_AUTO merge-gate handling, merge rules, clea
 | Keyword | Default? | Path | Quota cost |
 |---|---|---|---|
 | `implement SCRUM-XX FULL_AUTO` | **Yes** | Agent polls gate + `mergeable_state` every 30s, merges via `merge_pull_request`, transitions Jira to Done itself. | None — runs in your local Claude Code session. |
-| `implement SCRUM-XX FULL_AUTO_WEBHOOK` | No (opt-in) | A deployed Claude routine subscribes to `pull_request.labeled` + `pull_request.closed`, merges in the cloud, transitions Jira. See [`pr-gate-webhook.md`](pr-gate-webhook.md). | Each event consumes 1 routine run from your claude.ai daily quota (~15/day on the default plan). |
+| `implement SCRUM-XX FULL_AUTO_WEBHOOK` | No (opt-in) | A deployed Claude routine subscribes to `pull_request.labeled` + `pull_request.closed`, merges in the cloud, transitions Jira. Requires the `<!-- full-auto-webhook -->` marker in the PR body (SCRUM-394) — without it `release-readiness.yml` does not apply the `pr-gate:*` label, so the routine never fires. See [`pr-gate-webhook.md`](pr-gate-webhook.md). | Each event consumes 1 routine run from your claude.ai daily quota (~15/day on the default plan). |
 
 The two paths produce the **same PR / Jira outputs** (PR Gate comment, Jira completion comment, Done transition) — the only differences are who executes the merge and whether the close-out runs in the cloud or in your local session.
 
@@ -152,6 +152,7 @@ If HTTPS push fails non-interactively (`could not read Username ... Device not c
 
 Invoke with `implement SCRUM-XX FULL_AUTO_WEBHOOK` (note the trailing `_WEBHOOK`). The agent's behavior changes:
 
+- **Opt-in marker (SCRUM-394) — required.** Include the literal line `<!-- full-auto-webhook -->` (an HTML comment, invisible in the rendered PR) in the PR body when creating the PR. `release-readiness.yml` only applies the `pr-gate:<status>` label — and therefore only wakes the routine — for PRs whose body carries this marker. A PR without it is handled by the polling path only and never consumes a routine run, even though `release-readiness` still publishes the `TalkBack PR Gate` check. Do **not** add the marker on a normal `FULL_AUTO` PR; do **not** write the literal marker comment anywhere in a PR body that isn't actually opting in (describe it instead) — the workflow greps the PR body for that exact string.
 - After pushing the PR and Jira → In Review, **stop active work**. Do not poll. The routine fires on the gate-applied label (typically within ~60s of `release-readiness` completing).
 - Optionally do **one** confirmation read after ~5–10 min. If the PR is merged, run the local cleanup (FF + worktree remove + branch -D) and post the closure comment. If still open, the routine likely halted at WARN/BLOCK (its Jira halt comment will say so) — fall back to the polling path's WARN/BLOCK handling (above).
 - The routine handles the cloud-side merge, the Jira completion comment, and the Done transition. The agent's only job is the local cleanup + a brief closure comment naming `"webhook path (FULL_AUTO_WEBHOOK)"` as the path indicator.
