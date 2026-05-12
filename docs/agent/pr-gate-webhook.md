@@ -38,12 +38,22 @@ labels starts-with "pr-gate:")
                   gate signals, posts a structured halt comment on the Jira
                   ticket linked from the PR title's SCRUM-XXX key.
                   PASS / UNKNOWN skip the Jira step.
-  Slice 4 (now):  + on PASS + mergeable_state=clean only: pre-merge guard
+  Slice 4:        + on PASS + mergeable_state=clean only: pre-merge guard
                   (re-read PR state at merge moment), then `gh pr merge
                   --squash`, then post a Jira completion comment, then
                   transition the linked Jira ticket to Done via the
                   Atlassian connector's transition-issue tool.
                   WARN / BLOCK / UNKNOWN never merge.
+  Slice 6 (now):  + on `pull_request.closed` with `merged=true`: the
+                  routine also subscribes to the close event so that
+                  manual squash-merges of WARN/BLOCK PRs (the documented
+                  override path) auto-close Jira. Posts a "FULL_AUTO
+                  COMPLETE (manual override)" Jira comment naming the
+                  bypassed gate outcome and the merging user, then
+                  transitions Jira to Done. Idempotency: a Slice 4
+                  fingerprint on the head_sha comment short-circuits
+                  the close-event handler so PASS auto-merges don't
+                  double-write.
 ```
 
 ### Why labels, not API or workflow_run
@@ -72,8 +82,10 @@ with a label-prefix filter and reads the outcome from the label name.
 | 1 | SCRUM-382 | Logs receipt by commenting on the PR. No decisions, no merge, no Jira write. | Done |
 | 2 | SCRUM-383 / SCRUM-387 | + comment body formatted for notification surface (claude.ai run-completion delivers the alert); + idempotency dedup keyed on `head_sha` | Done |
 | 3 | SCRUM-384 | + on WARN/BLOCK only: downloads `pr-gate-summary.json` from the workflow artifacts and posts a structured halt comment on the linked Jira ticket (Atlassian connector required) | Done |
-| 4 | SCRUM-385 | + on PASS only: pre-merge guards, squash-merges the PR, posts a Jira completion comment, transitions the linked Jira ticket to Done (Atlassian "Transition issue" tool required) | Current |
-| 5 | SCRUM-386 | Cut over FULL_AUTO / epic-run docs; remove polling | Pending |
+| 4 | SCRUM-385 | + on PASS only: pre-merge guards, squash-merges the PR, posts a Jira completion comment, transitions the linked Jira ticket to Done (Atlassian "Transition issue" tool required) | Done |
+| 5 | SCRUM-386 | Cut over FULL_AUTO / epic-run docs; remove polling | Done |
+| 5b | SCRUM-390 | + Step 1 rich PR comment mirroring `release-readiness.yml` "PR Gate Summary" format (signals table, top risks, required-before-merge, analysis link); minimal fallback when no artifact | Done |
+| 6 | SCRUM-391 | + subscribe to `pull_request.closed` (merged=true) and handle WARN/BLOCK manual-override squash-merges: post Jira "FULL_AUTO COMPLETE (manual override)" comment + transition to Done. Slice 4 fingerprint short-circuits PASS-path double-writes. | Current |
 
 ## One-time setup (repo admin)
 
@@ -94,12 +106,26 @@ or `RemoteTrigger create` (API path — see the troubleshooting note below).
   prompt + tool allow-list updates).
 - **Source / repository:** `psuthar/talkback`
 - **Model:** any (the work is tiny; Sonnet is sufficient).
-- **Trigger:** **GitHub event** → preset row **Pull request labeled** (or
-  **Custom** → event `Pull request labeled`). Add a Filter on the `Labels`
-  property. If a `starts with` operator is available, use it with value
-  `pr-gate:`. Otherwise switch the operator to `is one of` and add all
-  four labels as discrete values: `pr-gate:pass`, `pr-gate:warn`,
-  `pr-gate:block`, `pr-gate:unknown`.
+- **Trigger:** the routine subscribes to **two** GitHub event types in
+  the same trigger config:
+  1. **`Pull request labeled`** (preset row, or Custom → event
+     `Pull request labeled`). Add a Filter on the `Labels` property.
+     If a `starts with` operator is available, use it with value
+     `pr-gate:`. Otherwise switch the operator to `is one of` and add
+     all four labels as discrete values: `pr-gate:pass`, `pr-gate:warn`,
+     `pr-gate:block`, `pr-gate:unknown`.
+  2. **`Pull request closed`** (preset row, or Custom → event
+     `Pull request closed`). Add a Filter on the `Merged` property =
+     `true` if the UI exposes it (recommended); if not, the prompt
+     short-circuits on `merged == false` so an unfiltered subscription
+     is still safe.
+
+  Both event types fire the same prompt; the prompt's event router
+  dispatches to the LABEL FLOW or CLOSE FLOW based on `action`. The
+  CLOSE FLOW (SCRUM-391) handles manual-override squash-merges of
+  PRs the routine had halted at WARN or BLOCK — the operator only has
+  to click "Squash and merge" in GitHub and the routine closes out the
+  Jira ticket (override comment + Done transition).
 - **Permissions:** the per-repo permissions panel — leave
   "Allow unrestricted git push" **off**.
 - **Tool allow-list:** Slice 3 requires `Bash` (for `gh pr comment`,
@@ -161,6 +187,15 @@ routine should produce:
    Jira completion comment on the linked ticket, and transitions that
    ticket to Done via the Atlassian connector's `Transition issue`
    tool. WARN / BLOCK / UNKNOWN never merge.
+5. **On manual squash-merge of a WARN/BLOCK PR (Slice 6):** the
+   `pull_request.closed` (merged=true) event fires the routine's
+   CLOSE FLOW. It posts a "FULL_AUTO COMPLETE (manual override)" Jira
+   comment naming the bypassed gate outcome and the merging user, then
+   transitions Jira to Done. A PASS auto-merge from Slice 4 also fires
+   the close event but is silenced by an idempotency check that looks
+   for the Slice 4 fingerprint on the head_sha PR comment. Local
+   cleanup (FF main, worktree remove, branch delete) is unchanged —
+   the cloud routine can't touch the developer's filesystem.
 
 A re-run of `release-readiness` against the same head_sha should NOT
 produce a second PR comment, a second notification, a second Jira
@@ -196,9 +231,13 @@ If you don't see the expected outputs:
 
 ## Current routine prompt
 
-This is the live prompt (Slices 1+2+3+4). Copy verbatim into the routine.
+This is the live prompt (Slices 1+2+3+4+6). Copy verbatim into the routine.
 
-The prompt does up to five things:
+The prompt routes on event type first — `pull_request.labeled` takes the
+LABEL FLOW (Pre-step + Steps 1–3); `pull_request.closed` with
+`merged=true` takes the CLOSE FLOW (Steps M1–M6). The LABEL FLOW does up
+to five things; the CLOSE FLOW does two (Jira override comment + Jira
+Done transition):
 
 1. **Always (Pre-step):** attempt to download `pr-gate-summary.json` from
    the `release-readiness` workflow's artifact. If present, the routine
@@ -219,6 +258,16 @@ The prompt does up to five things:
 5. **Always:** emit the outcome headline as the final sentence so the
    run-completion notification carries it.
 
+The CLOSE FLOW (event B, SCRUM-391):
+
+6. **`pull_request.closed` with `merged=true`:** dedupe against the
+   Slice 4 PASS auto-merge fingerprint (M1); read the prior gate outcome
+   from the most recent head_sha PR comment (M2); extract the Jira key
+   from the PR title (M3); post a "FULL_AUTO COMPLETE (manual override)"
+   Jira comment naming the bypassed gate outcome and the merging user
+   (M4); transition Jira to Done (M5); emit the headline (M6 / Final
+   exit). On `merged=false` (user closed without merging), exit silently.
+
 The PR comment format (Step 1 with artifact present) is intentionally
 the same as the comment posted by `.github/workflows/release-readiness.yml`'s
 "Post PR gate comment" step. The workflow's bot comment and the routine's
@@ -229,46 +278,80 @@ changes in the future, update the routine prompt to match.
 
 ```
 You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383 +
-SCRUM-384 + SCRUM-385, revised by SCRUM-387). You're invoked by a GitHub
-webhook — specifically a `pull_request.labeled` event from
-`psuthar/talkback` where the applied label name starts with `pr-gate:`.
+SCRUM-384 + SCRUM-385, revised by SCRUM-387, extended by SCRUM-391).
+You're invoked by GitHub webhooks from `psuthar/talkback`. Two event
+types fan into this routine:
+
+  A. `pull_request.labeled` where the applied label name starts with
+     `pr-gate:` — the normal gate-signal flow (post PR comment; on
+     WARN/BLOCK post Jira halt; on PASS auto-merge + Jira Done).
+  B. `pull_request.closed` where `pull_request.merged == true` — the
+     manual-override close-out flow. Triggered when a human squash-merges
+     a PR the routine had halted at WARN or BLOCK. Posts a Jira override
+     comment and transitions Jira to Done so the operator's only step is
+     clicking "Squash and merge" in GitHub.
 
 Your job:
 
-  Pre-step (always): attempt to download pr-gate-summary.json from the
-  release-readiness workflow's artifact for this head_sha. Used by every
-  step below. If unavailable, fall through to minimal-body fallbacks.
+  Event router (decide first, before any other work):
+    - action == "labeled" → execute LABEL FLOW below (Pre-step + Steps 1–3 + Final exit).
+    - action == "closed" AND merged == true → execute CLOSE FLOW below (Steps M1–M6 + Final exit).
+    - action == "closed" AND merged == false → silently exit (user closed without merging; respect that).
+    - anything else → silently exit.
 
-  1. Always: post a PR comment. With the artifact, build a rich body that
-     mirrors release-readiness.yml's "Post PR gate comment" output (signal
-     table + top risk signals + required-before-merge + analysis link).
-     Without the artifact, fall back to a minimal headline-only body.
-  2. On WARN or BLOCK only: post a structured halt comment on the linked
-     Jira ticket via the Atlassian connector's add-comment tool, using
-     the gate signals from the Pre-step.
-  3. On PASS only (and only if mergeable_state is still clean at the
-     moment of merge): pre-merge guard, squash-merge the PR, post a
-     Jira completion comment, transition the Jira ticket to Done via
-     the Atlassian connector's transition-issue tool.
+  LABEL FLOW (event A):
+    Pre-step (always): attempt to download pr-gate-summary.json from the
+    release-readiness workflow's artifact for this head_sha. Used by every
+    step below. If unavailable, fall through to minimal-body fallbacks.
+
+    1. Always: post a PR comment. With the artifact, build a rich body that
+       mirrors release-readiness.yml's "Post PR gate comment" output (signal
+       table + top risk signals + required-before-merge + analysis link).
+       Without the artifact, fall back to a minimal headline-only body.
+    2. On WARN or BLOCK only: post a structured halt comment on the linked
+       Jira ticket via the Atlassian connector's add-comment tool, using
+       the gate signals from the Pre-step.
+    3. On PASS only (and only if mergeable_state is still clean at the
+       moment of merge): pre-merge guard, squash-merge the PR, post a
+       Jira completion comment, transition the Jira ticket to Done via
+       the Atlassian connector's transition-issue tool.
+
+  CLOSE FLOW (event B): see Steps M1–M6 below — post a Jira "manual
+  override" completion comment, transition Jira to Done. No PR comment
+  is posted on the close event (the prior gate's PR comment from
+  LABEL FLOW remains the gate signal of record).
 
 Filter rules (silently exit if any fails — the routine's trigger filter
 should already enforce these, but defense in depth):
 
-  1. The event's `action` must equal "labeled".
-  2. The event's `label.name` must start with the prefix "pr-gate:".
+  For LABEL FLOW:
+    1. The event's `action` must equal "labeled".
+    2. The event's `label.name` must start with the prefix "pr-gate:".
+  For CLOSE FLOW:
+    3. The event's `action` must equal "closed".
+    4. `pull_request.merged` must equal `true` (otherwise silent exit —
+       the user closed the PR without merging).
 
-Extract from the payload:
+Extract from the payload (both events share the first five fields):
 
   pr_number  = pull_request.number
   pr_title   = pull_request.title
   pr_url     = pull_request.html_url
   head_sha   = pull_request.head.sha
   short_sha  = first 7 chars of head_sha
-  outcome    = the part of label.name after "pr-gate:"
+
+  LABEL FLOW only:
+    outcome  = the part of label.name after "pr-gate:"
                (one of: pass | warn | block | unknown)
 
-Idempotency check — re-runs of release-readiness re-apply the same label
-and would otherwise produce duplicate comments. Before posting:
+  CLOSE FLOW only:
+    merge_sha       = pull_request.merge_commit_sha
+    short_merge_sha = first 7 chars of merge_sha
+    merged_by       = sender.login  (the GitHub user who clicked merge)
+
+Idempotency check (LABEL FLOW only — CLOSE FLOW dedupes via M1). Re-runs
+of release-readiness re-apply the same label and would otherwise produce
+duplicate comments. Before posting:
 
   existing=$(gh pr view <pr_number> -R psuthar/talkback \
     --json comments \
@@ -279,9 +362,9 @@ and would otherwise produce duplicate comments. Before posting:
     exit 0
   fi
 
-Pick the fallback headline and guidance line by outcome (used only when
-the gate artifact isn't available — Step 1 fallback body, and the final
-exit notification):
+Pick the fallback headline and guidance line by outcome (LABEL FLOW
+only — used when the gate artifact isn't available for Step 1's body,
+and for the LABEL FLOW Final exit notification):
 
   pass    → headline: "PR Gate: PASS — PR #<pr_number> (<short_sha>)"
             guidance: "Ready to merge."
@@ -527,37 +610,129 @@ Manual squash-merge required; Jira ticket remains In Review."
       tool (target status name "Done"). Both calls handle errors
       gracefully — log and continue. The merge is complete regardless.
 
+CLOSE FLOW — Manual-override close-out (event B). Runs when a human
+squash-merges a PR outside of the LABEL FLOW's Step 3 auto-merge. Goal:
+post the Jira completion comment + transition to Done so the operator
+doesn't have to remember any post-merge steps. The local agent still
+owns laptop-side cleanup (FF main, worktree remove, branch -D) on the
+developer's next "finish SCRUM-XXX" / continue — that boundary is
+unchanged.
+
+  M1. Idempotency / dedupe against LABEL FLOW Step 3 auto-merges. When
+      LABEL FLOW merges, it triggers `pull_request.closed` as a side
+      effect — without dedupe we'd double-write to Jira.
+
+        existing=$(gh pr view <pr_number> -R psuthar/talkback \
+          --json comments \
+          --jq '.comments[] | select(.body | contains("<!-- pr-gate-routine head=<head_sha> -->")) | select(.body | contains("Auto-merged and transitioned to Done by Claude routine")) | .id' \
+          | head -1)
+        if [ -n "$existing" ]; then
+          echo "PASS auto-merge already closed out by LABEL FLOW; skipping CLOSE FLOW."
+          exit 0
+        fi
+
+      The dedupe key is the *combination* of the head_sha marker AND
+      the Slice 4 fingerprint text ("Auto-merged and transitioned to
+      Done by Claude routine") in the same PR comment. Either alone is
+      not sufficient — a user who happens to copy the marker string
+      into a manual comment shouldn't suppress this flow.
+
+  M2. Read the prior gate outcome from the most recent PR comment with
+      the `<!-- pr-gate-routine head=` marker. Headlines follow the
+      "PR Gate: <OUTCOME>" pattern so we can grep for the outcome.
+
+        prior_body=$(gh pr view <pr_number> -R psuthar/talkback \
+          --json comments \
+          --jq '[.comments[] | select(.body | startswith("<!-- pr-gate-routine head="))] | last | .body // ""')
+        prior_outcome=$(echo "$prior_body" | grep -oE 'PR Gate: (PASS|WARN|BLOCK|UNKNOWN)' | head -1 | awk '{print $3}')
+        [ -z "$prior_outcome" ] && prior_outcome="UNKNOWN (no prior gate signal)"
+
+  M3. Extract the Jira key from the PR title (same regex as Step 2a):
+
+        jira_key=$(echo "<pr_title>" | grep -oE 'SCRUM-[0-9]+' | head -1)
+        if [ -z "$jira_key" ]; then
+          echo "No Jira key in PR title; merged but not ticket-tracked. Skipping M4 + M5."
+          # Continue to Final exit so the run-completion notification still fires.
+        fi
+
+  M4. Post the Jira override comment via the Atlassian connector's
+      add-comment tool. Call with issueKey=<jira_key> and a body of
+      this form:
+
+          FULL_AUTO COMPLETE (manual override) — TalkBack PR Gate: <prior_outcome>
+
+          PR: <pr_url>
+          Merged at: <merge_sha>
+          Head SHA at merge: <head_sha>
+          Merged by: <merged_by>
+
+          The routine had halted at <prior_outcome> (see the prior Jira
+          halt comment for the gate signals). <merged_by> squash-merged
+          the PR manually, accepting the gate risk.
+
+          Local cleanup still pending (cloud routines can't touch the
+          developer's laptop): FF the primary tree's main, remove the
+          worktree, delete the local branch. The developer's agent
+          will run these on the next "finish SCRUM-XXX" / continue.
+
+          Auto-posted by Claude routine (Slice 6, SCRUM-391). Idempotency
+          marker on the corresponding PR comment dedupes against
+          LABEL FLOW auto-merges, so this comment is posted at most
+          once per manual override per head_sha.
+
+      If the connector call errors (Atlassian down / auth expired), log
+      the error and continue to M5. The merge already happened; the
+      operator can transition Jira by hand from the override notice on
+      the PR.
+
+  M5. Transition the Jira ticket to Done via the Atlassian connector's
+      transition-issue tool (target status name "Done"). Same handling
+      as Step 3e: if the call errors, log and continue to Final exit.
+
+  M6. (No further action — proceed to Final exit.)
+
 Final exit:
 
-  Emit the headline (from the outcome map above) verbatim as the
-  routine's last sentence and exit. The final sentence is what
-  claude.ai's run-completion notification displays on the user's
-  device. For PASS, append " — merged at <short_merge_sha>" so the
-  notification reflects the merge actually happened.
+  Emit the headline as the routine's last sentence and exit. The final
+  sentence is what claude.ai's run-completion notification displays on
+  the user's device.
+
+  LABEL FLOW headline format:
+    "PR Gate: <OUTCOME> — PR #<N> (<short_sha>)"
+    For PASS, append " — merged at <short_merge_sha>" so the
+    notification reflects that the merge actually happened.
+
+  CLOSE FLOW headline format:
+    "PR Gate: <prior_outcome> — PR #<N> (<short_sha>) — manually merged by <merged_by> at <short_merge_sha>"
 
   Examples:
     "PR Gate: PASS — PR #348 (887d7be) — merged at a1b2c3d"
     "PR Gate: WARN — PR #344 (803b903)"
     "PR Gate: BLOCK — PR #342 (f4dc764)"
     "PR Gate: UNKNOWN — PR #999 (deadbee)"
+    "PR Gate: WARN — PR #350 (20da230) — manually merged by psuthar at 7e254b6"
 ```
 
 ## Payload contract
 
-The routine receives GitHub's standard `pull_request` webhook payload with
-`action: "labeled"`. Schema:
+The routine receives GitHub's standard `pull_request` webhook payload.
+Two `action` values fan into the same prompt: `"labeled"` (LABEL FLOW)
+and `"closed"` (CLOSE FLOW, SCRUM-391). Schema:
 <https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request>.
 
-Fields the current prompt (Slices 1+2+3) uses:
+Fields the current prompt uses:
 
-| Field | Source |
-|-------|--------|
-| `action` | top-level — must be `"labeled"` |
-| `label.name` | the freshly-applied label, e.g. `pr-gate:warn` |
-| `pull_request.number` | the PR number |
-| `pull_request.title` | parsed for the `SCRUM-XXX` Jira key (Slice 3) |
-| `pull_request.html_url` | included in the Jira halt comment (Slice 3) |
-| `pull_request.head.sha` | head SHA at the moment the label was applied; also used as the idempotency dedupe key |
+| Field | Used in | Source |
+|-------|---------|--------|
+| `action` | router | must be `"labeled"` or `"closed"` |
+| `label.name` | LABEL FLOW | the freshly-applied label, e.g. `pr-gate:warn` |
+| `pull_request.number` | both | the PR number |
+| `pull_request.title` | both | parsed for the `SCRUM-XXX` Jira key |
+| `pull_request.html_url` | both | included in the Jira comment |
+| `pull_request.head.sha` | both | head SHA at the moment the event fired; also the idempotency dedupe key |
+| `pull_request.merged` | CLOSE FLOW filter | must be `true` for CLOSE FLOW; `false` exits silently |
+| `pull_request.merge_commit_sha` | CLOSE FLOW M4 / Final exit | the squash-merge commit on `main` |
+| `sender.login` | CLOSE FLOW M4 / Final exit | the GitHub user who clicked merge |
 
 Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
 `gh run download` from the `release-readiness` workflow:
@@ -588,6 +763,8 @@ Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
 | PR didn't auto-merge on PASS | Pre-merge guard failed: re-read `mergeable_state` was not `CLEAN` at the moment of merge. Most common cause: the gate fired with `pr-gate:pass` label but a required reviewer requirement was added/changed between gate completion and the routine firing, or branch protection requires up-to-date branch and the PR went stale. Routine logs `"mergeable_state=<state>; skipping merge"` and exits without merging — the PR comment from Step 1 already announces PASS, so the operator can push a fixup or merge manually. |
 | Routine fired on a PASS PR but the merge command errored | Inspect the routine's Run log for the `gh pr merge` exit code and stderr. Common causes: branch protection rejected the merge (e.g., requires linear history but the PR isn't rebased); the routine's GitHub App scope doesn't include `contents:write` on this repo (unlikely if Slice 1 PR comment worked); or a race with another merge. The routine posts a `<!-- pr-gate-routine merge-failed -->` comment on the PR documenting the error and exits without transitioning Jira. The Jira ticket stays In Review until manually closed out. |
 | Jira didn't transition to Done after a successful merge | The Atlassian connector's transition-issue call failed. Most common: ticket has a non-standard workflow that doesn't expose "Done" as a transition (some projects use "Closed" or "Resolved" instead). Check the routine's Run log for the connector error. Fix: either align the project's workflow to expose `Done` as a transition name, or update the routine prompt to use the project's actual terminal-state name. The merge itself is unaffected; the ticket just needs a manual transition. |
+| I manually squash-merged a WARN/BLOCK PR and Jira stayed In Review | The routine's trigger isn't subscribed to `pull_request.closed` events — the CLOSE FLOW (Slice 6, SCRUM-391) never fired. Add the second event-type to the routine's Trigger config: claude.ai → Routines → routine → **Trigger** → add `Pull request closed` alongside `Pull request labeled`. Filter on `Merged = true` if the UI exposes it; the prompt also short-circuits on `merged=false` so an unfiltered subscription is still safe. After the subscription is added, manual override merges will auto-post the override comment and transition Jira within ~60s. |
+| CLOSE FLOW posted a Jira override comment after a PASS auto-merge | The M1 idempotency check didn't match the Slice 4 fingerprint. The check requires BOTH the head_sha marker `<!-- pr-gate-routine head=<sha> -->` AND the literal string `Auto-merged and transitioned to Done by Claude routine` in the same PR comment. If Slice 4's comment body wording changes, update M1's contains-string in the prompt to match. |
 
 ## Authorization scope
 
