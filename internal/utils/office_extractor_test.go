@@ -78,10 +78,10 @@ func TestExtractXlsx(t *testing.T) {
 	xlsxPath := filepath.Join(tmp, "minimal.xlsx")
 
 	f := excelize.NewFile()
-	if err := f.SetCellValue("Sheet1", "A1", "Hello XLSX"); err != nil {
+	if err := f.SetSheetRow("Sheet1", "A1", &[]any{"name", "role"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.SetCellValue("Sheet1", "B1", "Cell B"); err != nil {
+	if err := f.SetSheetRow("Sheet1", "A2", &[]any{"Alex Chen", "Senior Staff Engineer"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.SaveAs(xlsxPath); err != nil {
@@ -93,11 +93,61 @@ func TestExtractXlsx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(text, "Hello XLSX") {
-		t.Errorf("expected Hello XLSX in output: %q", text)
+	// SCRUM-396: a single-sheet workbook renders as one markdown table
+	// (no `## SheetName` heading) — header, separator, body.
+	if !strings.HasPrefix(text, "| name | role |\n| --- | --- |\n") {
+		t.Errorf("expected a markdown table header+separator; got %q", text)
 	}
-	if !strings.Contains(text, "Cell B") {
-		t.Errorf("expected Cell B in output: %q", text)
+	if !strings.Contains(text, "| Alex Chen | Senior Staff Engineer |") {
+		t.Errorf("expected a markdown table body row; got %q", text)
+	}
+	if strings.Contains(text, "## ") {
+		t.Errorf("single-sheet workbook must not get a sheet heading; got %q", text)
+	}
+}
+
+// SCRUM-396: a multi-sheet .xlsx renders one `## SheetName` heading + table
+// per non-empty sheet (the shape SpreadsheetViewer styles).
+func TestExtractXlsx_MultiSheet(t *testing.T) {
+	tmp := t.TempDir()
+	xlsxPath := filepath.Join(tmp, "multi.xlsx")
+
+	f := excelize.NewFile() // creates "Sheet1"
+	if err := f.SetSheetRow("Sheet1", "A1", &[]any{"name", "role"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("Sheet1", "A2", &[]any{"Alex", "Eng"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.NewSheet("Notes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("Notes", "A1", &[]any{"topic", "summary"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetSheetRow("Notes", "A2", &[]any{"scope", "platform"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveAs(xlsxPath); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	text, err := extractXlsx(xlsxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"## Sheet1", "## Notes",
+		"| name | role |", "| --- | --- |", "| Alex | Eng |",
+		"| topic | summary |", "| scope | platform |",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("multi-sheet xlsx output missing %q\n--- got ---\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "## Sheet1") > strings.Index(text, "## Notes") {
+		t.Errorf("sheets out of order; got %q", text)
 	}
 }
 
@@ -183,9 +233,14 @@ func TestExtractXls(t *testing.T) {
 			t.Errorf("extracted .xls text missing %q\n--- got ---\n%s", want, text)
 		}
 	}
-	// Within-row cells are tab-joined (parity with extractXlsx).
-	if !strings.Contains(text, "Alex Chen\tSenior Staff Engineer") {
-		t.Errorf("expected tab-joined row; got %q", text)
+	// SCRUM-396: output is a GitHub-flavored markdown table (so SpreadsheetViewer
+	// renders a real table, not a run-on paragraph) — header row, alignment
+	// separator, then `| value | value |` body rows.
+	if !strings.HasPrefix(text, "| name | role |\n| --- | --- |\n") {
+		t.Errorf("expected a markdown table header+separator; got %q", text)
+	}
+	if !strings.Contains(text, "| Alex Chen | Senior Staff Engineer |") {
+		t.Errorf("expected a markdown table body row; got %q", text)
 	}
 }
 

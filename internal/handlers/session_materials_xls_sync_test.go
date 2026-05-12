@@ -54,6 +54,10 @@ func TestSessionUploadMaterial_XLS_SyncExtraction_Success(t *testing.T) {
 	require.NotNil(t, mat.ExtractedText, "extracted_text must be populated")
 	assert.Contains(t, *mat.ExtractedText, "Alex Chen", "expected a known cell value from the .xls fixture")
 	assert.Contains(t, *mat.ExtractedText, "leads notification platform", "expected a cell from the second sheet")
+	// SCRUM-396: extracted_text is a GFM markdown table (so SpreadsheetViewer
+	// renders a table, not a run-on paragraph) — header row + `| --- |` separator.
+	assert.Contains(t, *mat.ExtractedText, "| --- |", "extracted_text must be a markdown table (alignment separator present)")
+	assert.True(t, strings.HasPrefix(strings.TrimSpace(*mat.ExtractedText), "| "), "extracted_text must start with a markdown table row")
 	assert.Nil(t, mat.ErrorMessage, "successful extraction must not set error_message")
 
 	assert.Equal(t, 0, transcriptJobsForMaterial(t, h, *matID),
