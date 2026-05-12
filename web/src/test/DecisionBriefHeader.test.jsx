@@ -13,13 +13,13 @@ describe('DecisionBriefHeader', () => {
     expect(screen.getByText('Hiring John')).toBeTruthy()
     expect(screen.getByText('Should we extend an offer?')).toBeTruthy()
     expect(screen.getByText('Premise')).toBeTruthy()
-    expect(screen.getByText('Decision')).toBeTruthy()
+    expect(screen.getByText('Decision to be made')).toBeTruthy()
   })
 
   it('renders only decision when no premise', () => {
     render(<DecisionBriefHeader decision="Pick X" />)
     expect(screen.queryByText('Premise')).toBeNull()
-    expect(screen.getByText('Decision')).toBeTruthy()
+    expect(screen.getByText('Decision to be made')).toBeTruthy()
     expect(screen.getByText('Pick X')).toBeTruthy()
     expect(screen.queryByTestId('decision-outcome-badge')).toBeNull()
   })
@@ -44,7 +44,7 @@ describe('DecisionBriefHeader', () => {
     expect(screen.getByText('Outcome')).toBeTruthy()
     expect(screen.getByTestId('decision-outcome-badge').textContent).toContain('Approved')
     expect(screen.queryByText('Premise')).toBeNull()
-    expect(screen.queryByText('Decision')).toBeNull()
+    expect(screen.queryByText('Decision to be made')).toBeNull()
   })
 
   it('treats whitespace-only premise/decision/outcome as empty', () => {
