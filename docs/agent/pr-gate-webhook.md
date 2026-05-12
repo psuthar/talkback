@@ -3,9 +3,9 @@
 Push-based handling of TalkBack PR Gate outcomes. Replaces 30-second polling
 in `implement SCRUM-XXX FULL_AUTO`. Epic: SCRUM-381.
 
-This document covers Slices 1–3 (SCRUM-382, SCRUM-383, SCRUM-384, plus
-the SCRUM-387 correction). It is updated in place as later slices land —
-see the **Slice status** table.
+This document covers Slices 1–4 (SCRUM-382, SCRUM-383, SCRUM-384,
+SCRUM-385, plus the SCRUM-387 correction). It is updated in place as
+later slices land — see the **Slice status** table.
 
 ## How it fits together
 
@@ -33,13 +33,17 @@ labels starts-with "pr-gate:")
                   outcome headline; claude.ai's run-completion notification
                   (configured at Settings → General → Notifications)
                   carries that headline to the user's device
-  Slice 3 (now):  + on WARN/BLOCK only: downloads pr-gate-summary.json from
+  Slice 3:        + on WARN/BLOCK only: downloads pr-gate-summary.json from
                   the release-readiness workflow's artifacts, extracts the
-                  gate signals (pr_risk band/score/factors, release_readiness
-                  status), and posts a structured halt comment on the Jira
-                  ticket linked from the PR title's SCRUM-XXX key (via the
-                  Atlassian connector). PASS / UNKNOWN skip the Jira step.
-  Slice 4:        + auto-merge + Done transition (PASS+clean)
+                  gate signals, posts a structured halt comment on the Jira
+                  ticket linked from the PR title's SCRUM-XXX key.
+                  PASS / UNKNOWN skip the Jira step.
+  Slice 4 (now):  + on PASS + mergeable_state=clean only: pre-merge guard
+                  (re-read PR state at merge moment), then `gh pr merge
+                  --squash`, then post a Jira completion comment, then
+                  transition the linked Jira ticket to Done via the
+                  Atlassian connector's transition-issue tool.
+                  WARN / BLOCK / UNKNOWN never merge.
 ```
 
 ### Why labels, not API or workflow_run
@@ -67,8 +71,8 @@ with a label-prefix filter and reads the outcome from the label name.
 |-------|--------|--------------------|-------|
 | 1 | SCRUM-382 | Logs receipt by commenting on the PR. No decisions, no merge, no Jira write. | Done |
 | 2 | SCRUM-383 / SCRUM-387 | + comment body formatted for notification surface (claude.ai run-completion delivers the alert); + idempotency dedup keyed on `head_sha` | Done |
-| 3 | SCRUM-384 | + on WARN/BLOCK only: downloads `pr-gate-summary.json` from the workflow artifacts and posts a structured halt comment on the linked Jira ticket (Atlassian connector required) | Current |
-| 4 | SCRUM-385 | + auto-merge and Done transition on PASS+clean | Pending |
+| 3 | SCRUM-384 | + on WARN/BLOCK only: downloads `pr-gate-summary.json` from the workflow artifacts and posts a structured halt comment on the linked Jira ticket (Atlassian connector required) | Done |
+| 4 | SCRUM-385 | + on PASS only: pre-merge guards, squash-merges the PR, posts a Jira completion comment, transitions the linked Jira ticket to Done (Atlassian "Transition issue" tool required) | Current |
 | 5 | SCRUM-386 | Cut over FULL_AUTO / epic-run docs; remove polling | Pending |
 
 ## One-time setup (repo admin)
@@ -104,14 +108,20 @@ or `RemoteTrigger create` (API path — see the troubleshooting note below).
   toggles; the cloud-routine default allow-list is broader than the
   minimum but fine — none of the unused tools are exercised by the
   prompt below.
-- **Connectors (NEW for Slice 3):** add the **Atlassian** connector via
-  claude.ai → Routines → routine → **Connectors** tab → **Add connector** →
-  Atlassian. Authorize the routine for the Jira instance at
-  `suthar-team.atlassian.net` (or whatever Jira host your tickets live in).
-  Once added, `mcp__atlassian__jira_*` tools become available to the
-  routine. **Without this connector, Slice 3's Jira halt comment will
-  fail gracefully** and the routine will fall through with a `notice` —
-  the PR comment from Slice 1+2 is still posted.
+- **Connectors (NEW for Slice 3, expanded for Slice 4):** add the
+  **Atlassian** (Rovo) connector via claude.ai → Routines → routine →
+  **Connectors** tab → **Add connector** → Atlassian. Authorize the
+  routine for the Jira instance at `suthar-team.atlassian.net` (or
+  whatever Jira host your tickets live in). Once added, Atlassian Rovo
+  exposes Jira tools to the routine. For Slice 3 the routine needs
+  **Add comment** (find it in the connector's Read-only tools — enable
+  with auto-allow). For Slice 4 the routine additionally needs
+  **Transition issue** (Interactive tools, auto-allowed by default).
+  **Without the Atlassian connector, both Slice 3 (Jira halt comment)
+  and Slice 4 (Jira Done transition) fall through with a notice** —
+  the PR comment from Slice 1+2 is still posted, and Slice 4's
+  squash-merge still completes via `gh pr merge` (the Jira transition
+  is the only step that depends on the connector for Slice 4).
 - **Notifications:** ensure the relevant toggles are on at
   <https://claude.ai/settings/general> → Notifications section, especially
   **Response completions** and **Code notifications**. See the
@@ -140,10 +150,27 @@ routine should produce:
    band/score, top risk factors, release_readiness status,
    mergeable_state) and three resume options. PASS and UNKNOWN do NOT
    produce a Jira comment.
+4. **On PASS + mergeable_state=clean only:** the routine pre-merge-guards
+   the PR (re-reads via `gh pr view` and confirms still clean), then
+   squash-merges via `gh pr merge --squash --delete-branch`, posts a
+   Jira completion comment on the linked ticket, and transitions that
+   ticket to Done via the Atlassian connector's `Transition issue`
+   tool. WARN / BLOCK / UNKNOWN never merge.
 
 A re-run of `release-readiness` against the same head_sha should NOT
-produce a second PR comment, a second notification, or a second Jira
-comment — the idempotency marker on the PR comment is the dedupe key.
+produce a second PR comment, a second notification, a second Jira
+comment, a second merge attempt, or a second Done transition — the
+idempotency marker on the PR comment is the dedupe key for the whole
+routine.
+
+**Primary-tree FF gap (Slice 4 vs SCRUM-388 rule):** When the routine
+auto-merges, the user's primary working tree does NOT auto fast-forward.
+The SCRUM-388 FF rule lives in the Claude Code FULL_AUTO close-out
+(executed by a developer-side agent), not in this cloud routine. After
+a routine-driven auto-merge, the developer's primary tree will be one
+commit behind until they `git pull --ff-only origin main` manually
+(or until their next `implement SCRUM-XX FULL_AUTO` close-out catches
+up). Out of cloud-routine reach — documented as a known gap.
 
 If you don't see the expected outputs:
 
@@ -164,9 +191,9 @@ If you don't see the expected outputs:
 
 ## Current routine prompt
 
-This is the live prompt (Slices 1+2+3). Copy verbatim into the routine.
+This is the live prompt (Slices 1+2+3+4). Copy verbatim into the routine.
 
-The prompt does up to three things:
+The prompt does up to four things:
 
 1. **Always:** post a PR comment whose headline (second line) is the
    outcome summary. claude.ai's run-completion notification surfaces
@@ -177,14 +204,18 @@ The prompt does up to three things:
    `release-readiness` workflow's artifacts, extract gate signals, and
    post a structured halt comment on the linked Jira ticket via the
    Atlassian connector.
-3. **Never:** merge the PR or transition Jira state — those land in
-   Slice 4 (SCRUM-385).
+3. **PASS only (and mergeable_state=clean):** pre-merge guard, then
+   squash-merge via `gh pr merge --squash --delete-branch`, then post a
+   Jira completion comment, then transition the Jira ticket to Done via
+   the Atlassian connector's transition-issue tool.
+4. **Always:** emit the outcome headline as the final sentence so the
+   run-completion notification carries it.
 
 ```
 You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383 +
-SCRUM-384, revised by SCRUM-387). You're invoked by a GitHub webhook —
-specifically a `pull_request.labeled` event from `psuthar/talkback` where
-the applied label name starts with `pr-gate:`.
+SCRUM-384 + SCRUM-385, revised by SCRUM-387). You're invoked by a GitHub
+webhook — specifically a `pull_request.labeled` event from
+`psuthar/talkback` where the applied label name starts with `pr-gate:`.
 
 Your job:
 
@@ -194,9 +225,11 @@ Your job:
   2. On WARN or BLOCK only: download the release-readiness workflow's
      pr-gate-summary.json artifact, extract gate signals, and post a
      structured halt comment on the linked Jira ticket via the
-     mcp__atlassian__jira_add_comment tool.
-
-No merge, no Jira state transition — those land in Slice 4 (SCRUM-385).
+     Atlassian connector's add-comment tool.
+  3. On PASS only (and only if mergeable_state is still clean at the
+     moment of merge): pre-merge guard, squash-merge the PR, post a
+     Jira completion comment, transition the Jira ticket to Done via
+     the Atlassian connector's transition-issue tool.
 
 Filter rules (silently exit if any fails — the routine's trigger filter
 should already enforce these, but defense in depth):
@@ -324,15 +357,103 @@ skip this entire step and go to the final exit.
           this Jira comment is posted at most once per head_sha.
 
       If the call errors (Atlassian connector missing or auth expired),
-      log the error and continue to final exit — do NOT crash the
-      routine. The PR comment is still the fallback signal.
+      log the error and continue to Step 3 / final exit — do NOT crash
+      the routine. The PR comment is still the fallback signal.
+
+Step 3 — Auto-merge + Jira Done (PASS only). On WARN / BLOCK / UNKNOWN,
+skip this entire step and go to the final exit. Outcome must equal
+"pass" — exact match.
+
+  3a. Pre-merge guard. Re-read the PR state right now to confirm it's
+      still mergeable and not already merged:
+
+        pr_state=$(gh pr view <pr_number> -R psuthar/talkback \
+          --json mergeStateStatus,state,mergeCommit \
+          --jq '{state, ms: .mergeStateStatus, merged_sha: .mergeCommit.oid}')
+        ms=$(echo "$pr_state" | jq -r '.ms')
+        state=$(echo "$pr_state" | jq -r '.state')
+        existing_merge_sha=$(echo "$pr_state" | jq -r '.merged_sha // ""')
+
+      Branch:
+        - If state == "MERGED": skip 3b (merge already happened — manual
+          override or another fire); use existing_merge_sha as the
+          merge_sha and continue to 3c/3d/3e.
+        - If state != "OPEN": log "PR not in OPEN state ($state); skipping
+          merge" and exit. (CLOSED unmerged means the user closed without
+          merging; respect that.)
+        - If ms != "CLEAN": log "mergeable_state=$ms; skipping merge —
+          gate is stale, push or re-run release-readiness" and exit.
+          (The PR comment from Step 1 already documents the PASS outcome;
+          the operator can re-trigger.)
+
+  3b. Merge:
+
+        merge_resp=$(gh pr merge <pr_number> -R psuthar/talkback \
+          --squash --delete-branch 2>&1)
+        if [ $? -ne 0 ]; then
+          echo "Merge failed: $merge_resp"
+          # Post an error comment on the PR and exit without transitioning Jira.
+          gh pr comment <pr_number> -R psuthar/talkback --body \
+            "<!-- pr-gate-routine merge-failed head=<head_sha> -->
+TalkBack PR Gate auto-merge failed.
+gh pr merge returned: $merge_resp
+Manual squash-merge required; Jira ticket remains In Review."
+          exit 1
+        fi
+        merge_sha=$(gh pr view <pr_number> -R psuthar/talkback \
+          --json mergeCommit --jq .mergeCommit.oid)
+
+  3c. Compose the Jira completion comment body:
+
+        FULL_AUTO COMPLETE — TalkBack PR Gate: PASS
+
+        PR: <pr_url> merged at <merge_sha>
+        Head SHA at merge: <head_sha>
+
+        Gate signals (from artifacts/pr-gate-summary.json):
+        - final_gate: PASS
+        - pr_risk: band=<pr_risk_band>, score=<pr_risk_score>
+        - release_readiness: <rr_status> (<rr_score>/100,
+          <rr_warnings> warnings, <rr_blockers> blockers)
+        - mergeable_state at merge: clean
+
+        Auto-merged and transitioned to Done by Claude routine (Slice 4,
+        SCRUM-385).
+
+      Note: this is a different body than Step 2's halt comment. If
+      Step 2 wasn't run (PASS path), download the artifact here:
+
+        if [ ! -f "/tmp/gate-<head_sha>/artifacts/pr-gate-summary.json" ]; then
+          # Same artifact-download block as Step 2b/2c (find run_id, gh run download).
+          # If artifact not present, post a minimal completion comment
+          # listing just final_gate=PASS, merge_sha, head_sha — without
+          # pr_risk / release_readiness details.
+        fi
+
+  3d. Extract the Jira key from PR title (same regex as Step 2a). If no
+      key found, log "no Jira key in PR title; skipping Jira step
+      (merge already happened)" and exit. The PR is merged, just not
+      ticket-tracked.
+
+  3e. Post the completion comment via the Atlassian connector's
+      add-comment tool (same one Step 2 uses), then transition the
+      ticket to Done via the Atlassian connector's transition-issue
+      tool (target status name "Done"). Both calls handle errors
+      gracefully — log and continue. The merge is complete regardless.
 
 Final exit:
 
   Emit the headline (from the outcome map above) verbatim as the
   routine's last sentence and exit. The final sentence is what
   claude.ai's run-completion notification displays on the user's
-  device. Do not merge the PR. Do not transition any Jira ticket.
+  device. For PASS, append " — merged at <short_merge_sha>" so the
+  notification reflects the merge actually happened.
+
+  Examples:
+    "PR Gate: PASS — PR #348 (887d7be) — merged at a1b2c3d"
+    "PR Gate: WARN — PR #344 (803b903)"
+    "PR Gate: BLOCK — PR #342 (f4dc764)"
+    "PR Gate: UNKNOWN — PR #999 (deadbee)"
 ```
 
 ## Payload contract
@@ -376,6 +497,9 @@ Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
 | Comment fires twice on the same head_sha | The idempotency check's `gh pr view --json comments --jq …` didn't match the marker. Common cause: the marker line isn't the first line of the body, or the head_sha format drifted (use full 40-char SHA on both sides, never the short form). Inspect the routine's Run log for the value of `existing`. |
 | Jira halt comment never appears on WARN/BLOCK | One of: (a) Atlassian connector not added to the routine — claude.ai → Routines → routine → Connectors tab → Add connector → Atlassian, then authorize the Jira host; (b) authorization expired — reconnect; (c) PR title doesn't contain a `SCRUM-XXX` key — the routine logs "no Jira key in PR title; skipping Jira step" and falls through; (d) the release-readiness artifact wasn't produced this run (e.g., docs-skip-hint workflow ran instead) — the routine logs "No release-readiness run found" or "pr-gate-summary.json not in artifact" and falls through. In every fall-through case the PR comment from Step 1 is still posted. |
 | Jira halt comment posted on PASS | Shouldn't happen — Slice 3 only posts on WARN or BLOCK. Inspect the routine's Run log: if `outcome` was parsed as `warn`/`block` for a PR that actually passed, the label-application step in the workflow may have mis-classified. Check `artifacts/pr-gate-summary.json` for the run and the workflow's `case "$final_gate"` branch. |
+| PR didn't auto-merge on PASS | Pre-merge guard failed: re-read `mergeable_state` was not `CLEAN` at the moment of merge. Most common cause: the gate fired with `pr-gate:pass` label but a required reviewer requirement was added/changed between gate completion and the routine firing, or branch protection requires up-to-date branch and the PR went stale. Routine logs `"mergeable_state=<state>; skipping merge"` and exits without merging — the PR comment from Step 1 already announces PASS, so the operator can push a fixup or merge manually. |
+| Routine fired on a PASS PR but the merge command errored | Inspect the routine's Run log for the `gh pr merge` exit code and stderr. Common causes: branch protection rejected the merge (e.g., requires linear history but the PR isn't rebased); the routine's GitHub App scope doesn't include `contents:write` on this repo (unlikely if Slice 1 PR comment worked); or a race with another merge. The routine posts a `<!-- pr-gate-routine merge-failed -->` comment on the PR documenting the error and exits without transitioning Jira. The Jira ticket stays In Review until manually closed out. |
+| Jira didn't transition to Done after a successful merge | The Atlassian connector's transition-issue call failed. Most common: ticket has a non-standard workflow that doesn't expose "Done" as a transition (some projects use "Closed" or "Resolved" instead). Check the routine's Run log for the connector error. Fix: either align the project's workflow to expose `Done` as a transition name, or update the routine prompt to use the project's actual terminal-state name. The merge itself is unaffected; the ticket just needs a manual transition. |
 
 ## Authorization scope
 
