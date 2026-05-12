@@ -139,9 +139,14 @@ workflow's last step applies one of `pr-gate:pass` / `pr-gate:warn` /
 PR's labels strip. Within ~60–90 seconds of that label appearing, the
 routine should produce:
 
-1. A PR comment with `<!-- pr-gate-routine head=… -->` (first line) and
-   the outcome headline (second line), e.g.
-   `PR Gate: WARN — PR #344 (803b903)`.
+1. A PR comment with `<!-- pr-gate-routine head=… -->` (first line) followed
+   by a body that mirrors the `github-actions[bot]` "PR Gate Summary" comment
+   that `release-readiness.yml` already auto-posts: a `## 🤖 PR Gate Summary`
+   header, a signals table (PR Risk / Release Readiness / Final Gate with
+   colored emojis), a deterministic-gate caveat, top risk signals + required-
+   before-merge bullet lists, and a `Full analysis: pr-gate-summary.md` link.
+   When `pr-gate-summary.json` isn't present (docs-skip-hint path), the
+   routine falls back to a minimal headline-only body.
 2. A claude.ai run-completion notification carrying the outcome headline
    (configured channels per Settings → General → Notifications).
 3. **On WARN or BLOCK only:** a structured halt comment on the Jira
@@ -193,23 +198,34 @@ If you don't see the expected outputs:
 
 This is the live prompt (Slices 1+2+3+4). Copy verbatim into the routine.
 
-The prompt does up to four things:
+The prompt does up to five things:
 
-1. **Always:** post a PR comment whose headline (second line) is the
-   outcome summary. claude.ai's run-completion notification surfaces
-   the routine's final emitted sentence; the prompt instructs the
-   routine to emit the same headline at exit so the notification's
-   preview text matches the PR comment.
-2. **WARN or BLOCK only:** download `pr-gate-summary.json` from the
-   `release-readiness` workflow's artifacts, extract gate signals, and
-   post a structured halt comment on the linked Jira ticket via the
-   Atlassian connector.
-3. **PASS only (and mergeable_state=clean):** pre-merge guard, then
+1. **Always (Pre-step):** attempt to download `pr-gate-summary.json` from
+   the `release-readiness` workflow's artifact. If present, the routine
+   has rich gate signals to compose downstream comments; if absent, it
+   falls back to minimal bodies. Performed early so the gate data is
+   available to every subsequent step.
+2. **Always:** post a PR comment. With the artifact present, the body
+   mirrors `release-readiness.yml`'s "PR Gate Summary" format (signals
+   table, top risk signals, required-before-merge, analysis link). Without
+   the artifact, falls back to the minimal headline-only body.
+3. **WARN or BLOCK only:** post a structured halt comment on the linked
+   Jira ticket via the Atlassian connector, reusing the artifact from
+   the Pre-step.
+4. **PASS only (and mergeable_state=clean):** pre-merge guard, then
    squash-merge via `gh pr merge --squash --delete-branch`, then post a
    Jira completion comment, then transition the Jira ticket to Done via
    the Atlassian connector's transition-issue tool.
-4. **Always:** emit the outcome headline as the final sentence so the
+5. **Always:** emit the outcome headline as the final sentence so the
    run-completion notification carries it.
+
+The PR comment format (Step 1 with artifact present) is intentionally
+the same as the comment posted by `.github/workflows/release-readiness.yml`'s
+"Post PR gate comment" step. The workflow's bot comment and the routine's
+comment will look near-identical (one extra marker line on the routine's,
+plus the routine's comment is `psuthar`-authored rather than
+`github-actions[bot]`-authored). If the workflow's comment format
+changes in the future, update the routine prompt to match.
 
 ```
 You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383 +
@@ -219,13 +235,17 @@ webhook — specifically a `pull_request.labeled` event from
 
 Your job:
 
-  1. Always: post a PR comment that confirms the webhook fired and
-     surfaces the gate outcome. The comment body's headline (second
-     line) doubles as the notification text.
-  2. On WARN or BLOCK only: download the release-readiness workflow's
-     pr-gate-summary.json artifact, extract gate signals, and post a
-     structured halt comment on the linked Jira ticket via the
-     Atlassian connector's add-comment tool.
+  Pre-step (always): attempt to download pr-gate-summary.json from the
+  release-readiness workflow's artifact for this head_sha. Used by every
+  step below. If unavailable, fall through to minimal-body fallbacks.
+
+  1. Always: post a PR comment. With the artifact, build a rich body that
+     mirrors release-readiness.yml's "Post PR gate comment" output (signal
+     table + top risk signals + required-before-merge + analysis link).
+     Without the artifact, fall back to a minimal headline-only body.
+  2. On WARN or BLOCK only: post a structured halt comment on the linked
+     Jira ticket via the Atlassian connector's add-comment tool, using
+     the gate signals from the Pre-step.
   3. On PASS only (and only if mergeable_state is still clean at the
      moment of merge): pre-merge guard, squash-merge the PR, post a
      Jira completion comment, transition the Jira ticket to Done via
@@ -259,7 +279,9 @@ and would otherwise produce duplicate comments. Before posting:
     exit 0
   fi
 
-Pick the headline and guidance line by outcome:
+Pick the fallback headline and guidance line by outcome (used only when
+the gate artifact isn't available — Step 1 fallback body, and the final
+exit notification):
 
   pass    → headline: "PR Gate: PASS — PR #<pr_number> (<short_sha>)"
             guidance: "Ready to merge."
@@ -270,66 +292,120 @@ Pick the headline and guidance line by outcome:
   unknown → headline: "PR Gate: UNKNOWN — PR #<pr_number> (<short_sha>)"
             guidance: "Gate status not determined; see workflow run."
 
-Step 1 — Post the PR comment. The marker MUST be the first line of the
-body so the idempotency check above finds it on re-runs.
+Pre-step — Download the gate artifact (always attempt; flag the result
+for use in every step below).
 
-  gh pr comment <pr_number> -R psuthar/talkback --body \
-    "<!-- pr-gate-routine head=<head_sha> -->
-<headline>
+  run_id=$(gh run list -R psuthar/talkback --commit <head_sha> \
+    --workflow "Release Readiness" --json databaseId \
+    --jq '.[0].databaseId')
+  artifact_available=false
+  workflow_run_url=""
+  if [ -n "$run_id" ]; then
+    workflow_run_url="https://github.com/psuthar/talkback/actions/runs/${run_id}"
+    rm -rf /tmp/gate-<head_sha> && mkdir -p /tmp/gate-<head_sha>
+    if gh run download "$run_id" -R psuthar/talkback \
+         -n release-readiness -D /tmp/gate-<head_sha> 2>/dev/null; then
+      summary_path="/tmp/gate-<head_sha>/artifacts/pr-gate-summary.json"
+      [ -f "$summary_path" ] && artifact_available=true
+    fi
+  fi
 
-<guidance>
+  if [ "$artifact_available" = "true" ]; then
+    final_gate_status=$(jq -r '.final_gate.status // "UNKNOWN"' "$summary_path" | tr '[:lower:]' '[:upper:]')
+    pr_risk_status=$(jq -r '.pr_risk.status // "UNKNOWN"' "$summary_path" | tr '[:lower:]' '[:upper:]')
+    pr_risk_label=$(jq -r '.pr_risk.label // empty' "$summary_path")
+    pr_risk_band=$(jq -r '.pr_risk.band // "unknown"' "$summary_path")
+    pr_risk_score=$(jq -r '.pr_risk.score // "?"' "$summary_path")
+    pr_risk_confidence=$(jq -r '.pr_risk.confidence // "?"' "$summary_path")
+    top_risk_factors_json=$(jq -c '.pr_risk.top_risk_factors // []' "$summary_path")
+    required_actions_json=$(jq -c '.required_actions // []' "$summary_path")
+    rr_status=$(jq -r '.release_readiness.status // "UNKNOWN"' "$summary_path" | tr '[:lower:]' '[:upper:]')
+    rr_score=$(jq -r '.release_readiness.score // "?"' "$summary_path")
+    rr_warnings=$(jq -r '.release_readiness.warnings // 0' "$summary_path")
+    rr_blockers=$(jq -r '.release_readiness.blockers // 0' "$summary_path")
+  fi
 
-Details: label=<label.name>, head_sha=<head_sha>"
+Step 1 — Post the PR comment. The marker MUST be the first line so the
+idempotency check above finds it on re-runs.
+
+  Status emoji map (used in 1a):
+    PASS=🟢, WARN=🟡, BLOCK=🔴, anything else=⚪
+  REC_DISPLAY map:
+    PASS="PASS (low risk)", WARN="WARN", BLOCK="BLOCK"
+
+  1a. If artifact_available == true, compose the rich body (mirrors
+      release-readiness.yml's "Post PR gate comment" output):
+
+      risk_emoji = STATUS_EMOJI[<pr_risk_status>] or '⚪'
+      rr_emoji   = STATUS_EMOJI[<rr_status>] or '⚪'
+      gate_emoji = STATUS_EMOJI[<final_gate_status>] or '⚪'
+      risk_label_display = <pr_risk_label> if non-empty else
+                           REC_DISPLAY[<pr_risk_status>] or <pr_risk_status>
+      rr_label_display   = "<rr_status> (<rr_score>/100)"
+
+      Body (in this exact line order — the marker is line 1):
+
+        <!-- pr-gate-routine head=<head_sha> -->
+        ## 🤖 PR Gate Summary
+
+        | Signal | Result |
+        |--------|--------|
+        | PR Risk | <risk_emoji> <risk_label_display> |
+        | Release Readiness | <rr_emoji> <rr_label_display> |
+        | **Final Gate** | **<gate_emoji> <final_gate_status>** |
+
+        > _This gate is deterministic. PASS does not bypass branch protection or required code review._
+
+      If top_risk_factors_json has 1+ entries: append a blank line, the
+      header `**Top risk signals:**`, and the first 4 entries as
+      `- <factor>` bullets.
+
+      If required_actions_json has 1+ entries: append a blank line, the
+      header `**Required before merge:**`, and the first 5 entries as
+      `- <action>` bullets.
+
+      Append: blank line, then
+        `_Full analysis: [pr-gate-summary.md](<workflow_run_url>)_`
+
+  1b. Else (artifact_available == false — typically docs-skip-hint or
+      a repo without the gate), fall back to the minimal body:
+
+        <!-- pr-gate-routine head=<head_sha> -->
+        <headline>
+
+        <guidance>
+
+        Details: label=<label.name>, head_sha=<head_sha>
+        (no pr-gate-summary.json available; rich body skipped)
+
+  1c. Post via:
+        gh pr comment <pr_number> -R psuthar/talkback --body "<body>"
 
 Step 2 — Jira halt comment (WARN or BLOCK only). On PASS or UNKNOWN,
-skip this entire step and go to the final exit.
+skip this entire step and go to Step 3.
 
   2a. Extract the Jira key from the PR title — first match of the regex
       `SCRUM-[0-9]+`. If no match, log a notice ("no Jira key in PR
-      title; skipping Jira step") and continue to final exit. The PR
-      comment from Step 1 is still the user's signal.
+      title; skipping Jira step") and continue to Step 3. The PR comment
+      from Step 1 is still the user's signal.
 
       jira_key=$(echo "<pr_title>" | grep -oE 'SCRUM-[0-9]+' | head -1)
 
-  2b. Find the release-readiness workflow run id for this head_sha.
-      Sometimes the docs-skip-hint workflow is the one that ran instead
-      — try it as a fallback. If neither found, log + skip Jira step
-      (PR comment already posted).
+  2b. If artifact_available is false (gate signals not loaded in the
+      Pre-step), log "pr-gate-summary.json not available; skipping Jira
+      step" and continue to Step 3. The PR comment from Step 1 has the
+      fallback headline; that's the user's signal for this case.
 
-      run_id=$(gh run list -R psuthar/talkback --commit <head_sha> \
-        --workflow "Release Readiness" --json databaseId \
-        --jq '.[0].databaseId')
-      if [ -z "$run_id" ]; then
-        echo "No release-readiness run found for head_sha=<head_sha>; skipping Jira step."
-        # Continue to final exit.
-      fi
+  2c. mergeable_state (computed live; not in artifact):
 
-  2c. Download the artifact (idempotent — overwrites prior dir):
-
-      rm -rf /tmp/gate-<head_sha> && mkdir -p /tmp/gate-<head_sha>
-      gh run download "$run_id" -R psuthar/talkback \
-        -n release-readiness -D /tmp/gate-<head_sha>
-      summary_path="/tmp/gate-<head_sha>/artifacts/pr-gate-summary.json"
-      if [ ! -f "$summary_path" ]; then
-        echo "pr-gate-summary.json not in artifact; skipping Jira step."
-        # Continue to final exit.
-      fi
-
-  2d. Extract fields:
-
-      final_gate_status=$(jq -r '.final_gate.status // "unknown"' "$summary_path")
-      pr_risk_band=$(jq -r '.pr_risk.band // "unknown"' "$summary_path")
-      pr_risk_score=$(jq -r '.pr_risk.score // "?"' "$summary_path")
-      pr_risk_confidence=$(jq -r '.pr_risk.confidence // "?"' "$summary_path")
-      top_risk_factors=$(jq -r '.pr_risk.top_risk_factors // [] | join(", ")' "$summary_path")
-      rr_status=$(jq -r '.release_readiness.status // "unknown"' "$summary_path")
-      rr_score=$(jq -r '.release_readiness.score // "?"' "$summary_path")
-      rr_warnings=$(jq -r '.release_readiness.warnings // 0' "$summary_path")
-      rr_blockers=$(jq -r '.release_readiness.blockers // 0' "$summary_path")
       mergeable=$(gh pr view <pr_number> -R psuthar/talkback \
         --json mergeStateStatus --jq .mergeStateStatus)
 
-  2e. Post the Jira halt comment via mcp__atlassian__jira_add_comment.
+      Convert top_risk_factors_json to a comma-separated string for
+      the comment body:
+        top_risk_factors=$(echo "$top_risk_factors_json" | jq -r 'join(", ")')
+
+  2d. Post the Jira halt comment via mcp__atlassian__jira_add_comment.
       Call with issueKey=<jira_key> and a body of the form:
 
           FULL_AUTO HALT — TalkBack PR Gate: <UPPERCASE_OUTCOME>
@@ -359,6 +435,9 @@ skip this entire step and go to the final exit.
       If the call errors (Atlassian connector missing or auth expired),
       log the error and continue to Step 3 / final exit — do NOT crash
       the routine. The PR comment is still the fallback signal.
+
+  2e. (Step 2e renumbered out — the previous prompt had artifact-download
+      inline here; now handled in the Pre-step. Skip directly to Step 3.)
 
 Step 3 — Auto-merge + Jira Done (PASS only). On WARN / BLOCK / UNKNOWN,
 skip this entire step and go to the final exit. Outcome must equal
@@ -403,7 +482,11 @@ Manual squash-merge required; Jira ticket remains In Review."
         merge_sha=$(gh pr view <pr_number> -R psuthar/talkback \
           --json mergeCommit --jq .mergeCommit.oid)
 
-  3c. Compose the Jira completion comment body:
+  3c. Compose the Jira completion comment body. Use the gate signals
+      from the Pre-step if artifact_available; otherwise post a minimal
+      completion comment.
+
+      With artifact:
 
         FULL_AUTO COMPLETE — TalkBack PR Gate: PASS
 
@@ -418,17 +501,20 @@ Manual squash-merge required; Jira ticket remains In Review."
         - mergeable_state at merge: clean
 
         Auto-merged and transitioned to Done by Claude routine (Slice 4,
-        SCRUM-385).
+        SCRUM-385; PR comment format enriched by SCRUM-390).
 
-      Note: this is a different body than Step 2's halt comment. If
-      Step 2 wasn't run (PASS path), download the artifact here:
+      Without artifact (artifact_available == false):
 
-        if [ ! -f "/tmp/gate-<head_sha>/artifacts/pr-gate-summary.json" ]; then
-          # Same artifact-download block as Step 2b/2c (find run_id, gh run download).
-          # If artifact not present, post a minimal completion comment
-          # listing just final_gate=PASS, merge_sha, head_sha — without
-          # pr_risk / release_readiness details.
-        fi
+        FULL_AUTO COMPLETE — TalkBack PR Gate: PASS
+
+        PR: <pr_url> merged at <merge_sha>
+        Head SHA at merge: <head_sha>
+
+        (pr-gate-summary.json not available; gate signal detail omitted —
+        likely a docs-skip-hint path.)
+
+        Auto-merged and transitioned to Done by Claude routine (Slice 4,
+        SCRUM-385; PR comment format enriched by SCRUM-390).
 
   3d. Extract the Jira key from PR title (same regex as Step 2a). If no
       key found, log "no Jira key in PR title; skipping Jira step
@@ -495,6 +581,8 @@ Slice 3 also reads from `artifacts/pr-gate-summary.json` downloaded via
 | Comment appears but no claude.ai notification arrives | The notification toggles at <https://claude.ai/settings/general> are off (Response completions + Code notifications), or no delivery target is configured (browser push not granted, mobile app not installed, email disabled). See [Notifications](#notifications). |
 | GitHub notifications never arrive for routine comments | Expected. GitHub does not notify users about their own actions, and the routine runs as the routine owner. Rely on claude.ai notifications. |
 | Comment fires twice on the same head_sha | The idempotency check's `gh pr view --json comments --jq …` didn't match the marker. Common cause: the marker line isn't the first line of the body, or the head_sha format drifted (use full 40-char SHA on both sides, never the short form). Inspect the routine's Run log for the value of `existing`. |
+| Routine's PR comment is the minimal "Details: label=…" body instead of the rich signal table | The Pre-step couldn't download `pr-gate-summary.json` for this `head_sha`. Most common cause: PR went through the `Release Readiness (docs skip-hint)` workflow rather than `Release Readiness`, so no artifact was produced. The fallback minimal body is intentional in that case; the bot's own gate comment is also missing for the same reason. To fix at the gate level, scope the docs-skip-hint workflow to actually emit a `pr-gate-summary.json` stub. Out of scope here. |
+| Routine's PR comment has rich format but differs from the bot's comment | The two comment formats should match because both derive from `pr-gate-summary.json` via the same logic. If they diverge, the workflow's "Post PR gate comment" step changed and the routine prompt is stale. Update the routine's Step 1 body template to match. The source of truth is `.github/workflows/release-readiness.yml`'s `lines` array. |
 | Jira halt comment never appears on WARN/BLOCK | One of: (a) Atlassian connector not added to the routine — claude.ai → Routines → routine → Connectors tab → Add connector → Atlassian, then authorize the Jira host; (b) authorization expired — reconnect; (c) PR title doesn't contain a `SCRUM-XXX` key — the routine logs "no Jira key in PR title; skipping Jira step" and falls through; (d) the release-readiness artifact wasn't produced this run (e.g., docs-skip-hint workflow ran instead) — the routine logs "No release-readiness run found" or "pr-gate-summary.json not in artifact" and falls through. In every fall-through case the PR comment from Step 1 is still posted. |
 | Jira halt comment posted on PASS | Shouldn't happen — Slice 3 only posts on WARN or BLOCK. Inspect the routine's Run log: if `outcome` was parsed as `warn`/`block` for a PR that actually passed, the label-application step in the workflow may have mis-classified. Check `artifacts/pr-gate-summary.json` for the run and the workflow's `case "$final_gate"` branch. |
 | PR didn't auto-merge on PASS | Pre-merge guard failed: re-read `mergeable_state` was not `CLEAN` at the moment of merge. Most common cause: the gate fired with `pr-gate:pass` label but a required reviewer requirement was added/changed between gate completion and the routine firing, or branch protection requires up-to-date branch and the PR went stale. Routine logs `"mergeable_state=<state>; skipping merge"` and exits without merging — the PR comment from Step 1 already announces PASS, so the operator can push a fixup or merge manually. |
