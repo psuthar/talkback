@@ -3,8 +3,8 @@
 Push-based handling of TalkBack PR Gate outcomes. Replaces 30-second polling
 in `implement SCRUM-XXX FULL_AUTO`. Epic: SCRUM-381.
 
-This document covers Slice 1 (SCRUM-382). It will be updated in place as later
-slices land — see the **Slice status** table.
+This document covers Slices 1–2 (SCRUM-382, SCRUM-383). It is updated in
+place as later slices land — see the **Slice status** table.
 
 ## How it fits together
 
@@ -26,8 +26,9 @@ labels starts-with "pr-gate:")
         │
         │ reads webhook payload, decides terminal action
         ▼
-  Slice 1 (now):  posts a "received" comment on the PR
-  Slice 2:        + push notification
+  Slice 1:        posts a "received" comment on the PR (with idempotency
+                  marker so re-runs for the same head_sha don't double-post)
+  Slice 2 (now):  + push notification with concise outcome line
   Slice 3:        + downloads pr-gate-summary.json from the run's artifacts;
                     posts structured halt comment on Jira (WARN/BLOCK)
   Slice 4:        + auto-merge + Done transition (PASS+clean)
@@ -56,8 +57,8 @@ with a label-prefix filter and reads the outcome from the label name.
 
 | Slice | Ticket | Routine capability | State |
 |-------|--------|--------------------|-------|
-| 1 | SCRUM-382 | Logs receipt by commenting on the PR. No decisions, no merge, no Jira write. | Current |
-| 2 | SCRUM-383 | + push notification on every terminal outcome | Pending |
+| 1 | SCRUM-382 | Logs receipt by commenting on the PR. No decisions, no merge, no Jira write. | Done |
+| 2 | SCRUM-383 | + push notification on every terminal outcome; + idempotency dedup keyed on `head_sha` | Current |
 | 3 | SCRUM-384 | + structured halt comment on linked Jira ticket (WARN/BLOCK) | Pending |
 | 4 | SCRUM-385 | + auto-merge and Done transition on PASS+clean | Pending |
 | 5 | SCRUM-386 | Cut over FULL_AUTO / epic-run docs; remove polling | Pending |
@@ -76,9 +77,11 @@ until the GitHub App has actual installation access on them.
 Via the claude.ai UI at <https://claude.ai/code/routines> (form-driven path)
 or `RemoteTrigger create` (API path — see the troubleshooting note below).
 
-- **Name:** `TalkBack PR Gate handler (psuthar/talkback) — Slice 1`
+- **Name:** `TalkBack PR Gate handler (psuthar/talkback)` (the per-slice
+  suffix is informational only — the same routine evolves across slices via
+  prompt + tool allow-list updates).
 - **Source / repository:** `psuthar/talkback`
-- **Model:** any (Slice 1 is tiny; Sonnet is sufficient)
+- **Model:** any (the work is tiny; Sonnet is sufficient).
 - **Trigger:** **GitHub event** → preset row **Pull request labeled** (or
   **Custom** → event `Pull request labeled`). Add a Filter on the `Labels`
   property. If a `starts with` operator is available, use it with value
@@ -86,8 +89,12 @@ or `RemoteTrigger create` (API path — see the troubleshooting note below).
   four labels as discrete values: `pr-gate:pass`, `pr-gate:warn`,
   `pr-gate:block`, `pr-gate:unknown`.
 - **Permissions:** the per-repo permissions panel — leave
-  "Allow unrestricted git push" **off**. Slice 1 only posts a PR comment.
-- **Prompt:** copy verbatim from [Slice 1 prompt](#slice-1-routine-prompt) below.
+  "Allow unrestricted git push" **off**.
+- **Tool allow-list:** Slice 2 requires `Bash` (for `gh`) and
+  `PushNotification`. Other tools (`Read`, `Write`, `Edit`, `Glob`, `Grep`,
+  `WebFetch`, `WebSearch`) are not needed for this slice — narrow the
+  allow-list to the minimum your routine UI permits.
+- **Prompt:** copy verbatim from [Current routine prompt](#current-routine-prompt) below.
 
 After save, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
 
@@ -96,55 +103,98 @@ After save, capture the routine ID (format: `trig_xxxxxxxxxxxxxxxxxxxxxxxx`).
 Open any PR; let `release-readiness` complete. After the gate decides, the
 workflow's last step applies one of `pr-gate:pass` / `pr-gate:warn` /
 `pr-gate:block` / `pr-gate:unknown` to the PR — visible immediately in the
-PR's labels strip. Within ~60 seconds of that label appearing, the routine
-should post a "Webhook received" comment on the PR with the matched label
-name. If you don't see one:
+PR's labels strip. Within ~60 seconds of that label appearing, two things
+should happen:
+
+1. A "Webhook received" comment with `<!-- pr-gate-routine head=… -->`
+   appears on the PR.
+2. A push notification arrives on the user's device with a one-line outcome
+   summary (`PR #X PASS — abcd123`, `PR #X WARN — review needed (abcd123)`,
+   etc).
+
+A re-run of `release-readiness` against the same head_sha should NOT
+produce a second comment or a second notification — the idempotency marker
+on the comment is the dedupe key.
+
+If you don't see one of the two outputs:
 
 - Routine session log in claude.ai → Routines → your routine → **Runs**.
   Failures and stdout/stderr from the routine's session are captured there.
 - If no run was triggered, the GitHub App probably doesn't have webhook
   delivery enabled for `pull_request.labeled` events on this repo. Re-check
   the app's repository access in GitHub Settings.
+- If the comment posted but the notification didn't, the routine's
+  allow-list is missing `PushNotification` — re-check via claude.ai → the
+  routine's Permissions tab.
 
-## Slice 1 routine prompt
+## Current routine prompt
 
-Copy this verbatim into the routine.
+This is the live prompt (Slices 1+2). Copy verbatim into the routine.
 
 ```
-You are the TalkBack PR Gate webhook handler (Slice 1, SCRUM-382). You're
+You are the TalkBack PR Gate webhook handler (SCRUM-382 + SCRUM-383). You're
 invoked by a GitHub webhook — specifically a `pull_request.labeled` event
 from `psuthar/talkback` where the applied label name starts with
 `pr-gate:`.
 
-This slice's only job is to prove the trigger plumbing works by posting a
-"webhook received" comment on the PR. No decisions, no merge, no Jira write,
-no notifications. Subsequent slices (SCRUM-383/384/385) replace this prompt
-with progressively richer logic.
+Your job has two parts:
+  1. Post a comment on the PR confirming the webhook fired (with an
+     idempotency marker keyed on head_sha so re-runs don't double-post).
+  2. Send a push notification with a concise outcome line.
+
+No Jira write, no merge — those land in Slices 3+4 (SCRUM-384, SCRUM-385).
 
 Filter rules (silently exit if any fails — the routine's trigger filter
 should already enforce these, but defense in depth):
 
-1. The event's `action` must equal "labeled".
-2. The event's `label.name` must start with the prefix "pr-gate:".
+  1. The event's `action` must equal "labeled".
+  2. The event's `label.name` must start with the prefix "pr-gate:".
 
 Extract from the payload:
 
   pr_number  = pull_request.number
   head_sha   = pull_request.head.sha
+  short_sha  = first 7 chars of head_sha
   outcome    = the part of label.name after "pr-gate:"
                (one of: pass | warn | block | unknown)
 
-Run exactly one command (substituting the actual values):
+Idempotency check — re-runs of release-readiness re-apply the same label
+and would otherwise produce duplicate comments and duplicate notifications.
+Before doing anything else, run:
+
+  existing=$(gh pr view <pr_number> -R psuthar/talkback \
+    --json comments \
+    --jq '.comments[] | select(.body | contains("<!-- pr-gate-routine head=<head_sha> -->")) | .id' \
+    | head -1)
+  if [ -n "$existing" ]; then
+    echo "Already processed head_sha=<head_sha>; skipping."
+    exit 0
+  fi
+
+Step 1 — post the comment. The marker `<!-- pr-gate-routine head=… -->`
+is the dedupe key for the idempotency check above; it MUST be the first
+line of the body.
 
   gh pr comment <pr_number> -R psuthar/talkback --body \
-    "TalkBack PR Gate webhook received (via pull_request.labeled event).
+    "<!-- pr-gate-routine head=<head_sha> -->
+TalkBack PR Gate webhook received (via pull_request.labeled event).
 label: <label.name>
 outcome: <outcome>
 head_sha: <head_sha>"
 
-After the comment is posted (or the gh command errors), report the outcome
-in one short sentence and exit. Do not merge the PR. Do not transition any
-Jira ticket. Do not send notifications.
+Step 2 — send a push notification. Pick the message text by outcome:
+
+  pass    → "PR #<pr_number> PASS — <short_sha>"
+  warn    → "PR #<pr_number> WARN — review needed (<short_sha>)"
+  block   → "PR #<pr_number> BLOCK — fix CI then re-push (<short_sha>)"
+  unknown → "PR #<pr_number> gate unknown — see workflow"
+
+Use the PushNotification tool. Keep the message ≤ 200 characters, single
+line, no markdown.
+
+After both steps complete (or any individual step errors), report the
+outcome in one short sentence and exit. Do not merge the PR. Do not
+transition any Jira ticket.
 ```
 
 ## Payload contract
@@ -153,14 +203,14 @@ The routine receives GitHub's standard `pull_request` webhook payload with
 `action: "labeled"`. Schema:
 <https://docs.github.com/en/webhooks/webhook-events-and-payloads#pull_request>.
 
-Fields Slice 1 uses:
+Fields the current prompt (Slices 1+2) uses:
 
 | Field | Source |
 |-------|--------|
 | `action` | top-level — must be `"labeled"` |
 | `label.name` | the freshly-applied label, e.g. `pr-gate:warn` |
 | `pull_request.number` | the PR number |
-| `pull_request.head.sha` | head SHA at the moment the label was applied |
+| `pull_request.head.sha` | head SHA at the moment the label was applied; also used as the idempotency dedupe key |
 
 Future slices will additionally call:
 
@@ -183,21 +233,23 @@ jq '.final_gate.status, .pr_risk.top_risk_factors' artifacts/pr-gate-summary.jso
 | Routine runs but errors with "Could not resolve label.name" | The event payload schema changed, or the routine prompt's filter is too strict. Inspect the Run page for the actual payload received. |
 | Routine posts on PRs where the gate didn't actually run | Some other automation added a `pr-gate:*` label. Tighten the workflow step's label set (only the 4 documented values) or scope the routine's filter to the exact 4 labels via "is one of". |
 | Re-run of `release-readiness` for the same outcome doesn't fire the routine again | GitHub doesn't emit `labeled` when a label is already present. The workflow step removes the existing `pr-gate:<status>` label before re-adding it — confirm the remove step ran in the job log. |
+| Comment appears but no push notification arrives | The routine's tool allow-list doesn't include `PushNotification`, or the user's notification settings on claude.ai are disabled. Check the routine's Permissions tab. |
+| Comment + notification both fire twice on the same head_sha | The idempotency check's `gh pr view --json comments --jq …` didn't match the marker. Common cause: the marker line in Step 1 isn't the first line of the body, or the head_sha format drifted (use full 40-char SHA on both sides, never the short form). Inspect the routine's Run log for the value of `existing`. |
 
 ## Authorization scope
 
-The Slice 1 routine has a deliberately tight scope — comment-write on PRs
-in `psuthar/talkback`, nothing else. Each subsequent slice expands the scope
-explicitly:
+Each slice expands the routine's reach explicitly so a misbehaving routine
+can't exceed its slice's intended blast radius.
 
-| Slice | Adds |
-|-------|------|
-| 2 | Push notification capability |
-| 3 | Artifact download from workflow runs (`gh run download`), Jira comment write |
-| 4 | PR merge (`gh pr merge`), Jira transition write |
+| Slice | State | Tools required (cumulative) | New capability granted |
+|-------|-------|------------------------------|------------------------|
+| 1 | Done | `Bash` (for `gh pr comment`, `gh pr view`) | Comment-write on PRs in `psuthar/talkback`. |
+| 2 | Current | + `PushNotification` | Send a push notification to the routine owner. |
+| 3 | Pending | + `Bash` (no new tools, but uses `gh run download` + `mcp__atlassian__jira_*` if configured) | Artifact download from workflow runs; Jira comment write. |
+| 4 | Pending | + `gh pr merge`, Jira transition write | PR merge + Jira Done transition. |
 
-Keep the scope as narrow as possible at each slice so a misbehaving routine
-cannot exceed its intended blast radius.
+Keep the allow-list as narrow as your routine UI permits. Tools beyond
+this table (e.g. `Edit`, `Write`, `WebFetch`) are not used by any slice.
 
 ## History — what was tried and discarded
 
