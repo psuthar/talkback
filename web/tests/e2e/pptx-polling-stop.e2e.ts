@@ -73,12 +73,15 @@ async function uploadFile(page, filePath: string) {
   await fileChooser.setFiles(filePath)
   // SCRUM-397: 90 s (not 30 s) — same cold-start CI rationale as the sibling
   // spec material-processing-state.e2e.ts and the SCRUM-218 precedent in
-  // material-viewers.e2e.ts. Preemptive fix; this spec hasn't flaked yet but
-  // shares the identical vulnerable pattern (cold runner + synchronous
-  // markitdown extraction can spike the upload POST past 30s).
+  // material-viewers.e2e.ts.
+  // SCRUM-437: bumped further to 180 s. This spec only uploads PPTX (no JPG)
+  // so the image-extraction cold-start that triggered SCRUM-437 doesn't apply
+  // directly, but PPTX hits LibreOffice slide derivation which is also
+  // cold-sensitive. Keeping the helper consistent with the other two specs
+  // avoids the "this one is different" footgun.
   await page.waitForResponse(
     (res) => res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 90_000 }
+    { timeout: 180_000 }
   )
   // Give React a moment to register the upload and start the polling loops.
   await page.waitForTimeout(500)

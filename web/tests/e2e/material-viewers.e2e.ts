@@ -99,14 +99,17 @@ async function uploadFile(page, filePath: string) {
 
   // Wait for the upload HTTP response. SCRUM-218: 90 s (not 30 s) so cold-start
   // CI runners can clear text extraction + slide derivation without timing out.
-  // The DOCX-first run was consistently hitting 30001ms before; production
-  // timing under contention can spike to ~60s, so we leave generous headroom.
-  // A real upload-pipeline regression would still surface as a much-larger
-  // latency spike that exceeds 90s.
+  // SCRUM-437: bumped to 180 s. The JPG-upload test (line 461) exercises the
+  // markitdown image-extraction cold-start path which is significantly slower
+  // than the text-extraction path. Captured trace from release-readiness run
+  // 25810408865: attempt 0 timed out at 92.4 s on /materials/upload, attempt 1
+  // (markitdown warm) completed in 2.8 s — a 33x speedup. 180 s gives 2x
+  // headroom over the observed cold time. A real upload-pipeline regression
+  // would still surface as a much-larger latency spike that exceeds 180 s.
   await page.waitForResponse(
     (res) =>
       res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 90_000 }
+    { timeout: 180_000 }
   )
 
   // Wait briefly for the session refetch to update the tree

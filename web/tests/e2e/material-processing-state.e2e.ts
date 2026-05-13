@@ -82,11 +82,15 @@ async function uploadFile(page, filePath: string) {
   // in material-viewers.e2e.ts by SCRUM-218 — DOCX-first runs were
   // consistently hitting the 30001ms deadline on this exact assertion
   // (release-readiness run 25770842762 captured a passed/failed pair: 32.8s
-  // on attempt 0 vs 5.0s warmed). A real upload-pipeline regression would
-  // surface as a much-larger latency spike that still exceeds 90s.
+  // on attempt 0 vs 5.0s warmed).
+  // SCRUM-437: bumped further to 180 s — the JPG test here (line 290+) takes
+  // the markitdown image-extraction cold-start path which SCRUM-437 observed
+  // at 92.4 s on a sibling spec (material-viewers.e2e.ts). Preemptive bump
+  // before this spec hits the same flake. A real upload-pipeline regression
+  // would surface as a much-larger latency spike that still exceeds 180 s.
   await page.waitForResponse(
     (res) => res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 90_000 }
+    { timeout: 180_000 }
   )
   await page.waitForLoadState('networkidle')
 }
