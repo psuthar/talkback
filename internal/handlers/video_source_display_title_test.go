@@ -140,4 +140,43 @@ func TestUpdateVideoSourceDisplayTitle(t *testing.T) {
 		require.NotNil(t, got.DisplayTitle)
 		assert.Equal(t, "Renamed via SPA path", *got.DisplayTitle)
 	})
+
+	// SCRUM-436: the SPA sends credentials: 'include' (cookie auth) with NO
+	// X-Current-User header. The handler must accept this — i.e. fall back to
+	// UserFromContext when matching session.CreatedBy. Without this fix the
+	// non-admin session creator gets 403 on every rename even though they own
+	// the session. This test reproduces the SPA's actual call shape.
+	t.Run("matches cookie-auth user when X-Current-User absent (SCRUM-436)", func(t *testing.T) {
+		// Non-admin creator user authenticated via the request context (cookie path).
+		creator := &models.User{Email: creatorName, GlobalRole: models.GlobalRoleCreator}
+		b, _ := json.Marshal(map[string]any{"display_title": "Renamed via cookie auth"})
+		path := "/sessions/" + session.ID.String() + "/video-sources/" + vs.ID.String() + "/display-title"
+		req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		// Deliberately NO X-Current-User header — this is the SPA's shape.
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey, creator))
+		w := httptest.NewRecorder()
+		h.UpdateVideoSourceDisplayTitle(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		got, err := db.GetVideoSourceByID(context.Background(), vs.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.DisplayTitle)
+		assert.Equal(t, "Renamed via cookie auth", *got.DisplayTitle)
+	})
+
+	// SCRUM-436: cookie-auth user that is NOT the creator and NOT admin still
+	// gets rejected. Defends against an over-permissive fallback that would
+	// let any logged-in user rename anyone's video.
+	t.Run("rejects cookie-auth non-creator non-admin with 403 (SCRUM-436)", func(t *testing.T) {
+		stranger := &models.User{Email: "stranger@example.com", GlobalRole: models.GlobalRoleParticipant}
+		b, _ := json.Marshal(map[string]any{"display_title": "Hacker"})
+		path := "/sessions/" + session.ID.String() + "/video-sources/" + vs.ID.String() + "/display-title"
+		req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(context.WithValue(req.Context(), userContextKey, stranger))
+		w := httptest.NewRecorder()
+		h.UpdateVideoSourceDisplayTitle(w, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
 }
