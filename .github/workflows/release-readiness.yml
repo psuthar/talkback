@@ -480,13 +480,23 @@ jobs:
 
       # SCRUM-369: when the E2E section was skipped, synthesize the
       # readiness-schema e2e_results.json so release-readiness-evaluate
-      # has a file to read. status=skipped triggers e2e_skipped (severity:
-      # warn per ops/release-readiness/config.yaml — non-blocking).
+      # has a file to read.
+      # SCRUM-442: status="not_applicable" (not "skipped") so the upstream
+      # readiness engine doesn't fire the "E2E was skipped" warning + 10-pt
+      # penalty + e2e_skipped failed_check. Verified empirically against
+      # release_readiness_core.readiness_evaluate.evaluate(): status="skipped"
+      # produces "E2E was skipped" warning, score -10, failed_check
+      # e2e_skipped; status="not_applicable" produces neither. _e2e_passed()
+      # still returns False so no over-inference of auth_session / nav_assets
+      # / viewer_materials / qa_rag validations happens — semantically
+      # honest "we didn't run anything, nothing to claim." Eliminates the
+      # SCRUM-441 / SCRUM-442 paper-cut where pure-tooling PRs always
+      # WARN-ed on a procedurally-correct E2E skip.
       - name: Synthesize e2e_results.json when E2E skipped
         if: steps.changed.outputs.e2e_relevant != 'true'
         run: |
           cat > e2e_results.json <<'JSON'
-          {"status":"skipped","skipped":true,"skip_reason":"no E2E-relevant changes in this PR","failed_count":0,"total_count":0,"retries":0,"failures":[]}
+          {"status":"not_applicable","skipped":true,"skip_reason":"no E2E-relevant changes in this PR","failed_count":0,"total_count":0,"retries":0,"failures":[]}
           JSON
 
       - name: Stage E2E artifacts (JSON, HTML report, traces/screenshots)
