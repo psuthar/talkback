@@ -3991,9 +3991,7 @@ function App() {
                           padding: '8px 16px',
                           border: 'none',
                           borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '14px',
-                          fontWeight: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'bold' : 'normal'
+                          cursor: 'pointer'
                         }}
                       >
                         From Google Meet
