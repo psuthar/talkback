@@ -300,7 +300,17 @@ test.describe('Material processing-state gating in MaterialsTreePanel', () => {
 
   // ─── JPG ─────────────────────────────────────────────────────────────────
 
+  // SCRUM-440: JPG hits the markitdown image-extraction cold-start path that
+  // SCRUM-437 documented at ~92 s on a cold CI runner. With the uploadFile
+  // helper's 180 s ceiling, then phase 1 visibility (20 s), phase 2 poll (90 s),
+  // and the rest, worst-case is ~315 s. The file-level 120 s default at line 43
+  // is too small for the cold path — release-readiness run 25827791248 captured
+  // both attempt 0 and the retry timing out at exactly the 120 s test budget,
+  // not at any inner deadline. Bumping to 300 s gives enough headroom for the
+  // documented cold path with a small safety margin. PPTX has a similar
+  // per-test override at line 157 (180 s) for the same reason.
   test('JPG: item is disabled while text pipeline is processing, becomes enabled at terminal state', async ({ page, context, request }) => {
+    test.setTimeout(300_000)
     const email = uniqueEmail('proc-jpg')
     const userId = await createUserAndLoginWithId(context, request, email)
     const session = await createSession(request, 'E2E Processing State JPG')
