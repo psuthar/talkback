@@ -25,7 +25,7 @@ import { MemberRowActions } from '../components/MemberRowActions'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
-import { googleMeetWaitingCopy, googleMeetShouldShowReconnect, googleMeetTerminalErrorState } from '../googleMeetMessages'
+import { googleMeetWaitingCopy, googleMeetShouldShowReconnect, googleMeetTerminalErrorState, googleMeetWaitingStepIndex } from '../googleMeetMessages'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import topbarStyles from './ParticipantMode.module.css'
@@ -952,9 +952,18 @@ export function CreatorMode({
     : 'fetch'
   const stageIndexForStep = processingStageToStepIndex(effectiveStageForStep)
   const stateIndexForStep = processingStateToStepIndex(hasJobForStep ? processingStatus?.state : null)
+  // SCRUM-398: setJobWaiting doesn't bump the stage column when the Meet
+  // pipeline transitions from download → transcript-wait or awaiting_whisper.
+  // The stage strip shows "Download" frozen while the user can already play
+  // the video. Compensate by deriving an additional Meet-specific step index
+  // from state + last_error_code; max() with the stage/state pair ensures the
+  // strip never regresses for non-Meet jobs.
+  const meetWaitingStepIndex = hasJobForStep
+    ? googleMeetWaitingStepIndex(processingStatus?.state, processingStatus?.last_error_code)
+    : null
   const targetStepIndex = readyButNoVideoYetForStep
     ? PROCESSING_STEPS.length - 1
-    : Math.max(stageIndexForStep, stateIndexForStep)
+    : Math.max(stageIndexForStep, stateIndexForStep, meetWaitingStepIndex ?? 0)
   if (hasJobForStep || readyButNoVideoYetForStep) {
     backendTargetStepRef.current = targetStepIndex
   }
@@ -1553,7 +1562,7 @@ export function CreatorMode({
                       : isAwaitingWhisper
                         ? "Video downloaded — transcribing audio. This may take several minutes."
                         : isWaiting
-                        ? (googleMeetWaitingCopy(sessionSource)
+                        ? (googleMeetWaitingCopy(sessionSource, processingStatus.last_error_code, processingStatus.state)
                           || (sessionSource === 'teams'
                             ? "Waiting for Microsoft Teams or your tenant to finish processing. We'll keep checking."
                             : "Waiting for the recording provider to finish processing. We'll keep checking."))
@@ -1914,7 +1923,15 @@ export function CreatorMode({
                   />
                 ) : (
                   <div style={{ padding: '12px', color: '#666', fontSize: '14px', fontStyle: 'italic' }}>
-                    Transcript: {video.transcript_status === 'pending' || video.transcript_status === 'processing' ? 'Processing…' : 'No transcript yet.'}
+                    {/* SCRUM-398: 'ready' here means the status column flipped but the row's
+                        transcript_text/segments aren't loaded into this poll yet — transient.
+                        Show a neutral "loading" instead of "No transcript yet." which contradicts
+                        the header "Transcript: Ready" badge in PrimaryStage. */}
+                    Transcript: {video.transcript_status === 'pending' || video.transcript_status === 'processing'
+                      ? 'Processing…'
+                      : video.transcript_status === 'ready'
+                        ? 'Loading…'
+                        : 'No transcript yet.'}
                   </div>
                 )}
               </div>

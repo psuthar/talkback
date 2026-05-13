@@ -8,6 +8,7 @@ import {
   googleMeetImportErrorMessage,
   googleMeetImportTranscriptNote,
   googleMeetWaitingCopy,
+  googleMeetWaitingStepIndex,
   googleMeetShouldShowReconnect,
   googleMeetTerminalErrorState,
 } from '../googleMeetMessages'
@@ -187,7 +188,24 @@ describe('googleMeetImportTranscriptNote', () => {
 })
 
 describe('googleMeetWaitingCopy', () => {
-  it("returns the Google-finishing copy when sessionSource === 'google_meet'", () => {
+  it("returns the recording-not-ready copy when last_error_code says so", () => {
+    const msg = googleMeetWaitingCopy('google_meet', 'google_meet_recording_not_ready', 'waiting')
+    expect(msg).toMatch(/Google to finish preparing/)
+  })
+
+  it('returns the transcript-not-ready copy when last_error_code says so (SCRUM-398)', () => {
+    const msg = googleMeetWaitingCopy('google_meet', 'google_meet_transcript_not_ready', 'waiting')
+    expect(msg).toMatch(/Recording downloaded/)
+    expect(msg).toMatch(/Whisper will take over/)
+  })
+
+  it('returns Whisper-running copy when state === awaiting_whisper (SCRUM-398)', () => {
+    const msg = googleMeetWaitingCopy('google_meet', null, 'awaiting_whisper')
+    expect(msg).toMatch(/Whisper is transcribing/)
+  })
+
+  it('falls back to the generic Google-finishing copy when nothing else matches', () => {
+    // No error code, no state, but still on a Meet session — caller is just in 'waiting'.
     const msg = googleMeetWaitingCopy('google_meet')
     expect(msg).toMatch(/Google to finish preparing/)
   })
@@ -198,6 +216,35 @@ describe('googleMeetWaitingCopy', () => {
     expect(googleMeetWaitingCopy('upload')).toBeNull()
     expect(googleMeetWaitingCopy('')).toBeNull()
     expect(googleMeetWaitingCopy(undefined)).toBeNull()
+    // SCRUM-398: still null on non-Meet sources even when new args are passed.
+    expect(googleMeetWaitingCopy('zoom', 'google_meet_transcript_not_ready', 'waiting')).toBeNull()
+    expect(googleMeetWaitingCopy('teams', null, 'awaiting_whisper')).toBeNull()
+  })
+})
+
+describe('googleMeetWaitingStepIndex (SCRUM-398)', () => {
+  it('returns 2 (Parse) for awaiting_whisper state — past Download', () => {
+    expect(googleMeetWaitingStepIndex('awaiting_whisper', null)).toBe(2)
+    expect(googleMeetWaitingStepIndex('awaiting_whisper', 'irrelevant_code')).toBe(2)
+  })
+
+  it('returns 2 (Parse) for waiting + transcript-not-ready — past Download', () => {
+    expect(googleMeetWaitingStepIndex('waiting', 'google_meet_transcript_not_ready')).toBe(2)
+  })
+
+  it('returns 0 (Fetch) for waiting + recording-not-ready — Meet still finalizing MP4', () => {
+    expect(googleMeetWaitingStepIndex('waiting', 'google_meet_recording_not_ready')).toBe(0)
+  })
+
+  it('returns null for any other state or unrecognized error code', () => {
+    // Caller falls through to its own (stage, state) max derivation.
+    expect(googleMeetWaitingStepIndex('queued', null)).toBeNull()
+    expect(googleMeetWaitingStepIndex('downloading', null)).toBeNull()
+    expect(googleMeetWaitingStepIndex('ready', null)).toBeNull()
+    expect(googleMeetWaitingStepIndex('waiting', null)).toBeNull()
+    expect(googleMeetWaitingStepIndex('waiting', 'unrelated_code')).toBeNull()
+    expect(googleMeetWaitingStepIndex(null, null)).toBeNull()
+    expect(googleMeetWaitingStepIndex(undefined, undefined)).toBeNull()
   })
 })
 
