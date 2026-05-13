@@ -127,15 +127,34 @@ const terminalErrorCodes = {
 }
 
 /**
- * Banner copy for the waiting-state branch when the session was sourced from
- * Google Meet (sessionSource === 'google_meet'). Returns null for any other
- * source so the caller falls through to the existing teams/zoom/generic copy.
+ * Banner copy for the waiting / awaiting-whisper branches when the session
+ * was sourced from Google Meet (sessionSource === 'google_meet'). Returns
+ * null for any other source so the caller falls through to the existing
+ * teams/zoom/generic copy.
+ *
+ * SCRUM-398: route on last_error_code + state so the banner matches reality
+ * instead of always claiming the recording isn't ready.
+ *   - state === 'awaiting_whisper'                     → MP4 downloaded, Whisper running
+ *   - last_error_code === 'google_meet_transcript_not_ready' → MP4 downloaded, waiting on Meet transcript
+ *   - last_error_code === 'google_meet_recording_not_ready'  → Meet hasn't finalized the recording yet
+ *   - anything else (waiting on a Meet session)         → conservative generic
  *
  * @param {string} sessionSource
+ * @param {string|null|undefined} [lastErrorCode]
+ * @param {string|null|undefined} [state]
  * @returns {string|null}
  */
-export function googleMeetWaitingCopy(sessionSource) {
+export function googleMeetWaitingCopy(sessionSource, lastErrorCode, state) {
   if (sessionSource !== 'google_meet') return null
+  if (state === 'awaiting_whisper') {
+    return "Recording downloaded — Whisper is transcribing the audio now. This usually finishes in under a minute for short meetings."
+  }
+  if (lastErrorCode === 'google_meet_transcript_not_ready') {
+    return "Recording downloaded. Waiting for Google's transcript — Whisper will take over if it doesn't arrive."
+  }
+  if (lastErrorCode === 'google_meet_recording_not_ready') {
+    return "Waiting for Google to finish preparing this recording. We'll keep checking."
+  }
   return "Waiting for Google to finish preparing this recording. We'll keep checking."
 }
 
@@ -177,6 +196,41 @@ export function googleMeetTerminalErrorState(lastErrorCode) {
 export function googleMeetImportTranscriptNote(transcriptState) {
   if (transcriptState !== 'none') return ''
   return "This recording has no transcript. You'll get video and AI-generated answers about anything visible on screen, but Q&A quality is best when a transcript is available."
+}
+
+/**
+ * Derive the stage-strip step index from processing state + last_error_code
+ * for Meet imports specifically. Lives here (next to googleMeetWaitingCopy)
+ * because both signals interpret the same waiting / awaiting_whisper states
+ * that the v2 Meet pipeline uses.
+ *
+ * Used by CreatorMode.jsx's progression panel to compensate for the
+ * session_processing_jobs.stage field being stale (it doesn't get bumped by
+ * setJobWaiting when the pipeline transitions from download → transcript-wait).
+ *
+ * Mapping (SCRUM-398):
+ *   - state === 'awaiting_whisper'                          → 2 (Parse) — past Download
+ *   - state === 'waiting' && code === 'google_meet_transcript_not_ready'
+ *                                                           → 2 (Parse) — past Download, transcript-stage wait
+ *   - state === 'waiting' && code === 'google_meet_recording_not_ready'
+ *                                                           → 0 (Fetch) — Meet hasn't finalized the recording
+ *   - else                                                   → null (caller uses its own derivation)
+ *
+ * Returning null lets the caller's max(stageIndex, stateIndex) logic apply
+ * unchanged for non-Meet jobs and for Meet states this function doesn't
+ * specifically refine.
+ *
+ * @param {string|null|undefined} state
+ * @param {string|null|undefined} lastErrorCode
+ * @returns {number|null}
+ */
+export function googleMeetWaitingStepIndex(state, lastErrorCode) {
+  if (state === 'awaiting_whisper') return 2
+  if (state === 'waiting') {
+    if (lastErrorCode === 'google_meet_transcript_not_ready') return 2
+    if (lastErrorCode === 'google_meet_recording_not_ready') return 0
+  }
+  return null
 }
 
 /**
