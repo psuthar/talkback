@@ -380,7 +380,13 @@ export function MaterialsTreePanel({
     setEditingTitleError('')
     try {
       const trimmed = editingTitleValue.trim() || null
-      await updateVideoDisplayTitle(apiBaseUrl, session.id, videoSourceId, trimmed)
+      // SCRUM-436: currentSession's actual prop shape is { session: { id, ... }, video_sources, ... }
+      // so session.id is undefined. Resolve the id the same way the rest of
+      // this component does (lines 229, 297, 572, 696). Sending undefined here
+      // makes the SPA hit /sessions/undefined/... which fails uuid.Parse and
+      // returns 400 "Invalid session ID".
+      const resolvedSessionId = session?.session?.id || session?.id
+      await updateVideoDisplayTitle(apiBaseUrl, resolvedSessionId, videoSourceId, trimmed)
       setDisplayTitleOverrides((prev) => ({ ...prev, [videoSourceId]: trimmed }))
       setSavingTitleId(null)
       setEditingTitleId(null)

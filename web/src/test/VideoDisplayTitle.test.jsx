@@ -134,4 +134,45 @@ describe('Video display title — inline editing (creator)', () => {
     fireEvent.click(screen.getByTestId('edit-video-title-btn'))
     expect(screen.queryByTestId('video-title-error')).toBeNull()
   })
+
+  // SCRUM-436: the production currentSession prop has the nested shape
+  //   { session: { id: <uuid>, ... }, video_sources: [...], ... }
+  // not the flat shape the other tests in this file used. saveDisplayTitle
+  // was reading session.id directly (undefined for the nested shape), so the
+  // SPA was sending PATCH /sessions/undefined/... and the backend 400'd. This
+  // test reproduces the production prop shape and asserts the real UUID flows
+  // through.
+  it('passes the resolved UUID to updateVideoDisplayTitle when session is nested (SCRUM-436)', async () => {
+    mockUpdateVideoDisplayTitle.mockResolvedValue(undefined)
+    const nestedSession = {
+      // No top-level id — only the nested one. Mirrors the App.jsx currentSession shape.
+      session: { id: '11111111-2222-3333-4444-555555555555' },
+      video_sources: [{
+        id: 'vs-1',
+        provider: 'other',
+        original_url: null,
+        stored_video_object_key: null,
+        display_title: null,
+        transcript_status: 'ready',
+      }],
+      materials: [],
+      links: [],
+      unread_material_ids: [],
+      primary_video: null,
+      additional_videos: [],
+      material_slides_ready: {},
+      material_slides_status: {},
+    }
+    render(<MaterialsTreePanel {...baseProps} session={nestedSession} />)
+    fireEvent.click(screen.getByTestId('edit-video-title-btn'))
+    fireEvent.change(screen.getByTestId('video-title-input'), { target: { value: 'main' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(mockUpdateVideoDisplayTitle).toHaveBeenCalled())
+    const [, sessionIdArg, videoSourceIdArg] = mockUpdateVideoDisplayTitle.mock.calls[0]
+    // The nested id must flow through, NOT undefined (Bug D in SCRUM-436).
+    expect(sessionIdArg).toBe('11111111-2222-3333-4444-555555555555')
+    expect(sessionIdArg).not.toBe(undefined)
+    expect(sessionIdArg).not.toBe('undefined')
+    expect(videoSourceIdArg).toBe('vs-1')
+  })
 })

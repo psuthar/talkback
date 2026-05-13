@@ -371,9 +371,18 @@ func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+	// Ownership: header/query path is the legacy admin-utility shape; the SPA
+	// uses cookie-auth (credentials: 'include') with no X-Current-User. Fall
+	// back to UserFromContext when the header is empty so the session creator
+	// can rename their own video — SCRUM-436.
 	currentUser := r.Header.Get("X-Current-User")
 	if currentUser == "" {
 		currentUser = r.URL.Query().Get("user")
+	}
+	if currentUser == "" {
+		if u := UserFromContext(r.Context()); u != nil {
+			currentUser = u.Email
+		}
 	}
 	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
 		if u := UserFromContext(r.Context()); u == nil || u.GlobalRole != models.GlobalRoleAdmin {
