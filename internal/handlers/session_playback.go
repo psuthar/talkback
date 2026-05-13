@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
@@ -373,8 +375,12 @@ func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.
 	}
 	// Ownership: header/query path is the legacy admin-utility shape; the SPA
 	// uses cookie-auth (credentials: 'include') with no X-Current-User. Fall
-	// back to UserFromContext when the header is empty so the session creator
-	// can rename their own video — SCRUM-436.
+	// back to UserFromContext when the header is empty — SCRUM-436.
+	// SCRUM-438: the /sessions/... route this handler runs under is not wrapped
+	// with RequireAuth/OptionalAuth, so UserFromContext is always nil for the
+	// SPA's call. Do the cookie → login_session → user lookup inline (same
+	// pattern as OptionalAuthForAccept in auth.go:79-93) so the session creator
+	// can rename their own video without needing the header.
 	currentUser := r.Header.Get("X-Current-User")
 	if currentUser == "" {
 		currentUser = r.URL.Query().Get("user")
@@ -382,6 +388,17 @@ func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.
 	if currentUser == "" {
 		if u := UserFromContext(r.Context()); u != nil {
 			currentUser = u.Email
+		}
+	}
+	if currentUser == "" {
+		if sid := auth.SessionIDFromRequest(r); sid != nil {
+			if loginSession, err := h.DB.GetLoginSessionByID(r.Context(), *sid); err == nil && loginSession != nil {
+				if u, err := h.DB.GetUserByID(r.Context(), loginSession.UserID); err == nil && u != nil && u.Status == models.UserStatusActive {
+					currentUser = u.Email
+					// Stash so the admin-fallback check below sees the same user.
+					r = r.WithContext(context.WithValue(r.Context(), userContextKey, u))
+				}
+			}
 		}
 	}
 	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
