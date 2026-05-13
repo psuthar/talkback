@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/storage"
 	"github.com/psuthar/talkback/internal/utils"
@@ -247,9 +245,36 @@ func (h *Handlers) SetSessionPrimaryVideoArtifact(w http.ResponseWriter, r *http
 		http.Error(w, "Invalid artifact_id", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.DB.GetSession(r.Context(), sessionID); err != nil {
+	session, err := h.DB.GetSession(r.Context(), sessionID)
+	if err != nil || session == nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
+	}
+	// SCRUM-439 Finding 2: this handler previously had NO ownership check at
+	// all — any caller who knew a session_id + artifact_id could swap that
+	// session's primary video. Adding the standard creator-or-admin check used
+	// elsewhere in this file. SPA call site (SessionMaterialsTab.jsx:128) uses
+	// cookie-auth only, so the fallback chain mirrors SetSessionPrimaryVideoSource.
+	currentUser := r.Header.Get("X-Current-User")
+	if currentUser == "" {
+		currentUser = r.URL.Query().Get("user")
+	}
+	if currentUser == "" {
+		if u := UserFromContext(r.Context()); u != nil {
+			currentUser = u.Email
+		}
+	}
+	if currentUser == "" {
+		if u, newR := h.ResolveCookieUser(r); u != nil {
+			currentUser = u.Email
+			r = newR
+		}
+	}
+	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
+		if u := UserFromContext(r.Context()); u == nil || u.GlobalRole != models.GlobalRoleAdmin {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 	}
 	fa, err := h.DB.GetFileArtifactByID(r.Context(), artifactID)
 	if err != nil || fa == nil {
@@ -319,10 +344,26 @@ func (h *Handlers) SetSessionPrimaryVideoSource(w http.ResponseWriter, r *http.R
 		http.Error(w, "Video source not found", http.StatusNotFound)
 		return
 	}
-	// Creator or admin only (same as other session mutations)
+	// Creator or admin only (same as other session mutations).
+	// SCRUM-439: this route is dispatched from APISessionsRouter without
+	// RequireAuth wrapping, so the SPA's cookie-only call would have always
+	// returned 403 here (UserFromContext nil → admin-check fails). Mirror the
+	// SCRUM-438 fallback chain: header → query → context → inline cookie
+	// lookup via h.ResolveCookieUser.
 	currentUser := r.Header.Get("X-Current-User")
 	if currentUser == "" {
 		currentUser = r.URL.Query().Get("user")
+	}
+	if currentUser == "" {
+		if u := UserFromContext(r.Context()); u != nil {
+			currentUser = u.Email
+		}
+	}
+	if currentUser == "" {
+		if u, newR := h.ResolveCookieUser(r); u != nil {
+			currentUser = u.Email
+			r = newR
+		}
 	}
 	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
 		// Allow admin
@@ -391,14 +432,12 @@ func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.
 		}
 	}
 	if currentUser == "" {
-		if sid := auth.SessionIDFromRequest(r); sid != nil {
-			if loginSession, err := h.DB.GetLoginSessionByID(r.Context(), *sid); err == nil && loginSession != nil {
-				if u, err := h.DB.GetUserByID(r.Context(), loginSession.UserID); err == nil && u != nil && u.Status == models.UserStatusActive {
-					currentUser = u.Email
-					// Stash so the admin-fallback check below sees the same user.
-					r = r.WithContext(context.WithValue(r.Context(), userContextKey, u))
-				}
-			}
+		// SCRUM-439: inline cookie lookup is now in a shared helper. Was added
+		// inline by SCRUM-438; extracted after the audit found SetSessionPrimaryVideo*
+		// needed the same pattern.
+		if u, newR := h.ResolveCookieUser(r); u != nil {
+			currentUser = u.Email
+			r = newR
 		}
 	}
 	if session.CreatedBy != nil && *session.CreatedBy != currentUser {
