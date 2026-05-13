@@ -103,4 +103,35 @@ describe('Video display title — inline editing (creator)', () => {
     expect(screen.queryByTestId('video-title-input')).toBeNull()
     expect(mockUpdateVideoDisplayTitle).not.toHaveBeenCalled()
   })
+
+  // SCRUM-400: prior to this fix, the save catch block was `catch (_) {}` which
+  // silently swallowed the backend's 400 and collapsed the edit row, leaving
+  // the user no signal that the rename failed.
+  it('surfaces the error and keeps the edit row open when save fails (SCRUM-400)', async () => {
+    mockUpdateVideoDisplayTitle.mockRejectedValueOnce(new Error('Failed to update display title: 400'))
+    render(<MaterialsTreePanel {...baseProps} session={makeSession()} />)
+    fireEvent.click(screen.getByTestId('edit-video-title-btn'))
+    const input = screen.getByTestId('video-title-input')
+    fireEvent.change(input, { target: { value: 'Doomed Rename' } })
+    fireEvent.click(screen.getByText('Save'))
+    await waitFor(() => expect(mockUpdateVideoDisplayTitle).toHaveBeenCalled())
+    // Edit row stays open so the user can retry.
+    expect(screen.getByTestId('video-title-input')).toBeTruthy()
+    // Error message visible inline.
+    const err = await screen.findByTestId('video-title-error')
+    expect(err.textContent).toMatch(/Failed to update display title/)
+  })
+
+  it('clears the prior error when reopening the editor (SCRUM-400)', async () => {
+    mockUpdateVideoDisplayTitle.mockRejectedValueOnce(new Error('Failed to update display title: 400'))
+    render(<MaterialsTreePanel {...baseProps} session={makeSession()} />)
+    fireEvent.click(screen.getByTestId('edit-video-title-btn'))
+    fireEvent.change(screen.getByTestId('video-title-input'), { target: { value: 'Doomed' } })
+    fireEvent.click(screen.getByText('Save'))
+    await screen.findByTestId('video-title-error')
+    // Cancel out then reopen — error should be gone.
+    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.click(screen.getByTestId('edit-video-title-btn'))
+    expect(screen.queryByTestId('video-title-error')).toBeNull()
+  })
 })

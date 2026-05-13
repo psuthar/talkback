@@ -341,19 +341,27 @@ func (h *Handlers) SetSessionPrimaryVideoSource(w http.ResponseWriter, r *http.R
 
 // UpdateVideoSourceDisplayTitle sets or clears the display_title on a video source. Creator or admin only.
 // PATCH /sessions/{sessionId}/video-sources/{videoSourceId}/display-title
+// Also accepts /api/sessions/... in case APISessionsRouter ever dispatches here.
+// SCRUM-400: the SPA's PATCH currently hits the non-/api path (handled by
+// SessionsRouter at router.go:648); the previous strict-/api check returned
+// 400 on every call. Strip a leading "api" segment if present, then validate
+// the remaining shape.
 func (h *Handlers) UpdateVideoSourceDisplayTitle(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	// expected: api / sessions / {id} / video-sources / {vsID} / display-title
-	if len(pathParts) != 6 || pathParts[0] != "api" || pathParts[1] != "sessions" || pathParts[3] != "video-sources" || pathParts[5] != "display-title" {
+	if len(pathParts) > 0 && pathParts[0] == "api" {
+		pathParts = pathParts[1:]
+	}
+	// expected after normalization: sessions / {id} / video-sources / {vsID} / display-title
+	if len(pathParts) != 5 || pathParts[0] != "sessions" || pathParts[2] != "video-sources" || pathParts[4] != "display-title" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	sessionID, err := uuid.Parse(pathParts[2])
+	sessionID, err := uuid.Parse(pathParts[1])
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
-	videoSourceID, err := uuid.Parse(pathParts[4])
+	videoSourceID, err := uuid.Parse(pathParts[3])
 	if err != nil {
 		http.Error(w, "Invalid video source ID", http.StatusBadRequest)
 		return

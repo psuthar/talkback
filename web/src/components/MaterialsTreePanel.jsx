@@ -74,29 +74,36 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
   )
 }
 
-function VideoTitleEditRow({ currentTitle, saving, onSave, onCancel, value, onChange }) {
+function VideoTitleEditRow({ currentTitle, saving, onSave, onCancel, value, onChange, error }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}>
-      <input
-        data-testid="video-title-input"
-        autoFocus
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); onSave() }
-          if (e.key === 'Escape') onCancel()
-        }}
-        placeholder={currentTitle}
-        style={{ flex: 1, fontSize: 12, padding: '2px 4px', border: '1px solid #ccc', borderRadius: 3 }}
-        disabled={saving}
-      />
-      <button type="button" onClick={onSave} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
-        {saving ? '…' : 'Save'}
-      </button>
-      <button type="button" onClick={onCancel} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
-        Cancel
-      </button>
+    <div style={{ padding: '4px 8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <input
+          data-testid="video-title-input"
+          autoFocus
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); onSave() }
+            if (e.key === 'Escape') onCancel()
+          }}
+          placeholder={currentTitle}
+          style={{ flex: 1, fontSize: 12, padding: '2px 4px', border: '1px solid #ccc', borderRadius: 3 }}
+          disabled={saving}
+        />
+        <button type="button" onClick={onSave} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+          {saving ? '…' : 'Save'}
+        </button>
+        <button type="button" onClick={onCancel} disabled={saving} style={{ fontSize: 11, padding: '2px 6px', cursor: saving ? 'not-allowed' : 'pointer' }}>
+          Cancel
+        </button>
+      </div>
+      {error && (
+        <div data-testid="video-title-error" style={{ marginTop: 4, fontSize: 11, color: 'var(--color-danger-dark)' }}>
+          {error}
+        </div>
+      )}
     </div>
   )
 }
@@ -205,6 +212,7 @@ export function MaterialsTreePanel({
   const [editingTitleId, setEditingTitleId] = useState(null)
   const [editingTitleValue, setEditingTitleValue] = useState('')
   const [savingTitleId, setSavingTitleId] = useState(null)
+  const [editingTitleError, setEditingTitleError] = useState('')
   const [displayTitleOverrides, setDisplayTitleOverrides] = useState({})
 
   if (!session) return null
@@ -369,13 +377,21 @@ export function MaterialsTreePanel({
   }
   const saveDisplayTitle = async (videoSourceId) => {
     setSavingTitleId(videoSourceId)
+    setEditingTitleError('')
     try {
       const trimmed = editingTitleValue.trim() || null
       await updateVideoDisplayTitle(apiBaseUrl, session.id, videoSourceId, trimmed)
       setDisplayTitleOverrides((prev) => ({ ...prev, [videoSourceId]: trimmed }))
-    } catch (_) {}
-    setSavingTitleId(null)
-    setEditingTitleId(null)
+      setSavingTitleId(null)
+      setEditingTitleId(null)
+    } catch (err) {
+      // SCRUM-400: surface the failure instead of silently collapsing the edit
+      // row. The previous catch (_) {} masked a 400 from the backend on every
+      // save (see SCRUM-400 root cause) and made the save look like a data-
+      // loss bug to the user. Keep the edit row open so they can retry.
+      setSavingTitleId(null)
+      setEditingTitleError(err?.message || 'Failed to save title. Please try again.')
+    }
   }
 
   const videoMaterialId = (v) => {
@@ -421,7 +437,8 @@ export function MaterialsTreePanel({
                     value={editingTitleValue}
                     onChange={setEditingTitleValue}
                     onSave={() => saveDisplayTitle(v.id)}
-                    onCancel={() => setEditingTitleId(null)}
+                    onCancel={() => { setEditingTitleId(null); setEditingTitleError('') }}
+                    error={editingTitleError}
                   />
                 )
               }
@@ -494,7 +511,7 @@ export function MaterialsTreePanel({
                     <button
                       data-testid="edit-video-title-btn"
                       type="button"
-                      onClick={() => { setEditingTitleId(v.id); setEditingTitleValue(v.display_title || '') }}
+                      onClick={() => { setEditingTitleId(v.id); setEditingTitleValue(v.display_title || ''); setEditingTitleError('') }}
                       style={{ fontSize: 11, color: '#888', background: 'none', border: 'none', cursor: 'pointer', padding: '0 8px 4px' }}
                     >
                       Edit title
