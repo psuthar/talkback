@@ -77,9 +77,16 @@ async function uploadFile(page, filePath: string) {
     page.getByTestId('upload-file-btn').click(),
   ])
   await fileChooser.setFiles(filePath)
+  // SCRUM-397: 90 s (not 30 s) so cold-start CI runners can clear synchronous
+  // markitdown text-extraction without timing out. Matches the precedent set
+  // in material-viewers.e2e.ts by SCRUM-218 — DOCX-first runs were
+  // consistently hitting the 30001ms deadline on this exact assertion
+  // (release-readiness run 25770842762 captured a passed/failed pair: 32.8s
+  // on attempt 0 vs 5.0s warmed). A real upload-pipeline regression would
+  // surface as a much-larger latency spike that still exceeds 90s.
   await page.waitForResponse(
     (res) => res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 30_000 }
+    { timeout: 90_000 }
   )
   await page.waitForLoadState('networkidle')
 }
