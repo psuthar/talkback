@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/database"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/stretchr/testify/assert"
@@ -178,5 +180,65 @@ func TestUpdateVideoSourceDisplayTitle(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.UpdateVideoSourceDisplayTitle(w, req)
 		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	// SCRUM-438: load-bearing end-to-end test for the SPA's actual call shape.
+	// The /sessions/... route this handler runs under is NOT wrapped in
+	// RequireAuth/OptionalAuth in main.go (the SPA hits SessionsRouter
+	// directly), so UserFromContext is always nil when the handler runs in
+	// production. The SCRUM-436 cookie-auth tests above shortcut this by
+	// pre-populating userContextKey — useful as a unit test for the inner
+	// logic, but not load-bearing for the route-wiring miss this ticket
+	// catches.
+	//
+	// This test creates a REAL user + login_session in the DB and attaches the
+	// session cookie via http.Cookie. No X-Current-User header. No
+	// userContextKey pre-population. The handler must do the cookie → session
+	// → user lookup inline. Asserts 200 + persisted title.
+	t.Run("creator with real cookie session and no header gets 200 (SCRUM-438)", func(t *testing.T) {
+		ctx := context.Background()
+		// Create a fresh user that will be the session creator for this sub-test
+		// so we don't collide with the outer fixture's CreatedBy.
+		creator := &models.User{
+			ID:          uuid.New(),
+			Email:       "cookie-creator-" + uuid.NewString() + "@example.com",
+			DisplayName: "Cookie Creator",
+			Status:      models.UserStatusActive,
+			GlobalRole:  models.GlobalRoleCreator,
+		}
+		require.NoError(t, db.CreateUser(ctx, creator))
+		ownedSession := &models.Session{
+			ID:        uuid.New(),
+			Title:     "Cookie-Owned Session " + uuid.NewString(),
+			CreatedBy: &creator.Email,
+			Status:    models.SessionStatusOpen,
+		}
+		require.NoError(t, db.CreateSession(ctx, ownedSession))
+		ownedVS := createTestVideoSourceForTitle(t, db, ownedSession.ID)
+
+		// Real login_session row + cookie attached to the request.
+		loginSession := &models.LoginSession{
+			ID:        uuid.New(),
+			UserID:    creator.ID,
+			CreatedAt: time.Now(),
+			ExpiresAt: time.Now().Add(24 * time.Hour),
+		}
+		require.NoError(t, db.CreateLoginSession(ctx, loginSession))
+
+		b, _ := json.Marshal(map[string]any{"display_title": "Renamed via real cookie"})
+		path := "/sessions/" + ownedSession.ID.String() + "/video-sources/" + ownedVS.ID.String() + "/display-title"
+		req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		// Deliberately NO X-Current-User header and NO context.WithValue
+		// pre-population — only the cookie carries identity.
+		req.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: loginSession.ID.String()})
+		w := httptest.NewRecorder()
+		h.UpdateVideoSourceDisplayTitle(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		got, err := db.GetVideoSourceByID(ctx, ownedVS.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.DisplayTitle)
+		assert.Equal(t, "Renamed via real cookie", *got.DisplayTitle)
 	})
 }
