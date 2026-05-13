@@ -121,4 +121,23 @@ func TestUpdateVideoSourceDisplayTitle(t *testing.T) {
 		h.UpdateVideoSourceDisplayTitle(w, req)
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
+
+	// SCRUM-400: SPA hits the non-/api path (SessionsRouter dispatch arm).
+	// Prior to the fix, the handler rejected this with 400 "Invalid path"
+	// because its path parser hard-coded /api as the leading segment.
+	t.Run("accepts the non-/api path the SessionsRouter dispatches with (SCRUM-400)", func(t *testing.T) {
+		b, _ := json.Marshal(map[string]any{"display_title": "Renamed via SPA path"})
+		path := "/sessions/" + session.ID.String() + "/video-sources/" + vs.ID.String() + "/display-title"
+		req := httptest.NewRequest(http.MethodPatch, path, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Current-User", creatorName)
+		w := httptest.NewRecorder()
+		h.UpdateVideoSourceDisplayTitle(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		got, err := db.GetVideoSourceByID(context.Background(), vs.ID)
+		require.NoError(t, err)
+		require.NotNil(t, got.DisplayTitle)
+		assert.Equal(t, "Renamed via SPA path", *got.DisplayTitle)
+	})
 }
