@@ -71,9 +71,14 @@ async function uploadFile(page, filePath: string) {
     page.getByTestId('upload-file-btn').click(),
   ])
   await fileChooser.setFiles(filePath)
+  // SCRUM-397: 90 s (not 30 s) — same cold-start CI rationale as the sibling
+  // spec material-processing-state.e2e.ts and the SCRUM-218 precedent in
+  // material-viewers.e2e.ts. Preemptive fix; this spec hasn't flaked yet but
+  // shares the identical vulnerable pattern (cold runner + synchronous
+  // markitdown extraction can spike the upload POST past 30s).
   await page.waitForResponse(
     (res) => res.url().includes('/materials/upload') && res.request().method() === 'POST',
-    { timeout: 30_000 }
+    { timeout: 90_000 }
   )
   // Give React a moment to register the upload and start the polling loops.
   await page.waitForTimeout(500)
