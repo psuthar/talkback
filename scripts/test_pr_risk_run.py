@@ -19,6 +19,8 @@ from release_readiness_core.pr_risk.types import (  # noqa: E402
 )
 
 from scripts.pr_risk_run import (  # noqa: E402
+    apply_style_only_fallback,
+    detect_style_only_from_pr_head,
     diff_mentions_orchestration,
     reclassify_creatormode,
 )
@@ -148,6 +150,143 @@ class TestReclassifyCreatorMode(unittest.TestCase):
         self.assertEqual(s.domain_hits.get(DOMAIN_ORCHESTRATION), 1)
         # No CreatorMode files → diff_reader must not be called.
         self.assertEqual(called, [])
+
+
+class TestStyleOnlyFallback(unittest.TestCase):
+    """SCRUM-442: upstream detect_style_only_note misses the marker on CI's
+    fetch-depth: 1 checkout (HEAD is a synthetic merge, HEAD^2 isn't local).
+    The wrapper-side fallback resolves HEAD^2 directly and re-scans its body.
+    """
+
+    def _fake_git(self, scripted):
+        """Return a fake git runner that pops responses off a scripted list.
+        Each entry is ((expected_args_substring, ...), (stdout, returncode))."""
+        calls = []
+
+        def runner(repo_root, *args):
+            calls.append(args)
+            for matcher, response in scripted:
+                if all(token in args for token in matcher):
+                    return response
+            return ("", 1)
+
+        return runner, calls
+
+    def test_finds_style_only_when_head2_is_local(self) -> None:
+        runner, _ = self._fake_git(
+            [
+                # rev-parse HEAD^2 → SHA returned
+                (("rev-parse", "--verify", "HEAD^2"),
+                 ("deadbeef\n", 0)),
+                # cat-file -e <sha> → object exists locally (rc=0)
+                (("cat-file", "-e", "deadbeef"),
+                 ("", 0)),
+                # log -1 --format=%B <sha> → body has Style-only line
+                (("log", "-1", "--format=%B", "deadbeef"),
+                 ("SCRUM-441: button typography\n\n"
+                  "Style-only: drop fontSize/fontWeight overrides\n", 0)),
+            ]
+        )
+        found, snippet = detect_style_only_from_pr_head(".", git=runner)
+        self.assertTrue(found)
+        self.assertIn("Style-only", snippet)
+
+    def test_fetches_head2_when_not_local(self) -> None:
+        runner, calls = self._fake_git(
+            [
+                (("rev-parse", "--verify", "HEAD^2"),
+                 ("cafe1234\n", 0)),
+                # cat-file fails → not local
+                (("cat-file", "-e", "cafe1234"),
+                 ("", 128)),
+                # fetch succeeds
+                (("fetch", "--depth=50", "origin", "cafe1234"),
+                 ("", 0)),
+                (("log", "-1", "--format=%B", "cafe1234"),
+                 ("Style-only: pure cosmetic\n", 0)),
+            ]
+        )
+        found, snippet = detect_style_only_from_pr_head(".", git=runner)
+        self.assertTrue(found)
+        self.assertEqual(snippet, "Style-only: pure cosmetic")
+        # Confirm fetch was actually invoked.
+        self.assertTrue(
+            any("fetch" in c and "cafe1234" in c for c in calls),
+            f"expected a fetch call for cafe1234 in {calls}",
+        )
+
+    def test_returns_false_when_head_has_no_second_parent(self) -> None:
+        runner, _ = self._fake_git(
+            [
+                # No second parent → rev-parse fails
+                (("rev-parse", "--verify", "HEAD^2"),
+                 ("fatal: ...\n", 128)),
+            ]
+        )
+        found, snippet = detect_style_only_from_pr_head(".", git=runner)
+        self.assertFalse(found)
+        self.assertEqual(snippet, "")
+
+    def test_returns_false_when_fetch_fails(self) -> None:
+        runner, _ = self._fake_git(
+            [
+                (("rev-parse", "--verify", "HEAD^2"),
+                 ("deadbeef\n", 0)),
+                (("cat-file", "-e", "deadbeef"),
+                 ("", 128)),
+                (("fetch", "--depth=50", "origin", "deadbeef"),
+                 ("network error\n", 1)),
+            ]
+        )
+        found, _ = detect_style_only_from_pr_head(".", git=runner)
+        self.assertFalse(found)
+
+    def test_returns_false_when_body_has_no_style_only_line(self) -> None:
+        runner, _ = self._fake_git(
+            [
+                (("rev-parse", "--verify", "HEAD^2"),
+                 ("deadbeef\n", 0)),
+                (("cat-file", "-e", "deadbeef"),
+                 ("", 0)),
+                (("log", "-1", "--format=%B", "deadbeef"),
+                 ("SCRUM-XXX: real feature change\n\n"
+                  "Some description that mentions style but is not the marker.\n", 0)),
+            ]
+        )
+        found, snippet = detect_style_only_from_pr_head(".", git=runner)
+        self.assertFalse(found)
+        self.assertEqual(snippet, "")
+
+    def test_apply_fallback_mutates_signals_when_marker_found(self) -> None:
+        s = Signals()
+        self.assertFalse(s.style_only_note_found)
+        fired = apply_style_only_fallback(
+            s, ".",
+            detector=lambda _root: (True, "Style-only: cosmetic"),
+        )
+        self.assertTrue(fired)
+        self.assertTrue(s.style_only_note_found)
+        self.assertEqual(s.style_only_note_snippet, "Style-only: cosmetic")
+
+    def test_apply_fallback_is_idempotent_when_upstream_already_detected(self) -> None:
+        s = Signals(style_only_note_found=True, style_only_note_snippet="upstream")
+        sentinel = []
+        fired = apply_style_only_fallback(
+            s, ".",
+            detector=lambda _root: sentinel.append("called") or (True, "wrapper"),
+        )
+        self.assertFalse(fired)  # wrapper short-circuited
+        self.assertEqual(s.style_only_note_snippet, "upstream")  # not overwritten
+        self.assertEqual(sentinel, [])  # detector never invoked
+
+    def test_apply_fallback_noop_when_detector_returns_false(self) -> None:
+        s = Signals()
+        fired = apply_style_only_fallback(
+            s, ".",
+            detector=lambda _root: (False, ""),
+        )
+        self.assertFalse(fired)
+        self.assertFalse(s.style_only_note_found)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ from release_readiness_core.pr_risk.version import (
 
 CREATOR_MODE_PATH_RE = re.compile(r"^web/src/modes/creatormode", re.IGNORECASE)
 ORCHESTRATION_TOKEN_RE = re.compile(r"orchestration|recommendation", re.IGNORECASE)
+STYLE_ONLY_PREFIXES = ("style-only:", "style only:")
 
 
 def _run_diff(repo_root: str, base_ref: str, path: str) -> str:
@@ -127,6 +128,93 @@ def reclassify_creatormode(
     return moved
 
 
+def _git(repo_root: str, *args: str) -> Tuple[str, int]:
+    """Run a git subcommand against repo_root. Returns (stdout, returncode)."""
+    out = subprocess.run(
+        ["git", "-C", repo_root, *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return out.stdout, out.returncode
+
+
+def _scan_body_for_style_only(body: str) -> Tuple[bool, str]:
+    """Same prefix-scan the upstream uses, applied to a single commit body."""
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if stripped == "":
+            continue
+        lower = stripped.lower()
+        for prefix in STYLE_ONLY_PREFIXES:
+            if lower.startswith(prefix):
+                return True, stripped[:120] if len(stripped) > 120 else stripped
+    return False, ""
+
+
+def detect_style_only_from_pr_head(
+    repo_root: str,
+    *,
+    git=_git,
+) -> Tuple[bool, str]:
+    """SCRUM-442 fallback for the upstream detect_style_only_note when CI uses
+    fetch-depth: 1 (the standard GHA shallow checkout). In that case HEAD is a
+    synthetic refs/pull/N/merge commit and HEAD^2 (the PR's actual commit
+    carrying the Style-only marker) is not in local objects. The upstream
+    detector's ``git log origin/main...HEAD`` then sees only the merge commit's
+    "Merge X into Y" message and returns False.
+
+    This wrapper:
+      1. Resolves HEAD^2's SHA from the merge commit's parent pointer (works
+         without the object being local because rev-parse reads the merge's
+         own data).
+      2. Fetches HEAD^2 if it isn't local — ``git fetch --depth=50 origin <SHA>``.
+      3. Reads HEAD^2's commit body and scans for the Style-only prefix.
+
+    Returns (False, "") if HEAD is not a 2-parent merge, if HEAD^2 cannot be
+    fetched, or if the body has no Style-only line. Never raises.
+    """
+    sha_out, sha_rc = git(repo_root, "rev-parse", "--verify", "HEAD^2")
+    sha = sha_out.strip()
+    if sha_rc != 0 or not sha:
+        return False, ""
+    _, cat_rc = git(repo_root, "cat-file", "-e", sha)
+    if cat_rc != 0:
+        # Object not local — fetch it from origin. Depth=50 covers anything
+        # reasonable; we only need this single commit's body.
+        _, fetch_rc = git(repo_root, "fetch", "--depth=50", "origin", sha)
+        if fetch_rc != 0:
+            return False, ""
+    body_out, body_rc = git(repo_root, "log", "-1", "--format=%B", sha)
+    if body_rc != 0:
+        return False, ""
+    return _scan_body_for_style_only(body_out)
+
+
+def apply_style_only_fallback(
+    signals: Signals,
+    repo_root: str,
+    *,
+    detector=detect_style_only_from_pr_head,
+) -> bool:
+    """If the upstream detector missed the Style-only marker (commonly the
+    GHA fetch-depth: 1 case), run the PR-head fallback and mutate signals so
+    the score() pipeline emits the style_only_note reducer and policy.recommend
+    waives the tests_missing gate.
+
+    Returns True if the fallback fired (signals were mutated), False otherwise.
+    Idempotent: no-op when signals.style_only_note_found is already True.
+    """
+    if signals.style_only_note_found:
+        return False
+    found, snippet = detector(repo_root)
+    if not found:
+        return False
+    signals.style_only_note_found = True
+    signals.style_only_note_snippet = snippet
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pr_risk_run",
@@ -166,6 +254,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stderr.write(
             "pr_risk_run: reclassified CreatorMode pure-UI edits out of "
             "orchestration domain: " + ", ".join(moved) + "\n"
+        )
+    if apply_style_only_fallback(signals, args.repo_root):
+        sys.stderr.write(
+            "pr_risk_run: SCRUM-442 fallback found Style-only marker on "
+            "HEAD^2 (CI shallow-checkout case); upstream detector missed it.\n"
         )
 
     res = score(signals, default_weights(), jira_key, runtime=runtime)
