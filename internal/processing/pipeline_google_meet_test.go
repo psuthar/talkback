@@ -42,12 +42,15 @@ func TestRunGoogleMeetJob_MissingIDsFailsPermanent(t *testing.T) {
 	assert.Equal(t, "google_meet_missing_ids", *updated.LastErrorCode)
 }
 
-// TestShouldEnqueueMeetWhisperFallback covers the four branches of the
-// fallback decision (SCRUM-380):
-//  1. transcripts empty + attempt below threshold → keep waiting on Meet
-//  2. transcripts empty + attempt at/above threshold → fall back to Whisper
-//  3. all transcripts in a terminal failure state → fall back immediately
-//  4. any transcript still in a non-terminal state → keep waiting
+// TestShouldEnqueueMeetWhisperFallback covers the three branches of the
+// fallback decision (SCRUM-380 + SCRUM-399 tightening):
+//  1. transcripts empty → fall back immediately. Meet creates a transcript
+//     entity as soon as transcription is enabled, so an empty list after the
+//     MP4 is FILE_GENERATED means transcription was never enabled or the
+//     account tier does not surface transcripts. No wait will help.
+//  2. all transcripts in a terminal failure state → fall back immediately.
+//  3. any transcript still in a non-terminal state → keep waiting; prefer
+//     the native Meet transcript when one is being prepared.
 //
 // This is the contract that decides whether ingest converts to Whisper or
 // keeps polling Meet, so it gets explicit coverage independent of the DB-
@@ -55,32 +58,27 @@ func TestRunGoogleMeetJob_MissingIDsFailsPermanent(t *testing.T) {
 func TestShouldEnqueueMeetWhisperFallback(t *testing.T) {
 	t.Parallel()
 
-	t.Run("empty list below threshold waits on Meet", func(t *testing.T) {
-		assert.False(t, shouldEnqueueMeetWhisperFallback(nil, 1))
-		assert.False(t, shouldEnqueueMeetWhisperFallback([]googlemeet.Transcript{}, meetTranscriptWaitAttempts-1))
+	t.Run("empty list falls back immediately", func(t *testing.T) {
+		// SCRUM-399: no attempt threshold. ListTranscripts returning empty
+		// after the MP4 is FILE_GENERATED means no transcript is coming.
+		assert.True(t, shouldEnqueueMeetWhisperFallback(nil))
+		assert.True(t, shouldEnqueueMeetWhisperFallback([]googlemeet.Transcript{}))
 	})
 
-	t.Run("empty list at threshold falls back to Whisper", func(t *testing.T) {
-		assert.True(t, shouldEnqueueMeetWhisperFallback(nil, meetTranscriptWaitAttempts))
-		assert.True(t, shouldEnqueueMeetWhisperFallback(nil, meetTranscriptWaitAttempts+5))
-	})
-
-	t.Run("all transcripts terminal falls back regardless of attempt", func(t *testing.T) {
+	t.Run("all transcripts terminal falls back", func(t *testing.T) {
 		all := []googlemeet.Transcript{{State: "FAILED"}, {State: "ERROR"}}
-		assert.True(t, shouldEnqueueMeetWhisperFallback(all, 1))
-		assert.True(t, shouldEnqueueMeetWhisperFallback(all, meetTranscriptWaitAttempts))
+		assert.True(t, shouldEnqueueMeetWhisperFallback(all))
 	})
 
 	t.Run("any non-terminal transcript keeps waiting", func(t *testing.T) {
-		// Meet is actively preparing a transcript (STARTED/ENDED). Even
-		// past the wait threshold, do not pre-empt with Whisper — the
-		// Meet-native transcript is preferred when one is on the way.
+		// Meet is actively preparing a transcript (STARTED/ENDED). Do not
+		// pre-empt with Whisper — the Meet-native transcript is preferred
+		// when one is on the way.
 		mixed := []googlemeet.Transcript{{State: "FAILED"}, {State: "STARTED"}}
-		assert.False(t, shouldEnqueueMeetWhisperFallback(mixed, 1))
-		assert.False(t, shouldEnqueueMeetWhisperFallback(mixed, meetTranscriptWaitAttempts+5))
+		assert.False(t, shouldEnqueueMeetWhisperFallback(mixed))
 
 		stillProcessing := []googlemeet.Transcript{{State: "STARTED"}}
-		assert.False(t, shouldEnqueueMeetWhisperFallback(stillProcessing, meetTranscriptWaitAttempts+10))
+		assert.False(t, shouldEnqueueMeetWhisperFallback(stillProcessing))
 	})
 }
 

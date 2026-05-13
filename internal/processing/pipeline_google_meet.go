@@ -20,25 +20,21 @@ import (
 	"github.com/psuthar/talkback/internal/utils"
 )
 
-// meetTranscriptWaitAttempts is the number of "no FILE_GENERATED transcript yet"
-// polls we tolerate before falling back to Whisper. With BackoffWaiting (10m,
-// 30m, 2h), attempt==3 means we've already waited ~40 minutes for a Meet-side
-// transcript that has never appeared. Empirically Meet transcripts arrive
-// within 5–30 min when they're going to arrive at all; past 40 min, the
-// transcript is almost certainly not coming (transcription disabled at the
-// org/meeting level, or tier doesn't expose transcripts at all).
-const meetTranscriptWaitAttempts = 3
-
 // runGoogleMeetJob runs the Google Meet ingestion pipeline for one session_processing_job.
 // meeting_uuid = full conferenceRecord resource name; instance_uuid = full recording resource name.
 //
 // Stages: fetch (recording state + driveDestination) → download (Drive MP4) → upload
 // (R2 or local) → transcript fetch (ListTranscripts) → parse (entries → segments) →
-// index → ready. When no FILE_GENERATED transcript appears after
-// meetTranscriptWaitAttempts polls — or every listed transcript is in a
-// terminal failure state — the pipeline enqueues a Whisper fallback against
-// the already-downloaded MP4 and transitions to awaiting_whisper, matching
-// the Teams pattern.
+// index → ready. Transcript fallback rules (SCRUM-399 follow-up to SCRUM-380):
+// when ListTranscripts returns an empty list the pipeline immediately enqueues
+// a Whisper fallback — empirically Meet creates a transcript entity as soon as
+// transcription is enabled, so an empty list after the MP4 is FILE_GENERATED
+// means transcription was never enabled or the account tier does not surface
+// transcripts (e.g. Workspace Individual on a personal Gmail). When every
+// listed transcript is in a terminal failure state the same fallback fires.
+// Otherwise — there's a transcript entity that's still STARTED/ENDED — keep
+// polling: Meet is actively preparing one and we prefer the native transcript
+// over a Whisper re-transcription.
 func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getToken GoogleMeetTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
 	sessionID := job.SessionID
 	jobID := job.ID
@@ -260,7 +256,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		}
 	}
 	if readyTranscript == nil {
-		if shouldEnqueueMeetWhisperFallback(transcripts, attempt) {
+		if shouldEnqueueMeetWhisperFallback(transcripts) {
 			if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
 				return nil
 			}
@@ -424,13 +420,21 @@ func offsetMs(base time.Time, ts string) int {
 // shouldEnqueueMeetWhisperFallback decides whether to abandon waiting on a
 // Meet-native transcript and Whisper-transcribe the already-downloaded MP4.
 // Pure for unit testing. Triggers on either:
-//  1. transcripts list is empty AND attempt >= meetTranscriptWaitAttempts —
-//     Meet has had ~40 min to produce one and hasn't.
+//  1. transcripts list is empty — Meet has not created a transcript entity
+//     for this conference record. Since the MP4 reached FILE_GENERATED before
+//     this stage runs, an empty list means transcription was never enabled at
+//     meeting time or the account tier does not expose transcripts via the v2
+//     API. No wait is going to surface one. SCRUM-399 reduced this from a
+//     ~40 min poll wait (SCRUM-380's original threshold of 3 attempts) to an
+//     immediate fallback.
 //  2. every listed transcript is in a terminal failure state — Google has
 //     given up; no amount of waiting will help.
-func shouldEnqueueMeetWhisperFallback(transcripts []googlemeet.Transcript, attempt int) bool {
+//
+// When at least one transcript is in a non-terminal state (STARTED/ENDED),
+// Meet is actively preparing it; keep polling and prefer the native transcript.
+func shouldEnqueueMeetWhisperFallback(transcripts []googlemeet.Transcript) bool {
 	if len(transcripts) == 0 {
-		return attempt >= meetTranscriptWaitAttempts
+		return true
 	}
 	for _, t := range transcripts {
 		if !googlemeet.IsTerminalTranscriptState(t.State) {
