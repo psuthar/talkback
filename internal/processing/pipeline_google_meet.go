@@ -20,13 +20,25 @@ import (
 	"github.com/psuthar/talkback/internal/utils"
 )
 
+// meetTranscriptWaitAttempts is the number of "no FILE_GENERATED transcript yet"
+// polls we tolerate before falling back to Whisper. With BackoffWaiting (10m,
+// 30m, 2h), attempt==3 means we've already waited ~40 minutes for a Meet-side
+// transcript that has never appeared. Empirically Meet transcripts arrive
+// within 5–30 min when they're going to arrive at all; past 40 min, the
+// transcript is almost certainly not coming (transcription disabled at the
+// org/meeting level, or tier doesn't expose transcripts at all).
+const meetTranscriptWaitAttempts = 3
+
 // runGoogleMeetJob runs the Google Meet ingestion pipeline for one session_processing_job.
 // meeting_uuid = full conferenceRecord resource name; instance_uuid = full recording resource name.
 //
 // Stages: fetch (recording state + driveDestination) → download (Drive MP4) → upload
 // (R2 or local) → transcript fetch (ListTranscripts) → parse (entries → segments) →
-// index → ready. No Whisper fallback in v1: when no FILE_GENERATED transcript exists,
-// the job is set to waiting (Google Meet artifacts can take 5–15 min after meeting end).
+// index → ready. When no FILE_GENERATED transcript appears after
+// meetTranscriptWaitAttempts polls — or every listed transcript is in a
+// terminal failure state — the pipeline enqueues a Whisper fallback against
+// the already-downloaded MP4 and transitions to awaiting_whisper, matching
+// the Teams pattern.
 func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionProcessingJob, getToken GoogleMeetTokenFunc, store storage.Interface, storagePrefix string, jobProcessor *utils.JobProcessor, onJobReady OnJobReadyFunc) error {
 	sessionID := job.SessionID
 	jobID := job.ID
@@ -248,7 +260,14 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		}
 	}
 	if readyTranscript == nil {
-		// TODO(SCRUM-317 follow-up): enqueue Whisper fallback like Teams. v1 just waits.
+		if shouldEnqueueMeetWhisperFallback(transcripts, attempt) {
+			if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
+				return nil
+			}
+			// Fallback wanted but couldn't be enqueued (no processor, no primary
+			// artifact, R2 store missing for r2 artifact, etc.). Fall through to
+			// waiting so the next poll retries — this matches Teams' degraded path.
+		}
 		next := time.Now().Add(BackoffWaiting(attempt))
 		setJobWaiting(ctx, db, jobID, attempt, "google_meet_transcript_not_ready", "No FILE_GENERATED transcript yet; will check again later.", next)
 		updateMirror(models.ProcessingStateWaiting)
@@ -400,6 +419,162 @@ func offsetMs(base time.Time, ts string) int {
 		return 0
 	}
 	return int(d.Milliseconds())
+}
+
+// shouldEnqueueMeetWhisperFallback decides whether to abandon waiting on a
+// Meet-native transcript and Whisper-transcribe the already-downloaded MP4.
+// Pure for unit testing. Triggers on either:
+//  1. transcripts list is empty AND attempt >= meetTranscriptWaitAttempts —
+//     Meet has had ~40 min to produce one and hasn't.
+//  2. every listed transcript is in a terminal failure state — Google has
+//     given up; no amount of waiting will help.
+func shouldEnqueueMeetWhisperFallback(transcripts []googlemeet.Transcript, attempt int) bool {
+	if len(transcripts) == 0 {
+		return attempt >= meetTranscriptWaitAttempts
+	}
+	for _, t := range transcripts {
+		if !googlemeet.IsTerminalTranscriptState(t.State) {
+			return false
+		}
+	}
+	return true
+}
+
+// enqueueGoogleMeetWhisperFallback mirrors the Teams fallback (pipeline_teams.go
+// lines 253–344): resolves the primary video's whisper source URL, creates a
+// transcript job keyed google_meet_whisper:<session_id>, enqueues it on the
+// shared JobProcessor, and transitions the session_processing_job to
+// awaiting_whisper. Returns true if state was transitioned to awaiting_whisper
+// (either by enqueueing a new job or by detecting that a prior fallback job is
+// already in flight). Returns false if any precondition fails (no processor,
+// no ready primary artifact, R2 store missing for r2 artifact, presign error),
+// in which case the caller falls through to setJobWaiting.
+func enqueueGoogleMeetWhisperFallback(
+	ctx context.Context,
+	db *database.DB,
+	sessionID, jobID uuid.UUID,
+	attempt int,
+	store storage.Interface,
+	jobProcessor *utils.JobProcessor,
+	exportURI string,
+	updateMirror func(string),
+) bool {
+	if jobProcessor == nil {
+		return false
+	}
+	sess, _ := db.GetSession(ctx, sessionID)
+	if sess == nil || sess.PrimaryVideoArtifactID == nil {
+		return false
+	}
+	fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
+	if fa == nil || fa.Status != models.FileArtifactStatusReady || fa.StorageKey == "" {
+		return false
+	}
+	if fa.StorageProvider != "local" && fa.StorageProvider != "r2" {
+		return false
+	}
+
+	var whisperSourceURL string
+	if fa.StorageProvider == "r2" {
+		if store == nil {
+			log.Printf("Meet Whisper fallback: storage provider is r2 but store is nil; skipping")
+			return false
+		}
+		presigned, presignErr := store.PresignGet(ctx, fa.StorageKey, 4*time.Hour)
+		if presignErr != nil {
+			log.Printf("Meet Whisper fallback: presign r2 key %q: %v; skipping", fa.StorageKey, presignErr)
+			return false
+		}
+		whisperSourceURL = presigned
+	} else {
+		whisperSourceURL = filepath.ToSlash(fa.StorageKey)
+	}
+	if whisperSourceURL == "" {
+		return false
+	}
+
+	// Ensure artifact + video_source rows exist (same idempotent pattern as the
+	// happy path).
+	artifacts, _ := db.GetArtifactsBySessionID(ctx, sessionID)
+	var artifactID uuid.UUID
+	if len(artifacts) > 0 {
+		artifactID = artifacts[0].ID
+	} else {
+		title := "Google Meet Recording"
+		if sess.Title != "" {
+			title = sess.Title
+		}
+		artifact, createErr := db.CreateArtifact(ctx, sessionID, title, nil)
+		if createErr != nil {
+			log.Printf("Meet Whisper fallback: create artifact: %v", createErr)
+			return false
+		}
+		artifactID = artifact.ID
+	}
+	sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
+	var videoID uuid.UUID
+	if len(sources) > 0 {
+		videoID = sources[0].ID
+	} else {
+		videoID = uuid.New()
+		playbackURL := exportURI
+		if playbackURL == "" {
+			playbackURL = "https://meet.google.com/"
+		}
+		ts := "whisper"
+		vs := &models.VideoSource{
+			ID:                  videoID,
+			ArtifactID:          artifactID,
+			SessionID:           sessionID,
+			Provider:            "google_meet",
+			VideoURL:            playbackURL,
+			PlaybackMode:        "embed",
+			OriginalURL:         &playbackURL,
+			TranscriptStatus:    models.VideoTranscriptStatusPending,
+			TranscriptionSource: &ts,
+			SourceType:          models.VideoSourceTypeEmbedURL,
+		}
+		if err := db.CreateVideoSource(ctx, vs); err != nil {
+			log.Printf("Meet Whisper fallback: create video source: %v", err)
+			return false
+		}
+	}
+
+	jobKey := "google_meet_whisper:" + sessionID.String()
+	existing, _ := db.GetTranscriptJobByKey(ctx, jobKey)
+	if existing != nil && existing.Status != models.TranscriptJobStatusFailed {
+		// Prior fallback's Whisper job is still in flight (queued/running) or
+		// already completed. Skip duplicate create+enqueue but still reflect
+		// awaiting_whisper on the session_processing_job so subsequent polls
+		// don't escalate to failed_permanent via maxWaitingAttempts.
+		updateJobState(ctx, db, jobID, models.ProcessingStateAwaitingWhisper, models.ProcessingStageDownload, attempt, nil, nil, nil)
+		_ = db.UnlockSessionProcessingJob(ctx, jobID)
+		updateMirror(models.ProcessingStateAwaitingWhisper)
+		return true
+	}
+	tj := &models.TranscriptJob{
+		ID:            uuid.New(),
+		VideoSourceID: videoID,
+		SessionID:     sessionID,
+		Status:        models.TranscriptJobStatusQueued,
+		SourceURL:     whisperSourceURL,
+		JobKey:        jobKey,
+		QueuedAt:      time.Now(),
+	}
+	if err := db.CreateTranscriptJob(ctx, tj); err != nil {
+		log.Printf("Meet Whisper fallback: create transcript job: %v", err)
+		return false
+	}
+	_ = db.UpdateVideoSourceTranscriptionJob(ctx, videoID, &tj.ID)
+	if enqErr := jobProcessor.Enqueue(ctx, tj); enqErr != nil {
+		log.Printf("Meet Whisper fallback: enqueue: %v", enqErr)
+		return false
+	}
+	updateJobState(ctx, db, jobID, models.ProcessingStateAwaitingWhisper, models.ProcessingStageDownload, attempt, nil, nil, nil)
+	_ = db.UnlockSessionProcessingJob(ctx, jobID)
+	updateMirror(models.ProcessingStateAwaitingWhisper)
+	log.Printf("Meet Whisper fallback: enqueued transcript job for session %s", sessionID)
+	return true
 }
 
 func googleMeetArtifactMetadata(conferenceRecord, recordingName, driveFileID, exportURI string) []byte {

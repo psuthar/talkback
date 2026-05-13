@@ -48,6 +48,24 @@ func TestBackoffWaitingFromState(t *testing.T) {
 	require.Greater(t, BackoffWaitingFromState("UNKNOWN").Seconds(), float64(0))
 }
 
+func TestIsTerminalTranscriptState(t *testing.T) {
+	// Documented terminal-failure tokens (case-insensitive, trimmed).
+	require.True(t, IsTerminalTranscriptState("FAILED"))
+	require.True(t, IsTerminalTranscriptState("failed"))
+	require.True(t, IsTerminalTranscriptState(" Failed "))
+	require.True(t, IsTerminalTranscriptState("ERROR"))
+	require.True(t, IsTerminalTranscriptState("CANCELED"))
+	require.True(t, IsTerminalTranscriptState("CANCELLED"))
+	require.True(t, IsTerminalTranscriptState("ABORTED"))
+
+	// In-flight or healthy states must not be classified terminal.
+	require.False(t, IsTerminalTranscriptState("STARTED"))
+	require.False(t, IsTerminalTranscriptState("ENDED"))
+	require.False(t, IsTerminalTranscriptState("FILE_GENERATED"))
+	require.False(t, IsTerminalTranscriptState(""))
+	require.False(t, IsTerminalTranscriptState("UNKNOWN_FUTURE_STATE"))
+}
+
 func TestTranscriptStateFromTranscripts(t *testing.T) {
 	require.Equal(t, "none", TranscriptStateFromTranscripts(nil))
 	require.Equal(t, "none", TranscriptStateFromTranscripts([]Transcript{}))

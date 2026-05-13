@@ -37,6 +37,23 @@ func IsRecordingReady(state string) bool {
 	return strings.EqualFold(state, StateFileGenerated)
 }
 
+// IsTerminalTranscriptState reports whether a transcript-state value means
+// Google has given up — the transcript will not transition to FILE_GENERATED.
+// The Meet v2 API does not currently document a terminal failure state, but
+// this helper matches anything that looks like a failure so the pipeline can
+// fall back to Whisper without waiting forever when one appears.
+func IsTerminalTranscriptState(state string) bool {
+	s := strings.ToUpper(strings.TrimSpace(state))
+	if s == "" {
+		return false
+	}
+	switch s {
+	case "FAILED", "ERROR", "CANCELED", "CANCELLED", "ABORTED":
+		return true
+	}
+	return false
+}
+
 // BackoffWaitingFromState returns how long the pipeline should wait before
 // re-checking a recording whose state is not yet FILE_GENERATED. The pipeline's
 // generic BackoffWaiting is fine for most cases; this helper just clamps a
