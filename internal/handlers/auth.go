@@ -74,6 +74,38 @@ func (h *Handlers) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// ResolveCookieUser performs the cookie → login_session → user lookup that
+// RequireAuth middleware does, but inline. Returns the user (or nil) and a
+// request with userContextKey populated when a valid active user is found.
+// Use this in handlers whose route is NOT wrapped in RequireAuth /
+// OptionalAuth* (e.g., handlers dispatched from SessionsRouter or
+// APISessionsRouter directly) but that still need to identify the
+// cookie-authenticated user for ownership / admin checks.
+//
+// SCRUM-438 introduced this pattern inline for UpdateVideoSourceDisplayTitle;
+// SCRUM-439 extracted it after a post-fix audit turned up two more sibling
+// handlers with the same route-wiring miss (SetSessionPrimaryVideoSource and
+// SetSessionPrimaryVideoArtifact).
+//
+// Does not return 401 / 403 on its own — callers handle the absence-of-user
+// case according to their own policy (e.g., fall through to admin check, or
+// 403 outright).
+func (h *Handlers) ResolveCookieUser(r *http.Request) (*models.User, *http.Request) {
+	sid := auth.SessionIDFromRequest(r)
+	if sid == nil {
+		return nil, r
+	}
+	loginSession, err := h.DB.GetLoginSessionByID(r.Context(), *sid)
+	if err != nil || loginSession == nil {
+		return nil, r
+	}
+	user, err := h.DB.GetUserByID(r.Context(), loginSession.UserID)
+	if err != nil || user == nil || user.Status != models.UserStatusActive {
+		return nil, r
+	}
+	return user, r.WithContext(context.WithValue(r.Context(), userContextKey, user))
+}
+
 // OptionalAuthForAccept runs session lookup and, if valid, sets user in context. Does not return 401 if no session.
 // Used for POST /api/invitations/accept so the handler can also try accept_auth_token from the body.
 func (h *Handlers) OptionalAuthForAccept(next http.HandlerFunc) http.HandlerFunc {
