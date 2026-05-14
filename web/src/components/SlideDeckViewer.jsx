@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { getMaterialSlides } from '../api/materials'
 
 // SCRUM-444/446: lazy-load the PDF renderer + pdfjs-dist so legacy PNG decks
@@ -45,6 +45,12 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     return p
   }
 
+  // Initial load: full reset + fetch when the deck identity changes.
+  // SCRUM-448: deliberately excludes slidesRefreshTrigger so a sibling
+  // material's session_updated does not unmount the loaded viewer (which would
+  // reset SlideDeckViewerPDF's currentPage state back to slide 1). The next
+  // effect below handles the legitimate "slides finished generating" bump
+  // path with the same trigger, but only when no response has loaded yet.
   useEffect(() => {
     if (!sessionId || !materialId) {
       setResponse(null)
@@ -71,7 +77,36 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     })()
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiBaseUrl, sessionId, materialId, slidesRefreshTrigger])
+  }, [apiBaseUrl, sessionId, materialId])
+
+  // SCRUM-448: silent refetch on slidesRefreshTrigger ONLY when the response
+  // isn't yet loaded. App.jsx bumps this trigger on every WebSocket
+  // session_updated — including unrelated sibling uploads — so guarding on
+  // response keeps the open viewer's page state intact while still catching
+  // the original "slides finished generating" use case.
+  useEffect(() => {
+    if (!sessionId || !materialId) return
+    const hasLoadedResponse =
+      !!response &&
+      ((response.format === 'pdf' && response.pdf_url) ||
+        (Array.isArray(response.slides) && response.slides.length > 0))
+    if (hasLoadedResponse) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await loadOnce()
+        if (cancelled) return
+        if (data) setResponse(data)
+      } catch {
+        /* poll loop below will continue trying */
+      }
+    })()
+    return () => { cancelled = true }
+    // response is intentionally not a dep — we only react to the trigger;
+    // reading the latest value via closure is fine because the effect
+    // re-runs only when slidesRefreshTrigger changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slidesRefreshTrigger])
 
   const isPDFShape = response && response.format === 'pdf' && response.pdf_url
   const hasLegacySlides = response && Array.isArray(response.slides) && response.slides.length > 0
@@ -113,7 +148,14 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
   // Refetch callback handed to the PDF viewer. PDF.js will call this when it
   // hits an expired-URL load/render failure; the next render uses the fresh
   // pdf_url from the new response.
-  const handlePDFRefetch = async () => {
+  //
+  // SCRUM-448: stable identity via a ref + useCallback so SlideDeckViewerPDF's
+  // [pdfUrl, onRefetch] effect does NOT re-run on every parent re-render. A
+  // fresh function each render was causing the viewer to re-load the document
+  // (re-call getDocument) when slidesRefreshTrigger bumped, which compounded
+  // the page-state reset bug this ticket addresses.
+  const handlePDFRefetchRef = useRef(null)
+  handlePDFRefetchRef.current = async () => {
     try {
       const data = await loadOnce()
       if (data && data.format === 'pdf' && data.pdf_url) {
@@ -125,6 +167,7 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     }
     return null
   }
+  const handlePDFRefetch = useCallback(() => handlePDFRefetchRef.current(), [])
 
   if (loading) {
     return (
