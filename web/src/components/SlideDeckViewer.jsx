@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { getMaterialSlides } from '../api/materials'
+
+// SCRUM-444/446: lazy-load the PDF renderer + pdfjs-dist so legacy PNG decks
+// (and users who never open a PPTX) don't pay the ~430 KB gzipped cost.
+const SlideDeckViewerPDF = lazy(() => import('./SlideDeckViewerPDF'))
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
 function ensureSpinnerStyle() {
@@ -12,23 +16,38 @@ function ensureSpinnerStyle() {
 }
 
 /**
- * Displays one slide at a time from a slides material (e.g. derived PPTX PNGs).
- * Fetches slide list from GET .../materials/{materialId}/slides and shows prev/next navigation.
- * When slides are not ready yet, shows "Processing slides…" and refetches when session_updated
- * arrives via WebSocket (slidesRefreshTrigger bumps). Also polls periodically while empty so
- * slide preview still appears if WebSocket misses (e.g. multi-instance API behind a load balancer).
+ * Displays one slide at a time from a slides material. SCRUM-444/446: the
+ * response shape determines the renderer — legacy {slides:[]} → inline PNG
+ * branch (back-compat), new {format:"pdf", pdf_url, slide_count} →
+ * lazy-loaded PDF.js branch with selectable text. The dispatcher itself owns
+ * the fetch + readiness polling so both renderers stay focused on rendering.
  * @param {string} [artifactId] - Optional; when set, empty state shows "Open original file" link.
  * @param {number} [slidesRefreshTrigger] - Bump when session_updated (e.g. slides ready); triggers one refetch.
  */
 export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlide, artifactId, slidesRefreshTrigger }) {
-  const [slides, setSlides] = useState([])
+  const [response, setResponse] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [currentIndex, setCurrentIndex] = useState(0)
+  const refetchInFlightRef = useRef(null)
+
+  // Single fetch helper used by both the initial load effect and the PDF
+  // viewer's refetch-on-expiry callback. De-dupes concurrent calls.
+  const loadOnce = async () => {
+    if (refetchInFlightRef.current) return refetchInFlightRef.current
+    const p = (async () => {
+      try {
+        return await getMaterialSlides(apiBaseUrl, sessionId, materialId)
+      } finally {
+        refetchInFlightRef.current = null
+      }
+    })()
+    refetchInFlightRef.current = p
+    return p
+  }
 
   useEffect(() => {
     if (!sessionId || !materialId) {
-      setSlides([])
+      setResponse(null)
       setLoading(false)
       setError(null)
       return
@@ -36,39 +55,34 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
     let cancelled = false
     setLoading(true)
     setError(null)
-    setSlides([])
-
-    const run = async () => {
+    setResponse(null)
+    ;(async () => {
       try {
-        const data = await getMaterialSlides(apiBaseUrl, sessionId, materialId)
+        const data = await loadOnce()
         if (cancelled) return
-        const list = Array.isArray(data?.slides) ? data.slides : []
-        if (list.length > 0) {
-          setSlides(list)
-          const safeInitial = Math.max(0, Math.min(list.length - 1, (initialSlide ?? 1) - 1))
-          setCurrentIndex(safeInitial)
-        }
+        setResponse(data)
         setLoading(false)
       } catch (err) {
         if (cancelled) return
         setError(err?.message || 'Unable to load slides.')
-        setSlides([])
+        setResponse(null)
         setLoading(false)
       }
-    }
-
-    run()
-
-    return () => {
-      cancelled = true
-    }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl, sessionId, materialId, slidesRefreshTrigger])
 
-  // Poll while slides are still empty (processing). WebSocket session_updated is best-effort only
-  // when the hub is in-memory per process (e.g. Render with multiple instances).
+  const isPDFShape = response && response.format === 'pdf' && response.pdf_url
+  const hasLegacySlides = response && Array.isArray(response.slides) && response.slides.length > 0
+  const isEmpty = !loading && !error && !isPDFShape && !hasLegacySlides
+
+  // Poll while the response is missing or has neither shape (legacy: empty
+  // slides; new: 404 returning null). WebSocket session_updated is best-effort
+  // only when the hub is in-memory per process (e.g. Render multi-instance).
   useEffect(() => {
     if (!sessionId || !materialId || loading || error) return
-    if (slides.length > 0) return
+    if (!isEmpty) return
 
     let cancelled = false
     let attempts = 0
@@ -80,14 +94,9 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
       attempts += 1
       if (attempts > maxAttempts) return
       try {
-        const data = await getMaterialSlides(apiBaseUrl, sessionId, materialId)
+        const data = await loadOnce()
         if (cancelled) return
-        const list = Array.isArray(data?.slides) ? data.slides : []
-        if (list.length > 0) {
-          setSlides(list)
-          const safeInitial = Math.max(0, Math.min(list.length - 1, (initialSlide ?? 1) - 1))
-          setCurrentIndex(safeInitial)
-        }
+        if (data) setResponse(data)
       } catch {
         /* keep polling until maxAttempts */
       }
@@ -98,16 +107,24 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
       cancelled = true
       clearInterval(id)
     }
-  }, [apiBaseUrl, sessionId, materialId, slides.length, loading, error, slidesRefreshTrigger, initialSlide])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseUrl, sessionId, materialId, isEmpty, loading, error, slidesRefreshTrigger])
 
-  useEffect(() => {
-    if (slides.length === 0) return
-    const nextIndex = Math.max(0, Math.min(slides.length - 1, (initialSlide ?? 1) - 1))
-    setCurrentIndex(nextIndex)
-  }, [slides.length, initialSlide])
-
-  const handlePrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
-  const handleNext = () => setCurrentIndex((i) => Math.min(slides.length - 1, i + 1))
+  // Refetch callback handed to the PDF viewer. PDF.js will call this when it
+  // hits an expired-URL load/render failure; the next render uses the fresh
+  // pdf_url from the new response.
+  const handlePDFRefetch = async () => {
+    try {
+      const data = await loadOnce()
+      if (data && data.format === 'pdf' && data.pdf_url) {
+        setResponse(data)
+        return data.pdf_url
+      }
+    } catch {
+      /* fall through to caller's error path */
+    }
+    return null
+  }
 
   if (loading) {
     return (
@@ -123,47 +140,87 @@ export function SlideDeckViewer({ apiBaseUrl, sessionId, materialId, initialSlid
       </div>
     )
   }
-  if (slides.length === 0) {
-    ensureSpinnerStyle()
-    const originalFileUrl = (apiBaseUrl != null && artifactId && materialId)
-      ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${artifactId}/materials/${materialId}/file`
-      : null
+  if (isPDFShape) {
     return (
-      <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ padding: '24px', color: '#666', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span
-            aria-hidden
-            style={{
-              display: 'inline-block',
-              width: '16px',
-              height: '16px',
-              border: '2px solid #e65100',
-              borderTopColor: 'transparent',
-              borderRadius: '50%',
-              animation: 'tb-spin 0.8s linear infinite',
-              flexShrink: 0,
-            }}
+      <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+        <Suspense fallback={<div style={{ padding: '24px', color: '#666' }}>Loading slides…</div>}>
+          <SlideDeckViewerPDF
+            pdfUrl={response.pdf_url}
+            slideCount={response.slide_count}
+            initialSlide={initialSlide}
+            onRefetch={handlePDFRefetch}
           />
-          <p style={{ margin: 0, fontWeight: 500 }}>Generating slide previews…</p>
-        </div>
-        <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>
-          This takes 20–60 seconds. Slide previews will appear here automatically when ready.
-        </p>
-        {originalFileUrl && (
-          <a
-            href={originalFileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ fontSize: '14px', color: 'var(--color-primary)', fontWeight: 500 }}
-          >
-            Open original file in the meantime
-          </a>
-        )}
+        </Suspense>
       </div>
     )
   }
+  if (hasLegacySlides) {
+    return (
+      <SlideDeckViewerPNG slides={response.slides} initialSlide={initialSlide} />
+    )
+  }
 
+  // Empty state — slides not generated yet (or generation failed silently).
+  ensureSpinnerStyle()
+  const originalFileUrl = (apiBaseUrl != null && artifactId && materialId)
+    ? `${apiBaseUrl.replace(/\/$/, '')}/artifacts/${artifactId}/materials/${materialId}/file`
+    : null
+  return (
+    <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ padding: '24px', color: '#666', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <span
+          aria-hidden
+          style={{
+            display: 'inline-block',
+            width: '16px',
+            height: '16px',
+            border: '2px solid #e65100',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'tb-spin 0.8s linear infinite',
+            flexShrink: 0,
+          }}
+        />
+        <p style={{ margin: 0, fontWeight: 500 }}>Generating slide previews…</p>
+      </div>
+      <p style={{ margin: 0, fontSize: '13px', color: '#888' }}>
+        This takes 20–60 seconds. Slide previews will appear here automatically when ready.
+      </p>
+      {originalFileUrl && (
+        <a
+          href={originalFileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ fontSize: '14px', color: 'var(--color-primary)', fontWeight: 500 }}
+        >
+          Open original file in the meantime
+        </a>
+      )}
+    </div>
+  )
+}
+
+// SlideDeckViewerPNG is the legacy PNG-per-slide branch, extracted from the
+// original SlideDeckViewer body so the dispatcher above stays compact. Kept
+// inline (not a separate file) because it is the back-compat path that runs
+// for every existing PPTX upload and there is no bundle-cost benefit to
+// lazy-loading it.
+function SlideDeckViewerPNG({ slides, initialSlide }) {
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    const safe = Math.max(0, Math.min(slides.length - 1, (initialSlide ?? 1) - 1))
+    return safe
+  })
+
+  useEffect(() => {
+    if (slides.length === 0) return
+    const nextIndex = Math.max(0, Math.min(slides.length - 1, (initialSlide ?? 1) - 1))
+    setCurrentIndex(nextIndex)
+  }, [slides.length, initialSlide])
+
+  const handlePrev = () => setCurrentIndex((i) => Math.max(0, i - 1))
+  const handleNext = () => setCurrentIndex((i) => Math.min(slides.length - 1, i + 1))
   const current = slides[currentIndex]
+
   return (
     <div data-testid="slide-deck-viewer" className="slide-deck-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div
