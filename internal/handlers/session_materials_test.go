@@ -541,32 +541,25 @@ func TestGetMaterialSlides(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 
-	t.Run("returns 200 with empty slides when no manifest yet (e.g. async slide gen not done or failed)", func(t *testing.T) {
-		// PPT/PPTX material with no StorageURL/StorageKey and no _slides manifest; GetMaterialSlides returns 200 + empty list.
+	t.Run("returns 404 when no manifest yet (SCRUM-445: was 200 empty, now 404 — SPA polls GetSlidesStatus first)", func(t *testing.T) {
+		// SCRUM-444/445 contract change: when the slide artifact is absent, fail
+		// closed with 404 instead of returning 200 + empty slides. The SPA's
+		// readiness check (GetSlidesStatus) already gates fetching the manifest
+		// behind a "ready" state, so a 200-empty response was indistinguishable
+		// from "no slides for this deck" and hid real lookup failures.
 		slideMat := &models.Material{
-			ID:            uuid.New(),
-			ArtifactID:    artifact.ID,
-			SessionID:     session.ID,
-			Kind:          string(models.MaterialKindDocument),
-			Filename:      "deck.pptx",
-			TextStatus:    models.MaterialTextStatusReady,
+			ID:         uuid.New(),
+			ArtifactID: artifact.ID,
+			SessionID:  session.ID,
+			Kind:       string(models.MaterialKindDocument),
+			Filename:   "deck.pptx",
+			TextStatus: models.MaterialTextStatusReady,
 		}
 		require.NoError(t, h.DB.CreateMaterial(ctx, slideMat))
 		req := httptest.NewRequest(http.MethodGet, "/sessions/"+session.ID.String()+"/materials/"+slideMat.ID.String()+"/slides", nil)
 		w := httptest.NewRecorder()
 		h.GetMaterialSlides(w, req)
-		assert.Equal(t, http.StatusOK, w.Code)
-		var resp struct {
-			MaterialID string `json:"material_id"`
-			Slides     []struct {
-				Index    int    `json:"index"`
-				ImageURL string `json:"image_url"`
-			} `json:"slides"`
-		}
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, slideMat.ID.String(), resp.MaterialID)
-		assert.Len(t, resp.Slides, 0)
+		assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
 	})
 
 	t.Run("returns 400 for invalid session ID", func(t *testing.T) {

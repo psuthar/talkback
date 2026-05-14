@@ -149,3 +149,11 @@ func SlidesProcessingKeyFromArtifactKey(artifactKey string) string {
 func SlideImageKeyFromArtifactKey(artifactKey string, index int) string {
 	return fmt.Sprintf("%sslide-%03d.png", SlidesPrefixFromArtifactKey(artifactKey), index)
 }
+
+// SlidePDFKeyFromArtifactKey returns the storage key for the consolidated slide
+// deck PDF written by the SCRUM-444 PDF pipeline. Sits alongside the manifest
+// at the same prefix used by SlideImageKeyFromArtifactKey, so a single
+// DeletePrefix continues to drop the entire derived bundle.
+func SlidePDFKeyFromArtifactKey(artifactKey string) string {
+	return SlidesPrefixFromArtifactKey(artifactKey) + "deck.pdf"
+}

@@ -273,13 +273,23 @@ func TestSlidesProcessingMarkerHelpers_SCRUM443(t *testing.T) {
 // slidesStatusStorage is an in-memory storage.Interface implementation for SCRUM-443 status tests.
 // Supports Put/Head/Get/Delete with real semantics so the staleness auto-fail path is exercised
 // end-to-end (Head sees the marker, Get returns its body, Delete removes it, Put writes failed.json).
+//
+// SCRUM-444/445 extension: tracks presign call counts (per-key + total) so the
+// PDF-pipeline tests can assert "PresignGet was called N times" without
+// depending on the returned URL string.
 type slidesStatusStorage struct {
-	mu      sync.Mutex
-	objects map[string][]byte
+	mu             sync.Mutex
+	objects        map[string][]byte
+	presignByKey   map[string]int
+	presignTotal   int
+	presignGetURL  string // when set, PresignGet returns this fixed URL (otherwise "presigned:<key>")
 }
 
 func newSlidesStatusStorage() *slidesStatusStorage {
-	return &slidesStatusStorage{objects: make(map[string][]byte)}
+	return &slidesStatusStorage{
+		objects:      make(map[string][]byte),
+		presignByKey: make(map[string]int),
+	}
 }
 
 func (s *slidesStatusStorage) put(key string, data []byte) {
@@ -346,8 +356,29 @@ func (s *slidesStatusStorage) Delete(_ context.Context, key string) error {
 func (s *slidesStatusStorage) PresignPut(_ context.Context, _ string, _ time.Duration, _ string) (string, map[string]string, error) {
 	return "", nil, nil
 }
-func (s *slidesStatusStorage) PresignGet(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", nil
+func (s *slidesStatusStorage) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.presignByKey[key]++
+	s.presignTotal++
+	if s.presignGetURL != "" {
+		return s.presignGetURL, nil
+	}
+	return "presigned:" + key, nil
+}
+
+// presignCount returns the total number of PresignGet invocations across all keys.
+func (s *slidesStatusStorage) presignCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.presignTotal
+}
+
+// presignCountFor returns the number of PresignGet invocations for a specific key.
+func (s *slidesStatusStorage) presignCountFor(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.presignByKey[key]
 }
 func (s *slidesStatusStorage) CopyObject(_ context.Context, _, _ string) error { return nil }
 func (s *slidesStatusStorage) DeletePrefix(_ context.Context, prefix string) (int, error) {

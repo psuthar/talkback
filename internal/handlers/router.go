@@ -607,6 +607,11 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 			h.GetMaterialSlideImage(w, r)
 			return
 		}
+		// /sessions/{id}/materials/{material_id}/slide-pdf - GET (SCRUM-444/445 local PDF pipeline)
+		if parts[4] == "slide-pdf" && r.Method == http.MethodGet {
+			h.GetMaterialSlidePDF(w, r)
+			return
+		}
 		// /sessions/{id}/materials/{material_id} - DELETE
 		if r.Method == http.MethodDelete {
 			h.DeleteSessionMaterial(w, r)
@@ -622,6 +627,10 @@ func (h *Handlers) SessionsRouter(w http.ResponseWriter, r *http.Request) {
 		}
 		if parts[5] == "slide-image" {
 			h.GetMaterialSlideImage(w, r)
+			return
+		}
+		if parts[5] == "slide-pdf" {
+			h.GetMaterialSlidePDF(w, r)
 			return
 		}
 	}

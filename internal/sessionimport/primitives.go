@@ -151,6 +151,35 @@ func copySlideAssets(ctx context.Context, c *Ctx, m, newMaterial *models.Materia
 			return
 		}
 		rc.Close()
+		// SCRUM-444/445: PDF-format manifests carry a single deck.pdf alongside
+		// metadata, not a per-slide image list. Copy the PDF + rewrite the key
+		// pointer so the imported material is renderable; falling through to
+		// the legacy entry loop would silently produce an empty slides array.
+		if strings.EqualFold(manifest.Format, utils.SlidesPipelinePDF) {
+			srcPDFKey := manifest.PDFStorageKey
+			if strings.TrimSpace(srcPDFKey) == "" {
+				srcPDFKey = storage.SlidePDFKeyFromArtifactKey(m.StorageKey)
+			}
+			dstPDFKey := storage.SlidePDFKeyFromArtifactKey(newMaterial.StorageKey)
+			if err := c.Deps.Storage.CopyObject(ctx, srcPDFKey, dstPDFKey); err != nil {
+				pdfRc, gerr := c.Deps.Storage.Get(ctx, srcPDFKey)
+				if gerr != nil {
+					return
+				}
+				_, _, perr := c.Deps.Storage.Put(ctx, dstPDFKey, pdfRc, "application/pdf", 0)
+				pdfRc.Close()
+				if perr != nil {
+					return
+				}
+			}
+			newManifestBytes, _ := json.Marshal(utils.SlideManifest{
+				Format:        utils.SlidesPipelinePDF,
+				SlideCount:    manifest.SlideCount,
+				PDFStorageKey: dstPDFKey,
+			})
+			_, _, _ = c.Deps.Storage.Put(ctx, storage.SlidesManifestKeyFromArtifactKey(newMaterial.StorageKey), bytes.NewReader(newManifestBytes), "application/json", int64(len(newManifestBytes)))
+			return
+		}
 		newSlides := make([]utils.SlideManifestEntry, 0, len(manifest.Slides))
 		for _, entry := range manifest.Slides {
 			newSlideKey := storage.SlideImageKeyFromArtifactKey(newMaterial.StorageKey, entry.Index)

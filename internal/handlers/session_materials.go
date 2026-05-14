@@ -56,8 +56,17 @@ func isSpreadsheetExt(ext string) bool {
 }
 
 // MaterialSlidesResponse is the JSON response for GET .../materials/{material_id}/slides.
+//
+// SCRUM-444/445: dual-format read path. Legacy materials with a {"slides":[...]}
+// manifest return the original shape (Slides populated, Format/SlideCount/PDFURL
+// empty). New PDF-pipeline materials return Format="pdf" + SlideCount + PDFURL,
+// with Slides serialized as an empty array. Exactly one of PDFURL / Slides is
+// populated for any given material.
 type MaterialSlidesResponse struct {
 	MaterialID string                 `json:"material_id"`
+	Format     string                 `json:"format,omitempty"`
+	SlideCount int                    `json:"slide_count,omitempty"`
+	PDFURL     string                 `json:"pdf_url,omitempty"`
 	Slides     []MaterialSlidePayload `json:"slides"`
 }
 
@@ -827,17 +836,25 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 
 // tryGenerateAndStoreSlides performs best-effort slide derivation for PPT/PPTX materials.
 // It never returns errors to the caller; failures are logged for debugging.
+//
+// SCRUM-444/445: dispatches to the PDF or PNG pipeline based on
+// TALKBACK_SLIDES_PIPELINE. Default and unset values keep the legacy PNG path
+// for full backward compatibility; the SCRUM-447 cutover flips this to "pdf".
 func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
 	pipelineStart := time.Now()
-	log.Printf("slide generation started for %s (key=%s)", localPath, artifactKey)
+	log.Printf("slide generation started for %s (key=%s) pipeline=%s", localPath, artifactKey, utils.SlidesPipeline())
 	// SCRUM-443: write processing.json BEFORE clearing failed.json so concurrent reads always see
 	// a marker. defer the clear so an OOM-killed goroutine leaves processing.json behind for
 	// GetSlidesStatus to detect via the staleness threshold.
 	h.writeSlidesProcessingMarkerStorage(ctx, artifactKey)
 	defer h.clearSlidesProcessingMarkerStorage(ctx, artifactKey)
 	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
+	if utils.SlidesPipeline() == utils.SlidesPipelinePDF {
+		h.tryGenerateAndStoreSlidesPDF(ctx, localPath, artifactKey, pipelineStart)
+		return
+	}
 	tConv := time.Now()
-	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	slides, err := utils.ConvertSlidesToPNGsFn(localPath)
 	convElapsed := time.Since(tConv)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
@@ -906,16 +923,23 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 
 // tryGenerateAndStoreSlidesLocal performs best-effort slide derivation for PPT/PPTX stored on local disk.
 // Writes manifest.json and slide-001.png, slide-002.png, ... into a _slides subdir next to the source file.
+//
+// SCRUM-444/445: dispatches to the PDF or PNG pipeline based on
+// TALKBACK_SLIDES_PIPELINE (same flag, same defaults as the R2 path).
 func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath string) {
 	pipelineStart := time.Now()
-	log.Printf("slide generation started (local) for %s", localPath)
+	log.Printf("slide generation started (local) for %s pipeline=%s", localPath, utils.SlidesPipeline())
 	// SCRUM-443: mirror R2 path — write processing.json before clearing failed.json; defer clear so
 	// a killed goroutine leaves the marker for GetSlidesStatus to staleness-check.
 	writeSlidesProcessingMarkerLocal(localPath)
 	defer clearSlidesProcessingMarkerLocal(localPath)
 	clearSlidesFailureMarkerLocal(localPath)
+	if utils.SlidesPipeline() == utils.SlidesPipelinePDF {
+		tryGenerateAndStoreSlidesLocalPDF(localPath, pipelineStart)
+		return
+	}
 	tConv := time.Now()
-	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
+	slides, err := utils.ConvertSlidesToPNGsFn(localPath)
 	convElapsed := time.Since(tConv)
 	if err != nil {
 		log.Printf("slides conversion failed for %s: %v", localPath, err)
@@ -961,6 +985,152 @@ func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath s
 	log.Printf("slides pipeline summary (local): path=%s slides=%d convert=%v mkdir=%v write_files=%v total=%v",
 		localPath, len(manifest.Slides), convElapsed, mkdirElapsed, writeElapsed, time.Since(pipelineStart))
 	log.Printf("generated %d derived slides (local) for %s", len(manifest.Slides), localPath)
+}
+
+// tryGenerateAndStoreSlidesPDF is the SCRUM-444/445 PDF-pipeline analogue of
+// the per-slide PNG path: convert PPTX → single PDF, stream the PDF up to R2 as
+// deck.pdf, and write a format-tagged manifest. The SPA (SCRUM-446) reads
+// pdf_url + slide_count and renders pages on demand via PDF.js, eliminating the
+// pdftoppm memory peak that drove the Render Starter OOMs.
+//
+// Markers (processing.json / failed.json) are managed by the caller so the
+// staleness auto-fail logic in GetSlidesStatus stays unchanged.
+func (h *Handlers) tryGenerateAndStoreSlidesPDF(ctx context.Context, localPath, artifactKey string, pipelineStart time.Time) {
+	tConv := time.Now()
+	pdfPath, slideCount, cleanupConv, err := utils.ConvertPPTXToPDFFn(localPath)
+	convElapsed := time.Since(tConv)
+	if err != nil {
+		log.Printf("slides PDF conversion failed for %s: %v", localPath, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+	defer cleanupConv()
+
+	f, err := os.Open(pdfPath)
+	if err != nil {
+		log.Printf("slides PDF open failed for %s: %v", pdfPath, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		log.Printf("slides PDF stat failed for %s: %v", pdfPath, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+
+	pdfKey := storage.SlidePDFKeyFromArtifactKey(artifactKey)
+	tUpload := time.Now()
+	_, _, err = h.Storage.Put(ctx, pdfKey, f, "application/pdf", info.Size())
+	uploadElapsed := time.Since(tUpload)
+	if err != nil {
+		log.Printf("failed uploading derived PDF for %s: %v", artifactKey, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+
+	manifest := utils.SlideManifest{
+		Format:        utils.SlidesPipelinePDF,
+		SlideCount:    slideCount,
+		PDFStorageKey: pdfKey,
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		log.Printf("failed marshalling PDF slide manifest for %s: %v", artifactKey, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+	manifestKey := storage.SlidesManifestKeyFromArtifactKey(artifactKey)
+	tManifest := time.Now()
+	_, _, err = h.Storage.Put(ctx, manifestKey, bytes.NewReader(manifestBytes), "application/json", int64(len(manifestBytes)))
+	manifestElapsed := time.Since(tManifest)
+	if err != nil {
+		log.Printf("failed uploading PDF slide manifest for %s: %v", artifactKey, err)
+		h.writeSlidesFailureMarkerStorage(ctx, artifactKey, err.Error())
+		return
+	}
+
+	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
+	log.Printf("slides PDF pipeline summary: key=%s pages=%d pdf_bytes=%d convert=%v upload_pdf=%v manifest_put=%v total=%v",
+		artifactKey, slideCount, info.Size(), convElapsed, uploadElapsed, manifestElapsed, time.Since(pipelineStart))
+	log.Printf("generated derived PDF (%d pages) for %s", slideCount, artifactKey)
+}
+
+// tryGenerateAndStoreSlidesLocalPDF is the local-disk analogue of the R2 PDF
+// pipeline: produces <storageURL>_slides/deck.pdf + a format-tagged
+// manifest.json. The GetMaterialSlidePDF handler streams deck.pdf with
+// Accept-Ranges support so PDF.js can range-fetch pages.
+func tryGenerateAndStoreSlidesLocalPDF(localPath string, pipelineStart time.Time) {
+	tConv := time.Now()
+	pdfPath, slideCount, cleanupConv, err := utils.ConvertPPTXToPDFFn(localPath)
+	convElapsed := time.Since(tConv)
+	if err != nil {
+		log.Printf("slides PDF conversion failed (local) for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
+		return
+	}
+	defer cleanupConv()
+
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	tMkdir := time.Now()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("slides PDF local mkdir failed for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
+		return
+	}
+	mkdirElapsed := time.Since(tMkdir)
+
+	dstPath := filepath.Join(dir, "deck.pdf")
+	tCopy := time.Now()
+	if err := copyLocalPDFFile(pdfPath, dstPath); err != nil {
+		log.Printf("slides PDF local copy failed for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
+		return
+	}
+	copyElapsed := time.Since(tCopy)
+
+	manifest := utils.SlideManifest{
+		Format:         utils.SlidesPipelinePDF,
+		SlideCount:     slideCount,
+		PDFStoragePath: "deck.pdf",
+	}
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		log.Printf("failed marshalling PDF slide manifest (local) for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifestBytes, 0644); err != nil {
+		log.Printf("failed writing PDF slide manifest (local) for %s: %v", localPath, err)
+		writeSlidesFailureMarkerLocal(localPath, err.Error())
+		return
+	}
+	clearSlidesFailureMarkerLocal(localPath)
+	log.Printf("slides PDF pipeline summary (local): path=%s pages=%d convert=%v mkdir=%v copy=%v total=%v",
+		localPath, slideCount, convElapsed, mkdirElapsed, copyElapsed, time.Since(pipelineStart))
+	log.Printf("generated derived PDF (%d pages, local) for %s", slideCount, localPath)
+}
+
+// copyLocalPDFFile copies the converter's temp PDF into the persistent _slides
+// directory. A direct rename would be faster but the temp dir lives on a
+// different volume from uploads under TALKBACK_SOFFICE_CMD (Docker) mode, so a
+// streaming copy is the portable choice.
+func copyLocalPDFFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open src: %w", err)
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create dst: %w", err)
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	return nil
 }
 
 // HasSlidesManifest returns true if the material (PPT/PPTX) has a derived slides manifest available (viewable in UI).
@@ -1265,19 +1435,19 @@ func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
 		Slides:     []MaterialSlidePayload{},
 	}
 
-	// Local storage: read manifest from disk and return slide-image API URLs
+	// Local storage: read manifest from disk and dispatch on Format.
 	if mat.StorageProvider == "local" && strings.TrimSpace(mat.StorageURL) != "" {
 		manifestPath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", "manifest.json")
 		manifestBytes, err := os.ReadFile(manifestPath)
 		if err != nil {
 			log.Printf("slides manifest missing or unreadable for material %s path %s: %v", materialID, manifestPath, err)
-			writeJSON(w, http.StatusOK, resp)
+			http.Error(w, "Slides not available", http.StatusNotFound)
 			return
 		}
 		var manifest utils.SlideManifest
 		if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 			log.Printf("failed to decode slides manifest for material %s: %v", materialID, err)
-			writeJSON(w, http.StatusOK, resp)
+			http.Error(w, "Slides not available", http.StatusNotFound)
 			return
 		}
 		scheme := "https"
@@ -1288,6 +1458,29 @@ func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
 			scheme = s
 		}
 		baseURL := scheme + "://" + r.Host
+		// SCRUM-444/445: PDF-format manifests serve deck.pdf via the slide-pdf
+		// handler so PDF.js can range-fetch pages.
+		if strings.EqualFold(manifest.Format, utils.SlidesPipelinePDF) {
+			pdfPath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", "deck.pdf")
+			if _, err := os.Stat(pdfPath); err != nil {
+				log.Printf("slides PDF artifact missing for material %s path %s: %v", materialID, pdfPath, err)
+				http.Error(w, "Slides not available", http.StatusNotFound)
+				return
+			}
+			resp.Format = utils.SlidesPipelinePDF
+			resp.SlideCount = manifest.SlideCount
+			resp.PDFURL = fmt.Sprintf("%s/sessions/%s/materials/%s/slide-pdf", baseURL, sessionID.String(), materialID.String())
+			writeJSON(w, http.StatusOK, resp)
+			return
+		}
+		// Legacy PNG path. Treat an empty manifest (no Format, no entries) as a
+		// corrupt write and fail closed so the SPA shows a real error instead of
+		// a silently-empty deck.
+		if len(manifest.Slides) == 0 {
+			log.Printf("slides manifest has no entries for material %s path %s (corrupt or mid-write)", materialID, manifestPath)
+			http.Error(w, "Slides not available", http.StatusNotFound)
+			return
+		}
 		for _, entry := range manifest.Slides {
 			slideURL := fmt.Sprintf("%s/sessions/%s/materials/%s/slide-image?index=%d", baseURL, sessionID.String(), materialID.String(), entry.Index)
 			resp.Slides = append(resp.Slides, MaterialSlidePayload{
@@ -1299,26 +1492,68 @@ func (h *Handlers) GetMaterialSlides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// R2 storage: read manifest from storage and presign each slide
+	// R2 storage: read manifest from storage and dispatch on Format.
 	if h.Storage == nil || strings.TrimSpace(mat.StorageKey) == "" {
-		writeJSON(w, http.StatusOK, resp)
+		http.Error(w, "Slides not available", http.StatusNotFound)
 		return
 	}
 	manifestKey := storage.SlidesManifestKeyFromArtifactKey(mat.StorageKey)
 	rc, err := h.Storage.Get(ctx, manifestKey)
 	if err != nil {
 		log.Printf("slides manifest missing or unreadable for material %s key %s: %v (slide generation may still be running or have failed — check logs for 'slide generation started' / 'slides conversion failed' / 'generated N derived slides')", materialID, manifestKey, err)
-		writeJSON(w, http.StatusOK, resp)
+		http.Error(w, "Slides not available", http.StatusNotFound)
 		return
 	}
 	defer rc.Close()
 	var manifest utils.SlideManifest
 	if err := json.NewDecoder(rc).Decode(&manifest); err != nil {
 		log.Printf("failed to decode slides manifest for material %s key %s: %v", materialID, manifestKey, err)
-		writeJSON(w, http.StatusOK, resp)
+		http.Error(w, "Slides not available", http.StatusNotFound)
 		return
 	}
 	presignTTL := time.Hour
+	// SCRUM-444/445: PDF-format manifests presign deck.pdf instead of per-image
+	// URLs. Head() first so a corrupt manifest (manifest says PDF but deck.pdf
+	// missing) fails with 404 instead of returning a presigned URL that 403s on
+	// fetch. Test #11 guards this.
+	if strings.EqualFold(manifest.Format, utils.SlidesPipelinePDF) {
+		pdfKey := manifest.PDFStorageKey
+		if strings.TrimSpace(pdfKey) == "" {
+			pdfKey = storage.SlidePDFKeyFromArtifactKey(mat.StorageKey)
+		}
+		exists, _, _, hErr := h.Storage.Head(ctx, pdfKey)
+		if hErr != nil || !exists {
+			log.Printf("slides PDF artifact missing for material %s key %s: exists=%v err=%v", materialID, pdfKey, exists, hErr)
+			http.Error(w, "Slides not available", http.StatusNotFound)
+			return
+		}
+		url, err := h.Storage.PresignGet(ctx, pdfKey, presignTTL)
+		if err != nil {
+			log.Printf("failed to presign PDF for material %s key %s: %v", materialID, pdfKey, err)
+			http.Error(w, "Slides not available", http.StatusNotFound)
+			return
+		}
+		resp.Format = utils.SlidesPipelinePDF
+		resp.SlideCount = manifest.SlideCount
+		resp.PDFURL = url
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
+	// Legacy PNG path. Head the first slide as a sanity check so a corrupt
+	// manifest (slide-001.png removed/never-written) fails fast with 404 rather
+	// than returning broken URLs (test #12).
+	if len(manifest.Slides) == 0 {
+		log.Printf("slides manifest has no entries for material %s key %s (corrupt or mid-write)", materialID, manifestKey)
+		http.Error(w, "Slides not available", http.StatusNotFound)
+		return
+	}
+	firstKey := manifest.Slides[0].StorageKey
+	if exists, _, _, hErr := h.Storage.Head(ctx, firstKey); hErr != nil || !exists {
+		log.Printf("first slide missing for material %s manifest_key=%s slide_key=%s exists=%v err=%v", materialID, manifestKey, firstKey, exists, hErr)
+		http.Error(w, "Slides not available", http.StatusNotFound)
+		return
+	}
 	resp.Slides = make([]MaterialSlidePayload, 0, len(manifest.Slides))
 	for _, entry := range manifest.Slides {
 		url, err := h.Storage.PresignGet(ctx, entry.StorageKey, presignTTL)
@@ -1407,4 +1642,77 @@ func (h *Handlers) GetMaterialSlideImage(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.WriteHeader(http.StatusOK)
 	w.Write(data)
+}
+
+// GetMaterialSlidePDF serves the consolidated deck.pdf for local-storage
+// materials produced by the SCRUM-444/445 PDF pipeline. Uses http.ServeContent
+// so Range requests work — PDF.js (SCRUM-446) range-fetches pages on demand
+// rather than downloading the whole deck up front.
+func (h *Handlers) GetMaterialSlidePDF(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	ctx := r.Context()
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	var sessionIDStr, materialIDStr string
+	switch {
+	case len(pathParts) >= 6 && pathParts[0] == "api" && pathParts[1] == "sessions" && pathParts[3] == "materials" && pathParts[5] == "slide-pdf":
+		sessionIDStr = pathParts[2]
+		materialIDStr = pathParts[4]
+	case len(pathParts) >= 5 && pathParts[0] == "sessions" && pathParts[2] == "materials" && pathParts[4] == "slide-pdf":
+		sessionIDStr = pathParts[1]
+		materialIDStr = pathParts[3]
+	default:
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
+		return
+	}
+	materialID, err := uuid.Parse(materialIDStr)
+	if err != nil {
+		http.Error(w, "Invalid material ID", http.StatusBadRequest)
+		return
+	}
+	mat, err := h.DB.GetMaterialByID(ctx, materialID)
+	if err != nil || mat == nil {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.SessionID != sessionID {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if !models.MaterialSupportsDerivedSlideDeck(mat) {
+		http.Error(w, "Material not found", http.StatusNotFound)
+		return
+	}
+	if mat.StorageProvider != "local" || strings.TrimSpace(mat.StorageURL) == "" {
+		http.Error(w, "Slide PDF only available for local-storage materials", http.StatusNotFound)
+		return
+	}
+	pdfPath := filepath.Join(storage.UploadRoot(), mat.StorageURL+"_slides", "deck.pdf")
+	f, err := os.Open(pdfPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Slide PDF not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("GetMaterialSlidePDF open %s: %v", pdfPath, err)
+		http.Error(w, "Failed to read slide PDF", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		log.Printf("GetMaterialSlidePDF stat %s: %v", pdfPath, err)
+		http.Error(w, "Failed to read slide PDF", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	http.ServeContent(w, r, "deck.pdf", info.ModTime(), f)
 }
