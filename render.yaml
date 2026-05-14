@@ -91,3 +91,10 @@ services:
         value: "false"   # flip to "true" in Dashboard when ready to roll out
       - key: MARKITDOWN_URL_EXTRACTION_ENABLED
         value: "false"   # flip to "true" in Dashboard when ready to roll out
+      # SCRUM-444/447: slide pipeline cutover. "pdf" enables the deck.pdf +
+      # PDF.js pipeline (SCRUM-445 backend + SCRUM-446 SPA viewer); "pngs"
+      # (or unset) keeps the legacy per-slide PNG path. Rollback is a one-line
+      # revert of this value — existing PDF artifacts in R2 are harmless under
+      # the legacy default because the SPA dispatcher routes on manifest.format.
+      - key: TALKBACK_SLIDES_PIPELINE
+        value: pdf
