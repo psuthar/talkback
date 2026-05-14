@@ -3,16 +3,28 @@
  */
 
 /**
+ * SCRUM-444/445: dual-format response shape.
+ * Legacy (PNG pipeline): { material_id, slides: [{index, image_url}, ...] }
+ * New (PDF pipeline):    { material_id, format: "pdf", slide_count, pdf_url }
  * @typedef {{ index: number; image_url: string }} MaterialSlide
- * @typedef {{ material_id: string; slides: MaterialSlide[] }} MaterialSlidesResponse
+ * @typedef {{
+ *   material_id: string;
+ *   format?: "pdf";
+ *   slide_count?: number;
+ *   pdf_url?: string;
+ *   slides: MaterialSlide[];
+ * }} MaterialSlidesResponse
  */
 
 /**
- * Load slide metadata and presigned image URLs for a slides material.
+ * Load slide metadata for a slides material. Returns the response body on 2xx,
+ * or `null` on 404 (SCRUM-445: server returns 404 when the slides artifact has
+ * not been written yet — the SPA treats null as "still generating" and keeps
+ * polling).
  * @param {string} apiBaseUrl
  * @param {string} sessionId
  * @param {string} materialId
- * @returns {Promise<MaterialSlidesResponse>}
+ * @returns {Promise<MaterialSlidesResponse | null>}
  */
 export async function getMaterialSlides(apiBaseUrl, sessionId, materialId) {
   const base = (apiBaseUrl || '').replace(/\/$/, '')
@@ -20,6 +32,7 @@ export async function getMaterialSlides(apiBaseUrl, sessionId, materialId) {
     `${base}/sessions/${sessionId}/materials/${materialId}/slides`,
     { credentials: 'include' }
   )
+  if (res.status === 404) return null
   if (!res.ok) {
     throw new Error(`Failed to load slides: ${res.status}`)
   }
