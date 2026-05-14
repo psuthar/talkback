@@ -1,4 +1,12 @@
-/* InlineSpinner */
+/* InlineSpinner — visual properties only.
+   SCRUM-450: animation lives in the JSX inline style, not here. CSS Modules
+   scopes animation-name by default (rewriting "tb-spin" to "_tb-spin_<hash>_"),
+   which breaks the link to the globally-injected @keyframes from
+   ensureSpinnerStyle() in the .jsx. PostCSS also rejects :global(name)
+   inside the `animation` shorthand. The cleanest fix is to keep the
+   visual rule here as a CSS-Module class and apply the keyframe via an
+   inline `style={{ animation: ... }}` on the React element — same pattern
+   SlideDeckViewer.jsx uses (its inline-style spinner animates fine). */
 .inlineSpinner {
   display: inline-block;
   width: 10px;
@@ -6,7 +14,6 @@
   border: 2px solid #e65100;
   border-top-color: transparent;
   border-radius: 50%;
-  animation: tb-spin 0.8s linear infinite;
   vertical-align: middle;
   flex-shrink: 0;
 }

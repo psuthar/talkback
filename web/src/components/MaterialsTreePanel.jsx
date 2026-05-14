@@ -13,10 +13,19 @@ function ensureSpinnerStyle() {
   document.head.appendChild(style)
 }
 
-/** Small inline spinner shown while async background tasks are running (e.g. slide generation). */
+/** Small inline spinner shown while async background tasks are running (e.g. slide generation).
+ *  SCRUM-450: the rotation lives in an inline style so the keyframe reference
+ *  is NOT subject to CSS Modules animation-name scoping. Visual properties
+ *  (size, color, border) stay in the .module.css class. */
 function InlineSpinner() {
   ensureSpinnerStyle()
-  return <span aria-hidden className={styles.inlineSpinner} />
+  return (
+    <span
+      aria-hidden
+      className={styles.inlineSpinner}
+      style={{ animation: 'tb-spin 0.8s linear infinite' }}
+    />
+  )
 }
 
 /** Shared "Materials" header with chevron for creator and participant left panel.
