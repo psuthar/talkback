@@ -136,6 +136,14 @@ func SlidesManifestKeyFromArtifactKey(artifactKey string) string {
 	return SlidesPrefixFromArtifactKey(artifactKey) + "manifest.json"
 }
 
+// SlidesProcessingKeyFromArtifactKey returns the storage key for the in-flight slide-derivation marker
+// (SCRUM-443). Written on goroutine entry and deleted on terminal success/error so a goroutine killed
+// mid-flight (OOM, instance restart) leaves the marker behind. GetSlidesStatus checks the marker's age
+// to detect stranded conversions and lazily auto-fail them.
+func SlidesProcessingKeyFromArtifactKey(artifactKey string) string {
+	return SlidesPrefixFromArtifactKey(artifactKey) + "processing.json"
+}
+
 // SlideImageKeyFromArtifactKey returns the storage key for a specific slide PNG for a given artifact key and 1-based index.
 // Using the example above and index=1, this would be "prefix/sessions/<sid>/data/uploads/Galaxy.pptx_slides/slide-001.png".
 func SlideImageKeyFromArtifactKey(artifactKey string, index int) string {
