@@ -285,6 +285,38 @@ describe('SlideDeckViewer dispatcher — SCRUM-444/446', () => {
     fetchMock.mockRestore()
   })
 
+  it('SlideDeckViewer_NoRefetchLoop_WhenSecondGetDocumentAlsoFails_SCRUM449', async () => {
+    // Regression for SCRUM-449: the one-shot retry latch must not be reset
+    // by a fresh pdfUrl from the parent's refetch. Before the fix, the
+    // dispatcher would call /slides → SlideDeckViewerPDF would call
+    // onRefetch on getDocument failure → parent returns a new pdfUrl
+    // (different presign sig) → SlideDeckViewerPDF re-armed the latch via
+    // its [pdfUrl] reset effect → infinite loop in production when R2
+    // CORS permanently blocked the fetch.
+    //
+    // Fix: don't reset the latch on pdfUrl change; rely on natural remount
+    // for materialId-change resets. With this fix, two consecutive failing
+    // getDocument calls produce exactly two total fetches (initial + one
+    // refetch) and surface the error UI — no third attempt, no loop.
+    mockGetDocumentFailures = 2
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(() =>
+      jsonResponse({
+        material_id: MATERIAL_ID,
+        format: 'pdf',
+        slide_count: 5,
+        pdf_url: 'https://example.com/deck.pdf?retry=' + Math.random(),
+      }),
+    )
+    render(<SlideDeckViewer apiBaseUrl="/api" sessionId={SESSION_ID} materialId={MATERIAL_ID} />)
+
+    await waitFor(() => expect(screen.getByText(/Unable to load slides/i)).toBeInTheDocument())
+
+    // Exactly one refetch beyond the initial fetch — total 2.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(mockGetDocument).toHaveBeenCalledTimes(2)
+    fetchMock.mockRestore()
+  })
+
   it('SlideDeckViewer_RefetchOnSlidesRefreshTriggerBump_WhileStillGenerating_SCRUM448', async () => {
     // The bump must still drive a refetch when slides are not yet loaded —
     // that is the original purpose of the trigger (accelerate the
