@@ -830,6 +830,11 @@ func (h *Handlers) ensureSessionArtifactForMaterials(ctx context.Context, sessio
 func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath string, artifactKey string) {
 	pipelineStart := time.Now()
 	log.Printf("slide generation started for %s (key=%s)", localPath, artifactKey)
+	// SCRUM-443: write processing.json BEFORE clearing failed.json so concurrent reads always see
+	// a marker. defer the clear so an OOM-killed goroutine leaves processing.json behind for
+	// GetSlidesStatus to detect via the staleness threshold.
+	h.writeSlidesProcessingMarkerStorage(ctx, artifactKey)
+	defer h.clearSlidesProcessingMarkerStorage(ctx, artifactKey)
 	h.clearSlidesFailureMarkerStorage(ctx, artifactKey)
 	tConv := time.Now()
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
@@ -904,6 +909,10 @@ func (h *Handlers) tryGenerateAndStoreSlides(ctx context.Context, localPath stri
 func (h *Handlers) tryGenerateAndStoreSlidesLocal(_ context.Context, localPath string) {
 	pipelineStart := time.Now()
 	log.Printf("slide generation started (local) for %s", localPath)
+	// SCRUM-443: mirror R2 path — write processing.json before clearing failed.json; defer clear so
+	// a killed goroutine leaves the marker for GetSlidesStatus to staleness-check.
+	writeSlidesProcessingMarkerLocal(localPath)
+	defer clearSlidesProcessingMarkerLocal(localPath)
 	clearSlidesFailureMarkerLocal(localPath)
 	tConv := time.Now()
 	slides, err := utils.ConvertSlidesToPNGsWithLibreOffice(localPath)
@@ -1021,7 +1030,123 @@ func (h *Handlers) clearSlidesFailureMarkerStorage(ctx context.Context, artifact
 	_ = h.Storage.Delete(ctx, slidesFailureMarkerKeyFromArtifactKey(artifactKey))
 }
 
+// SCRUM-443: in-flight slide-derivation marker. Written on goroutine entry, deleted (via defer) on
+// terminal success/error. If the goroutine is killed mid-flight (OOM, container restart), the marker
+// persists and GetSlidesStatus uses its age to detect stranded conversions and auto-fail them.
+
+// SlidesStaleProcessingThreshold is how long a processing.json marker may live before GetSlidesStatus
+// treats it as stranded. soffice has a 3-min hard cap + pdftoppm ~1 min + R2 uploads ~1 min, so 6 min
+// is safely past any successful completion.
+const SlidesStaleProcessingThreshold = 6 * time.Minute
+
+type slidesProcessingMarker struct {
+	StartedAt     string `json:"started_at"`
+	MarkerVersion int    `json:"marker_version"`
+}
+
+func slidesProcessingMarkerPayload() []byte {
+	payload, _ := json.Marshal(slidesProcessingMarker{
+		StartedAt:     time.Now().UTC().Format(time.RFC3339),
+		MarkerVersion: 1,
+	})
+	return payload
+}
+
+func slidesProcessingMarkerPathFromStorageURL(storageURL string) string {
+	return filepath.Join(storage.UploadRoot(), storageURL+"_slides", "processing.json")
+}
+
+func writeSlidesProcessingMarkerLocal(localPath string) {
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "processing.json"), slidesProcessingMarkerPayload(), 0644)
+}
+
+func clearSlidesProcessingMarkerLocal(localPath string) {
+	dir := filepath.Join(filepath.Dir(localPath), filepath.Base(localPath)+"_slides")
+	_ = os.Remove(filepath.Join(dir, "processing.json"))
+}
+
+func (h *Handlers) writeSlidesProcessingMarkerStorage(ctx context.Context, artifactKey string) {
+	if h.Storage == nil || strings.TrimSpace(artifactKey) == "" {
+		return
+	}
+	payload := slidesProcessingMarkerPayload()
+	key := storage.SlidesProcessingKeyFromArtifactKey(artifactKey)
+	_, _, _ = h.Storage.Put(ctx, key, bytes.NewReader(payload), "application/json", int64(len(payload)))
+}
+
+func (h *Handlers) clearSlidesProcessingMarkerStorage(ctx context.Context, artifactKey string) {
+	if h.Storage == nil || strings.TrimSpace(artifactKey) == "" {
+		return
+	}
+	_ = h.Storage.Delete(ctx, storage.SlidesProcessingKeyFromArtifactKey(artifactKey))
+}
+
+// handleStaleSlidesMarkerLocal lazily auto-fails a stale processing.json marker on the local filesystem.
+// Returns true if the marker was stale (in which case failed.json has been written and processing.json
+// removed). Returns false on parse errors, fresh markers, or read errors — caller falls through to
+// "processing" so the UI keeps polling rather than locking a brand-new conversion into a wrong state.
+func (h *Handlers) handleStaleSlidesMarkerLocal(storageURL string, data []byte) bool {
+	var marker slidesProcessingMarker
+	if err := json.Unmarshal(data, &marker); err != nil {
+		return false
+	}
+	startedAt, err := time.Parse(time.RFC3339, marker.StartedAt)
+	if err != nil {
+		return false
+	}
+	if time.Since(startedAt) <= SlidesStaleProcessingThreshold {
+		return false
+	}
+	localSourcePath := filepath.Join(storage.UploadRoot(), storageURL)
+	writeSlidesFailureMarkerLocal(localSourcePath,
+		fmt.Sprintf("stranded by instance restart or kill (no terminal marker after %v)", SlidesStaleProcessingThreshold))
+	clearSlidesProcessingMarkerLocal(localSourcePath)
+	return true
+}
+
+// handleStaleSlidesMarkerStorage is the R2 equivalent of handleStaleSlidesMarkerLocal. It downloads
+// the processing.json body via Storage.Get (Head doesn't return content), checks the started_at age,
+// and if stale writes failed.json + deletes processing.json. Returns true iff it auto-failed.
+func (h *Handlers) handleStaleSlidesMarkerStorage(ctx context.Context, artifactKey, processingKey string) bool {
+	reader, err := h.Storage.Get(ctx, processingKey)
+	if err != nil || reader == nil {
+		return false
+	}
+	data, readErr := io.ReadAll(reader)
+	_ = reader.Close()
+	if readErr != nil {
+		return false
+	}
+	var marker slidesProcessingMarker
+	if jsonErr := json.Unmarshal(data, &marker); jsonErr != nil {
+		return false
+	}
+	startedAt, parseErr := time.Parse(time.RFC3339, marker.StartedAt)
+	if parseErr != nil {
+		return false
+	}
+	if time.Since(startedAt) <= SlidesStaleProcessingThreshold {
+		return false
+	}
+	h.writeSlidesFailureMarkerStorage(ctx, artifactKey,
+		fmt.Sprintf("stranded by instance restart or kill (no terminal marker after %v)", SlidesStaleProcessingThreshold))
+	h.clearSlidesProcessingMarkerStorage(ctx, artifactKey)
+	return true
+}
+
 // GetSlidesStatus returns "ready", "processing", or "failed" for PPT/PPTX materials using the slide pipeline.
+//
+// Precedence (SCRUM-443):
+//  1. manifest.json present → "ready"
+//  2. failed.json present → "failed"
+//  3. processing.json present + started_at older than SlidesStaleProcessingThreshold → lazily write
+//     failed.json + delete processing.json, return "failed" (stranded by OOM/restart)
+//  4. processing.json present + fresh → "processing"
+//  5. no markers at all → "processing" (legacy compat for materials that pre-date processing.json)
 func (h *Handlers) GetSlidesStatus(ctx context.Context, mat *models.Material) string {
 	if mat == nil || !models.MaterialSupportsDerivedSlideDeck(mat) {
 		return ""
@@ -1032,6 +1157,11 @@ func (h *Handlers) GetSlidesStatus(ctx context.Context, mat *models.Material) st
 		}
 		if _, err := os.Stat(slidesFailureMarkerPathFromStorageURL(mat.StorageURL)); err == nil {
 			return "failed"
+		}
+		if data, err := os.ReadFile(slidesProcessingMarkerPathFromStorageURL(mat.StorageURL)); err == nil {
+			if h.handleStaleSlidesMarkerLocal(mat.StorageURL, data) {
+				return "failed"
+			}
 		}
 		return "processing"
 	}
@@ -1044,6 +1174,12 @@ func (h *Handlers) GetSlidesStatus(ctx context.Context, mat *models.Material) st
 		failureKey := slidesFailureMarkerKeyFromArtifactKey(mat.StorageKey)
 		if exists, _, _, err := h.Storage.Head(ctx, failureKey); err == nil && exists {
 			return "failed"
+		}
+		processingKey := storage.SlidesProcessingKeyFromArtifactKey(mat.StorageKey)
+		if exists, _, _, err := h.Storage.Head(ctx, processingKey); err == nil && exists {
+			if h.handleStaleSlidesMarkerStorage(ctx, mat.StorageKey, processingKey) {
+				return "failed"
+			}
 		}
 		return "processing"
 	}
