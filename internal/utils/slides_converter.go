@@ -26,8 +26,18 @@ type ConvertedSlide struct {
 }
 
 // SlideManifest describes the derived slide assets stored in object storage.
+//
+// SCRUM-444/445: extended for the PDF pipeline. Legacy manifests
+// ({"slides":[...]}) decode with Format == "" (treated as "pngs"). New PDF
+// manifests carry Format="pdf" + SlideCount + a PDF locator (PDFStorageKey for
+// R2, PDFStoragePath for the local-disk driver). Slides remains the legacy
+// per-image list, empty under the PDF path.
 type SlideManifest struct {
-	Slides []SlideManifestEntry `json:"slides"`
+	Format         string               `json:"format,omitempty"`
+	SlideCount     int                  `json:"slide_count,omitempty"`
+	PDFStorageKey  string               `json:"pdf_storage_key,omitempty"`
+	PDFStoragePath string               `json:"pdf_storage_path,omitempty"`
+	Slides         []SlideManifestEntry `json:"slides,omitempty"`
 }
 
 // SlideManifestEntry describes a single derived slide asset.
@@ -35,6 +45,33 @@ type SlideManifestEntry struct {
 	Index      int    `json:"index"`
 	StorageKey string `json:"storage_key"`
 }
+
+// SlidesPipelinePDF identifies the PDF pipeline; SlidesPipelinePNGs is the legacy raster path.
+const (
+	SlidesPipelinePDF  = "pdf"
+	SlidesPipelinePNGs = "pngs"
+)
+
+// SlidesPipeline returns the active slides pipeline ("pdf" or "pngs") from the
+// TALKBACK_SLIDES_PIPELINE env. Default and any non-"pdf" value are treated as
+// the legacy "pngs" pipeline so the cutover stays a one-line render.yaml flip.
+func SlidesPipeline() string {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("TALKBACK_SLIDES_PIPELINE"))); v == SlidesPipelinePDF {
+		return SlidesPipelinePDF
+	}
+	return SlidesPipelinePNGs
+}
+
+// ConvertPPTXToPDFFn is the active PPTX→PDF converter, wired to
+// ConvertPPTXToPDFWithLibreOffice in production. Exposed as a variable so
+// SCRUM-444/445 tests can inject a stub that returns a known PDF path without
+// invoking the real soffice binary (CI may not have LibreOffice installed).
+var ConvertPPTXToPDFFn func(srcPath string) (string, int, func(), error) = ConvertPPTXToPDFWithLibreOffice
+
+// ConvertSlidesToPNGsFn is the equivalent injection point for the legacy PNG
+// raster path. Keeping both injection points symmetric lets the same test
+// scaffolding cover the regression case for flag="pngs".
+var ConvertSlidesToPNGsFn func(srcPath string) ([]ConvertedSlide, error) = ConvertSlidesToPNGsWithLibreOffice
 
 // sofficeCmd returns the executable to use for slide conversion: TALKBACK_SOFFICE_CMD if set, otherwise "soffice".
 func sofficeCmd() (string, error) {
@@ -640,5 +677,122 @@ func ConvertSlidesToPNGsWithLibreOffice(srcPath string) ([]ConvertedSlide, error
 	log.Printf("slides timing: read %d png files %v | convert total %v src=%s",
 		len(slides), time.Since(tRead), time.Since(overallStart), srcPath)
 	return slides, nil
+}
+
+// ConvertPPTXToPDFWithLibreOffice converts srcPath to a single PDF on disk via the
+// same Step 1 (unoconv-or-soffice) used by ConvertSlidesToPNGsWithLibreOffice. The
+// pdftoppm rasterisation step is intentionally omitted — under the PDF pipeline
+// (SCRUM-444) the SPA renders pages on demand via PDF.js, eliminating the
+// per-deck pdftoppm memory peak (~150-200 MB on Render Starter).
+//
+// On success the caller receives:
+//   - pdfPath:    absolute path to the produced PDF (caller streams to storage).
+//   - slideCount: page count from pdfinfo, or 0 if pdfinfo is unavailable.
+//   - cleanup:    closes/removes the temp dir holding pdfPath; always non-nil
+//     when err == nil. Callers should defer cleanup() immediately.
+//
+// The function honors the same TALKBACK_SOFFICE_TIMEOUT, TALKBACK_SOFFICE_CMD,
+// TALKBACK_USE_UNOCONV, and TALKBACK_UPLOAD_ROOT envs as the legacy converter so
+// ops have one consistent surface across pipelines.
+func ConvertPPTXToPDFWithLibreOffice(srcPath string) (string, int, func(), error) {
+	overallStart := time.Now()
+
+	unoconvActive := useUnoconv()
+	_, sofficeAvailErr := sofficeCmd()
+	if !unoconvActive && sofficeAvailErr != nil {
+		return "", 0, nil, sofficeAvailErr
+	}
+
+	semWait := time.Now()
+	slideConversionSem <- struct{}{}
+	if d := time.Since(semWait); d > 200*time.Millisecond {
+		log.Printf("slides timing: waited %v for conversion slot (queue) src=%s", d, srcPath)
+	}
+	// Hold the semaphore until cleanup runs so concurrent PPTX uploads still
+	// serialise through soffice (the converter cost is what we cap, not the
+	// caller's R2 upload).
+	releaseSem := func() { <-slideConversionSem }
+
+	var tmpDir string
+	var mkdirErr error
+	if os.Getenv("TALKBACK_SOFFICE_CMD") != "" {
+		base := uploadRootForTemp()
+		if err := os.MkdirAll(base, 0755); err != nil {
+			releaseSem()
+			return "", 0, nil, fmt.Errorf("create temp base for soffice: %w", err)
+		}
+		tmpDir, mkdirErr = os.MkdirTemp(base, "talkback-pdfslides-*")
+	} else {
+		tmpDir, mkdirErr = os.MkdirTemp("", "talkback-pdfslides-*")
+	}
+	if mkdirErr != nil {
+		releaseSem()
+		return "", 0, nil, mkdirErr
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tmpDir)
+		releaseSem()
+	}
+
+	sofficeTimeout := 3 * time.Minute
+	if s := strings.TrimSpace(os.Getenv("TALKBACK_SOFFICE_TIMEOUT")); s != "" {
+		if seconds, parseErr := strconv.Atoi(s); parseErr == nil && seconds > 0 {
+			sofficeTimeout = time.Duration(seconds) * time.Second
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sofficeTimeout)
+	defer cancel()
+
+	tConv := time.Now()
+	var pdfPath string
+	if unoconvActive {
+		var err error
+		pdfPath, err = convertWithUnoconv(ctx, srcPath, tmpDir)
+		if err != nil {
+			if sofficeAvailErr != nil {
+				cleanup()
+				return "", 0, nil, fmt.Errorf("slides conversion failed: unoconv errored (%w) and soffice is unavailable: %v", err, sofficeAvailErr)
+			}
+			log.Printf("[WARN] slides: unoconv failed (%v); falling back to soffice for %s", err, srcPath)
+			unoconvActive = false
+		} else {
+			log.Printf("slides timing: unoconv pptx→pdf %v src=%s", time.Since(tConv), srcPath)
+		}
+	}
+	if !unoconvActive {
+		soffStart := time.Now()
+		cmdPath, _ := sofficeCmd()
+		cmd := exec.CommandContext(ctx, cmdPath, "--headless", "--convert-to", "pdf", "--outdir", tmpDir, srcPath)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			cleanup()
+			if ctx.Err() == context.DeadlineExceeded {
+				return "", 0, nil, fmt.Errorf("soffice conversion to PDF timed out after %s", sofficeTimeout)
+			}
+			return "", 0, nil, fmt.Errorf("soffice conversion to PDF failed: %w; output=%s", err, string(output))
+		}
+		baseName := strings.TrimSuffix(filepath.Base(srcPath), filepath.Ext(srcPath))
+		pdfPath = filepath.Join(tmpDir, baseName+".pdf")
+		if _, err := os.Stat(pdfPath); err != nil {
+			candidates, _ := filepath.Glob(filepath.Join(tmpDir, baseName+".*"))
+			resolved := ""
+			for _, c := range candidates {
+				if strings.EqualFold(filepath.Ext(c), ".pdf") {
+					resolved = c
+					break
+				}
+			}
+			if resolved == "" {
+				cleanup()
+				return "", 0, nil, fmt.Errorf("soffice did not produce expected PDF %s: %w", pdfPath, err)
+			}
+			pdfPath = resolved
+		}
+		log.Printf("slides timing: soffice pptx→pdf %v src=%s", time.Since(soffStart), srcPath)
+	}
+
+	slideCount := pdfPageCount(ctx, pdfPath)
+	log.Printf("slides timing: pptx→pdf total %v pages=%d src=%s", time.Since(overallStart), slideCount, srcPath)
+	return pdfPath, slideCount, cleanup, nil
 }
 
