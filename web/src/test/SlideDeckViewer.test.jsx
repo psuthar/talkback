@@ -238,6 +238,102 @@ describe('SlideDeckViewer dispatcher — SCRUM-444/446', () => {
     fetchMock.mockRestore()
   })
 
+  it('SlideDeckViewer_NoReset_OnSlidesRefreshTriggerBump_AfterLoaded_SCRUM448', async () => {
+    // Regression for SCRUM-448: App.jsx bumps slidesRefreshTrigger on every
+    // session_updated event (including sibling material uploads). Before the
+    // fix the loaded viewer would unmount/remount on each bump, snapping
+    // currentPage back to slide 1. After the fix the bump is a no-op once a
+    // response has loaded — verified here by asserting that fetch / getDocument
+    // call counts do not change across a bump and that the canvas stays in
+    // the DOM (no "Loading slides…" replacement).
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(() =>
+      jsonResponse({
+        material_id: MATERIAL_ID,
+        format: 'pdf',
+        slide_count: 5,
+        pdf_url: 'https://example.com/deck.pdf',
+      }),
+    )
+    const { rerender } = render(
+      <SlideDeckViewer
+        apiBaseUrl="/api"
+        sessionId={SESSION_ID}
+        materialId={MATERIAL_ID}
+        slidesRefreshTrigger={0}
+      />,
+    )
+    await screen.findByTestId('slide-deck-viewer-pdf-canvas')
+    await waitFor(() => expect(mockGetDocument).toHaveBeenCalledTimes(1))
+    const fetchCallsBefore = fetchMock.mock.calls.length
+    const getDocCallsBefore = mockGetDocument.mock.calls.length
+
+    rerender(
+      <SlideDeckViewer
+        apiBaseUrl="/api"
+        sessionId={SESSION_ID}
+        materialId={MATERIAL_ID}
+        slidesRefreshTrigger={1}
+      />,
+    )
+    // Allow React + microtasks to settle.
+    await act(async () => { await Promise.resolve() })
+
+    // No new fetch, no new getDocument — viewer didn't unmount + remount.
+    expect(fetchMock.mock.calls.length).toBe(fetchCallsBefore)
+    expect(mockGetDocument.mock.calls.length).toBe(getDocCallsBefore)
+    expect(screen.queryByTestId('slide-deck-viewer-pdf-canvas')).toBeInTheDocument()
+    fetchMock.mockRestore()
+  })
+
+  it('SlideDeckViewer_RefetchOnSlidesRefreshTriggerBump_WhileStillGenerating_SCRUM448', async () => {
+    // The bump must still drive a refetch when slides are not yet loaded —
+    // that is the original purpose of the trigger (accelerate the
+    // "Generating slides…" → ready transition). First fetch returns null
+    // (404 stub → SlideDeckViewer treats as "still generating"); after a
+    // slidesRefreshTrigger bump, the next fetch returns the loaded shape.
+    let nextResponse = null
+    const fetchMock = vi.spyOn(global, 'fetch').mockImplementation(() => {
+      if (nextResponse === null) {
+        return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) })
+      }
+      return jsonResponse(nextResponse)
+    })
+
+    const { rerender } = render(
+      <SlideDeckViewer
+        apiBaseUrl="/api"
+        sessionId={SESSION_ID}
+        materialId={MATERIAL_ID}
+        slidesRefreshTrigger={0}
+      />,
+    )
+    // Initial render lands in the "Generating slides…" empty state.
+    await waitFor(() => expect(screen.getByText(/Generating slide previews/i)).toBeInTheDocument())
+    const fetchCallsBefore = fetchMock.mock.calls.length
+
+    // Backend finished — next fetch returns a real response.
+    nextResponse = {
+      material_id: MATERIAL_ID,
+      format: 'pdf',
+      slide_count: 3,
+      pdf_url: 'https://example.com/deck.pdf',
+    }
+    rerender(
+      <SlideDeckViewer
+        apiBaseUrl="/api"
+        sessionId={SESSION_ID}
+        materialId={MATERIAL_ID}
+        slidesRefreshTrigger={1}
+      />,
+    )
+
+    // The bump drove a refetch (one or more new fetch calls) and the
+    // canvas appeared.
+    await screen.findByTestId('slide-deck-viewer-pdf-canvas')
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(fetchCallsBefore)
+    fetchMock.mockRestore()
+  })
+
   it('SlideDeckViewer_WorkerURLConfigured', async () => {
     // Importing SlideDeckViewerPDF transitively sets GlobalWorkerOptions.workerSrc.
     // We force the lazy import to resolve here.
