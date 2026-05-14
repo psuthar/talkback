@@ -40,12 +40,22 @@ export function SlideDeckViewerPDF({ pdfUrl, slideCount, initialSlide, onRefetch
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // Reset retry latch + page when the deck identity changes.
+  // SCRUM-449: do NOT reset hasRefetchedRef on pdfUrl change. The previous
+  // reset turned the one-shot latch into a no-op because onRefetch produces a
+  // fresh presigned pdf_url, which would immediately re-arm the latch and let
+  // a permanently-broken deck (e.g. R2 CORS blocking the fetch) drive an
+  // infinite refetch loop. Latch reset happens naturally on component
+  // remount, which the parent dispatcher already does whenever materialId
+  // changes (it sets loading=true → SlideDeckViewerPDF unmounts → next mount
+  // gets a fresh ref).
+  //
+  // Citation jumps for the same deck still need to update currentPage when
+  // the parent passes a new initialSlide; do that explicitly, without
+  // touching the retry latch.
   useEffect(() => {
-    hasRefetchedRef.current = false
-    setCurrentPage(safeInitial)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfUrl])
+    if (initialSlide === undefined || initialSlide === null) return
+    setCurrentPage(Math.max(1, Math.min(slideCount || 1, initialSlide)))
+  }, [initialSlide, slideCount])
 
   // Load the document. Re-runs only when pdfUrl changes (e.g. after a refetch).
   useEffect(() => {
