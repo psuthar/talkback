@@ -33,23 +33,27 @@ function InlineSpinner() {
  *  ("Materials (N)") so the rail announces what is behind it instead of showing
  *  a bare chevron. itemCount is opt-in so existing call sites are unchanged. */
 export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount = 0, itemCount = null }) {
-  const showCountedCollapsed = collapsed && itemCount != null
-  const collapsedAriaLabel = collapsed
-    ? `Expand materials panel${itemCount != null ? ` (${itemCount} item${itemCount !== 1 ? 's' : ''})` : ''}`
-    : 'Collapse materials panel'
+  // After SCRUM-451 the outer panel hosts Context + Members + Materials siblings,
+  // so the header label is "Session" rather than "Materials". `itemCount`
+  // continues to control the chunky-vs-thin collapsed-rail layout (callers
+  // that don't pass it get the chevron-only rail) but is no longer rendered as
+  // a numeric badge — that count would have lied because Context/Members are
+  // not materials.
+  const showSessionRail = collapsed && itemCount != null
+  const collapsedAriaLabel = collapsed ? 'Expand session panel' : 'Collapse session panel'
   return (
     <div
       className={`materials-tree-header ${collapsed ? 'materials-tree-header-collapsed' : ''}`}
       style={{
         flexShrink: 0,
-        padding: collapsed ? (showCountedCollapsed ? '14px 4px' : '8px 4px') : '10px 12px',
+        padding: collapsed ? (showSessionRail ? '14px 4px' : '8px 4px') : '10px 12px',
         borderBottom: '1px solid #e0e0e0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: collapsed ? 'center' : 'flex-start',
         gap: '6px',
         cursor: 'pointer',
-        ...(collapsed && { minHeight: showCountedCollapsed ? '120px' : '36px' }),
+        ...(collapsed && { minHeight: showSessionRail ? '120px' : '36px' }),
       }}
       onClick={() => onCollapsedChange(!collapsed)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCollapsedChange(!collapsed); } }}
@@ -57,24 +61,24 @@ export function MaterialsPanelHeader({ collapsed, onCollapsedChange, unreadCount
       tabIndex={0}
       aria-label={collapsedAriaLabel}
     >
-      {showCountedCollapsed ? (
-        <span className={styles.panelCollapsedLabel} data-testid="materials-collapsed-label">
-          Materials ({itemCount})
+      {showSessionRail ? (
+        <span className={styles.panelCollapsedLabel} data-testid="session-collapsed-label">
+          Session
         </span>
       ) : (
         <span className={styles.panelHeaderChevron} aria-hidden>{collapsed ? '▷' : '▼'}</span>
       )}
-      {collapsed && !showCountedCollapsed && unreadCount > 0 && (
+      {collapsed && !showSessionRail && unreadCount > 0 && (
         <span className={styles.panelHeaderBadgeCollapsed} title={`${unreadCount} new material${unreadCount !== 1 ? 's' : ''}`}>
           {unreadCount}
         </span>
       )}
       {!collapsed && (
         <span className={styles.panelHeaderLabel}>
-          Materials
+          Session
           {unreadCount > 0 && (
             <span className={styles.panelHeaderBadge} title="New documents added by creator">
-              New {unreadCount}
+              {unreadCount} new material{unreadCount !== 1 ? 's' : ''}
             </span>
           )}
         </span>

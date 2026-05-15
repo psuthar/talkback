@@ -79,7 +79,7 @@ test(
     await expect(materialsToggle).toBeVisible()
 
     // Column-level collapse (48px) hides all three siblings.
-    const columnHeader = page.getByRole('button', { name: /collapse materials panel/i })
+    const columnHeader = page.getByRole('button', { name: /collapse session panel/i })
     if (await columnHeader.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await columnHeader.click()
       await expect(contextToggle).toHaveCount(0)
@@ -110,7 +110,7 @@ test(
       await page.waitForLoadState('networkidle')
       await dismissParticipantOnboardingIfPresent(page)
 
-      const expandColumn = page.getByRole('button', { name: /expand materials panel/i })
+      const expandColumn = page.getByRole('button', { name: /expand session panel/i })
       if (await expandColumn.isVisible({ timeout: 2_000 }).catch(() => false)) {
         await expandColumn.click()
       }
@@ -163,7 +163,7 @@ test(
       await page.waitForLoadState('networkidle')
       await dismissParticipantOnboardingIfPresent(page)
 
-      const expandColumn = page.getByRole('button', { name: /expand materials panel/i })
+      const expandColumn = page.getByRole('button', { name: /expand session panel/i })
       if (await expandColumn.isVisible({ timeout: 2_000 }).catch(() => false)) {
         await expandColumn.click()
       }

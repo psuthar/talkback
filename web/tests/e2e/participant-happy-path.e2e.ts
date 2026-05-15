@@ -46,8 +46,8 @@ test(
     await page.waitForLoadState('networkidle')
     await dismissParticipantOnboardingIfPresent(page)
 
-    // --- 2. Expand materials panel if collapsed ---
-    const expandPanelBtn = page.getByRole('button', { name: 'Expand materials panel' })
+    // --- 2. Expand session panel if collapsed ---
+    const expandPanelBtn = page.getByRole('button', { name: 'Expand session panel' })
     if (await expandPanelBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await expandPanelBtn.click()
     }
