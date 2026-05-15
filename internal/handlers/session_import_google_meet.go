@@ -190,18 +190,23 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"message": "conference_record and recording required"})
 		return
 	}
-	if _, _, err := h.GetValidGoogleMeetAccessTokenContext(r.Context(), creatorIdentity); err != nil {
-		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "Google Meet not connected. Connect Google Meet first."})
-		return
-	}
 	cr := conferenceRecord
 	rec := recording
 	creatorPtr := &creatorIdentity
-	// SCRUM-413 dedupe pre-check.
+	// SCRUM-413 dedupe + SCRUM-414 cap fire BEFORE the Google Meet OAuth
+	// check so an idempotent re-attach works even when the user's Google
+	// connection is stale.
 	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, models.SessionProcessingJobSourceGoogleMeet, &cr, &rec, creatorPtr); err != nil {
 		log.Printf("SessionImportGoogleMeet dedupe lookup: %v", err)
 	} else if dedupe.Existing != nil {
 		writeJSONStatus(w, dedupe.Status, dedupe.Response)
+		return
+	}
+	if h.enforceRecordingCap(w, r, sessionID) {
+		return
+	}
+	if _, _, err := h.GetValidGoogleMeetAccessTokenContext(r.Context(), creatorIdentity); err != nil {
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "Google Meet not connected. Connect Google Meet first."})
 		return
 	}
 	jobID := uuid.New()
