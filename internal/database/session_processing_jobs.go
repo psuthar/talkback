@@ -255,7 +255,7 @@ func (db *DB) ClaimNextSessionProcessingJob(ctx context.Context, owner string, l
 	query := `
 		WITH candidate AS (
 			SELECT id FROM session_processing_jobs
-			WHERE state IN ('queued', 'failed_transient', 'waiting')
+			WHERE state IN ('queued', 'failed_transient', 'waiting', 'waiting_native_transcript')
 			  AND (next_retry_at IS NULL OR next_retry_at <= $1)
 			  AND (locked_at IS NULL OR locked_at < $1 - $2::interval)
 			ORDER BY next_retry_at ASC NULLS FIRST, created_at ASC

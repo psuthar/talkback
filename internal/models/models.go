@@ -246,6 +246,13 @@ const (
 	ProcessingStateEmbedding         = "embedding"
 	ProcessingStateWaiting           = "waiting"
 	ProcessingStateAwaitingWhisper   = "awaiting_whisper" // Zoom: video stored, Whisper job enqueued for transcript
+	// SCRUM-415: Meet/Teams native transcripts can land hours after the recording.
+	// When ListTranscripts returns transcripts in non-terminal states
+	// (STARTED/ENDED but not FILE_GENERATED), the job sits in this state and
+	// the worker polls with the MEET_TRANSCRIPT_POLL_INTERVAL cadence until
+	// either the native transcript is ready or MEET_TRANSCRIPT_POLL_MAX_AGE
+	// elapses (then we fall back to Whisper).
+	ProcessingStateWaitingNativeTranscript = "waiting_native_transcript"
 	ProcessingStateReady            = "ready"
 	ProcessingStateFailedTransient   = "failed_transient"
 	ProcessingStateFailedPermanent  = "failed_permanent"
