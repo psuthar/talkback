@@ -164,6 +164,21 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 		writeJSONStatus(w, http.StatusNotFound, map[string]string{"message": "Session not found"})
 		return
 	}
+	// SCRUM-411 authz hardening: editor check before any state mutation.
+	user := UserFromContext(r.Context())
+	if user == nil {
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"message": "unauthorized"})
+		return
+	}
+	editor, editorErr := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if editorErr != nil {
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "authz check failed"})
+		return
+	}
+	if !editor {
+		writeJSONStatus(w, http.StatusForbidden, map[string]string{"message": "session editor role required"})
+		return
+	}
 	var req GoogleMeetImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"message": "Invalid request body"})
@@ -199,5 +214,8 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
-	writeJSONStatus(w, http.StatusAccepted, map[string]string{"job_id": job.ID.String(), "state": job.State})
+	writeJSONStatus(w, http.StatusAccepted, SessionImportResponse{
+		JobID: job.ID.String(),
+		State: job.State,
+	})
 }

@@ -204,10 +204,23 @@ type SessionImportZoomRequest struct {
 	InstanceUUID string `json:"instance_uuid,omitempty"`
 }
 
-// SessionImportZoomResponse for 202 response
+// SessionImportZoomResponse for 202 response.
+// Deprecated: use SessionImportResponse — kept for backward compatibility with
+// any external caller that hardcoded the legacy shape (SCRUM-411 standardized
+// the shape across the three attach handlers).
 type SessionImportZoomResponse struct {
 	JobID string `json:"job_id"`
 	State string `json:"state"`
+}
+
+// SessionImportResponse is the shared 202 / 200 body for the three attach-
+// import handlers (Zoom, Google Meet, Teams). SCRUM-411 standardized the
+// shape so the frontend has one contract. AlreadyImported is reserved for
+// SCRUM-XX5b's idempotent dedupe — handlers return false for now.
+type SessionImportResponse struct {
+	JobID           string `json:"job_id"`
+	State           string `json:"state"`
+	AlreadyImported bool   `json:"already_imported,omitempty"`
 }
 
 // IngestionStatusResponse for GET /api/sessions/:id/ingestion
@@ -268,6 +281,29 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{"message": "Session not found"})
+		return
+	}
+	// SCRUM-411 authz hardening: only session editors may push a recording
+	// into a session. Without this check, any authenticated caller with a
+	// valid creator_identity could attach into someone else's session.
+	user := UserFromContext(r.Context())
+	if user == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"message": "unauthorized"})
+		return
+	}
+	editor, editorErr := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if editorErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "authz check failed"})
+		return
+	}
+	if !editor {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"message": "session editor role required"})
 		return
 	}
 	var req SessionImportZoomRequest
@@ -344,7 +380,7 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(SessionImportZoomResponse{
+	json.NewEncoder(w).Encode(SessionImportResponse{
 		JobID: job.ID.String(),
 		State: job.State,
 	})
