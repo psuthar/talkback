@@ -247,6 +247,18 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// SCRUM-412: PATCH /api/sessions/:id/primary-recording — multi-recording
+	// era canonical endpoint. Same outcome as set-primary-video but with
+	// userIsSessionEditor (role-based) authz and the standardized response
+	// shape.
+	if parts[3] == "primary-recording" {
+		if r.Method == http.MethodPatch {
+			h.RequireAuth(h.SessionPatchPrimaryRecording)(w, r)
+			return
+		}
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	if parts[3] == "primary-video-artifact" {
 		if r.Method == http.MethodPost {
 			h.SetSessionPrimaryVideoArtifact(w, r)
