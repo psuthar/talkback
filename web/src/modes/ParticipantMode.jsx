@@ -17,8 +17,6 @@ import {
   setStoredMaterialsCollapsed,
   isParticipantOnboardingDismissed,
   setParticipantOnboardingDismissed,
-  getStoredContextExpanded,
-  setStoredContextExpanded,
   getStoredMembersExpanded,
   setStoredMembersExpanded,
   getStoredMaterialsTreeExpanded,
@@ -27,7 +25,6 @@ import {
 import {
   sessionMaterialsCount,
   resolveInitialExpanded,
-  getParticipantContextFields,
 } from '../utils/sessionSidebar'
 import { ParticipantOnboardingDialog } from '../components/ParticipantOnboardingDialog'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
@@ -123,7 +120,6 @@ export function ParticipantMode({
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
   const [membersPanelExpanded, setMembersPanelExpandedState] = useState(false)
-  const [contextPanelExpanded, setContextPanelExpandedState] = useState(false)
   const [materialsTreeExpanded, setMaterialsTreeExpandedState] = useState(true)
   const [showParticipantOnboarding, setShowParticipantOnboarding] = useState(false)
   const setMembersPanelExpanded = useCallback((value) => {
@@ -131,14 +127,6 @@ export function ParticipantMode({
       const next = typeof value === 'function' ? value(prev) : value
       const sid = currentSession?.session?.id
       if (sid) setStoredMembersExpanded(sid, next)
-      return next
-    })
-  }, [currentSession?.session?.id])
-  const setContextPanelExpanded = useCallback((value) => {
-    setContextPanelExpandedState((prev) => {
-      const next = typeof value === 'function' ? value(prev) : value
-      const sid = currentSession?.session?.id
-      if (sid) setStoredContextExpanded(sid, next)
       return next
     })
   }, [currentSession?.session?.id])
@@ -348,24 +336,15 @@ export function ParticipantMode({
   }, [currentSession?.session?.id])
 
   // Load per-section collapse preferences for the lifted sidebar siblings.
-  // Context and Members force-collapse below the narrow viewport breakpoint
-  // regardless of stored preference; the Materials sub-collapse always honors
-  // its stored value so the tree stays discoverable.
+  // Members force-collapses below the narrow viewport breakpoint regardless of
+  // stored preference; the Materials sub-collapse always honors its stored
+  // value so the tree stays discoverable. Context is creator-only — premise /
+  // primary_decision / decision_outcome already surface to participants via
+  // DecisionBriefHeader and DecisionBar above the Session sidebar.
   useEffect(() => {
     const sid = currentSession?.session?.id
     if (!sid) return
     const win = typeof window !== 'undefined' ? window : null
-    // When a session has a recorded decision_outcome and the participant has no
-    // stored preference yet, default Context to expanded so the outcome stays
-    // surfaced even though SCRUM-456 removed the duplicate card over the video.
-    const hasOutcome = typeof currentSession?.session?.decision_outcome === 'string'
-      && currentSession.session.decision_outcome.trim().length > 0
-    setContextPanelExpandedState(resolveInitialExpanded({
-      stored: getStoredContextExpanded(sid),
-      defaultExpanded: hasOutcome,
-      honorNarrowOverride: true,
-      win,
-    }))
     setMembersPanelExpandedState(resolveInitialExpanded({
       stored: getStoredMembersExpanded(sid),
       defaultExpanded: false,
@@ -706,51 +685,6 @@ export function ParticipantMode({
           />
           {!materialsCollapsed && (
             <>
-              {/* Context: read-only premise / primary decision / decision outcome.
-                  Skipped entirely when all three fields are empty so the block
-                  does not show up as an empty placeholder. */}
-              {(() => {
-                const ctx = getParticipantContextFields(currentSession)
-                if (!ctx) return null
-                return (
-                  <div className={styles.panelSection} data-testid="participant-sidebar-context">
-                    <button
-                      type="button"
-                      onClick={() => setContextPanelExpanded((e) => !e)}
-                      aria-expanded={contextPanelExpanded}
-                      aria-controls="participant-sidebar-context-region"
-                      className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
-                      data-testid="participant-context-toggle"
-                    >
-                      <span className={styles.panelChevron} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
-                      Context
-                    </button>
-                    {contextPanelExpanded && (
-                      <div id="participant-sidebar-context-region" className={styles.contextContent}>
-                        {ctx.premise && (
-                          <div className={styles.contextField}>
-                            <span className={styles.contextFieldLabel}>Premise</span>
-                            <p className={styles.contextFieldValue}>{ctx.premise}</p>
-                          </div>
-                        )}
-                        {ctx.decision && (
-                          <div className={styles.contextField}>
-                            <span className={styles.contextFieldLabel}>Primary Decision</span>
-                            <p className={styles.contextFieldValue}>{ctx.decision}</p>
-                          </div>
-                        )}
-                        {ctx.outcome && (
-                          <div className={styles.contextField}>
-                            <span className={styles.contextFieldLabel}>Decision Outcome</span>
-                            <p className={styles.contextFieldValue}>{ctx.outcome}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
-
               {/* Members: read-only list of invited members */}
               <div className={styles.panelSection} data-testid="participant-sidebar-members">
                 <button
