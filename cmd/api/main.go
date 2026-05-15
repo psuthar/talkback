@@ -434,6 +434,11 @@ func main() {
 	// Google Meet status follows the same always-on pattern.
 	http.HandleFunc(wrapNR("/api/google-meet/status", corsMiddleware(h.GoogleMeetAPIStatus)))
 
+	// SCRUM-418: aggregate per-platform enabled+connected status. Authenticated
+	// users only — used by Add Content tiles + Manage Connections modal so
+	// disabled integrations never render a tile.
+	http.HandleFunc(wrapNR("/api/integrations/status", corsWithCredentials(h.RequireAuth(h.IntegrationsStatus))))
+
 	// API Session list (my sessions): GET /api/sessions requires auth
 	http.HandleFunc(wrapNR("/api/sessions", corsWithCredentials(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/sessions" {
