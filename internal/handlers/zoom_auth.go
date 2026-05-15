@@ -18,10 +18,32 @@ import (
 )
 
 const (
-	zoomAuthURL       = "https://zoom.us/oauth/authorize"
-	zoomTokenURL      = "https://zoom.us/oauth/token"
+	zoomAuthURL  = "https://zoom.us/oauth/authorize"
+	zoomTokenURL = "https://zoom.us/oauth/token"
+	// SCRUM-407 audit (2026-05-15): the default scope set is sufficient for the
+	// SCRUM-401 multi-recording attach flow. The three v2-namespaced scopes
+	// cover every Zoom API call the flow makes:
+	//   - cloud_recording:read:list_user_recordings — GET /users/{id}/recordings
+	//     (browse user recordings in the Add-Content tile).
+	//   - cloud_recording:read:list_recording_files  — GET /meetings/{mid}/recordings
+	//     (resolve VTT + MP4 download URLs; without this, the API returns 4711).
+	//   - user:read                                   — GET /users/me (identity).
+	// No re-consent banner is required for currently-connected users — they
+	// already granted these scopes. Any future scope addition (e.g. webhooks,
+	// scheduler) MUST update the re-consent state in SessionImport zoom flows
+	// per the SCRUM-407 reviewer note.
 	zoomScopesDefault = "cloud_recording:read:list_user_recordings cloud_recording:read:list_recording_files user:read"
 )
+
+// ZoomRequiredScopes is the closed set of scopes the SCRUM-401 multi-recording
+// flow requires from a connected Zoom user. Tests assert that zoomScopesDefault
+// contains every entry; if a future ticket extends the scope set without
+// updating this list, the assertion will fail.
+var ZoomRequiredScopes = []string{
+	"cloud_recording:read:list_user_recordings",
+	"cloud_recording:read:list_recording_files",
+	"user:read",
+}
 
 // ZoomOAuthConfig holds Zoom OAuth app config (from env).
 // redirect_uri must be an absolute URL for Zoom; use ZOOM_REDIRECT_URL in production
