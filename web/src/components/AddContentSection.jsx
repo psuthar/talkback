@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useIntegrationsStatus } from '../hooks/useIntegrationsStatus'
+import { PlatformConnectionTile } from './PlatformConnectionTile'
 
 export function AddContentSection({
   sessionId,
@@ -8,7 +10,36 @@ export function AddContentSection({
   uploading = false,
   uploadFeedback,
   defaultExpanded = true,
+  onBrowseZoom,
 }) {
+  const { status: integrations, refresh: refreshIntegrations } = useIntegrationsStatus(apiBaseUrl)
+
+  // SCRUM-420: open Zoom OAuth in a popup. After the popup closes
+  // (success or cancel) we refresh the integrations status so the tile
+  // re-renders into the connected state.
+  const connectZoom = useCallback(() => {
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    return new Promise((resolve, reject) => {
+      let popup
+      try {
+        popup = window.open(`${base}/api/zoom/connect`, 'zoom_oauth', 'width=600,height=720')
+      } catch (err) {
+        reject(err)
+        return
+      }
+      if (!popup) {
+        reject(new Error('Popup blocked — allow pop-ups for this site to connect Zoom.'))
+        return
+      }
+      const interval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(interval)
+          refreshIntegrations()
+          resolve()
+        }
+      }, 500)
+    })
+  }, [apiBaseUrl, refreshIntegrations])
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [urlInput, setUrlInput] = useState('')
   const [adding, setAdding] = useState(false)
@@ -113,6 +144,24 @@ export function AddContentSection({
           </div>
 
           <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
+
+          {/* SCRUM-420: Zoom tile (Meet + Teams ship in SCRUM-XX10 / XX11). */}
+          {integrations && integrations.zoom?.enabled && (
+            <>
+              <div>
+                <div style={subsectionLabel}>Import from Zoom</div>
+                <PlatformConnectionTile
+                  platform="zoom"
+                  enabled={integrations.zoom.enabled}
+                  connected={integrations.zoom.connected}
+                  accountEmail={integrations.zoom.account_email}
+                  onConnect={connectZoom}
+                  onBrowse={onBrowseZoom}
+                />
+              </div>
+              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
+            </>
+          )}
 
           {/* Add link */}
           <div>
