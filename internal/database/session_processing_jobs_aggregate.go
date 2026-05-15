@@ -84,6 +84,10 @@ func statePriority(state string) int {
 		return 290
 	case models.ProcessingStateWaiting:
 		return 280
+	case models.ProcessingStateWaitingNativeTranscript:
+		// Slightly lower than 'waiting' so a generic worker stall outranks a
+		// healthy "waiting for the native transcript to land" state.
+		return 275
 	case models.ProcessingStateAwaitingWhisper:
 		return 270
 	case models.ProcessingStateQueued:

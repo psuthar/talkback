@@ -256,6 +256,14 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		}
 	}
 	if readyTranscript == nil {
+		// SCRUM-415: distinguish "transcript will never come" from "transcript
+		// is being generated". shouldEnqueueMeetWhisperFallback returns true
+		// only when the list is empty OR every transcript is in a terminal-
+		// failure state — those cases get an immediate Whisper fallback. The
+		// non-terminal branch (Gemini still preparing the transcript) enters
+		// waiting_native_transcript with the SCRUM-415 poll cadence; once the
+		// recording exceeds MEET_TRANSCRIPT_POLL_MAX_AGE we give up and fall
+		// back to Whisper instead.
 		if shouldEnqueueMeetWhisperFallback(transcripts) {
 			if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
 				return nil
@@ -263,6 +271,22 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			// Fallback wanted but couldn't be enqueued (no processor, no primary
 			// artifact, R2 store missing for r2 artifact, etc.). Fall through to
 			// waiting so the next poll retries — this matches Teams' degraded path.
+		} else {
+			// Transcripts present, all non-terminal → Gemini still generating.
+			recEnd, _ := time.Parse(time.RFC3339, rec.EndTime)
+			if nativeTranscriptPollExpired(recEnd, time.Now()) {
+				// Max-age exhausted — fall back to Whisper to unblock the user.
+				if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
+					return nil
+				}
+				// Fallback unavailable; fall through to waiting (will retry).
+			} else {
+				next := time.Now().Add(nativeTranscriptPollInterval())
+				updateJobState(ctx, db, jobID, models.ProcessingStateWaitingNativeTranscript, models.ProcessingStageParse, attempt, &next, nil, nil)
+				_ = db.UnlockSessionProcessingJob(ctx, jobID)
+				updateMirror(models.ProcessingStateWaitingNativeTranscript)
+				return nil
+			}
 		}
 		next := time.Now().Add(BackoffWaiting(attempt))
 		setJobWaiting(ctx, db, jobID, attempt, "google_meet_transcript_not_ready", "No FILE_GENERATED transcript yet; will check again later.", next)
