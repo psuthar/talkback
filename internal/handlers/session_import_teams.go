@@ -225,6 +225,13 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"message": "session editor role required"})
 		return
 	}
+	// SCRUM-417 cross-tenant safety.
+	if !strings.EqualFold(strings.TrimSpace(creatorIdentity), strings.TrimSpace(user.Email)) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"message": "creator_identity must match authenticated user"})
+		return
+	}
 	var req TeamsImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
