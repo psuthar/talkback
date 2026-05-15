@@ -17,7 +17,7 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 			id, session_id, source, state, stage, attempt_count, next_retry_at,
 			meeting_uuid, instance_uuid, creator_identity
 		) VALUES ($1, $2, $3, $4, $5, 0, now(), $6, $7, $8)
-		ON CONFLICT (session_id, source) DO UPDATE SET
+		ON CONFLICT (session_id, source, COALESCE(meeting_uuid, ''), COALESCE(instance_uuid, '')) DO UPDATE SET
 			state = 'queued', stage = 'fetch', next_retry_at = now(),
 			meeting_uuid = EXCLUDED.meeting_uuid, instance_uuid = EXCLUDED.instance_uuid,
 			creator_identity = EXCLUDED.creator_identity, last_error_code = NULL, last_error_message = NULL,
