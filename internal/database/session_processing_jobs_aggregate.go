@@ -142,6 +142,83 @@ func AggregateProcessingState(jobs []*models.SessionProcessingJob) string {
 	return best
 }
 
+// GetSessionProcessingJobByRecordingKey returns the existing session-processing
+// job for the SCRUM-403 partial-null-safe key
+// (session_id, source, meeting_uuid, instance_uuid), or nil if none. Used by
+// the SCRUM-413 attach-handler dedupe pre-check.
+//
+// nil meetingUUID / instanceUUID inputs match the same NULL-coalesces-to-''
+// semantics as the row's unique index.
+func (db *DB) GetSessionProcessingJobByRecordingKey(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	source string,
+	meetingUUID, instanceUUID *string,
+) (*models.SessionProcessingJob, error) {
+	mu := ""
+	iu := ""
+	if meetingUUID != nil {
+		mu = *meetingUUID
+	}
+	if instanceUUID != nil {
+		iu = *instanceUUID
+	}
+	row := db.Pool.QueryRow(ctx, `
+		SELECT id, session_id, source, state, stage, attempt_count, next_retry_at,
+		       last_error_code, last_error_message, locked_at, lock_owner,
+		       meeting_uuid, instance_uuid, creator_identity, created_at, updated_at
+		FROM session_processing_jobs
+		WHERE session_id = $1
+		  AND source = $2
+		  AND COALESCE(meeting_uuid, '') = $3
+		  AND COALESCE(instance_uuid, '') = $4
+		LIMIT 1
+	`, sessionID, source, mu, iu)
+	j := &models.SessionProcessingJob{}
+	var nextRetryAt, lockedAt *time.Time
+	var lastCode, lastMsg, lockOwner *string
+	var mUUID, iUUID, creator *string
+	err := row.Scan(
+		&j.ID,
+		&j.SessionID,
+		&j.Source,
+		&j.State,
+		&j.Stage,
+		&j.AttemptCount,
+		&nextRetryAt,
+		&lastCode,
+		&lastMsg,
+		&lockedAt,
+		&lockOwner,
+		&mUUID,
+		&iUUID,
+		&creator,
+		&j.CreatedAt,
+		&j.UpdatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" || errIsNoRows(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get session processing job by recording key: %w", err)
+	}
+	j.NextRetryAt = nextRetryAt
+	j.LastErrorCode = lastCode
+	j.LastErrorMessage = lastMsg
+	j.LockedAt = lockedAt
+	j.LockOwner = lockOwner
+	j.MeetingUUID = mUUID
+	j.InstanceUUID = iUUID
+	j.CreatorIdentity = creator
+	return j, nil
+}
+
+// errIsNoRows is a local helper that handles pgx's typed sentinel without
+// pulling pgx into this file (the package already imports pgx elsewhere).
+func errIsNoRows(err error) bool {
+	return err != nil && err.Error() == "no rows in result set"
+}
+
 // MirrorAggregateProcessingState reads every job for the session, computes
 // the aggregate state via AggregateProcessingState, and updates
 // sessions.processing_state + processing_updated_at. Equivalent to

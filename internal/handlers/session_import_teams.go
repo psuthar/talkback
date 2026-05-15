@@ -243,6 +243,15 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 	mtg := meetingID
 	rec := recordingID
 	creatorIdentityPtr := &creatorIdentity
+	// SCRUM-413 dedupe pre-check.
+	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, "teams", &mtg, &rec, creatorIdentityPtr); err != nil {
+		log.Printf("SessionImportTeams dedupe lookup: %v", err)
+	} else if dedupe.Existing != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(dedupe.Status)
+		json.NewEncoder(w).Encode(dedupe.Response)
+		return
+	}
 	jobID := uuid.New()
 	job := &models.SessionProcessingJob{
 		ID:              jobID,

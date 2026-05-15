@@ -197,6 +197,13 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 	cr := conferenceRecord
 	rec := recording
 	creatorPtr := &creatorIdentity
+	// SCRUM-413 dedupe pre-check.
+	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, models.SessionProcessingJobSourceGoogleMeet, &cr, &rec, creatorPtr); err != nil {
+		log.Printf("SessionImportGoogleMeet dedupe lookup: %v", err)
+	} else if dedupe.Existing != nil {
+		writeJSONStatus(w, dedupe.Status, dedupe.Response)
+		return
+	}
 	jobID := uuid.New()
 	job := &models.SessionProcessingJob{
 		ID:              jobID,

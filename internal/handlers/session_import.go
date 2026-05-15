@@ -215,12 +215,19 @@ type SessionImportZoomResponse struct {
 
 // SessionImportResponse is the shared 202 / 200 body for the three attach-
 // import handlers (Zoom, Google Meet, Teams). SCRUM-411 standardized the
-// shape so the frontend has one contract. AlreadyImported is reserved for
-// SCRUM-XX5b's idempotent dedupe — handlers return false for now.
+// shape; SCRUM-413 added AlreadyImported + Retried.
+//
+//   - AlreadyImported=true: the recording was already attached to this
+//     session; the response carries the existing job_id + current state.
+//     Status code is 200.
+//   - Retried=true: the existing job was in a failed-terminal state, has now
+//     been re-queued, and is back on the worker. Status code is 202.
+//   - Neither set (fresh attach): status code is 202 and state is "queued".
 type SessionImportResponse struct {
 	JobID           string `json:"job_id"`
 	State           string `json:"state"`
 	AlreadyImported bool   `json:"already_imported,omitempty"`
+	Retried         bool   `json:"retried,omitempty"`
 }
 
 // IngestionStatusResponse for GET /api/sessions/:id/ingestion
@@ -356,10 +363,21 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	if recErr != nil {
 		log.Printf("SessionImportZoom: pre-check recordings failed (will let job run): %v", recErr)
 	}
-	jobID := uuid.New()
 	meetingUUIDPtr := &meetingUUID
 	instanceUUIDPtr := &instanceUUID
 	creatorIdentityPtr := &creatorIdentity
+	// SCRUM-413 dedupe pre-check: if a job for this recording already exists
+	// in this session, return the existing job_id (and re-queue when the
+	// prior import gave up).
+	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, models.SessionProcessingJobSourceZoom, meetingUUIDPtr, instanceUUIDPtr, creatorIdentityPtr); err != nil {
+		log.Printf("SessionImportZoom dedupe lookup: %v", err)
+	} else if dedupe.Existing != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(dedupe.Status)
+		json.NewEncoder(w).Encode(dedupe.Response)
+		return
+	}
+	jobID := uuid.New()
 	job := &models.SessionProcessingJob{
 		ID:              jobID,
 		SessionID:       sessionID,
