@@ -25,6 +25,18 @@ import { MemberRowActions } from '../components/MemberRowActions'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
 import { buildCanonicalSessionUrl } from '../sessionNavigation'
+import {
+  getStoredContextExpanded,
+  setStoredContextExpanded,
+  getStoredMembersExpanded,
+  setStoredMembersExpanded,
+  getStoredMaterialsTreeExpanded,
+  setStoredMaterialsTreeExpanded,
+} from '../utils/participantStorage'
+import {
+  sessionMaterialsCount,
+  resolveInitialExpanded,
+} from '../utils/sessionSidebar'
 import { googleMeetWaitingCopy, googleMeetShouldShowReconnect, googleMeetTerminalErrorState, googleMeetWaitingStepIndex } from '../googleMeetMessages'
 import { ORCHESTRATION_AUTO_REFRESH_DEBOUNCE_MS } from '../constants/orchestrationAutoRefresh'
 import { SessionSkeleton } from '../components/SessionSkeleton'
@@ -211,8 +223,49 @@ export function CreatorMode({
     return { roots, byParent }
   }, [questions])
 
-  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
-  const [contextPanelExpanded, setContextPanelExpanded] = useState(false)
+  const [membersPanelExpanded, setMembersPanelExpandedState] = useState(false)
+  const [contextPanelExpanded, setContextPanelExpandedState] = useState(false)
+  const [materialsTreeExpanded, setMaterialsTreeExpandedState] = useState(true)
+  const setContextPanelExpanded = useCallback((value) => {
+    const next = typeof value === 'function' ? value(contextPanelExpanded) : value
+    setContextPanelExpandedState(next)
+    if (currentSession?.session?.id) setStoredContextExpanded(currentSession.session.id, next)
+  }, [contextPanelExpanded, currentSession?.session?.id])
+  const setMembersPanelExpanded = useCallback((value) => {
+    const next = typeof value === 'function' ? value(membersPanelExpanded) : value
+    setMembersPanelExpandedState(next)
+    if (currentSession?.session?.id) setStoredMembersExpanded(currentSession.session.id, next)
+  }, [membersPanelExpanded, currentSession?.session?.id])
+  const setMaterialsTreeExpanded = useCallback((value) => {
+    const next = typeof value === 'function' ? value(materialsTreeExpanded) : value
+    setMaterialsTreeExpandedState(next)
+    if (currentSession?.session?.id) setStoredMaterialsTreeExpanded(currentSession.session.id, next)
+  }, [materialsTreeExpanded, currentSession?.session?.id])
+  // Load per-section collapse preferences from storage when the active session
+  // changes. Context and Members honor the narrow-viewport override (force-
+  // collapse below 1024px); the Materials sub-collapse always honors storage.
+  useEffect(() => {
+    const sid = currentSession?.session?.id
+    if (!sid) return
+    setContextPanelExpandedState(resolveInitialExpanded({
+      stored: getStoredContextExpanded(sid),
+      defaultExpanded: false,
+      honorNarrowOverride: true,
+      win: typeof window !== 'undefined' ? window : null,
+    }))
+    setMembersPanelExpandedState(resolveInitialExpanded({
+      stored: getStoredMembersExpanded(sid),
+      defaultExpanded: false,
+      honorNarrowOverride: true,
+      win: typeof window !== 'undefined' ? window : null,
+    }))
+    setMaterialsTreeExpandedState(resolveInitialExpanded({
+      stored: getStoredMaterialsTreeExpanded(sid),
+      defaultExpanded: true,
+      honorNarrowOverride: false,
+      win: typeof window !== 'undefined' ? window : null,
+    }))
+  }, [currentSession?.session?.id])
   const [contextPremise, setContextPremise] = useState('')
   const [contextDecision, setContextDecision] = useState('')
   const [contextOutcome, setContextOutcome] = useState('')
@@ -1697,13 +1750,19 @@ export function CreatorMode({
               {/* SCRUM-188: legacy "Decisions" sidebar block removed; stance entry + counts now live in the top DecisionBar. */}
 
               {/* Context: Premise, Decision, Outcome */}
-              <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                <button type="button" onClick={() => setContextPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={contextPanelExpanded}>
+              <div className="session-sidebar-block">
+                <button
+                  type="button"
+                  onClick={() => setContextPanelExpanded(e => !e)}
+                  className="session-sidebar-block__toggle"
+                  aria-expanded={contextPanelExpanded}
+                  aria-controls="creator-sidebar-context-region"
+                >
                   <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
                   {' '}<strong>Context</strong>
                 </button>
                 {contextPanelExpanded && (
-                  <div style={{ marginTop: '8px' }}>
+                  <div id="creator-sidebar-context-region" style={{ marginTop: '8px' }}>
                     <label style={{ display: 'block', marginBottom: '3px', fontSize: '12px', fontWeight: '500' }}>Premise</label>
                     <textarea value={contextPremise} onChange={e => setContextPremise(e.target.value)} placeholder="Describe the session premise…" rows={2} style={{ width: '100%', padding: '4px 6px', fontSize: '12px', resize: 'vertical', boxSizing: 'border-box', border: '1px solid #ddd', borderRadius: '3px' }} />
                     <label style={{ display: 'block', marginTop: '6px', marginBottom: '3px', fontSize: '12px', fontWeight: '500' }}>Primary Decision</label>
@@ -1724,13 +1783,19 @@ export function CreatorMode({
 
               {/* Members — prominent at top */}
               {authUser && inviteUserToSession && (
-                <div style={{ padding: '8px 12px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#f1f8e9' }}>
-                  <button type="button" onClick={() => setMembersPanelExpanded(e => !e)} className="creator-collapsible-btn" aria-expanded={membersPanelExpanded}>
+                <div className="session-sidebar-block">
+                  <button
+                    type="button"
+                    onClick={() => setMembersPanelExpanded(e => !e)}
+                    className="session-sidebar-block__toggle"
+                    aria-expanded={membersPanelExpanded}
+                    aria-controls="creator-sidebar-members-region"
+                  >
                     <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                     {' '}<strong>Members</strong>{sessionInvitations?.length > 0 ? ` (${sessionInvitations.length})` : ''}
                   </button>
                   {membersPanelExpanded && (
-                    <div style={{ marginTop: '8px' }}>
+                    <div id="creator-sidebar-members-region" style={{ marginTop: '8px' }}>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '6px' }}>
                         <input type="email" value={inviteEmail ?? ''} onChange={e => setInviteEmail?.(e.target.value)} placeholder="user@example.com" style={{ flex: '1', minWidth: '120px', padding: '4px 8px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }} />
                         <select aria-label="Invite role" value={inviteRole ?? 'participant'} onChange={e => setInviteRole?.(e.target.value)} style={{ padding: '4px 6px', fontSize: '12px', border: '1px solid #ddd', borderRadius: '3px' }}>
@@ -1820,7 +1885,9 @@ export function CreatorMode({
                 </div>
               )}
 
-              {/* Hidden file input for material uploads */}
+              {/* Hidden file input for material uploads. Kept outside the
+                  Materials sub-collapse so the ref stays mounted and any
+                  programmatic .click() trigger still works. */}
               {sessionId && (
                 <input
                   ref={materialFileInputRef}
@@ -1832,49 +1899,72 @@ export function CreatorMode({
                 />
               )}
 
-              {/* Add content at top: upload files + add links */}
-              {sessionId && (
-                <AddContentSection
-                  sessionId={sessionId}
-                  apiBaseUrl={apiBaseUrl}
-                  refetchSession={refetchSession}
-                  onUploadClick={() => materialFileInputRef.current?.click()}
-                  uploading={materialUploading}
-                  uploadFeedback={materialUploadFeedback}
-                  defaultExpanded={false}
-                />
-              )}
+              {/* Materials sub-header. Sibling of Context/Members; toggles only
+                  the tree + add-content region, not the column-level collapse. */}
+              <div className="session-sidebar-block">
+                <button
+                  type="button"
+                  onClick={() => setMaterialsTreeExpanded(e => !e)}
+                  className="session-sidebar-block__toggle"
+                  aria-expanded={materialsTreeExpanded}
+                  aria-controls="creator-sidebar-materials-region"
+                >
+                  <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{materialsTreeExpanded ? '▼' : '▷'}</span>
+                  {' '}<strong>Materials</strong>
+                  {(() => {
+                    const n = sessionMaterialsCount(currentSession)
+                    return n > 0 ? ` (${n})` : ''
+                  })()}
+                </button>
+              </div>
 
-              {/* Materials tree (no duplicate header; topmost Materials is shared) */}
-              <MaterialsTreePanel
-                session={currentSession}
-                apiBaseUrl={apiBaseUrl}
-                selectedVideo={selectedVideo}
-                setSelectedVideo={setSelectedVideo}
-                setVideoId={setVideoId}
-                setVideoPlayerKey={setVideoPlayerKey}
-                onSelectDocument={handleSelectDocument}
-                onSelectVideo={handleBackToVideo}
-                onSelectLink={handleSelectLink}
-                selectedDocumentId={selectedDocumentId}
-                collapsed={leftPanelCollapsed}
-                onCollapsedChange={setLeftPanelCollapsed}
-                hideTranscriptSection
-                hideHeader
-                lastSeenLinkCount={0}
-                canManage={!!sessionId}
-                onDeleteMaterial={deleteMaterial}
-                onDeleteVideo={deleteMaterial}
-                onDeleteLink={deleteLink}
-                deletingId={deletingMaterialId}
-                deleteError={deleteMaterialError}
-                /* SCRUM-275: pass the resolved primary descriptor so the
-                   panel can badge the current row, and refetch the session
-                   when the creator changes the primary so the participant
-                   side (and the local center pane) pick up the new value. */
-                currentPrimary={currentSession?.primary || null}
-                onPrimaryChanged={() => refetchSession?.()}
-              />
+              {materialsTreeExpanded && (
+                <div id="creator-sidebar-materials-region">
+                  {/* Add content at top: upload files + add links */}
+                  {sessionId && (
+                    <AddContentSection
+                      sessionId={sessionId}
+                      apiBaseUrl={apiBaseUrl}
+                      refetchSession={refetchSession}
+                      onUploadClick={() => materialFileInputRef.current?.click()}
+                      uploading={materialUploading}
+                      uploadFeedback={materialUploadFeedback}
+                      defaultExpanded={false}
+                    />
+                  )}
+
+                  {/* Materials tree (no duplicate header; sub-header above owns it) */}
+                  <MaterialsTreePanel
+                    session={currentSession}
+                    apiBaseUrl={apiBaseUrl}
+                    selectedVideo={selectedVideo}
+                    setSelectedVideo={setSelectedVideo}
+                    setVideoId={setVideoId}
+                    setVideoPlayerKey={setVideoPlayerKey}
+                    onSelectDocument={handleSelectDocument}
+                    onSelectVideo={handleBackToVideo}
+                    onSelectLink={handleSelectLink}
+                    selectedDocumentId={selectedDocumentId}
+                    collapsed={leftPanelCollapsed}
+                    onCollapsedChange={setLeftPanelCollapsed}
+                    hideTranscriptSection
+                    hideHeader
+                    lastSeenLinkCount={0}
+                    canManage={!!sessionId}
+                    onDeleteMaterial={deleteMaterial}
+                    onDeleteVideo={deleteMaterial}
+                    onDeleteLink={deleteLink}
+                    deletingId={deletingMaterialId}
+                    deleteError={deleteMaterialError}
+                    /* SCRUM-275: pass the resolved primary descriptor so the
+                       panel can badge the current row, and refetch the session
+                       when the creator changes the primary so the participant
+                       side (and the local center pane) pick up the new value. */
+                    currentPrimary={currentSession?.primary || null}
+                    onPrimaryChanged={() => refetchSession?.()}
+                  />
+                </div>
+              )}
 
             </div>
           )}
