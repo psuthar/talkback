@@ -25,7 +25,10 @@ import (
 //                         that follows depends on upstream side effects like
 //                         OAuth/recording lookups that are out of scope here).
 func TestSessionImportAttachHandlers_AuthzMatrix(t *testing.T) {
-	t.Parallel()
+	// Cannot t.Parallel() — the feature flags are read from process env, and
+	// running concurrently with another test that toggles them would race.
+	t.Setenv("ENABLE_GOOGLE_MEET", "true")
+	t.Setenv("ENABLE_TEAMS", "true")
 	h, cleanup := setupTestHandlersParallel(t)
 	defer cleanup()
 
