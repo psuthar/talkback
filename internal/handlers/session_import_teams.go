@@ -25,7 +25,13 @@ type TeamsImportResponse struct {
 }
 
 // TeamsImport creates a session and enqueues a Teams processing job (mirrors ZoomImport).
+//
+// SCRUM-416: legacy create-new endpoint, deprecated in favor of the
+// attach-to-existing-session POST /api/sessions/:id/import/teams path.
+// Every response carries the SCRUM-416 deprecation headers and emits a
+// DEPRECATED_ENDPOINT_HIT structured log. SCRUM-XX17 schedules removal.
 func (h *Handlers) TeamsImport(w http.ResponseWriter, r *http.Request) {
+	markLegacyImportDeprecated(w, r, "/api/sessions/:id/import/teams")
 	if !teamsEnabled() {
 		http.Error(w, "Teams integration disabled", http.StatusNotFound)
 		return

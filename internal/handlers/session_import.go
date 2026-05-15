@@ -42,7 +42,14 @@ type ZoomImportResponse struct {
 }
 
 // ZoomImport creates a session and starts Zoom import in one request (RequireAuth; requires admin or creator role).
+//
+// SCRUM-416: this is the LEGACY create-new endpoint, deprecated in favor of
+// the attach-to-existing-session POST /api/sessions/:id/import/zoom path.
+// Every response carries the SCRUM-416 deprecation headers (Deprecation,
+// Sunset, Link) and emits a DEPRECATED_ENDPOINT_HIT structured log.
+// SCRUM-XX17 schedules removal after the 2-week coexistence window.
 func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
+	markLegacyImportDeprecated(w, r, "/api/sessions/:id/import/zoom")
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)

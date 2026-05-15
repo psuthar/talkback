@@ -28,7 +28,13 @@ type GoogleMeetImportResponse struct {
 
 // GoogleMeetImport creates a session and enqueues a Google Meet processing job
 // (mirrors TeamsImport). Routes: POST /api/google-meet/import.
+//
+// SCRUM-416: legacy create-new endpoint, deprecated in favor of the
+// attach-to-existing-session POST /api/sessions/:id/import/google-meet path.
+// Every response carries the SCRUM-416 deprecation headers and emits a
+// DEPRECATED_ENDPOINT_HIT structured log. SCRUM-XX17 schedules removal.
 func (h *Handlers) GoogleMeetImport(w http.ResponseWriter, r *http.Request) {
+	markLegacyImportDeprecated(w, r, "/api/sessions/:id/import/google-meet")
 	if !googleMeetEnabled() {
 		http.Error(w, "Google Meet integration disabled", http.StatusNotFound)
 		return
