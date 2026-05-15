@@ -1750,13 +1750,14 @@ export function CreatorMode({
               {/* SCRUM-188: legacy "Decisions" sidebar block removed; stance entry + counts now live in the top DecisionBar. */}
 
               {/* Context: Premise, Decision, Outcome */}
-              <div className="session-sidebar-block">
+              <div className="session-sidebar-block" data-testid="creator-sidebar-context">
                 <button
                   type="button"
                   onClick={() => setContextPanelExpanded(e => !e)}
                   className="session-sidebar-block__toggle"
                   aria-expanded={contextPanelExpanded}
                   aria-controls="creator-sidebar-context-region"
+                  data-testid="creator-context-toggle"
                 >
                   <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
                   {' '}<strong>Context</strong>
@@ -1783,13 +1784,14 @@ export function CreatorMode({
 
               {/* Members — prominent at top */}
               {authUser && inviteUserToSession && (
-                <div className="session-sidebar-block">
+                <div className="session-sidebar-block" data-testid="creator-sidebar-members">
                   <button
                     type="button"
                     onClick={() => setMembersPanelExpanded(e => !e)}
                     className="session-sidebar-block__toggle"
                     aria-expanded={membersPanelExpanded}
                     aria-controls="creator-sidebar-members-region"
+                    data-testid="creator-members-toggle"
                   >
                     <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                     {' '}<strong>Members</strong>{sessionInvitations?.length > 0 ? ` (${sessionInvitations.length})` : ''}
@@ -1901,13 +1903,14 @@ export function CreatorMode({
 
               {/* Materials sub-header. Sibling of Context/Members; toggles only
                   the tree + add-content region, not the column-level collapse. */}
-              <div className="session-sidebar-block">
+              <div className="session-sidebar-block" data-testid="creator-sidebar-materials">
                 <button
                   type="button"
                   onClick={() => setMaterialsTreeExpanded(e => !e)}
                   className="session-sidebar-block__toggle"
                   aria-expanded={materialsTreeExpanded}
                   aria-controls="creator-sidebar-materials-region"
+                  data-testid="creator-materials-tree-toggle"
                 >
                   <span style={{ fontSize: '12px', color: '#555' }} aria-hidden>{materialsTreeExpanded ? '▼' : '▷'}</span>
                   {' '}<strong>Materials</strong>
