@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getMaterialSlides, retryMaterialSlides, updateVideoDisplayTitle } from '../api/materials'
 import { SessionPrimaryRow } from './SetPrimaryButton'
 import styles from './MaterialsTreePanel.module.css'
+import { getPrimaryRecording } from '../utils/session'
 
 const SPINNER_STYLE_ID = 'tb-spinner-keyframes'
 function ensureSpinnerStyle() {
@@ -238,7 +239,12 @@ export function MaterialsTreePanel({
   // logic in the merged Videos section (the primary row gets the
   // `primary-video-item` testid). The legacy `additional_videos` /
   // `otherVideos` split is no longer rendered as a separate section.
-  const presentationVideo = primary_video ?? (video_sources?.length > 0 ? video_sources[0] : null)
+  // SCRUM-405: presentationVideo follows the canonical primary recording for
+  // single- and multi-recording sessions alike. Pre-SCRUM-405 this was
+  // `primary_video ?? video_sources[0]`, which getPrimaryRecording matches
+  // for the single-recording case while making the multi-recording fallback
+  // deterministic (oldest by `created_at`).
+  const presentationVideo = getPrimaryRecording({ primary_video, video_sources })
   const sessionId = session?.session?.id || session?.id
 
   const isMaterialImage = (m) => {

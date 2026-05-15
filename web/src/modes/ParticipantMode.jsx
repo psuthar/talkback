@@ -11,6 +11,7 @@ import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
+import { getPrimaryRecording, getRecordings } from '../utils/session'
 import {
   STORAGE_KEY_MATERIALS_COLLAPSED,
   getStoredMaterialsCollapsed,
@@ -94,10 +95,10 @@ export function ParticipantMode({
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
   // Resolve displayed video from session using ref (so selection survives refetches); fallback to primary
-  const sources = currentSession?.video_sources ?? []
-  const primary = currentSession?.primary_video ?? sources[0]
-  const primarySourceId = currentSession?.primary_video?.id ?? sources[0]?.id
-  const transcriptSourceForPrimary = primary ?? sources[0]
+  const sources = getRecordings(currentSession)
+  const primary = getPrimaryRecording(currentSession)
+  const primarySourceId = primary?.id
+  const transcriptSourceForPrimary = primary
   const syntheticR2Video = hasPrimaryR2Video
     ? {
         id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
