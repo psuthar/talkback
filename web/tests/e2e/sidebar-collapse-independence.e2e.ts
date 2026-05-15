@@ -90,23 +90,25 @@ test(
 )
 
 test(
-  'participant: read-only Context block renders when premise/decision/outcome are populated (SCRUM-455)',
+  'participant: Session sidebar never shows Context, regardless of session content (SCRUM-458)',
   async ({ page, context, request }) => {
-    const email = uniqueEmail('sidebar-participant-populated')
-    const localUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Sidebar Participant Populated')
-
-    const session = await createSession(request, 'SCRUM-455 Participant Context Populated')
-    // Populate all three Context fields via PATCH so the participant sidebar Context block renders.
-    await request.patch(`${API_BASE}/api/sessions/${session.id}`, {
+    // Two sessions: one with all Context fields populated, one blank. The
+    // participant Session sidebar must omit the Context block in both cases —
+    // premise/primary_decision/decision_outcome are surfaced via
+    // DecisionBriefHeader at the top of the participant view instead.
+    const emailA = uniqueEmail('sidebar-participant-populated')
+    const userA = await createUserAndLoginWithId(context, request, emailA, 'SmokePass123!', 'Sidebar Participant Populated')
+    const sessionA = await createSession(request, 'SCRUM-458 Participant Populated Context')
+    await request.patch(`${API_BASE}/api/sessions/${sessionA.id}`, {
       data: {
         premise: 'We are evaluating sidebar layout changes.',
-        primary_decision: 'Adopt the lift-out of Members and Context.',
-        decision_outcome: 'Adopted for the next release.',
+        primary_decision: 'Hide Context from participant sidebar.',
+        decision_outcome: 'Hidden — discovered via DecisionBriefHeader instead.',
       },
     })
 
     try {
-      await page.goto(`/?session=${session.id}&mode=view`)
+      await page.goto(`/?session=${sessionA.id}&mode=view`)
       await page.waitForLoadState('networkidle')
       await dismissParticipantOnboardingIfPresent(page)
 
@@ -115,51 +117,31 @@ test(
         await expandColumn.click()
       }
 
-      const contextSection = page.getByTestId('participant-sidebar-context')
-      const contextToggle = page.getByTestId('participant-context-toggle')
-      const membersToggle = page.getByTestId('participant-members-toggle')
-      const materialsToggle = page.getByTestId('participant-materials-tree-toggle')
+      // Members and Materials sub-header render; Context block must be absent.
+      await expect(page.getByTestId('participant-members-toggle')).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByTestId('participant-materials-tree-toggle')).toBeVisible()
+      await expect(page.getByTestId('participant-sidebar-context')).toHaveCount(0)
+      await expect(page.getByTestId('participant-context-toggle')).toHaveCount(0)
 
-      await expect(contextSection).toBeVisible({ timeout: 15_000 })
-      await expect(membersToggle).toBeVisible()
-      await expect(materialsToggle).toBeVisible()
-
-      // Expand Context and assert the three labeled values render read-only.
-      if ((await contextToggle.getAttribute('aria-expanded')) !== 'true') {
-        await contextToggle.click()
-      }
-      const region = page.locator('#participant-sidebar-context-region')
-      await expect(region).toContainText('We are evaluating sidebar layout changes.')
-      await expect(region).toContainText('Adopt the lift-out of Members and Context.')
-      await expect(region).toContainText('Adopted for the next release.')
-
-      // Materials sub-collapse toggles independently of Context/Members.
-      if ((await materialsToggle.getAttribute('aria-expanded')) === 'true') {
-        await materialsToggle.click()
-      }
-      await expect(materialsToggle).toHaveAttribute('aria-expanded', 'false')
-      await expect(contextToggle).toBeVisible()
-      await expect(membersToggle).toBeVisible()
+      // DecisionBriefHeader at the top continues to surface the same content
+      // (no in-sidebar duplicate). The header is global to the participant
+      // view, so we only assert that the premise text shows up *somewhere*
+      // on the page outside the sidebar — the sidebar Context assertions
+      // above already pinned its absence.
+      await expect(page.getByText('We are evaluating sidebar layout changes.')).toBeVisible()
     } finally {
       await loginAsAdmin(request)
-      await deleteSession(request, session.id)
-      await deleteUserViaAdmin(request, localUserId)
+      await deleteSession(request, sessionA.id)
+      await deleteUserViaAdmin(request, userA)
     }
-  }
-)
 
-test(
-  'participant: Context block is absent when premise/decision/outcome are all empty (SCRUM-455)',
-  async ({ page, context, request }) => {
-    const email = uniqueEmail('sidebar-participant-empty')
-    const localUserId = await createUserAndLoginWithId(context, request, email, 'SmokePass123!', 'Sidebar Participant Empty')
-
-    const session = await createSession(request, 'SCRUM-455 Participant Context Empty')
-    // Intentionally do not patch any Context fields — premise, primary_decision,
-    // and decision_outcome remain blank on the session row.
+    const emailB = uniqueEmail('sidebar-participant-blank')
+    const userB = await createUserAndLoginWithId(context, request, emailB, 'SmokePass123!', 'Sidebar Participant Blank')
+    const sessionB = await createSession(request, 'SCRUM-458 Participant Blank Context')
+    // Intentionally leave premise/primary_decision/decision_outcome blank.
 
     try {
-      await page.goto(`/?session=${session.id}&mode=view`)
+      await page.goto(`/?session=${sessionB.id}&mode=view`)
       await page.waitForLoadState('networkidle')
       await dismissParticipantOnboardingIfPresent(page)
 
@@ -168,14 +150,13 @@ test(
         await expandColumn.click()
       }
 
-      // Members and Materials sub-header still render; Context block does not.
       await expect(page.getByTestId('participant-members-toggle')).toBeVisible({ timeout: 15_000 })
       await expect(page.getByTestId('participant-materials-tree-toggle')).toBeVisible()
       await expect(page.getByTestId('participant-sidebar-context')).toHaveCount(0)
     } finally {
       await loginAsAdmin(request)
-      await deleteSession(request, session.id)
-      await deleteUserViaAdmin(request, localUserId)
+      await deleteSession(request, sessionB.id)
+      await deleteUserViaAdmin(request, userB)
     }
   }
 )
