@@ -772,6 +772,40 @@ button:disabled {
   background: none;
 }
 
+/* Shared sidebar block for lifted Context / Members / Materials siblings
+   above the materials tree in both CreatorMode and ParticipantMode. */
+.session-sidebar-block {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e0e0e0;
+  background-color: var(--color-success-bg);
+}
+
+.session-sidebar-block__toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-primary-dark);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  margin: 0;
+}
+
+.session-sidebar-block__toggle:hover {
+  color: var(--color-primary-dark);
+  background: none;
+}
+
+.session-sidebar-block__toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 @media (max-width: 1024px) {
   .creator-layout-grid {
     grid-template-columns: 22% 50% 28%;
