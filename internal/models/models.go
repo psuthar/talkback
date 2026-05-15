@@ -332,6 +332,30 @@ type GoogleMeetConnection struct {
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
+// SCRUM-404: per-session speaker alias mapping. Maps raw
+// transcript_segments.speaker_label strings to a canonical synthetic person
+// within the same session. Cross-session reconciliation is out of scope.
+type SessionSpeakerAlias struct {
+	ID                   uuid.UUID  `json:"id"`
+	SessionID            uuid.UUID  `json:"session_id"`
+	CanonicalPersonID    uuid.UUID  `json:"canonical_person_id"`
+	SourceLabel          string     `json:"source_label"`
+	SourceRecordingID    *uuid.UUID `json:"source_recording_id,omitempty"`
+	CanonicalDisplayName string     `json:"canonical_display_name"`
+	CanonicalEmail       *string    `json:"canonical_email,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
+// SpeakerLabelObservation is a distinct raw speaker_label observed in a
+// session's transcript_segments, optionally scoped to the recording it came
+// from. Powers the People panel's "labels needing reconciliation" UI.
+type SpeakerLabelObservation struct {
+	SourceLabel       string     `json:"source_label"`
+	SourceRecordingID *uuid.UUID `json:"source_recording_id,omitempty"`
+	SegmentCount      int        `json:"segment_count"`
+}
+
 // Phase 2: Q&A Models
 
 type QuestionSource string
