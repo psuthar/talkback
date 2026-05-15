@@ -151,7 +151,8 @@ func TestSessionImportZoom_RecordingCap(t *testing.T) {
 		body := fmt.Sprintf(`{"meeting_uuid":%q}`, meetingUUID)
 		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID.String()+"/import/zoom", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Creator-Identity", "any-identity")
+		// SCRUM-417: creator_identity must match the authenticated user's email.
+		req.Header.Set("X-Creator-Identity", editor.Email)
 		req = req.WithContext(context.WithValue(req.Context(), userContextKey, editor))
 		w := httptest.NewRecorder()
 		h.SessionImportZoom(w, req)

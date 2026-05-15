@@ -92,11 +92,19 @@ func TestSessionImportAttachHandlers_AuthzMatrix(t *testing.T) {
 	for _, p := range handlers {
 		p := p
 		// Build a request with the creator_identity header (so the handler
-		// passes its pre-flight check and reaches the path/session/authz block).
+		// passes its pre-flight check and reaches the path/session/authz
+		// block). SCRUM-417: the creator_identity must match the
+		// authenticated user; we set it from user.Email when a user is
+		// provided, else fall back to a sentinel for the no-user-in-ctx
+		// branch (the handler 401's before the cross-tenant check).
 		newReq := func(sid string, user *models.User) *http.Request {
 			req := httptest.NewRequest(http.MethodPost, p.path(sid), bytes.NewReader([]byte(p.bodyJSON)))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-Creator-Identity", "any-creator-identity")
+			identity := "any-creator-identity"
+			if user != nil {
+				identity = user.Email
+			}
+			req.Header.Set("X-Creator-Identity", identity)
 			if user != nil {
 				req = req.WithContext(context.WithValue(req.Context(), userContextKey, user))
 			}

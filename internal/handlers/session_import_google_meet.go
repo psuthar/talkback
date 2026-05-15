@@ -185,6 +185,11 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 		writeJSONStatus(w, http.StatusForbidden, map[string]string{"message": "session editor role required"})
 		return
 	}
+	// SCRUM-417 cross-tenant safety.
+	if !strings.EqualFold(strings.TrimSpace(creatorIdentity), strings.TrimSpace(user.Email)) {
+		writeJSONStatus(w, http.StatusForbidden, map[string]string{"message": "creator_identity must match authenticated user"})
+		return
+	}
 	var req GoogleMeetImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"message": "Invalid request body"})

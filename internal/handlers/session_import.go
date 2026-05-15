@@ -320,6 +320,16 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"message": "session editor role required"})
 		return
 	}
+	// SCRUM-417 cross-tenant safety: creator_identity in the request must
+	// match the authenticated user. Without this check, an editor of session
+	// X could pass user B's creator_identity, causing the background worker
+	// to fetch the recording using B's OAuth token and inject it into X.
+	if !strings.EqualFold(strings.TrimSpace(creatorIdentity), strings.TrimSpace(user.Email)) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"message": "creator_identity must match authenticated user"})
+		return
+	}
 	var req SessionImportZoomRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
