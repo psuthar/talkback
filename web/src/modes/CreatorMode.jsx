@@ -21,6 +21,7 @@ import {
 } from '../utils/orchestrationGrouping'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { roleLabel } from '../utils/roleLabels'
+import { getPrimaryRecording, getRecordings } from '../utils/session'
 import { MemberRowActions } from '../components/MemberRowActions'
 import { DecisionBar } from '../components/DecisionBar'
 import { isValidEmailFormat } from '../utils/inviteMailto'
@@ -836,7 +837,11 @@ export function CreatorMode({
   // When session has primary_video_artifact_id, playback is ONLY the downloaded MP4 (R2 or local). Never use Zoom stream (410).
   const primaryVideoAccessUrl = currentSession?.video_access_url || ''
   const hasPrimaryR2Video = currentSession?.session?.primary_video_artifact_id && primaryVideoAccessUrl
-  const firstVideoSource = currentSession?.video_sources?.[0]
+  // R2-synthetic-video transcript metadata: pull from the primary recording.
+  // Pre-SCRUM-405 this read `video_sources[0]` directly; identical for
+  // single-recording sessions, and follows the canonical primary for multi-
+  // recording sessions.
+  const firstVideoSource = getPrimaryRecording(currentSession)
   const syntheticR2Video = hasPrimaryR2Video
     ? {
         id: currentSession?.session?.primary_video_artifact_id ?? 'primary',
@@ -850,9 +855,9 @@ export function CreatorMode({
       }
     : null
   // Resolve displayed video from session using ref (so selection survives refetches); fallback to primary
-  const sources = currentSession?.video_sources ?? []
-  const primary = currentSession?.primary_video ?? sources[0]
-  const primarySourceId = currentSession?.primary_video?.id ?? sources[0]?.id
+  const sources = getRecordings(currentSession)
+  const primary = getPrimaryRecording(currentSession)
+  const primarySourceId = primary?.id
   const preferredId = selectedVideoIdRef?.current ?? selectedVideo?.id
   const resolvedFromSession = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
   // When primary is selected and we have R2 primary, use syntheticR2Video so VideoPlayer gets primaryVideoAccessUrl (artifact id); otherwise it would get the raw VideoSource and miss the stream URL

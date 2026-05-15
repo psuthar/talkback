@@ -13,6 +13,7 @@ import { DeleteQuestionModal } from './components/DeleteQuestionModal'
 import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { isValidEmailFormat } from './utils/inviteMailto'
 import { roleLabel } from './utils/roleLabels'
+import { getPrimaryRecording } from './utils/session'
 import {
   parseSessionNavigationFromLocation,
   parseSessionIdFromPathname,
@@ -2105,7 +2106,7 @@ function App() {
       setCurrentSession(data)
       if (isRefetch) {
         // Preserve user's video selection when refetching; resolve by ref so we get fresh object (transcript etc.) from new data
-        const primary = data.primary_video ?? (data.video_sources?.length > 0 ? data.video_sources[0] : null)
+        const primary = getPrimaryRecording(data)
         const sources = data.video_sources ?? []
         const preferredId = selectedVideoIdRef.current
         const found = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
@@ -2136,7 +2137,7 @@ function App() {
                 const prevId = prev?.session?.id || prev?.id
                 if (prevId !== currentId) return prev
                 if (retryData?.video_sources?.length > 0 && !retryData?.session?.primary_video_artifact_id) {
-                  const primary = retryData.primary_video ?? retryData.video_sources[0]
+                  const primary = getPrimaryRecording(retryData)
                   queueMicrotask(() => {
                     setVideoId(primary.id)
                     setSelectedVideo(primary)
@@ -2201,7 +2202,7 @@ function App() {
       }
       // Pre-populate video selection only on initial open (not refetch)
       if (!isRefetch) {
-        const primaryVideo = data.primary_video ?? (data.video_sources?.length > 0 ? data.video_sources[0] : null)
+        const primaryVideo = getPrimaryRecording(data)
         if (primaryVideo) {
           selectedVideoIdRef.current = primaryVideo.id
           setVideoId(primaryVideo.id)
@@ -3182,7 +3183,7 @@ function App() {
 
   // Resolve selected video from session using ref (user's chosen id) so selection survives refetches; sync ref when we fall back to primary
   useEffect(() => {
-    const primary = currentSession?.primary_video ?? currentSession?.video_sources?.[0]
+    const primary = getPrimaryRecording(currentSession)
     const sources = currentSession?.video_sources ?? []
     const preferredId = selectedVideoIdRef.current
     const found = preferredId ? sources.find(vs => String(vs.id) === String(preferredId)) : null
