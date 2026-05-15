@@ -355,9 +355,14 @@ export function ParticipantMode({
     const sid = currentSession?.session?.id
     if (!sid) return
     const win = typeof window !== 'undefined' ? window : null
+    // When a session has a recorded decision_outcome and the participant has no
+    // stored preference yet, default Context to expanded so the outcome stays
+    // surfaced even though SCRUM-456 removed the duplicate card over the video.
+    const hasOutcome = typeof currentSession?.session?.decision_outcome === 'string'
+      && currentSession.session.decision_outcome.trim().length > 0
     setContextPanelExpandedState(resolveInitialExpanded({
       stored: getStoredContextExpanded(sid),
-      defaultExpanded: false,
+      defaultExpanded: hasOutcome,
       honorNarrowOverride: true,
       win,
     }))
@@ -830,14 +835,6 @@ export function ParticipantMode({
 
         <main className="participant-video-stage">
           <div className={styles.videoStageContent}>
-            {/* Decision outcome only (Your decision lives in top "Your Position" bar) */}
-            {currentSession?.session?.decision_outcome?.trim() && (
-              <div className={styles.decisionOutcomeCard}>
-                <div className={styles.decisionOutcomeLabel}>Decision Outcome</div>
-                <div className={styles.decisionOutcomeText}>{currentSession.session.decision_outcome.trim()}</div>
-              </div>
-            )}
-
             {selectedDocument ? (
               <DocumentViewer
                 doc={selectedDocument}

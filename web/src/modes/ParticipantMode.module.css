@@ -139,28 +139,6 @@
   overflow: auto;
 }
 
-.decisionOutcomeCard {
-  flex-shrink: 0;
-  margin-bottom: 16px;
-  padding: 12px;
-  background-color: #f1f8e9;
-  border: 1px solid #c8e6c9;
-  border-radius: 8px;
-}
-
-.decisionOutcomeLabel {
-  font-weight: 600;
-  margin-bottom: 2px;
-  color: var(--color-text-secondary);
-}
-
-.decisionOutcomeText {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-  color: #333;
-}
-
 .videoPendingCard {
   padding: 24px;
   border-radius: 8px;

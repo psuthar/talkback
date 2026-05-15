@@ -118,6 +118,58 @@ describe('resolveInitialExpanded', () => {
   })
 })
 
+describe('Context default-expanded derivation when decision_outcome is present (SCRUM-456)', () => {
+  // The participant useEffect computes `hasOutcome` from
+  // currentSession.session.decision_outcome and passes it as
+  // `defaultExpanded` to resolveInitialExpanded. These tests pin that
+  // contract so removing the duplicate decisionOutcomeCard does not
+  // regress outcome discoverability for first-visit participants.
+  const wide = { innerWidth: 1440 }
+
+  function hasOutcome(session) {
+    const v = session?.session?.decision_outcome
+    return typeof v === 'string' && v.trim().length > 0
+  }
+
+  function participantContextDefault(session, stored, win = wide) {
+    return resolveInitialExpanded({
+      stored,
+      defaultExpanded: hasOutcome(session),
+      honorNarrowOverride: true,
+      win,
+    })
+  }
+
+  it('defaults Context to expanded when decision_outcome is set and no preference is stored', () => {
+    expect(participantContextDefault(
+      { session: { decision_outcome: 'Approved' } }, null,
+    )).toBe(true)
+  })
+
+  it('defaults Context to collapsed when decision_outcome is blank and no preference is stored', () => {
+    expect(participantContextDefault({ session: { decision_outcome: '' } }, null)).toBe(false)
+    expect(participantContextDefault({ session: { decision_outcome: '   ' } }, null)).toBe(false)
+    expect(participantContextDefault({ session: {} }, null)).toBe(false)
+  })
+
+  it('stored preference still wins over the outcome-based default', () => {
+    // outcome present, but user previously collapsed → stays collapsed
+    expect(participantContextDefault(
+      { session: { decision_outcome: 'Approved' } }, false,
+    )).toBe(false)
+    // outcome blank, but user previously expanded → stays expanded
+    expect(participantContextDefault(
+      { session: { decision_outcome: '' } }, true,
+    )).toBe(true)
+  })
+
+  it('narrow viewport still force-collapses regardless of outcome presence', () => {
+    expect(participantContextDefault(
+      { session: { decision_outcome: 'Approved' } }, null, { innerWidth: 800 },
+    )).toBe(false)
+  })
+})
+
 describe('getParticipantContextFields', () => {
   it('returns null when session is null or undefined', () => {
     expect(getParticipantContextFields(null)).toBeNull()
