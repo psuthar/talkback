@@ -46,3 +46,18 @@ export function resolveInitialExpanded({ stored, defaultExpanded, honorNarrowOve
   if (stored === null || stored === undefined) return !!defaultExpanded
   return !!stored
 }
+
+/**
+ * Read-only Context fields for the participant sidebar block. Returns null
+ * when premise, primary_decision, and decision_outcome are all blank so the
+ * caller can skip rendering the section entirely. Trims whitespace.
+ */
+export function getParticipantContextFields(session) {
+  const src = session?.session ?? session
+  const trim = (v) => (typeof v === 'string' ? v.trim() : '')
+  const premise = trim(src?.premise)
+  const decision = trim(src?.primary_decision)
+  const outcome = trim(src?.decision_outcome)
+  if (!premise && !decision && !outcome) return null
+  return { premise, decision, outcome }
+}

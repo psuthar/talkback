@@ -17,7 +17,18 @@ import {
   setStoredMaterialsCollapsed,
   isParticipantOnboardingDismissed,
   setParticipantOnboardingDismissed,
+  getStoredContextExpanded,
+  setStoredContextExpanded,
+  getStoredMembersExpanded,
+  setStoredMembersExpanded,
+  getStoredMaterialsTreeExpanded,
+  setStoredMaterialsTreeExpanded,
 } from '../utils/participantStorage'
+import {
+  sessionMaterialsCount,
+  resolveInitialExpanded,
+  getParticipantContextFields,
+} from '../utils/sessionSidebar'
 import { ParticipantOnboardingDialog } from '../components/ParticipantOnboardingDialog'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import styles from './ParticipantMode.module.css'
@@ -111,8 +122,34 @@ export function ParticipantMode({
   const [materialsCollapsed, setMaterialsCollapsedState] = useState(false) // expanded by default on first visit; localStorage may override
   // Track link count "last seen" per session so we can show "New" when creator adds links (for other users)
   const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
-  const [membersPanelExpanded, setMembersPanelExpanded] = useState(false)
+  const [membersPanelExpanded, setMembersPanelExpandedState] = useState(false)
+  const [contextPanelExpanded, setContextPanelExpandedState] = useState(false)
+  const [materialsTreeExpanded, setMaterialsTreeExpandedState] = useState(true)
   const [showParticipantOnboarding, setShowParticipantOnboarding] = useState(false)
+  const setMembersPanelExpanded = useCallback((value) => {
+    setMembersPanelExpandedState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      const sid = currentSession?.session?.id
+      if (sid) setStoredMembersExpanded(sid, next)
+      return next
+    })
+  }, [currentSession?.session?.id])
+  const setContextPanelExpanded = useCallback((value) => {
+    setContextPanelExpandedState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      const sid = currentSession?.session?.id
+      if (sid) setStoredContextExpanded(sid, next)
+      return next
+    })
+  }, [currentSession?.session?.id])
+  const setMaterialsTreeExpanded = useCallback((value) => {
+    setMaterialsTreeExpandedState((prev) => {
+      const next = typeof value === 'function' ? value(prev) : value
+      const sid = currentSession?.session?.id
+      if (sid) setStoredMaterialsTreeExpanded(sid, next)
+      return next
+    })
+  }, [currentSession?.session?.id])
 
   // Decision stance state
   const [myStance, setMyStance] = useState(null)
@@ -308,6 +345,34 @@ export function ParticipantMode({
     const stored = getStoredMaterialsCollapsed(sid)
     // First visit (no stored preference): default to expanded so participants discover materials.
     setMaterialsCollapsedState(stored === null ? false : stored)
+  }, [currentSession?.session?.id])
+
+  // Load per-section collapse preferences for the lifted sidebar siblings.
+  // Context and Members force-collapse below the narrow viewport breakpoint
+  // regardless of stored preference; the Materials sub-collapse always honors
+  // its stored value so the tree stays discoverable.
+  useEffect(() => {
+    const sid = currentSession?.session?.id
+    if (!sid) return
+    const win = typeof window !== 'undefined' ? window : null
+    setContextPanelExpandedState(resolveInitialExpanded({
+      stored: getStoredContextExpanded(sid),
+      defaultExpanded: false,
+      honorNarrowOverride: true,
+      win,
+    }))
+    setMembersPanelExpandedState(resolveInitialExpanded({
+      stored: getStoredMembersExpanded(sid),
+      defaultExpanded: false,
+      honorNarrowOverride: true,
+      win,
+    }))
+    setMaterialsTreeExpandedState(resolveInitialExpanded({
+      stored: getStoredMaterialsTreeExpanded(sid),
+      defaultExpanded: true,
+      honorNarrowOverride: false,
+      win,
+    }))
   }, [currentSession?.session?.id])
 
   useEffect(() => {
@@ -636,19 +701,64 @@ export function ParticipantMode({
           />
           {!materialsCollapsed && (
             <>
+              {/* Context: read-only premise / primary decision / decision outcome.
+                  Skipped entirely when all three fields are empty so the block
+                  does not show up as an empty placeholder. */}
+              {(() => {
+                const ctx = getParticipantContextFields(currentSession)
+                if (!ctx) return null
+                return (
+                  <div className={styles.panelSection}>
+                    <button
+                      type="button"
+                      onClick={() => setContextPanelExpanded((e) => !e)}
+                      aria-expanded={contextPanelExpanded}
+                      aria-controls="participant-sidebar-context-region"
+                      className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
+                    >
+                      <span className={styles.panelChevron} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
+                      Context
+                    </button>
+                    {contextPanelExpanded && (
+                      <div id="participant-sidebar-context-region" className={styles.contextContent}>
+                        {ctx.premise && (
+                          <div className={styles.contextField}>
+                            <span className={styles.contextFieldLabel}>Premise</span>
+                            <p className={styles.contextFieldValue}>{ctx.premise}</p>
+                          </div>
+                        )}
+                        {ctx.decision && (
+                          <div className={styles.contextField}>
+                            <span className={styles.contextFieldLabel}>Primary Decision</span>
+                            <p className={styles.contextFieldValue}>{ctx.decision}</p>
+                          </div>
+                        )}
+                        {ctx.outcome && (
+                          <div className={styles.contextField}>
+                            <span className={styles.contextFieldLabel}>Decision Outcome</span>
+                            <p className={styles.contextFieldValue}>{ctx.outcome}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Members: read-only list of invited members */}
               <div className={styles.panelSection}>
                 <button
                   type="button"
                   onClick={() => setMembersPanelExpanded((e) => !e)}
                   aria-expanded={membersPanelExpanded}
+                  aria-controls="participant-sidebar-members-region"
                   className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
                 >
                   <span className={styles.panelChevron} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                   Members{Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
                 </button>
                 {membersPanelExpanded && (
-                  <div className={styles.membersContent}>
+                  <div id="participant-sidebar-members-region" className={styles.membersContent}>
                     {Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? (
                       <ul className={styles.membersList}>
                         {sessionInvitations.map((inv) => (
@@ -665,29 +775,52 @@ export function ParticipantMode({
                 )}
               </div>
 
-              <MaterialsTreePanel
-                session={currentSession}
-                apiBaseUrl={apiBaseUrl}
-                selectedVideo={selectedVideo}
-                setSelectedVideo={setSelectedVideo}
-                setVideoId={setVideoId}
-                setVideoPlayerKey={setVideoPlayerKey}
-                onSelectDocument={handleSelectDocument}
-                onSelectVideo={handleBackToVideo}
-                onSelectLink={(link) => {
-                  handleSelectLink(link)
-                  const sid = currentSession?.session?.id
-                  if (sid && currentSession?.links?.length != null) {
-                    setLastSeenLinkCountBySession((prev) => ({ ...prev, [sid]: currentSession.links.length }))
-                  }
-                }}
-                selectedDocumentId={selectedDocumentId}
-                collapsed={materialsCollapsed}
-                onCollapsedChange={setMaterialsCollapsed}
-                hideTranscriptSection
-                hideHeader
-                lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
-              />
+              {/* Materials sub-header. Sibling of Context/Members; toggles only
+                  the tree, leaving the lifted blocks visible. The column-level
+                  collapse remains owned by MaterialsPanelHeader above. */}
+              <div className={styles.panelSection}>
+                <button
+                  type="button"
+                  onClick={() => setMaterialsTreeExpanded((e) => !e)}
+                  aria-expanded={materialsTreeExpanded}
+                  aria-controls="participant-sidebar-materials-region"
+                  className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
+                >
+                  <span className={styles.panelChevron} aria-hidden>{materialsTreeExpanded ? '▼' : '▷'}</span>
+                  Materials{(() => {
+                    const n = sessionMaterialsCount(currentSession)
+                    return n > 0 ? ` (${n})` : ''
+                  })()}
+                </button>
+              </div>
+
+              {materialsTreeExpanded && (
+                <div id="participant-sidebar-materials-region">
+                  <MaterialsTreePanel
+                    session={currentSession}
+                    apiBaseUrl={apiBaseUrl}
+                    selectedVideo={selectedVideo}
+                    setSelectedVideo={setSelectedVideo}
+                    setVideoId={setVideoId}
+                    setVideoPlayerKey={setVideoPlayerKey}
+                    onSelectDocument={handleSelectDocument}
+                    onSelectVideo={handleBackToVideo}
+                    onSelectLink={(link) => {
+                      handleSelectLink(link)
+                      const sid = currentSession?.session?.id
+                      if (sid && currentSession?.links?.length != null) {
+                        setLastSeenLinkCountBySession((prev) => ({ ...prev, [sid]: currentSession.links.length }))
+                      }
+                    }}
+                    selectedDocumentId={selectedDocumentId}
+                    collapsed={materialsCollapsed}
+                    onCollapsedChange={setMaterialsCollapsed}
+                    hideTranscriptSection
+                    hideHeader
+                    lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
+                  />
+                </div>
+              )}
             </>
           )}
         </aside>
