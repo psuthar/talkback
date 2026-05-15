@@ -499,6 +499,41 @@ func (h *Handlers) copySessionRun(ctx context.Context, sourceSession, newSession
 }
 
 // DeleteSession removes a session and all its DB/file data. Admin-only.
+//
+// SCRUM-406 — canonical deletion order. With N recordings per session
+// (post-SCRUM-401), an incomplete delete is a GDPR / data-hygiene blocker,
+// so every path that can leave an orphan must be exercised explicitly here.
+//
+// Storage cleanup:
+//   1. Iterate file_artifacts for the session and `Delete` each storage_key
+//      explicitly. file_artifacts.session_id is `ON DELETE SET NULL`, so the
+//      row can survive a bare `DELETE FROM sessions`; the explicit key delete
+//      catches blobs that live outside the `sessions/{id}/` prefix (legacy,
+//      copy-sourced, or otherwise re-keyed).
+//   2. R2 `DeletePrefix("sessions/{sessionID}/")` is the safety net for
+//      everything not represented in file_artifacts (raw uploads, transcripts
+//      written directly to the session prefix, etc.).
+//   3. Local filesystem: remove `${UploadRoot}/${SessionStorageRoot}/{id}` so
+//      single-server installs leave no on-disk residue.
+//
+// DB cleanup:
+//   4. DeleteQuestionsBySessionID is explicit even though
+//      `questions.session_id` is `ON DELETE CASCADE` after migration #019 —
+//      historical envs may still carry the SET NULL constraint, so the
+//      explicit call is defense in depth.
+//   5. DeleteFileArtifactsBySessionID is mandatory because the FK is
+//      `ON DELETE SET NULL` — without this, file_artifacts rows would
+//      survive the session delete and orphan their storage_key.
+//   6. DELETE FROM sessions cascades to every other session-scoped table:
+//      artifacts → materials, video_sources → transcripts →
+//      transcript_segments → session_chunks → session_chunk_embeddings;
+//      session_processing_jobs, session_memberships, session_invitations,
+//      session_links, session_events, decision_stances,
+//      orchestration_recommendations + audit, sessions_primary_history,
+//      question_views, session_speaker_aliases (SCRUM-404). Tables with
+//      `ON DELETE SET NULL` back-pointers (transcript_jobs, import_jobs)
+//      survive intentionally — they hold idempotency/audit state, not user
+//      data.
 func (h *Handlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -529,7 +564,26 @@ func (h *Handlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
-	// 1. R2: delete all objects under sessions/{sessionID}/
+	// 1. R2: iterate file_artifacts and delete each storage_key explicitly.
+	// R2 delete failures must not block the DB transaction — log and continue;
+	// the prefix sweep (step 2) and bucket-lifecycle reaper will catch
+	// stragglers.
+	if h.Storage != nil {
+		artifacts, listErr := h.DB.ListFileArtifactsBySessionID(ctx, sessionID)
+		if listErr != nil {
+			log.Printf("DeleteSession ListFileArtifactsBySessionID %s: %v", sessionID, listErr)
+		} else {
+			for _, fa := range artifacts {
+				if fa == nil || fa.StorageProvider != "r2" || fa.StorageKey == "" {
+					continue
+				}
+				if delErr := h.Storage.Delete(ctx, fa.StorageKey); delErr != nil {
+					log.Printf("DeleteSession R2 Delete %s (file_artifact %s): %v", fa.StorageKey, fa.ID, delErr)
+				}
+			}
+		}
+	}
+	// 2. R2: prefix sweep for blobs not represented in file_artifacts.
 	if h.Storage != nil {
 		r2Prefix := strings.TrimSuffix(strings.TrimSpace(os.Getenv("R2_PREFIX")), "/")
 		prefix := "sessions/" + sessionID.String() + "/"
@@ -540,22 +594,24 @@ func (h *Handlers) DeleteSession(w http.ResponseWriter, r *http.Request) {
 			log.Printf("DeleteSession R2 DeletePrefix %s: %v", prefix, delErr)
 		}
 	}
-	// 2. Local: remove session directory (uploads, videos, transcripts)
+	// 3. Local: remove session directory (uploads, videos, transcripts)
 	localDir := filepath.Join(storage.UploadRoot(), storage.SessionStorageRoot, sessionID.String())
 	if err := os.RemoveAll(localDir); err != nil {
 		log.Printf("DeleteSession RemoveAll %s: %v", localDir, err)
 	}
-	// 3. DB: delete questions first (avoids NOT NULL on questions.session_id if FK is ON DELETE SET NULL), then file_artifacts, then session
+	// 4. DB: delete questions explicitly (defense in depth — see top comment).
 	if err := h.DB.DeleteQuestionsBySessionID(ctx, sessionID); err != nil {
 		log.Printf("DeleteSession DeleteQuestionsBySessionID: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session data"})
 		return
 	}
+	// 5. DB: delete file_artifacts explicitly because session_id is SET NULL.
 	if err := h.DB.DeleteFileArtifactsBySessionID(ctx, sessionID); err != nil {
 		log.Printf("DeleteSession DeleteFileArtifactsBySessionID: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session data"})
 		return
 	}
+	// 6. DB: delete the session — cascades to every session-scoped table.
 	if err := h.DB.DeleteSession(ctx, sessionID); err != nil {
 		log.Printf("DeleteSession DeleteSession: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete session"})
