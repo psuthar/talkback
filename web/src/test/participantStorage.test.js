@@ -2,10 +2,19 @@ import { describe, it, expect } from 'vitest'
 import {
   STORAGE_KEY_MATERIALS_COLLAPSED,
   STORAGE_KEY_PARTICIPANT_ONBOARDING_DISMISSED,
+  STORAGE_KEY_CONTEXT_EXPANDED,
+  STORAGE_KEY_MEMBERS_EXPANDED,
+  STORAGE_KEY_MATERIALS_TREE_EXPANDED,
   getStoredMaterialsCollapsed,
   setStoredMaterialsCollapsed,
   isParticipantOnboardingDismissed,
   setParticipantOnboardingDismissed,
+  getStoredContextExpanded,
+  setStoredContextExpanded,
+  getStoredMembersExpanded,
+  setStoredMembersExpanded,
+  getStoredMaterialsTreeExpanded,
+  setStoredMaterialsTreeExpanded,
 } from '../utils/participantStorage'
 
 function makeMockStorage(initial = {}) {
@@ -96,6 +105,77 @@ describe('participantStorage', () => {
       const storage = makeMockStorage()
       setParticipantOnboardingDismissed('', storage)
       expect(Object.keys(storage._data)).toHaveLength(0)
+    })
+  })
+
+  describe.each([
+    {
+      label: 'context expanded',
+      key: STORAGE_KEY_CONTEXT_EXPANDED,
+      get: getStoredContextExpanded,
+      set: setStoredContextExpanded,
+    },
+    {
+      label: 'members expanded',
+      key: STORAGE_KEY_MEMBERS_EXPANDED,
+      get: getStoredMembersExpanded,
+      set: setStoredMembersExpanded,
+    },
+    {
+      label: 'materials tree expanded',
+      key: STORAGE_KEY_MATERIALS_TREE_EXPANDED,
+      get: getStoredMaterialsTreeExpanded,
+      set: setStoredMaterialsTreeExpanded,
+    },
+  ])('$label', ({ key, get, set }) => {
+    it('returns null on first visit (no stored value)', () => {
+      const storage = makeMockStorage()
+      expect(get('sess-1', storage)).toBeNull()
+    })
+
+    it('round-trips true and false per session id', () => {
+      const storage = makeMockStorage()
+      set('sess-A', true, storage)
+      set('sess-B', false, storage)
+      expect(get('sess-A', storage)).toBe(true)
+      expect(get('sess-B', storage)).toBe(false)
+      expect(get('sess-C', storage)).toBeNull()
+    })
+
+    it('persists values as the string "true"/"false"', () => {
+      const storage = makeMockStorage()
+      set('sess-1', true, storage)
+      expect(storage._data[`${key}.sess-1`]).toBe('true')
+      set('sess-1', false, storage)
+      expect(storage._data[`${key}.sess-1`]).toBe('false')
+    })
+
+    it('returns null when sessionId is empty', () => {
+      const storage = makeMockStorage({ [`${key}.`]: 'true' })
+      expect(get('', storage)).toBeNull()
+      expect(get(null, storage)).toBeNull()
+      expect(get(undefined, storage)).toBeNull()
+    })
+
+    it('does not persist when sessionId is missing', () => {
+      const storage = makeMockStorage()
+      set('', true, storage)
+      expect(Object.keys(storage._data)).toHaveLength(0)
+    })
+
+    it('returns null when storage throws', () => {
+      const storage = {
+        getItem: () => { throw new Error('blocked') },
+        setItem: () => { throw new Error('blocked') },
+      }
+      expect(get('sess-1', storage)).toBeNull()
+    })
+
+    it('uses an isolated storage key (no cross-helper bleed)', () => {
+      const storage = makeMockStorage()
+      set('sess-1', true, storage)
+      const keys = Object.keys(storage._data)
+      expect(keys).toEqual([`${key}.sess-1`])
     })
   })
 })
