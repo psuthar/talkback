@@ -5,9 +5,9 @@ import { MaterialsPanelHeader } from '../components/MaterialsTreePanel'
 describe('MaterialsPanelHeader', () => {
   const noop = vi.fn()
 
-  it('shows Materials label when expanded', () => {
+  it('shows Session label when expanded', () => {
     render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} />)
-    expect(screen.getByText('Materials')).toBeTruthy()
+    expect(screen.getByText('Session')).toBeTruthy()
   })
 
   it('does not show badge when unreadCount is 0 and expanded', () => {
@@ -15,9 +15,14 @@ describe('MaterialsPanelHeader', () => {
     expect(screen.queryByTitle(/new material/i)).toBeNull()
   })
 
-  it('shows New badge with count when expanded and unread > 0', () => {
+  it('shows pluralized "N new materials" badge when expanded and unread > 1', () => {
     render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} unreadCount={3} />)
-    expect(screen.getByText('New 3')).toBeTruthy()
+    expect(screen.getByText('3 new materials')).toBeTruthy()
+  })
+
+  it('shows singular "1 new material" badge when expanded and unread is exactly 1', () => {
+    render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} unreadCount={1} />)
+    expect(screen.getByText('1 new material')).toBeTruthy()
   })
 
   it('shows compact count badge when collapsed and unread > 0', () => {
@@ -27,7 +32,7 @@ describe('MaterialsPanelHeader', () => {
     expect(badge.textContent).toBe('2')
   })
 
-  it('shows singular label for unreadCount=1 when collapsed', () => {
+  it('shows singular tooltip for unreadCount=1 when collapsed', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} unreadCount={1} />)
     expect(screen.getByTitle('1 new material')).toBeTruthy()
   })
@@ -37,44 +42,51 @@ describe('MaterialsPanelHeader', () => {
     expect(screen.queryByTitle(/new material/i)).toBeNull()
   })
 
-  it('hides Materials label text when collapsed', () => {
+  it('hides Session label text when collapsed without itemCount', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} />)
-    expect(screen.queryByText('Materials')).toBeNull()
+    expect(screen.queryByText('Session')).toBeNull()
   })
 
-  it('shows counted "Materials (N)" rail label when collapsed and itemCount provided', () => {
+  it('renders "Session" rail label when collapsed and itemCount provided (no numeric badge)', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={4} />)
-    const label = screen.getByTestId('materials-collapsed-label')
-    expect(label.textContent).toBe('Materials (4)')
+    const label = screen.getByTestId('session-collapsed-label')
+    expect(label.textContent).toBe('Session')
   })
 
-  it('renders counted label even when itemCount is zero', () => {
+  it('renders "Session" rail label even when itemCount is zero', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={0} />)
-    expect(screen.getByTestId('materials-collapsed-label').textContent).toBe('Materials (0)')
+    expect(screen.getByTestId('session-collapsed-label').textContent).toBe('Session')
   })
 
   it('falls back to chevron rail when itemCount is not provided', () => {
     render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} />)
-    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+    expect(screen.queryByTestId('session-collapsed-label')).toBeNull()
     // Chevron remains the only visible affordance
     expect(screen.getByRole('button').textContent).toContain('▷')
   })
 
-  it('counted rail aria-label includes item count and is pluralized', () => {
+  it('collapsed aria-label is "Expand session panel" with no item-count phrasing', () => {
     const { rerender } = render(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={1} />)
-    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand materials panel (1 item)')
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand session panel')
     rerender(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} itemCount={3} />)
-    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand materials panel (3 items)')
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand session panel')
+    rerender(<MaterialsPanelHeader collapsed={true} onCollapsedChange={noop} />)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Expand session panel')
+  })
+
+  it('expanded aria-label is "Collapse session panel"', () => {
+    render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} itemCount={5} />)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe('Collapse session panel')
   })
 
   it('expanded view is unchanged when itemCount is provided', () => {
     render(<MaterialsPanelHeader collapsed={false} onCollapsedChange={noop} itemCount={5} unreadCount={2} />)
-    expect(screen.getByText('Materials')).toBeTruthy()
-    expect(screen.getByText('New 2')).toBeTruthy()
-    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+    expect(screen.getByText('Session')).toBeTruthy()
+    expect(screen.getByText('2 new materials')).toBeTruthy()
+    expect(screen.queryByTestId('session-collapsed-label')).toBeNull()
   })
 
-  it('clicking the collapsed counted rail toggles expansion', () => {
+  it('clicking the collapsed session rail toggles expansion', () => {
     let collapsed = true
     const setCollapsed = vi.fn((next) => { collapsed = next })
     const { rerender } = render(
@@ -84,6 +96,6 @@ describe('MaterialsPanelHeader', () => {
     expect(setCollapsed).toHaveBeenCalledWith(false)
     rerender(<MaterialsPanelHeader collapsed={false} onCollapsedChange={setCollapsed} itemCount={2} />)
     // No collapsed-label rendered when expanded
-    expect(screen.queryByTestId('materials-collapsed-label')).toBeNull()
+    expect(screen.queryByTestId('session-collapsed-label')).toBeNull()
   })
 })

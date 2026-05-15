@@ -38,8 +38,8 @@ test('participant opens prepared session, sees materials panel and QA input', as
   await page.waitForLoadState('networkidle')
   await dismissParticipantOnboardingIfPresent(page)
 
-  // --- Expand materials panel if it loaded collapsed ---
-  const expandPanelBtn = page.getByRole('button', { name: 'Expand materials panel' })
+  // --- Expand session panel if it loaded collapsed ---
+  const expandPanelBtn = page.getByRole('button', { name: 'Expand session panel' })
   if (await expandPanelBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
     await expandPanelBtn.click()
   }
