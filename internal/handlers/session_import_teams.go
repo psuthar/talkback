@@ -198,6 +198,27 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"message": "Session not found"})
 		return
 	}
+	// SCRUM-411 authz hardening: editor check before any state mutation.
+	user := UserFromContext(r.Context())
+	if user == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"message": "unauthorized"})
+		return
+	}
+	editor, editorErr := h.userIsSessionEditor(r.Context(), sessionID, user)
+	if editorErr != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"message": "authz check failed"})
+		return
+	}
+	if !editor {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(map[string]string{"message": "session editor role required"})
+		return
+	}
 	var req TeamsImportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -243,5 +264,8 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"job_id": job.ID.String(), "state": job.State})
+	json.NewEncoder(w).Encode(SessionImportResponse{
+		JobID: job.ID.String(),
+		State: job.State,
+	})
 }
