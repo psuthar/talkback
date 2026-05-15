@@ -234,22 +234,27 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"message": "meeting_id and recording_id required"})
 		return
 	}
-	if _, _, err := h.GetValidTeamsAccessTokenContext(r.Context(), creatorIdentity); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"code": "teams_not_connected", "message": "Teams not connected. Connect Teams first."})
-		return
-	}
 	mtg := meetingID
 	rec := recordingID
 	creatorIdentityPtr := &creatorIdentity
-	// SCRUM-413 dedupe pre-check.
+	// SCRUM-413 dedupe + SCRUM-414 cap fire BEFORE the Teams OAuth check so
+	// an idempotent re-attach works even when the user's Teams connection
+	// is stale.
 	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, "teams", &mtg, &rec, creatorIdentityPtr); err != nil {
 		log.Printf("SessionImportTeams dedupe lookup: %v", err)
 	} else if dedupe.Existing != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(dedupe.Status)
 		json.NewEncoder(w).Encode(dedupe.Response)
+		return
+	}
+	if h.enforceRecordingCap(w, r, sessionID) {
+		return
+	}
+	if _, _, err := h.GetValidTeamsAccessTokenContext(r.Context(), creatorIdentity); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"code": "teams_not_connected", "message": "Teams not connected. Connect Teams first."})
 		return
 	}
 	jobID := uuid.New()

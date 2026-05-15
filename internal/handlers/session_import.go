@@ -331,6 +331,25 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	if instanceUUID == "" {
 		instanceUUID = meetingUUID
 	}
+	meetingUUIDPtr := &meetingUUID
+	instanceUUIDPtr := &instanceUUID
+	creatorIdentityPtr := &creatorIdentity
+	// SCRUM-413 dedupe + SCRUM-414 cap fire BEFORE the Zoom OAuth check.
+	// Per the SCRUM-414 documented order (authz → dedupe → cap → enqueue),
+	// a duplicate request must not require a working Zoom connection — the
+	// session already has the recording. The cap check guards the new-attach
+	// path; OAuth + duration enforcement come after.
+	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, models.SessionProcessingJobSourceZoom, meetingUUIDPtr, instanceUUIDPtr, creatorIdentityPtr); err != nil {
+		log.Printf("SessionImportZoom dedupe lookup: %v", err)
+	} else if dedupe.Existing != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(dedupe.Status)
+		json.NewEncoder(w).Encode(dedupe.Response)
+		return
+	}
+	if h.enforceRecordingCap(w, r, sessionID) {
+		return
+	}
 	accessToken, _, err := h.GetValidZoomAccessToken(r, creatorIdentity)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -362,20 +381,6 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 	}
 	if recErr != nil {
 		log.Printf("SessionImportZoom: pre-check recordings failed (will let job run): %v", recErr)
-	}
-	meetingUUIDPtr := &meetingUUID
-	instanceUUIDPtr := &instanceUUID
-	creatorIdentityPtr := &creatorIdentity
-	// SCRUM-413 dedupe pre-check: if a job for this recording already exists
-	// in this session, return the existing job_id (and re-queue when the
-	// prior import gave up).
-	if dedupe, err := dedupeExistingAttach(r.Context(), h.DB, sessionID, models.SessionProcessingJobSourceZoom, meetingUUIDPtr, instanceUUIDPtr, creatorIdentityPtr); err != nil {
-		log.Printf("SessionImportZoom dedupe lookup: %v", err)
-	} else if dedupe.Existing != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(dedupe.Status)
-		json.NewEncoder(w).Encode(dedupe.Response)
-		return
 	}
 	jobID := uuid.New()
 	job := &models.SessionProcessingJob{
