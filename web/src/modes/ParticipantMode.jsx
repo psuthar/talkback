@@ -708,13 +708,14 @@ export function ParticipantMode({
                 const ctx = getParticipantContextFields(currentSession)
                 if (!ctx) return null
                 return (
-                  <div className={styles.panelSection}>
+                  <div className={styles.panelSection} data-testid="participant-sidebar-context">
                     <button
                       type="button"
                       onClick={() => setContextPanelExpanded((e) => !e)}
                       aria-expanded={contextPanelExpanded}
                       aria-controls="participant-sidebar-context-region"
                       className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
+                      data-testid="participant-context-toggle"
                     >
                       <span className={styles.panelChevron} aria-hidden>{contextPanelExpanded ? '▼' : '▷'}</span>
                       Context
@@ -746,13 +747,14 @@ export function ParticipantMode({
               })()}
 
               {/* Members: read-only list of invited members */}
-              <div className={styles.panelSection}>
+              <div className={styles.panelSection} data-testid="participant-sidebar-members">
                 <button
                   type="button"
                   onClick={() => setMembersPanelExpanded((e) => !e)}
                   aria-expanded={membersPanelExpanded}
                   aria-controls="participant-sidebar-members-region"
                   className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
+                  data-testid="participant-members-toggle"
                 >
                   <span className={styles.panelChevron} aria-hidden>{membersPanelExpanded ? '▼' : '▷'}</span>
                   Members{Array.isArray(sessionInvitations) && sessionInvitations.length > 0 ? ` (${sessionInvitations.length})` : ''}
@@ -778,13 +780,14 @@ export function ParticipantMode({
               {/* Materials sub-header. Sibling of Context/Members; toggles only
                   the tree, leaving the lifted blocks visible. The column-level
                   collapse remains owned by MaterialsPanelHeader above. */}
-              <div className={styles.panelSection}>
+              <div className={styles.panelSection} data-testid="participant-sidebar-materials">
                 <button
                   type="button"
                   onClick={() => setMaterialsTreeExpanded((e) => !e)}
                   aria-expanded={materialsTreeExpanded}
                   aria-controls="participant-sidebar-materials-region"
                   className={`${styles.collapsibleBtn} ${styles.collapsibleBtnMembers}`}
+                  data-testid="participant-materials-tree-toggle"
                 >
                   <span className={styles.panelChevron} aria-hidden>{materialsTreeExpanded ? '▼' : '▷'}</span>
                   Materials{(() => {
