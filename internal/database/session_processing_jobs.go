@@ -10,7 +10,16 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-// CreateOrGetSessionProcessingJob creates a job or returns existing one for session/source (idempotent enqueue).
+// CreateOrGetSessionProcessingJob creates a job or returns the existing one
+// for the same (session_id, source, meeting_uuid, instance_uuid) tuple
+// (idempotent enqueue).
+//
+// SCRUM-408: the conflict target matches the SCRUM-403 partial-null-safe
+// expression UNIQUE. The DO UPDATE branch only re-queues the row when its
+// current state is NOT one of the active mid-stage states — re-attaching the
+// same recording while it is actively fetching/downloading/parsing/chunking/
+// embedding must not clobber the in-flight work. When the row is mid-stage,
+// the existing row is returned unchanged.
 func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.SessionProcessingJob) error {
 	query := `
 		INSERT INTO session_processing_jobs (
@@ -18,10 +27,44 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 			meeting_uuid, instance_uuid, creator_identity
 		) VALUES ($1, $2, $3, $4, $5, 0, now(), $6, $7, $8)
 		ON CONFLICT (session_id, source, COALESCE(meeting_uuid, ''), COALESCE(instance_uuid, '')) DO UPDATE SET
-			state = 'queued', stage = 'fetch', next_retry_at = now(),
+			state = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.state
+				ELSE 'queued'
+			END,
+			stage = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.stage
+				ELSE 'fetch'
+			END,
+			next_retry_at = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.next_retry_at
+				ELSE now()
+			END,
 			meeting_uuid = EXCLUDED.meeting_uuid, instance_uuid = EXCLUDED.instance_uuid,
-			creator_identity = EXCLUDED.creator_identity, last_error_code = NULL, last_error_message = NULL,
-			locked_at = NULL, lock_owner = NULL, updated_at = now()
+			creator_identity = EXCLUDED.creator_identity,
+			last_error_code = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.last_error_code
+				ELSE NULL
+			END,
+			last_error_message = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.last_error_message
+				ELSE NULL
+			END,
+			locked_at = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.locked_at
+				ELSE NULL
+			END,
+			lock_owner = CASE
+				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
+				THEN session_processing_jobs.lock_owner
+				ELSE NULL
+			END,
+			updated_at = now()
 		RETURNING id, state, stage, attempt_count, next_retry_at, last_error_code, last_error_message,
 			locked_at, lock_owner, meeting_uuid, instance_uuid, creator_identity, created_at, updated_at
 	`
