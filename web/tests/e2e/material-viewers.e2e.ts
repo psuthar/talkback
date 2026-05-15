@@ -35,7 +35,15 @@ import {
 } from './fixtures'
 
 // These tests upload files and wait for async extraction — allow plenty of time.
-test.setTimeout(120_000)
+// SCRUM-457: bumped from 120s to 240s. The uploadFile() helper waits up to 180s
+// on /materials/upload to absorb the markitdown cold-start path (see comment
+// block at uploadFile, lines 100–108). The previous 120s file-level budget was
+// shorter than the inner 180s response wait, so on a cold runner the test
+// budget fired before the response wait could return — observed as a CSV-upload
+// timeout in the SCRUM-335 trio (CI run 25930368760) while the sibling XLSX/XLS
+// tests passed because markitdown was warm by then. 240s preserves a tight
+// bound while clearing 180s + Playwright nav/setup overhead.
+test.setTimeout(240_000)
 
 // Fixture file paths (minimal valid files, real binary content)
 const FIXTURES_DIR = path.join(__dirname, 'fixtures')
