@@ -187,7 +187,23 @@ export function AddContentSection({
             </>
           )}
 
-          {/* SCRUM-423: Teams tile lands in a follow-up PR (mirrors this pattern). */}
+          {/* SCRUM-423: Microsoft Teams tile (reuses PlatformConnectionTile). */}
+          {integrations && integrations.teams?.enabled && (
+            <>
+              <div>
+                <div style={subsectionLabel}>Import from Microsoft Teams</div>
+                <PlatformConnectionTile
+                  platform="teams"
+                  enabled={integrations.teams.enabled}
+                  connected={integrations.teams.connected}
+                  accountEmail={integrations.teams.account_email}
+                  onConnect={connectTeams}
+                  onBrowse={onBrowseTeams}
+                />
+              </div>
+              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
+            </>
+          )}
 
           {/* Add link */}
           <div>
