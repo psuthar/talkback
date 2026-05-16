@@ -16,12 +16,29 @@ const SOURCE_TYPE_LABELS = {
   link: 'Link',
 }
 
+// SCRUM-426: multi-recording sessions now embed a per-recording source
+// badge in transcript citations so users can tell at a glance which
+// recording the answer came from ("Zoom · Standup 5/12").
+const RECORDING_PROVIDER_LABELS = {
+  zoom: 'Zoom',
+  google_meet: 'Google Meet',
+  teams: 'Microsoft Teams',
+  other: 'Uploaded',
+  loom: 'Loom',
+}
+
+function recordingProviderLabel(provider) {
+  return RECORDING_PROVIDER_LABELS[provider] || provider
+}
+
 function CitationBadge({ citation, onClick }) {
   const label = citation.label || SOURCE_TYPE_LABELS[citation.source_type] || citation.source_type || 'Source'
   const canNavigate = citation.anchor?.start_ms != null ||
     citation?.source_type === 'material' ||
     citation?.source_type === 'link' ||
     (citation.navigation && (citation.navigation.type === 'video' || citation.navigation.type === 'pdf' || citation.navigation.type === 'doc' || citation.navigation.type === 'url'))
+  const recordingProvider = citation.recording_provider || citation.provider
+  const showSourceBadge = citation.source_type === 'transcript' && recordingProvider
   return (
     <button
       type="button"
@@ -38,6 +55,14 @@ function CitationBadge({ citation, onClick }) {
       {citation.citation_id ? <span>[{citation.citation_id}]</span> : null}
       {' '}
       <span className={styles.citationLabel}>{label}</span>
+      {showSourceBadge && (
+        <>
+          {' '}
+          <span data-testid={`citation-source-badge-${recordingProvider}`} className={styles.citationSourceBadge}>
+            {recordingProviderLabel(recordingProvider)}
+          </span>
+        </>
+      )}
     </button>
   )
 }

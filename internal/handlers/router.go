@@ -264,6 +264,12 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		h.RequireAuth(h.SessionPeopleRouter)(w, r)
 		return
 	}
+	// SCRUM-426: DELETE /api/sessions/:id/video-sources/:vsid — single
+	// recording removal. Editor-only; cascade chain handles cleanup.
+	if parts[3] == "video-sources" && len(parts) == 5 && r.Method == http.MethodDelete {
+		h.RequireAuth(h.DeleteSessionVideoSource)(w, r)
+		return
+	}
 	if parts[3] == "primary-video-artifact" {
 		if r.Method == http.MethodPost {
 			h.SetSessionPrimaryVideoArtifact(w, r)
