@@ -11,24 +11,26 @@ export function AddContentSection({
   uploadFeedback,
   defaultExpanded = true,
   onBrowseZoom,
+  onBrowseGoogleMeet,
+  onBrowseTeams,
 }) {
   const { status: integrations, refresh: refreshIntegrations } = useIntegrationsStatus(apiBaseUrl)
 
-  // SCRUM-420: open Zoom OAuth in a popup. After the popup closes
-  // (success or cancel) we refresh the integrations status so the tile
-  // re-renders into the connected state.
-  const connectZoom = useCallback(() => {
+  // SCRUM-420 / SCRUM-422 / SCRUM-423: open the platform's OAuth flow in a
+  // popup. The popup-closed poll refreshes integrations status so the tile
+  // re-renders into the connected state without a full page reload.
+  const buildConnect = useCallback((connectPath, label) => () => {
     const base = (apiBaseUrl || '').replace(/\/$/, '')
     return new Promise((resolve, reject) => {
       let popup
       try {
-        popup = window.open(`${base}/api/zoom/connect`, 'zoom_oauth', 'width=600,height=720')
+        popup = window.open(`${base}${connectPath}`, `${label}_oauth`, 'width=600,height=720')
       } catch (err) {
         reject(err)
         return
       }
       if (!popup) {
-        reject(new Error('Popup blocked — allow pop-ups for this site to connect Zoom.'))
+        reject(new Error(`Popup blocked — allow pop-ups for this site to connect ${label}.`))
         return
       }
       const interval = setInterval(() => {
@@ -40,6 +42,10 @@ export function AddContentSection({
       }, 500)
     })
   }, [apiBaseUrl, refreshIntegrations])
+
+  const connectZoom = useCallback(buildConnect('/api/zoom/connect', 'Zoom'), [buildConnect])
+  const connectGoogleMeet = useCallback(buildConnect('/api/google-meet/connect', 'Google Meet'), [buildConnect])
+  const connectTeams = useCallback(buildConnect('/api/teams/connect', 'Microsoft Teams'), [buildConnect])
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [urlInput, setUrlInput] = useState('')
   const [adding, setAdding] = useState(false)
@@ -145,7 +151,7 @@ export function AddContentSection({
 
           <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
 
-          {/* SCRUM-420: Zoom tile (Meet + Teams ship in SCRUM-XX10 / XX11). */}
+          {/* SCRUM-420: Zoom tile. */}
           {integrations && integrations.zoom?.enabled && (
             <>
               <div>
@@ -162,6 +168,26 @@ export function AddContentSection({
               <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
             </>
           )}
+
+          {/* SCRUM-422: Google Meet tile (reuses PlatformConnectionTile). */}
+          {integrations && integrations.google_meet?.enabled && (
+            <>
+              <div>
+                <div style={subsectionLabel}>Import from Google Meet</div>
+                <PlatformConnectionTile
+                  platform="google_meet"
+                  enabled={integrations.google_meet.enabled}
+                  connected={integrations.google_meet.connected}
+                  accountEmail={integrations.google_meet.account_email}
+                  onConnect={connectGoogleMeet}
+                  onBrowse={onBrowseGoogleMeet}
+                />
+              </div>
+              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
+            </>
+          )}
+
+          {/* SCRUM-423: Teams tile lands in a follow-up PR (mirrors this pattern). */}
 
           {/* Add link */}
           <div>
