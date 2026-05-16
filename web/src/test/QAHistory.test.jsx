@@ -127,6 +127,37 @@ describe('CitationBadge label rendering', () => {
     expect(badge).not.toBeNull()
     expect(badge.textContent).toContain('Transcript 01:12–04:38')
   })
+
+  // SCRUM-426: transcript citations in multi-recording sessions render an
+  // inline source badge so users can tell which recording the answer came
+  // from. Materials and links don't get the badge — only transcripts.
+  it('renders an inline source badge for transcript citations from a known recording (SCRUM-426)', () => {
+    const q = makeQuestionWithCitations('q-cit-rp-1', [
+      { citation_id: 'C1', source_type: 'transcript', chunk_id: 'chunk-rp-1', recording_provider: 'zoom' },
+    ])
+    const { container } = renderQAHistory([q])
+    const sourceBadge = container.querySelector('[data-testid="citation-source-badge-zoom"]')
+    expect(sourceBadge).not.toBeNull()
+    expect(sourceBadge.textContent).toBe('Zoom')
+  })
+
+  it('does not render the recording source badge for material citations (SCRUM-426)', () => {
+    const q = makeQuestionWithCitations('q-cit-rp-2', [
+      { citation_id: 'C1', source_type: 'material', chunk_id: 'chunk-rp-2', recording_provider: 'zoom' },
+    ])
+    const { container } = renderQAHistory([q])
+    expect(container.querySelector('[data-testid="citation-source-badge-zoom"]')).toBeNull()
+  })
+
+  it('falls back to citation.provider when recording_provider is absent (SCRUM-426)', () => {
+    const q = makeQuestionWithCitations('q-cit-rp-3', [
+      { citation_id: 'C1', source_type: 'transcript', chunk_id: 'chunk-rp-3', provider: 'google_meet' },
+    ])
+    const { container } = renderQAHistory([q])
+    const sourceBadge = container.querySelector('[data-testid="citation-source-badge-google_meet"]')
+    expect(sourceBadge).not.toBeNull()
+    expect(sourceBadge.textContent).toBe('Google Meet')
+  })
 })
 
 describe('QAHistory answer_status mapping', () => {
