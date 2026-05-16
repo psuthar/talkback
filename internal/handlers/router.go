@@ -259,6 +259,11 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// SCRUM-424: People panel API.
+	if parts[3] == "people" {
+		h.RequireAuth(h.SessionPeopleRouter)(w, r)
+		return
+	}
 	if parts[3] == "primary-video-artifact" {
 		if r.Method == http.MethodPost {
 			h.SetSessionPrimaryVideoArtifact(w, r)
