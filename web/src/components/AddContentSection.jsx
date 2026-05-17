@@ -151,58 +151,50 @@ export function AddContentSection({
 
           <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
 
-          {/* SCRUM-420: Zoom tile. */}
+          {/* SCRUM-420 / 422 / 423: platform import tiles. SCRUM-461
+              compacts the layout — drop the between-tile <hr> separators
+              and tighten the per-tile container gap; the uppercase
+              subsection labels already provide enough visual separation. */}
           {integrations && integrations.zoom?.enabled && (
-            <>
-              <div>
-                <div style={subsectionLabel}>Import from Zoom</div>
-                <PlatformConnectionTile
-                  platform="zoom"
-                  enabled={integrations.zoom.enabled}
-                  connected={integrations.zoom.connected}
-                  accountEmail={integrations.zoom.account_email}
-                  onConnect={connectZoom}
-                  onBrowse={onBrowseZoom}
-                />
-              </div>
-              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
-            </>
+            <div>
+              <div style={subsectionLabel}>Import from Zoom</div>
+              <PlatformConnectionTile
+                platform="zoom"
+                enabled={integrations.zoom.enabled}
+                connected={integrations.zoom.connected}
+                accountEmail={integrations.zoom.account_email}
+                onConnect={connectZoom}
+                onBrowse={onBrowseZoom}
+              />
+            </div>
           )}
 
-          {/* SCRUM-422: Google Meet tile (reuses PlatformConnectionTile). */}
           {integrations && integrations.google_meet?.enabled && (
-            <>
-              <div>
-                <div style={subsectionLabel}>Import from Google Meet</div>
-                <PlatformConnectionTile
-                  platform="google_meet"
-                  enabled={integrations.google_meet.enabled}
-                  connected={integrations.google_meet.connected}
-                  accountEmail={integrations.google_meet.account_email}
-                  onConnect={connectGoogleMeet}
-                  onBrowse={onBrowseGoogleMeet}
-                />
-              </div>
-              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
-            </>
+            <div>
+              <div style={subsectionLabel}>Import from Google Meet</div>
+              <PlatformConnectionTile
+                platform="google_meet"
+                enabled={integrations.google_meet.enabled}
+                connected={integrations.google_meet.connected}
+                accountEmail={integrations.google_meet.account_email}
+                onConnect={connectGoogleMeet}
+                onBrowse={onBrowseGoogleMeet}
+              />
+            </div>
           )}
 
-          {/* SCRUM-423: Microsoft Teams tile (reuses PlatformConnectionTile). */}
           {integrations && integrations.teams?.enabled && (
-            <>
-              <div>
-                <div style={subsectionLabel}>Import from Microsoft Teams</div>
-                <PlatformConnectionTile
-                  platform="teams"
-                  enabled={integrations.teams.enabled}
-                  connected={integrations.teams.connected}
-                  accountEmail={integrations.teams.account_email}
-                  onConnect={connectTeams}
-                  onBrowse={onBrowseTeams}
-                />
-              </div>
-              <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
-            </>
+            <div>
+              <div style={subsectionLabel}>Import from Microsoft Teams</div>
+              <PlatformConnectionTile
+                platform="teams"
+                enabled={integrations.teams.enabled}
+                connected={integrations.teams.connected}
+                accountEmail={integrations.teams.account_email}
+                onConnect={connectTeams}
+                onBrowse={onBrowseTeams}
+              />
+            </div>
           )}
 
           {/* Add link */}
