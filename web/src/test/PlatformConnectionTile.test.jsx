@@ -76,4 +76,44 @@ describe('PlatformConnectionTile', () => {
     )
     expect(screen.getByTestId('platform-tile-teams-connect').textContent).toContain('Connect Microsoft Teams')
   })
+
+  // SCRUM-461: compact layout. The section header above the tile already
+  // names the platform (subsectionLabel "IMPORT FROM ZOOM"), so the tile
+  // itself no longer renders a redundant platform-name line. The
+  // connected state renders Browse button + account email on a single
+  // horizontal row.
+  it('connected state omits the redundant platform-name label (SCRUM-461)', () => {
+    render(
+      <PlatformConnectionTile
+        platform="zoom"
+        enabled
+        connected
+        accountEmail="z@example.com"
+        onBrowse={() => {}}
+      />
+    )
+    expect(screen.queryByTestId('platform-tile-zoom-label')).toBeNull()
+  })
+
+  it('connected state lays out Browse + account email inline on one row (SCRUM-461)', () => {
+    render(
+      <PlatformConnectionTile
+        platform="zoom"
+        enabled
+        connected
+        accountEmail="z@example.com"
+        onBrowse={() => {}}
+      />
+    )
+    const tile = screen.getByTestId('platform-tile-zoom')
+    expect(tile.style.display).toBe('flex')
+    expect(tile.style.alignItems).toBe('center')
+  })
+
+  it('unconnected state omits the redundant platform-name label (SCRUM-461)', () => {
+    render(
+      <PlatformConnectionTile platform="zoom" enabled connected={false} onConnect={() => {}} />
+    )
+    expect(screen.queryByTestId('platform-tile-zoom-label')).toBeNull()
+  })
 })
