@@ -6,6 +6,7 @@ import { DocumentViewer } from '../components/DocumentViewer'
 import { PrimaryStage } from '../components/PrimaryStage'
 import { resolvePrimaryAutoSelection } from '../components/sessionPrimaryAutoSelect'
 import { AddContentSection } from '../components/AddContentSection'
+import { RecordingsPicker } from '../components/RecordingsPicker'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import { OrchestrationRecActions } from '../components/OrchestrationRecActions'
 import { TrashIcon } from '../components/icons/TrashIcon'
@@ -164,6 +165,12 @@ export function CreatorMode({
 }) {
   const [materialUploading, setMaterialUploading] = useState(false)
   const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
+  // SCRUM-460: which platform's RecordingsPicker side-sheet is open
+  // ('zoom' | 'google_meet' | 'teams' | null). Set by the per-platform
+  // tile's Browse button in AddContentSection; cleared when the picker
+  // closes or finishes an import. RecordingsPicker is mounted only when
+  // browsePlatform is non-null so it tears down cleanly between opens.
+  const [browsePlatform, setBrowsePlatform] = useState(null)
   const materialFileInputRef = useRef(null)
   const materialUploadFeedbackTimeoutRef = useRef(null)
   useEffect(() => () => {
@@ -1938,6 +1945,35 @@ export function CreatorMode({
                       uploading={materialUploading}
                       uploadFeedback={materialUploadFeedback}
                       defaultExpanded={false}
+                      onBrowseZoom={() => setBrowsePlatform('zoom')}
+                      onBrowseGoogleMeet={() => setBrowsePlatform('google_meet')}
+                      onBrowseTeams={() => setBrowsePlatform('teams')}
+                    />
+                  )}
+
+                  {/* SCRUM-460: RecordingsPicker side-sheet, mounted only
+                      when a platform Browse button has been clicked.
+                      importedExternalIds is derived from the current
+                      session's video_sources so already-imported recordings
+                      render as disabled in the picker. */}
+                  {browsePlatform && sessionId && (
+                    <RecordingsPicker
+                      platform={browsePlatform}
+                      sessionId={sessionId}
+                      apiBaseUrl={apiBaseUrl}
+                      userEmail={authUser?.email}
+                      importedExternalIds={
+                        Array.isArray(currentSession?.video_sources)
+                          ? currentSession.video_sources
+                              .map((v) => v?.external_recording_id)
+                              .filter(Boolean)
+                          : []
+                      }
+                      onClose={() => setBrowsePlatform(null)}
+                      onImported={async () => {
+                        setBrowsePlatform(null)
+                        if (refetchSession) await refetchSession()
+                      }}
                     />
                   )}
 
