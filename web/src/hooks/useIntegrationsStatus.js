@@ -15,11 +15,11 @@ export function useIntegrationsStatus(apiBaseUrl) {
   const [error, setError] = useState(null)
 
   const refresh = useCallback(async () => {
-    if (!apiBaseUrl) return
+    if (apiBaseUrl === undefined || apiBaseUrl === null) return
     setLoading(true)
     setError(null)
     try {
-      const base = apiBaseUrl.replace(/\/$/, '')
+      const base = (apiBaseUrl || '').replace(/\/$/, '')
       const res = await fetch(`${base}/api/integrations/status`, {
         credentials: 'include',
         headers: { 'Accept': 'application/json' },
