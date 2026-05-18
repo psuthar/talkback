@@ -131,6 +131,75 @@ function TreeSection({ title, children }) {
   )
 }
 
+// SCRUM-468: in-progress placeholder for an imported meeting recording.
+// Renders an inline spinner + per-state copy so the user sees the import
+// is alive immediately after clicking Import, instead of staring at a
+// blank VIDEOS list for 3–10 minutes. State-to-copy mapping mirrors the
+// session_processing_jobs state machine in internal/models/models.go.
+const PROCESSING_PLATFORM_LABEL = {
+  zoom: 'Zoom',
+  google_meet: 'Google Meet',
+  teams: 'Microsoft Teams',
+}
+function processingCopyFor(job) {
+  const platform = PROCESSING_PLATFORM_LABEL[job.source] || job.source
+  switch (job.state) {
+    case 'queued':
+      return `Queued to import from ${platform}`
+    case 'fetching':
+      return `Looking up ${platform} recording…`
+    case 'downloading':
+      return `Downloading from ${platform}…`
+    case 'parsing':
+    case 'chunking':
+    case 'embedding':
+      return 'Indexing transcript…'
+    case 'awaiting_whisper':
+      return 'Transcribing (Whisper)…'
+    case 'waiting':
+    case 'waiting_native_transcript':
+      return `Waiting for ${platform} transcript…`
+    case 'failed_transient':
+      return `Retrying ${platform} import…`
+    default:
+      return `Importing from ${platform}…`
+  }
+}
+function ProcessingJobRow({ job }) {
+  ensureSpinnerStyle()
+  const copy = processingCopyFor(job)
+  const errMsg = job.last_error_message || ''
+  return (
+    <div
+      data-testid={`processing-job-row-${job.id}`}
+      data-state={job.state}
+      data-source={job.source}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '6px 8px',
+        borderRadius: 4,
+        backgroundColor: '#f5f7fb',
+        opacity: 0.95,
+      }}
+    >
+      <InlineSpinner />
+      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <span style={{ fontSize: 13, color: '#444' }}>{copy}</span>
+        <span style={{ fontSize: 11, color: '#777' }}>
+          {PROCESSING_PLATFORM_LABEL[job.source] || job.source} · this can take 3–10 min
+        </span>
+        {errMsg && (
+          <span data-testid={`processing-job-row-${job.id}-error`} style={{ fontSize: 11, color: '#c62828' }}>
+            {errMsg}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle, primaryBadge, rowHandlers }) {
   const handlers = rowHandlers || {}
   return (
@@ -231,7 +300,7 @@ export function MaterialsTreePanel({
 
   if (!session) return null
 
-  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, material_slides_ready = {}, material_slides_status = {} } = session
+  const { video_sources = [], materials = [], links = [], unread_material_ids = [], primary_video, material_slides_ready = {}, material_slides_status = {}, processing_jobs = [] } = session
   const linkCount = Array.isArray(links) ? links.length : 0
   const newLinkCount = Math.max(0, linkCount - lastSeenLinkCount)
   const unreadSet = new Set((unread_material_ids || []).map((id) => String(id)))
@@ -446,8 +515,15 @@ export function MaterialsTreePanel({
             is preserved on whichever row IS currently primary so the
             material-viewers e2e (`getByTestId('primary-video-item')`) keeps
             passing without an e2e change. */}
-        {video_sources.length > 0 && (
+        {(video_sources.length > 0 || processing_jobs.length > 0) && (
           <TreeSection title="Videos">
+            {/* SCRUM-468: placeholder rows for in-progress imports so
+                the user gets immediate feedback after clicking Import.
+                Rendered BEFORE the real video rows; auto-removed when
+                the worker completes and the matching video_source lands. */}
+            {processing_jobs.map((job) => (
+              <ProcessingJobRow key={job.id} job={job} />
+            ))}
             {video_sources.map((v) => {
               const materialId = videoMaterialId(v)
               const videoSelectable = !isProcessingStatus(v?.transcript_status)
