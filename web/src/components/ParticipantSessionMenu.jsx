@@ -24,6 +24,11 @@ export function ParticipantSessionMenu({
   onLogout,
   debugMode,
   setDebugMode,
+  /** Visible + aria label for the trigger (default: Session menu). Use "App menu" on the session list shell. */
+  menuLabel = 'Session menu',
+  /** Admin-only link target/label (defaults match in-session Admin panel). */
+  adminPanelHref = '/?mode=admin',
+  adminPanelLabel = 'Admin panel',
 }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef(null)
@@ -73,12 +78,12 @@ export function ParticipantSessionMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
-        aria-label="Session menu"
+        aria-label={menuLabel}
         onClick={() => setOpen((v) => !v)}
         className={styles.trigger}
       >
         <span aria-hidden="true" className={styles.triggerIcon}>☰</span>
-        <span className={styles.triggerLabel}>Session menu</span>
+        <span className={styles.triggerLabel}>{menuLabel}</span>
       </button>
 
       {open && (
@@ -86,7 +91,7 @@ export function ParticipantSessionMenu({
           ref={menuRef}
           id={menuId}
           role="menu"
-          aria-label="Session menu"
+          aria-label={menuLabel}
           className={styles.menu}
           data-testid="participant-session-menu"
         >
@@ -137,12 +142,12 @@ export function ParticipantSessionMenu({
           {isAdmin && (
             <a
               role="menuitem"
-              href="/?mode=admin"
+              href={adminPanelHref}
               data-testid="menu-admin-link"
               onClick={() => setOpen(false)}
               className={`${styles.menuItem} ${styles.menuItemLink}`}
             >
-              Admin panel
+              {adminPanelLabel}
             </a>
           )}
 

@@ -154,4 +154,23 @@ describe('ParticipantSessionMenu', () => {
     expect(link.getAttribute('href')).toBe('/app/sessions/abc?mode=view')
     expect(link.textContent).toContain('View as Participant')
   })
+
+  it('supports App menu label for session-list shell (SCRUM-477)', () => {
+    renderMenu({ menuLabel: 'App menu', onShowAllSessions: undefined })
+    const trigger = screen.getByTestId('participant-session-menu-btn')
+    expect(trigger.getAttribute('aria-label')).toBe('App menu')
+    expect(trigger.textContent).toContain('App menu')
+  })
+
+  it('uses custom admin panel link when on admin view (SCRUM-477)', () => {
+    renderMenu({
+      authUser: { ...baseUser, global_role: 'admin' },
+      adminPanelHref: '?',
+      adminPanelLabel: 'Back to app',
+    })
+    fireEvent.click(screen.getByTestId('participant-session-menu-btn'))
+    const adminLink = screen.getByTestId('menu-admin-link')
+    expect(adminLink.getAttribute('href')).toBe('?')
+    expect(adminLink.textContent).toContain('Back to app')
+  })
 })

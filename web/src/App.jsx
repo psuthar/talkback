@@ -23,6 +23,7 @@ import {
   sessionLoadMessageForStatus,
 } from './sessionNavigation'
 import { shouldShowAppAuthCluster } from './headerVisibility'
+import { ParticipantSessionMenu } from './components/ParticipantSessionMenu'
 import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus, googleMeetRecordingsErrorMessage, googleMeetTranscriptBadge, googleMeetEmptyStateMessage, googleMeetImportErrorMessage, googleMeetImportTranscriptNote } from './googleMeetMessages'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
@@ -3519,46 +3520,17 @@ function App() {
           {/* Log out / Admin / Debug alignment group (SCRUM-79).
               Hidden when participant or creator session shells are mounted with a valid session —
               ParticipantSessionMenu handles those actions in the topbar menu for those modes. */}
-          {showAppAuthCluster && (
-            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }} data-testid="app-auth-cluster">
-              <span style={{ fontSize: '13px', color: '#555', display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', lineHeight: 1.35 }}>
-                Logged in as {authUser.display_name || authUser.email}
-                {authUser?.id && (
-                  <>
-                    {' '}
-                    (id:{' '}
-                    <code style={{ fontSize: '12px', wordBreak: 'break-all', fontFamily: 'ui-monospace, monospace' }}>{authUser.id}</code>
-                    )
-                  </>
-                )}
-                {authUser.global_role === 'admin' && (
-                  <span title="Admin" style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--color-primary)', color: '#fff', fontSize: '12px', fontWeight: '600' }}>Admin</span>
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={logoutCurrentUser}
-                style={{ fontSize: '13px', padding: '4px 10px', cursor: 'pointer', background: 'none', border: '1px solid #999', borderRadius: '4px', color: '#555', lineHeight: 1.25 }}
-              >
-                Log out
-              </button>
-              {authUser?.global_role === 'admin' && (
-                showAdminView ? (
-                  <a href="?" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Back to app</a>
-                ) : (
-                  <a href="?mode=admin" style={{ fontSize: '14px', fontWeight: '600', lineHeight: 1.25 }}>Admin</a>
-                )
-              )}
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px', cursor: 'pointer', userSelect: 'none', lineHeight: 1.25 }}>
-                <input
-                  type="checkbox"
-                  checked={debugMode}
-                  onChange={(e) => setDebugMode(e.target.checked)}
-                  style={{ width: '16px', height: '16px', cursor: 'pointer', flexShrink: 0 }}
-                  aria-label="Show debug panel"
-                />
-                <span>Debug</span>
-              </label>
+          {showAppAuthCluster && authUser && (
+            <div data-testid="app-auth-cluster">
+              <ParticipantSessionMenu
+                authUser={authUser}
+                onLogout={logoutCurrentUser}
+                debugMode={debugMode}
+                setDebugMode={setDebugMode}
+                menuLabel="App menu"
+                adminPanelHref={showAdminView ? '?' : '/?mode=admin'}
+                adminPanelLabel={showAdminView ? 'Back to app' : 'Admin panel'}
+              />
             </div>
           )}
         </div>
