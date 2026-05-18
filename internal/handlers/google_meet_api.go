@@ -125,8 +125,49 @@ func (h *Handlers) GoogleMeetAPIDisconnect(w http.ResponseWriter, r *http.Reques
 }
 
 // GoogleMeetRecordingsResponse is the response for GET /api/google-meet/recordings.
+//
+// SCRUM-466: items are normalized to the Zoom-shaped fields the SPA's
+// RecordingsPicker reads uniformly (meeting_topic, start_time,
+// duration_minutes, meeting_uuid, instance_uuid, has_transcript). The
+// internal googlemeet.RecordingListItem (subject / conference_record_name /
+// recording_name) is still used by the pipeline; this is a response-layer
+// shim so the picker doesn't have to special-case per platform.
 type GoogleMeetRecordingsResponse struct {
-	Items []googlemeet.RecordingListItem `json:"items"`
+	Items []NormalizedRecordingListItem `json:"items"`
+}
+
+// NormalizedRecordingListItem is the SPA-facing shape every recordings
+// endpoint emits regardless of platform.
+type NormalizedRecordingListItem struct {
+	MeetingTopic    string `json:"meeting_topic"`
+	StartTime       string `json:"start_time"`
+	DurationMinutes int    `json:"duration_minutes"`
+	MeetingUUID     string `json:"meeting_uuid"`
+	InstanceUUID    string `json:"instance_uuid,omitempty"`
+	HasVideo        bool   `json:"has_video"`
+	HasTranscript   bool   `json:"has_transcript"`
+	RecordingCount  int    `json:"recording_count"`
+}
+
+// normalizeMeetItem maps a Google Meet RecordingListItem into the
+// normalized SPA shape. Subject becomes the title (with a date fallback
+// for untitled meetings); ConferenceRecordName + RecordingName become
+// the meeting+instance UUIDs the picker uses as opaque external IDs;
+// TranscriptState=="ready" sets has_transcript.
+func normalizeMeetItem(it googlemeet.RecordingListItem) NormalizedRecordingListItem {
+	title := strings.TrimSpace(it.Subject)
+	if title == "" {
+		title = "Meet recording " + it.StartTime
+	}
+	return NormalizedRecordingListItem{
+		MeetingTopic:   title,
+		StartTime:      it.StartTime,
+		MeetingUUID:    it.ConferenceRecordName,
+		InstanceUUID:   it.RecordingName,
+		HasVideo:       it.DriveFileID != "" || it.ExportURI != "",
+		HasTranscript:  it.TranscriptState == "ready",
+		RecordingCount: 1,
+	}
 }
 
 // GoogleMeetAPIRecordings lists Meet recordings the user can import. If the
@@ -162,10 +203,11 @@ func (h *Handlers) GoogleMeetAPIRecordings(w http.ResponseWriter, r *http.Reques
 		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "Failed to list Google Meet recordings"})
 		return
 	}
-	if items == nil {
-		items = []googlemeet.RecordingListItem{}
+	normalized := make([]NormalizedRecordingListItem, 0, len(items))
+	for _, it := range items {
+		normalized = append(normalized, normalizeMeetItem(it))
 	}
-	writeJSONStatus(w, http.StatusOK, GoogleMeetRecordingsResponse{Items: items})
+	writeJSONStatus(w, http.StatusOK, GoogleMeetRecordingsResponse{Items: normalized})
 }
 
 // readCreatorIdentity returns the creator identity from the X-Creator-Identity header
