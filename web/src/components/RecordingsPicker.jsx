@@ -1,30 +1,26 @@
-// SCRUM-421: recordings picker — multi-select + confirm + attach. Drives
-// the "Browse <Platform> recordings" CTA from SCRUM-420's
-// PlatformConnectionTile across Zoom (SCRUM-420), Meet (SCRUM-422), and
-// Teams (SCRUM-423).
+// SCRUM-421: recordings picker — multi-select + confirm + attach.
 //
-// SCRUM-462 (modal redesign):
-//   1. Renders as a centered modal overlay with a semi-transparent
-//      backdrop instead of expanding the sidebar inline. Esc closes;
-//      backdrop click closes; aria-modal=true; initial focus lands on
-//      the close affordance.
-//   2. Replaces the full-width "Close" button with a small × icon button
-//      in the upper-right corner of the dialog card.
-//   3. Drops the "With transcript" checkbox filter. Each result row
-//      now shows a small CC-style transcript icon when has_transcript
-//      is true.
-//   4. Drops the "Apply filters" button. Filter changes (search title,
-//      date range, custom from/to) re-run the list query automatically
-//      after a 300ms debounce, so the user doesn't hammer the platform
-//      API on every keystroke.
+// SCRUM-462 (modal redesign): popup overlay + × close + inline transcript
+// icon + auto-refetch on filter change with 300ms debounce.
 //
-// The data flow (fetch, multi-select, confirm dialog, attach POST,
-// 429 cap handling, already-imported / oversized disabling) is unchanged
-// from SCRUM-421.
+// SCRUM-463 (unified import): segmented platform selector lives INSIDE
+// the modal. The caller no longer hard-pins a platform; they open the
+// picker via a single "Import meeting recording" entry point and the
+// user chooses Zoom / Google Meet / Teams in the dialog. The initial
+// recordings fetch is gated behind an explicit "Load recordings" button —
+// no auto-fetch on open or on platform change. After a Load has fired
+// once, the SCRUM-462 debounced auto-refetch resumes for subsequent
+// filter edits. Last platform is remembered per-user in localStorage so
+// the common case (same user, same platform week-over-week) is one click.
+//
+// The data flow (fetch, multi-select, confirm dialog, attach POST, 429
+// cap handling, already-imported / oversized disabling, switch-account)
+// is unchanged from SCRUM-421.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const MAX_DURATION_MINUTES = 240 // 4 hours; mirrors SCRUM-421 spec default
 const FILTER_DEBOUNCE_MS = 300
+const LAST_PLATFORM_STORAGE_KEY = 'tb.import.lastPlatform'
 
 const PLATFORM_META = {
   zoom: {
@@ -32,20 +28,25 @@ const PLATFORM_META = {
     listPath: (q) => `/api/zoom/recordings${q ? `?${q}` : ''}`,
     attachPath: (sessionId) => `/api/sessions/${sessionId}/import/zoom`,
     buildAttachBody: (r) => ({ meeting_uuid: r.meeting_uuid, instance_uuid: r.instance_uuid || r.meeting_uuid }),
+    connectPath: '/api/zoom/connect',
   },
   google_meet: {
     label: 'Google Meet',
     listPath: (q) => `/api/google-meet/recordings${q ? `?${q}` : ''}`,
     attachPath: (sessionId) => `/api/sessions/${sessionId}/import/google-meet`,
     buildAttachBody: (r) => ({ conference_record: r.meeting_uuid, recording: r.instance_uuid || r.meeting_uuid }),
+    connectPath: '/api/google-meet/connect',
   },
   teams: {
     label: 'Microsoft Teams',
     listPath: (q) => `/api/teams/recordings${q ? `?${q}` : ''}`,
     attachPath: (sessionId) => `/api/sessions/${sessionId}/import/teams`,
     buildAttachBody: (r) => ({ meeting_id: r.meeting_uuid, recording_id: r.instance_uuid || r.meeting_uuid }),
+    connectPath: '/api/teams/connect',
   },
 }
+
+const PLATFORM_ORDER = ['zoom', 'google_meet', 'teams']
 
 const DATE_RANGES = [
   { key: '7', label: 'Last 7 days', days: 7 },
@@ -61,9 +62,6 @@ function isoOrEmpty(daysAgo) {
 }
 
 function recordingExternalID(r) {
-  // Match SCRUM-403's external_recording_id semantics (instance_uuid first,
-  // falling back to meeting_uuid). The parent passes a Set of already-
-  // imported external_recording_ids built from currentSession.video_sources.
   return r.instance_uuid || r.meeting_uuid || ''
 }
 
@@ -76,9 +74,8 @@ function recordingIsOversized(r) {
   return typeof r.duration_minutes === 'number' && r.duration_minutes > MAX_DURATION_MINUTES
 }
 
-// SCRUM-462: inline CC-style icon used per-row when a recording's
-// transcript is available. Replaces the SCRUM-421 verbose copy
-// ("Zoom transcript ready" / "No native transcript — we'll transcribe").
+// SCRUM-462: small CC-style transcript indicator rendered inline per row
+// when has_transcript=true.
 function TranscriptIcon({ id }) {
   return (
     <svg
@@ -97,23 +94,47 @@ function TranscriptIcon({ id }) {
   )
 }
 
+// SCRUM-463: pick the default platform when the modal opens. Order of
+// preference: lastPlatform persisted from a prior session, then the
+// first connected platform, then 'zoom' as the universal fallback.
+function pickDefaultPlatform(integrations) {
+  try {
+    const stored = window.localStorage.getItem(LAST_PLATFORM_STORAGE_KEY)
+    if (stored && PLATFORM_ORDER.includes(stored)) return stored
+  } catch (_) { /* localStorage may be unavailable; fall through */ }
+  if (integrations) {
+    for (const p of PLATFORM_ORDER) {
+      if (integrations[p]?.connected) return p
+    }
+  }
+  return 'zoom'
+}
+
+function persistLastPlatform(platform) {
+  try { window.localStorage.setItem(LAST_PLATFORM_STORAGE_KEY, platform) } catch (_) {}
+}
+
 export function RecordingsPicker({
-  platform,
   sessionId,
   apiBaseUrl,
-  accountEmail,
+  integrations,        // SCRUM-463: { zoom, google_meet, teams } from useIntegrationsStatus
   importedExternalIds = [],
   onClose,
   onSwitchAccount,
+  onConnect,           // SCRUM-463: opens OAuth popup for the disconnected platform
   onImported,
   userEmail,
+  initialPlatform,     // optional override; rarely used in production
 }) {
-  const meta = PLATFORM_META[platform] || PLATFORM_META.zoom
   const importedSet = useMemo(() => new Set(importedExternalIds), [importedExternalIds])
+
+  const [platform, setPlatform] = useState(() => initialPlatform || pickDefaultPlatform(integrations))
+  const meta = PLATFORM_META[platform] || PLATFORM_META.zoom
 
   const [recordings, setRecordings] = useState([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(null)
+  const [hasLoaded, setHasLoaded] = useState(false) // SCRUM-463: gate auto-refetch until first Load
   const [query, setQuery] = useState('')
   const [rangeKey, setRangeKey] = useState('30')
   const [customFrom, setCustomFrom] = useState('')
@@ -125,6 +146,9 @@ export function RecordingsPicker({
 
   const closeBtnRef = useRef(null)
   const base = useMemo(() => (apiBaseUrl || '').replace(/\/$/, ''), [apiBaseUrl])
+
+  const connected = !!integrations?.[platform]?.connected
+  const accountEmail = integrations?.[platform]?.account_email || null
 
   const buildListQuery = useCallback(() => {
     const params = new URLSearchParams()
@@ -163,19 +187,24 @@ export function RecordingsPicker({
     }
   }, [base, meta, platform, userEmail, buildListQuery])
 
-  // SCRUM-462: auto-refresh on filter change with a 300ms debounce so
-  // typing into the search field doesn't hammer the upstream API on
-  // every keystroke. `refresh` already depends on every filter input,
-  // so a single effect on [refresh] covers all of them.
+  // SCRUM-463: explicit Load button is required before any fetch fires.
+  // Once hasLoaded is true, SCRUM-462's debounced auto-refetch resumes
+  // for filter edits (search / range). Switching platforms resets
+  // hasLoaded back to false so the user must press Load again — see the
+  // platform-change handler below.
+  const handleLoad = useCallback(() => {
+    setHasLoaded(true)
+    persistLastPlatform(platform)
+    refresh()
+  }, [platform, refresh])
+
   useEffect(() => {
+    if (!hasLoaded) return
     const t = setTimeout(refresh, FILTER_DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [refresh])
+  }, [refresh, hasLoaded])
 
-  // SCRUM-462: Esc-to-close — attach to document so it fires regardless
-  // of which dialog control currently has focus. Also focus the close
-  // button on mount so the user can immediately Esc / Enter / Space out
-  // of the picker.
+  // Esc-to-close + focus the close button on mount.
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape' && typeof onClose === 'function') onClose()
@@ -185,13 +214,26 @@ export function RecordingsPicker({
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const visible = useMemo(() => {
-    // The backend filters by q + date range; visible == recordings. Kept
-    // as a hook so a future client-side filter pass can slot in here
-    // without re-querying.
-    return recordings
-  }, [recordings])
+  // SCRUM-463: switching platforms wipes everything specific to the
+  // previously-viewed platform.
+  const handlePlatformChange = (next) => {
+    if (next === platform) return
+    setPlatform(next)
+    setRecordings([])
+    setSelected(new Set())
+    setLoadError(null)
+    setQuery('')
+    setRangeKey('30')
+    setCustomFrom('')
+    setCustomTo('')
+    setHasLoaded(false)
+  }
 
+  const handleConnect = () => {
+    if (typeof onConnect === 'function') onConnect(platform)
+  }
+
+  const visible = recordings
   const selectableIDs = useMemo(() => {
     const ids = []
     for (const r of visible) {
@@ -215,7 +257,6 @@ export function RecordingsPicker({
     setImportErrors([])
     setConfirming(true)
   }
-
   const cancelConfirm = () => setConfirming(false)
 
   const performImport = useCallback(async () => {
@@ -237,7 +278,7 @@ export function RecordingsPicker({
         const body = await res.json().catch(() => ({}))
         if (res.status === 429) {
           errors.push({ recording: rec, message: `Cap exceeded (${body.cap || ''} max). Remove a recording from this session to add another.` })
-          break // stop the batch
+          break
         }
         if (!res.ok && res.status !== 202 && res.status !== 200) {
           errors.push({ recording: rec, message: body.message || `HTTP ${res.status}` })
@@ -258,19 +299,19 @@ export function RecordingsPicker({
     }
   }, [base, sessionId, meta, selected, visible, userEmail, onImported, onClose])
 
-  // SCRUM-462: backdrop click handler — only close when the click lands
-  // on the overlay itself (e.target === e.currentTarget), not when a
-  // descendant element bubbles up to the overlay.
   const onBackdropClick = (e) => {
     if (e.target === e.currentTarget && typeof onClose === 'function') onClose()
   }
 
+  const loadDisabled = !connected || loading
+  const loadLabel = loading ? 'Loading…' : 'Load recordings'
+
   return (
     <div
-      data-testid={`recordings-picker-${platform}`}
+      data-testid="recordings-picker"
       role="dialog"
       aria-modal="true"
-      aria-label={`${meta.label} recordings`}
+      aria-label="Import meeting recording"
       style={overlayStyle}
       onClick={onBackdropClick}
     >
@@ -286,121 +327,192 @@ export function RecordingsPicker({
         </button>
 
         <header data-testid="recordings-picker-header" style={headerStyle}>
-          <h2 style={{ margin: 0, fontSize: '18px' }}>{meta.label} recordings</h2>
-          {accountEmail && (
-            <p data-testid="recordings-picker-account" style={accountStyle}>
-              Connected: {accountEmail}{' '}
-              <button data-testid="recordings-picker-switch-account" onClick={onSwitchAccount} style={inlineLinkStyle}>
-                Switch account
-              </button>
-            </p>
-          )}
+          <h2 style={{ margin: 0, fontSize: '18px' }}>Import meeting recording</h2>
         </header>
 
-        <section data-testid="recordings-picker-filters" style={filtersStyle}>
-          <input
-            type="search"
-            data-testid="recordings-picker-search"
-            placeholder="Search title"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={inputStyle}
-          />
-          <select
-            data-testid="recordings-picker-range"
-            value={rangeKey}
-            onChange={(e) => setRangeKey(e.target.value)}
-            style={inputStyle}
-          >
-            {DATE_RANGES.map((r) => (
-              <option key={r.key} value={r.key}>{r.label}</option>
-            ))}
-          </select>
-          {rangeKey === 'custom' && (
-            <>
-              <input
-                type="date"
-                data-testid="recordings-picker-from"
-                value={customFrom}
-                onChange={(e) => setCustomFrom(e.target.value)}
-                style={inputStyle}
-              />
-              <input
-                type="date"
-                data-testid="recordings-picker-to"
-                value={customTo}
-                onChange={(e) => setCustomTo(e.target.value)}
-                style={inputStyle}
-              />
-            </>
-          )}
-          {loading && (
-            <span data-testid="recordings-picker-loading" style={mutedStyle}>Loading…</span>
-          )}
-        </section>
+        {/* SCRUM-463: segmented platform selector with status dots. */}
+        <div data-testid="recordings-picker-platform-selector" role="tablist" style={selectorStyle}>
+          {PLATFORM_ORDER.map((p) => {
+            const isActive = p === platform
+            const isConnected = !!integrations?.[p]?.connected
+            return (
+              <button
+                key={p}
+                role="tab"
+                aria-selected={isActive}
+                data-testid={`recordings-picker-platform-${p}`}
+                data-active={isActive}
+                data-connected={isConnected}
+                onClick={() => handlePlatformChange(p)}
+                style={segmentStyle(isActive)}
+              >
+                <span
+                  data-testid={`recordings-picker-platform-${p}-status`}
+                  data-status={isConnected ? 'connected' : 'disconnected'}
+                  aria-label={isConnected ? 'Connected' : 'Not connected'}
+                  style={statusDotStyle(isConnected)}
+                />
+                {PLATFORM_META[p].label}
+              </button>
+            )
+          })}
+        </div>
 
-        {loadError && (
-          <p data-testid="recordings-picker-error" style={errorStyle}>Failed to load: {String(loadError)}</p>
-        )}
-        {!loading && !loadError && visible.length === 0 && (
-          <p data-testid="recordings-picker-empty" style={mutedStyle}>No recordings match your filters.</p>
+        {connected && accountEmail && (
+          <p data-testid="recordings-picker-account" style={accountStyle}>
+            Connected as {accountEmail}{' '}
+            {typeof onSwitchAccount === 'function' && (
+              <button data-testid="recordings-picker-switch-account" onClick={() => onSwitchAccount(platform)} style={inlineLinkStyle}>
+                Switch account
+              </button>
+            )}
+          </p>
         )}
 
-        {visible.length > 0 && (
-          <ul data-testid="recordings-picker-list" style={listStyle}>
-            {visible.map((r) => {
-              const id = recordingExternalID(r)
-              const isImported = recordingIsImported(r, importedSet)
-              const isOversized = recordingIsOversized(r)
-              const isDisabled = isImported || isOversized
-              const isSelected = selected.has(id)
-              return (
-                <li
-                  key={id || `${r.meeting_topic}:${r.start_time}`}
-                  data-testid={`recording-row-${id}`}
-                  data-state={isImported ? 'imported' : isOversized ? 'oversized' : isSelected ? 'selected' : 'available'}
-                  aria-disabled={isDisabled}
-                  style={rowStyle(isDisabled)}
-                >
+        {/* SCRUM-463: disconnected variant — swap the middle of the
+            modal for an inline Connect CTA. Filters + Load button are
+            replaced; the list area is hidden. */}
+        {!connected && (
+          <div data-testid="recordings-picker-disconnected" style={disconnectedStyle}>
+            <p style={{ margin: 0 }}>{meta.label} isn't connected yet.</p>
+            <p style={mutedStyle}>Connect to browse and import your {meta.label} recordings.</p>
+            <button
+              data-testid={`recordings-picker-connect-${platform}`}
+              onClick={handleConnect}
+              style={primaryButtonStyle}
+            >
+              Connect {meta.label}
+            </button>
+          </div>
+        )}
+
+        {connected && (
+          <>
+            <section data-testid="recordings-picker-filters" style={filtersStyle}>
+              <input
+                type="search"
+                data-testid="recordings-picker-search"
+                placeholder="Search recordings..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                style={inputStyle}
+              />
+              <select
+                data-testid="recordings-picker-range"
+                value={rangeKey}
+                onChange={(e) => setRangeKey(e.target.value)}
+                style={inputStyle}
+              >
+                {DATE_RANGES.map((r) => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
+              </select>
+              {rangeKey === 'custom' && (
+                <>
                   <input
-                    type="checkbox"
-                    data-testid={`recording-checkbox-${id}`}
-                    checked={isSelected}
-                    onChange={() => toggleOne(id)}
-                    disabled={isDisabled}
-                    aria-label={`Select ${r.meeting_topic}`}
+                    type="date"
+                    data-testid="recordings-picker-from"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    style={inputStyle}
                   />
-                  <span data-testid={`recording-title-${id}`} style={titleStyle}>
-                    {r.meeting_topic || '(untitled)'}
-                    {r.has_transcript && <TranscriptIcon id={id} />}
-                  </span>
-                  <span data-testid={`recording-time-${id}`} style={mutedSmallStyle}>{r.start_time}</span>
-                  <span data-testid={`recording-duration-${id}`} style={mutedSmallStyle}>{r.duration_minutes} min</span>
-                  {isImported && (
-                    <span data-testid={`recording-already-imported-${id}`} style={mutedSmallStyle}>Already in this session</span>
-                  )}
-                  {isOversized && !isImported && (
-                    <span data-testid={`recording-oversized-${id}`} style={mutedSmallStyle}>Over {MAX_DURATION_MINUTES / 60}h — contact support</span>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
+                  <input
+                    type="date"
+                    data-testid="recordings-picker-to"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    style={inputStyle}
+                  />
+                </>
+              )}
+              <button
+                data-testid="recordings-picker-load"
+                onClick={handleLoad}
+                disabled={loadDisabled}
+                style={primaryButtonStyle}
+              >
+                {loadLabel}
+              </button>
+            </section>
+
+            {loadError && (
+              <div data-testid="recordings-picker-error" style={errorStyle}>
+                Failed to load: {String(loadError)}{' '}
+                <button data-testid="recordings-picker-retry" onClick={handleLoad} style={inlineLinkStyle}>
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {!hasLoaded && !loadError && (
+              <p data-testid="recordings-picker-preload" style={mutedStyle}>
+                Choose a date range and click Load recordings.
+              </p>
+            )}
+
+            {hasLoaded && !loading && !loadError && visible.length === 0 && (
+              <p data-testid="recordings-picker-empty" style={mutedStyle}>
+                No recordings found for {meta.label} in this range. Try widening the date range.
+              </p>
+            )}
+
+            {hasLoaded && visible.length > 0 && (
+              <ul data-testid="recordings-picker-list" style={listStyle}>
+                {visible.map((r) => {
+                  const id = recordingExternalID(r)
+                  const isImported = recordingIsImported(r, importedSet)
+                  const isOversized = recordingIsOversized(r)
+                  const isDisabled = isImported || isOversized
+                  const isSelected = selected.has(id)
+                  return (
+                    <li
+                      key={id || `${r.meeting_topic}:${r.start_time}`}
+                      data-testid={`recording-row-${id}`}
+                      data-state={isImported ? 'imported' : isOversized ? 'oversized' : isSelected ? 'selected' : 'available'}
+                      aria-disabled={isDisabled}
+                      style={rowStyle(isDisabled)}
+                    >
+                      <input
+                        type="checkbox"
+                        data-testid={`recording-checkbox-${id}`}
+                        checked={isSelected}
+                        onChange={() => toggleOne(id)}
+                        disabled={isDisabled}
+                        aria-label={`Select ${r.meeting_topic}`}
+                      />
+                      <span data-testid={`recording-title-${id}`} style={titleStyle}>
+                        {r.meeting_topic || '(untitled)'}
+                        {r.has_transcript && <TranscriptIcon id={id} />}
+                      </span>
+                      <span data-testid={`recording-time-${id}`} style={mutedSmallStyle}>{r.start_time}</span>
+                      <span data-testid={`recording-duration-${id}`} style={mutedSmallStyle}>{r.duration_minutes} min</span>
+                      {isImported && (
+                        <span data-testid={`recording-already-imported-${id}`} style={mutedSmallStyle}>Already in this session</span>
+                      )}
+                      {isOversized && !isImported && (
+                        <span data-testid={`recording-oversized-${id}`} style={mutedSmallStyle}>Over {MAX_DURATION_MINUTES / 60}h — contact support</span>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </>
         )}
 
         <footer data-testid="recordings-picker-footer" style={footerStyle}>
+          <button data-testid="recordings-picker-cancel" onClick={onClose} style={secondaryButtonStyle}>
+            Cancel
+          </button>
           <button
             data-testid="recordings-picker-import"
             onClick={beginImport}
-            disabled={selected.size === 0 || importing}
+            disabled={selected.size === 0 || importing || !connected}
             style={primaryButtonStyle}
           >
             {`Import ${selected.size} recording${selected.size === 1 ? '' : 's'}`}
           </button>
-          <button data-testid="recordings-picker-cancel" onClick={onClose} style={secondaryButtonStyle}>
-            Cancel
-          </button>
-          {selectableIDs.length === 0 && visible.length > 0 && (
+          {connected && hasLoaded && selectableIDs.length === 0 && visible.length > 0 && (
             <p data-testid="recordings-picker-none-selectable" style={mutedStyle}>
               All listed recordings are either already imported or oversized.
             </p>
@@ -447,49 +559,52 @@ export function RecordingsPicker({
   )
 }
 
-// SCRUM-462: inline modal styles. Kept here so the redesign is fully
-// self-contained — no new CSS module file to wire up. Trade-off: less
-// theming flexibility; revisit if/when the design system lands.
+// Styles
 const overlayStyle = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 9999,
+  position: 'fixed', inset: 0, zIndex: 9999,
   backgroundColor: 'rgba(0, 0, 0, 0.45)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
   padding: '24px',
 }
 const dialogStyle = {
-  position: 'relative',
-  backgroundColor: '#fff',
-  borderRadius: '8px',
+  position: 'relative', backgroundColor: '#fff', borderRadius: '8px',
   boxShadow: '0 12px 32px rgba(0,0,0,0.18)',
-  width: 'min(640px, 95vw)',
-  maxHeight: '85vh',
-  overflowY: 'auto',
-  padding: '20px 24px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
+  width: 'min(640px, 95vw)', maxHeight: '85vh', overflowY: 'auto',
+  padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '12px',
 }
 const closeXStyle = {
-  position: 'absolute',
-  top: '8px',
-  right: '10px',
-  width: '28px',
-  height: '28px',
-  border: 'none',
-  background: 'transparent',
-  fontSize: '22px',
-  lineHeight: '1',
-  cursor: 'pointer',
-  color: '#555',
+  position: 'absolute', top: '8px', right: '10px',
+  width: '28px', height: '28px', border: 'none', background: 'transparent',
+  fontSize: '22px', lineHeight: '1', cursor: 'pointer', color: '#555',
   borderRadius: '4px',
 }
-const headerStyle = { display: 'flex', flexDirection: 'column', gap: '4px', paddingRight: '32px' }
+const headerStyle = { paddingRight: '32px' }
+const selectorStyle = { display: 'flex', gap: '0', border: '1px solid #ddd', borderRadius: '6px', overflow: 'hidden', padding: 0 }
+const segmentStyle = (active) => ({
+  flex: 1,
+  padding: '8px 12px',
+  fontSize: '13px',
+  fontWeight: active ? 600 : 400,
+  border: 'none',
+  borderRight: '1px solid #ddd',
+  background: active ? '#e3f2fd' : '#fff',
+  color: active ? '#1976d2' : '#444',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+})
+const statusDotStyle = (connected) => ({
+  display: 'inline-block',
+  width: '8px',
+  height: '8px',
+  borderRadius: '50%',
+  backgroundColor: connected ? '#4caf50' : '#bbb',
+})
 const accountStyle = { fontSize: '12px', color: '#666', margin: 0 }
 const inlineLinkStyle = { background: 'none', border: 'none', color: '#1976d2', cursor: 'pointer', padding: 0, fontSize: '12px' }
+const disconnectedStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '24px 12px', textAlign: 'center' }
 const filtersStyle = { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }
 const inputStyle = { padding: '6px 8px', fontSize: '13px', border: '1px solid #ccc', borderRadius: '4px' }
 const mutedStyle = { fontSize: '12px', color: '#666', margin: 0 }
@@ -497,16 +612,13 @@ const mutedSmallStyle = { fontSize: '11px', color: '#888' }
 const errorStyle = { fontSize: '13px', color: '#c62828', margin: 0 }
 const listStyle = { listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '40vh', overflowY: 'auto' }
 const rowStyle = (disabled) => ({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '6px 8px',
-  borderRadius: '4px',
+  display: 'flex', alignItems: 'center', gap: '8px',
+  padding: '6px 8px', borderRadius: '4px',
   backgroundColor: disabled ? '#f5f5f5' : 'transparent',
   opacity: disabled ? 0.6 : 1,
 })
 const titleStyle = { fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }
-const footerStyle = { display: 'flex', gap: '8px', alignItems: 'center' }
+const footerStyle = { display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end' }
 const primaryButtonStyle = {
   padding: '8px 14px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '4px',
   backgroundColor: '#1976d2', color: '#fff', cursor: 'pointer',
@@ -515,8 +627,4 @@ const secondaryButtonStyle = {
   padding: '8px 14px', fontSize: '13px', fontWeight: 500, border: '1px solid #ccc', borderRadius: '4px',
   backgroundColor: '#fff', color: '#444', cursor: 'pointer',
 }
-const confirmStyle = {
-  borderTop: '1px solid #eee',
-  paddingTop: '12px',
-  marginTop: '4px',
-}
+const confirmStyle = { borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '4px' }

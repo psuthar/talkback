@@ -41,9 +41,25 @@ describe('useIntegrationsStatus', () => {
     expect(result.current.error).not.toBeNull()
   })
 
-  it('does nothing when apiBaseUrl is empty', () => {
+  // SCRUM-459: empty string is a valid same-origin apiBaseUrl, NOT a
+  // missing-configuration signal. The hook must still fetch with a
+  // relative URL so the deployed SPA (which is served same-origin with
+  // the API) works without an explicit base.
+  it('fetches with a same-origin relative URL when apiBaseUrl is empty (SCRUM-459)', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, json: async () => sample })
+    const { result } = renderHook(() => useIntegrationsStatus(''))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/integrations/status',
+      expect.objectContaining({ credentials: 'include' })
+    )
+    expect(result.current.status).toEqual(sample)
+  })
+
+  it('does nothing when apiBaseUrl is null or undefined', () => {
     global.fetch = vi.fn()
-    renderHook(() => useIntegrationsStatus(''))
+    renderHook(() => useIntegrationsStatus(null))
+    renderHook(() => useIntegrationsStatus(undefined))
     expect(global.fetch).not.toHaveBeenCalled()
   })
 })
