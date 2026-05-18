@@ -165,7 +165,9 @@ export function RecordingsPicker({
   }, [rangeKey, customFrom, customTo, query])
 
   const refresh = useCallback(async () => {
-    if (!base) return
+    // SCRUM-464: empty base is valid — SPA runs same-origin in
+    // production so apiBaseUrl is intentionally "". Don't bail on
+    // falsy; fetch a relative path. Same SCRUM-459 pattern.
     setLoading(true)
     setLoadError(null)
     try {
@@ -260,7 +262,9 @@ export function RecordingsPicker({
   const cancelConfirm = () => setConfirming(false)
 
   const performImport = useCallback(async () => {
-    if (!base || !sessionId) return
+    // SCRUM-464: same-origin SPA gives apiBaseUrl="" → empty base.
+    // Only bail when sessionId is missing.
+    if (!sessionId) return
     setImporting(true)
     const errors = []
     const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }

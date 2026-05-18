@@ -354,4 +354,38 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     await user.click(screen.getByTestId('recordings-picker-switch-account'))
     expect(onSwitchAccount).toHaveBeenCalledWith('zoom')
   })
+
+  // ──────────────────────────────────────────────────────────────────
+  // SCRUM-464: empty apiBaseUrl is valid (same-origin SPA). Same fix
+  // pattern as SCRUM-459 — guard must not bail on falsy base.
+  // ──────────────────────────────────────────────────────────────────
+
+  it('SCRUM-464: Load recordings fires the fetch with a same-origin relative URL when apiBaseUrl=""', async () => {
+    const fetchSpy = vi.fn().mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+    global.fetch = fetchSpy
+    const user = userEvent.setup()
+    renderPicker({ apiBaseUrl: '' })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 1500 })
+    const url = String(fetchSpy.mock.calls[0][0])
+    expect(url.startsWith('/api/zoom/recordings')).toBe(true)
+  })
+
+  it('SCRUM-464: Import POST fires with a same-origin relative URL when apiBaseUrl=""', async () => {
+    const onImported = vi.fn()
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ job_id: 'j1' }) })
+    const user = userEvent.setup()
+    renderPicker({ apiBaseUrl: '', onImported })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+    await waitFor(() => expect(onImported).toHaveBeenCalled())
+    const postCall = global.fetch.mock.calls.find(([_url, init]) => init?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    expect(String(postCall[0]).startsWith('/api/sessions/sess-1/import/')).toBe(true)
+  })
 })
