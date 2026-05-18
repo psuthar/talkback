@@ -558,6 +558,84 @@ func (h *Handlers) ZoomVideoStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Video not found", http.StatusNotFound)
 		return
 	}
+	// SCRUM-472: per-recording playback via file_artifact for non-upload sources
+	// (Zoom Cloud Recording, Teams, Meet — their pipelines download the MP4 to
+	// an R2 file_artifact and link it on the VideoSource). Before this branch,
+	// non-primary recordings from those platforms fell through to the legacy
+	// Zoom-proxy path (which 410s when the session has any primary, and
+	// requires creator_identity+zoom auth otherwise) — so selecting a
+	// non-primary Teams or Meet recording failed to render.
+	if vs.FileArtifactID != nil {
+		if fa, faErr := h.DB.GetFileArtifactByID(r.Context(), *vs.FileArtifactID); faErr == nil && fa != nil && fa.Status == models.FileArtifactStatusReady {
+			ct := strings.TrimSpace(strings.ToLower(fa.ContentType))
+			isVideo := ct == "video/mp4" || strings.HasPrefix(ct, "video/")
+			if isVideo && (fa.StorageProvider == "r2" || fa.StorageProvider == "local") {
+				outCT := "video/mp4"
+				if fa.ContentType != "" {
+					outCT = strings.TrimSpace(fa.ContentType)
+				}
+				w.Header().Set("Content-Type", outCT)
+				w.Header().Set("Accept-Ranges", "bytes")
+				switch fa.StorageProvider {
+				case "r2":
+					if h.Storage == nil {
+						http.Error(w, "R2 storage not configured", http.StatusServiceUnavailable)
+						return
+					}
+					exists, size, contentType, headErr := h.Storage.Head(r.Context(), fa.StorageKey)
+					if headErr != nil || !exists {
+						log.Printf("ZoomVideoStream file_artifact R2 Head %s: %v", fa.StorageKey, headErr)
+						http.Error(w, "Video not found", http.StatusNotFound)
+						return
+					}
+					if contentType != "" {
+						w.Header().Set("Content-Type", contentType)
+					}
+					if size > 0 {
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+					}
+					if r.Method == http.MethodHead {
+						w.WriteHeader(http.StatusOK)
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					rc, getErr := h.Storage.Get(r.Context(), fa.StorageKey)
+					if getErr != nil {
+						log.Printf("ZoomVideoStream file_artifact R2 Get %s: %v", fa.StorageKey, getErr)
+						return
+					}
+					defer rc.Close()
+					_, _ = io.Copy(w, rc)
+					return
+				case "local":
+					absPath := filepath.Join(storage.UploadRoot(), fa.StorageKey)
+					f, openErr := os.Open(absPath)
+					if openErr != nil {
+						if os.IsNotExist(openErr) {
+							http.Error(w, "Video file not found", http.StatusNotFound)
+							return
+						}
+						log.Printf("ZoomVideoStream file_artifact open %s: %v", absPath, openErr)
+						http.Error(w, "Failed to open video", http.StatusInternalServerError)
+						return
+					}
+					defer f.Close()
+					info, statErr := f.Stat()
+					if statErr != nil {
+						http.Error(w, "Failed to stat video", http.StatusInternalServerError)
+						return
+					}
+					if r.Method == http.MethodHead {
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+						w.WriteHeader(http.StatusOK)
+						return
+					}
+					http.ServeContent(w, r, "video.mp4", info.ModTime(), f)
+					return
+				}
+			}
+		}
+	}
 	// Playback is only from R2 when primary_video_artifact_id is set; do not proxy Zoom.
 	if session.PrimaryVideoArtifactID != nil {
 		w.Header().Set("Content-Type", "application/json")
