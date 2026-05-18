@@ -28,9 +28,35 @@ type TeamsConnectResponse struct {
 }
 
 // TeamsRecordingsResponse for GET /api/teams/recordings
+//
+// SCRUM-466: items emit the normalized SPA shape (meeting_topic,
+// meeting_uuid, instance_uuid, etc.) so the unified RecordingsPicker
+// reads every platform the same way. The internal msgraph.RecordingListItem
+// (subject / meeting_id / recording_id) is still used by the pipeline.
 type TeamsRecordingsResponse struct {
-	Items         []msgraph.RecordingListItem `json:"items"`
-	Diagnostics   *msgraph.RecordingsListDiag   `json:"diagnostics,omitempty"`
+	Items       []NormalizedRecordingListItem `json:"items"`
+	Diagnostics *msgraph.RecordingsListDiag   `json:"diagnostics,omitempty"`
+}
+
+// normalizeTeamsItem maps an msgraph.RecordingListItem into the
+// normalized SPA shape. Subject becomes the title (fallback to date for
+// untitled); MeetingID + RecordingID become the meeting+instance UUIDs.
+// has_transcript can't be cheaply determined from the listing — set
+// false; the pipeline resolves it during ingest.
+func normalizeTeamsItem(it msgraph.RecordingListItem) NormalizedRecordingListItem {
+	title := strings.TrimSpace(it.Subject)
+	if title == "" {
+		title = "Teams recording " + it.StartTime
+	}
+	return NormalizedRecordingListItem{
+		MeetingTopic:   title,
+		StartTime:      it.StartTime,
+		MeetingUUID:    it.MeetingID,
+		InstanceUUID:   it.RecordingID,
+		HasVideo:       true,
+		HasTranscript:  false,
+		RecordingCount: 1,
+	}
 }
 
 // TeamsAPIStatus returns whether Teams is enabled and connection status.
@@ -197,9 +223,13 @@ func (h *Handlers) TeamsAPIRecordings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("[teams] TeamsAPIRecordings: ListRecordingsDetailed returned %d items; diag=%+v", len(items), diag)
+		normalized := make([]NormalizedRecordingListItem, 0, len(items))
+		for _, it := range items {
+			normalized = append(normalized, normalizeTeamsItem(it))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(TeamsRecordingsResponse{Items: items, Diagnostics: &diag})
+		json.NewEncoder(w).Encode(TeamsRecordingsResponse{Items: normalized, Diagnostics: &diag})
 		return
 	}
 	log.Printf("[teams] TeamsAPIRecordings: calling ListRecordings")
@@ -212,7 +242,11 @@ func (h *Handlers) TeamsAPIRecordings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("[teams] TeamsAPIRecordings: returning %d items to client", len(items))
+	normalized := make([]NormalizedRecordingListItem, 0, len(items))
+	for _, it := range items {
+		normalized = append(normalized, normalizeTeamsItem(it))
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(TeamsRecordingsResponse{Items: items})
+	json.NewEncoder(w).Encode(TeamsRecordingsResponse{Items: normalized})
 }

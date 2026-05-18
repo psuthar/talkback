@@ -150,9 +150,13 @@ func TestSmoke_GoogleMeet_RecordingsListFlattening(t *testing.T) {
 	var resp GoogleMeetRecordingsResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Items, 1)
-	assert.Equal(t, "conferenceRecords/A/recordings/r1", resp.Items[0].RecordingName)
-	assert.Equal(t, "drive-1", resp.Items[0].DriveFileID)
-	assert.Equal(t, "ready", resp.Items[0].TranscriptState)
+	// SCRUM-466: response is normalized to the Zoom-shaped fields the
+	// SPA picker reads. RecordingName → InstanceUUID, DriveFileID is
+	// mapped via HasVideo, TranscriptState=="ready" → HasTranscript.
+	assert.Equal(t, "conferenceRecords/A/recordings/r1", resp.Items[0].InstanceUUID)
+	assert.Equal(t, "conferenceRecords/A", resp.Items[0].MeetingUUID)
+	assert.True(t, resp.Items[0].HasVideo)
+	assert.True(t, resp.Items[0].HasTranscript)
 }
 
 // TestSmoke_GoogleMeet_ImportEnqueuesJob covers the import handler: with a
