@@ -27,7 +27,7 @@ const recordings = [
   {
     meeting_topic: 'Day-long workshop',
     start_time: '2026-05-08T09:00:00Z',
-    duration_minutes: 480, // 8h, oversized
+    duration_minutes: 480,
     meeting_uuid: 'big-uuid',
     instance_uuid: 'big-instance',
     has_video: true,
@@ -35,6 +35,12 @@ const recordings = [
     recording_count: 1,
   },
 ]
+
+const allConnectedIntegrations = {
+  zoom:        { enabled: true, connected: true, account_email: 'z@example.com' },
+  google_meet: { enabled: true, connected: true, account_email: 'm@example.com' },
+  teams:       { enabled: true, connected: true, account_email: 't@example.com' },
+}
 
 const mockFetch = (responses) => {
   let i = 0
@@ -48,53 +54,88 @@ const mockFetch = (responses) => {
 const renderPicker = (overrides = {}) =>
   render(
     <RecordingsPicker
-      platform="zoom"
       sessionId="sess-1"
       apiBaseUrl="http://api.test"
-      accountEmail="z@example.com"
+      integrations={allConnectedIntegrations}
       importedExternalIds={['imported-instance']}
       onClose={() => {}}
       onImported={() => {}}
+      onConnect={() => {}}
+      onSwitchAccount={() => {}}
       userEmail="u@example.com"
+      initialPlatform="zoom"
       {...overrides}
     />
   )
 
-describe('RecordingsPicker', () => {
+describe('RecordingsPicker (SCRUM-463 unified)', () => {
   let originalFetch
   beforeEach(() => {
     originalFetch = global.fetch
+    try { window.localStorage.removeItem('tb.import.lastPlatform') } catch (_) {}
   })
-  afterEach(() => {
-    global.fetch = originalFetch
-  })
+  afterEach(() => { global.fetch = originalFetch })
 
-  it('shows loading then the recording rows', async () => {
+  it('renders as aria-modal dialog with the unified title', () => {
     global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
     renderPicker()
+    const dialog = screen.getByTestId('recordings-picker')
+    expect(dialog.getAttribute('role')).toBe('dialog')
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    expect(screen.getByText('Import meeting recording')).toBeTruthy()
+  })
+
+  it('shows pre-load placeholder before Load is clicked (no auto-fetch)', () => {
+    global.fetch = vi.fn()
+    renderPicker()
+    expect(screen.getByTestId('recordings-picker-preload')).toBeTruthy()
+    expect(screen.queryByTestId('recordings-picker-list')).toBeNull()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it('clicking Load recordings fetches and renders rows', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
     expect(screen.getByTestId('recording-row-std-instance').getAttribute('data-state')).toBe('available')
     expect(screen.getByTestId('recording-already-imported-imported-instance')).toBeTruthy()
     expect(screen.getByTestId('recording-oversized-big-instance')).toBeTruthy()
   })
 
-  it('shows the empty state when the API returns an empty list', async () => {
+  it('Load recordings persists the platform to localStorage', async () => {
     global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    const user = userEvent.setup()
+    renderPicker({ initialPlatform: 'teams' })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-empty')).toBeTruthy())
+    expect(window.localStorage.getItem('tb.import.lastPlatform')).toBe('teams')
+  })
+
+  it('empty state after Load when API returns no items', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    const user = userEvent.setup()
     renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-empty')).toBeTruthy())
   })
 
-  it('shows the error state on non-ok response', async () => {
+  it('error state on non-ok response surfaces Retry', async () => {
     global.fetch = mockFetch([{ ok: false, status: 500, json: async () => ({ message: 'boom' }) }])
+    const user = userEvent.setup()
     renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-error')).toBeTruthy())
+    expect(screen.getByTestId('recordings-picker-retry')).toBeTruthy()
   })
 
   it('imported and oversized rows are disabled and not selectable', async () => {
     global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
     renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-
     expect(screen.getByTestId('recording-checkbox-imported-instance').disabled).toBe(true)
     expect(screen.getByTestId('recording-checkbox-big-instance').disabled).toBe(true)
   })
@@ -102,7 +143,6 @@ describe('RecordingsPicker', () => {
   it('multi-select happy path: select two → confirm → POST each → onImported fires', async () => {
     const onImported = vi.fn()
     const onClose = vi.fn()
-    // Add a 4th recording so we have 2 selectable rows.
     const extra = [...recordings, {
       meeting_topic: 'Second selectable',
       start_time: '2026-05-11T15:00:00Z',
@@ -114,12 +154,13 @@ describe('RecordingsPicker', () => {
       recording_count: 1,
     }]
     global.fetch = mockFetch([
-      { ok: true, status: 200, json: async () => ({ items: extra }) }, // list
-      { ok: true, status: 202, json: async () => ({ job_id: 'j1', state: 'queued' }) }, // attach 1
-      { ok: true, status: 202, json: async () => ({ job_id: 'j2', state: 'queued' }) }, // attach 2
+      { ok: true, status: 200, json: async () => ({ items: extra }) },
+      { ok: true, status: 202, json: async () => ({ job_id: 'j1', state: 'queued' }) },
+      { ok: true, status: 202, json: async () => ({ job_id: 'j2', state: 'queued' }) },
     ])
     const user = userEvent.setup()
     renderPicker({ onImported, onClose })
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
 
     await user.click(screen.getByTestId('recording-checkbox-std-instance'))
@@ -135,122 +176,182 @@ describe('RecordingsPicker', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('429 cap-exceeded stops the batch and surfaces an error in the confirm dialog', async () => {
+  it('429 cap-exceeded stops the batch and surfaces an error', async () => {
     global.fetch = mockFetch([
       { ok: true, status: 200, json: async () => ({ items: recordings }) },
       { ok: false, status: 429, json: async () => ({ error: 'session_recording_cap_exceeded', cap: 10, current: 10 }) },
     ])
     const user = userEvent.setup()
     renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-
     await user.click(screen.getByTestId('recording-checkbox-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
-
     await waitFor(() => expect(screen.getByTestId('recordings-picker-import-errors')).toBeTruthy())
     expect(screen.getByTestId('recordings-picker-import-error-0').textContent).toContain('Cap exceeded')
   })
 
-  it('Switch account fires onSwitchAccount', async () => {
-    const onSwitchAccount = vi.fn()
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
-    const user = userEvent.setup()
-    renderPicker({ onSwitchAccount })
-    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recordings-picker-switch-account'))
-    expect(onSwitchAccount).toHaveBeenCalledTimes(1)
-  })
-
   // ──────────────────────────────────────────────────────────────────
-  // SCRUM-462: modal redesign — popup, X close, inline transcript icon,
-  // auto-apply filters with debounce.
+  // SCRUM-462: modal redesign — popup, X close, transcript icon, debounce.
   // ──────────────────────────────────────────────────────────────────
 
-  it('SCRUM-462: renders as an aria-modal dialog (popup, not inline) with backdrop', async () => {
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
-    renderPicker()
-    const dialog = screen.getByTestId('recordings-picker-zoom')
-    expect(dialog.getAttribute('role')).toBe('dialog')
-    expect(dialog.getAttribute('aria-modal')).toBe('true')
-    // The picker dialog card is a separate child so the backdrop can be
-    // clicked without dismissing on bubble from the card.
-    expect(screen.getByTestId('recordings-picker-dialog')).toBeTruthy()
-  })
-
-  it('SCRUM-462: clicking the backdrop closes the picker', async () => {
+  it('SCRUM-462: backdrop click closes; dialog-card click does NOT', async () => {
     const onClose = vi.fn()
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
     const user = userEvent.setup()
     renderPicker({ onClose })
-    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    // Click the overlay element itself (not the dialog card).
-    await user.click(screen.getByTestId('recordings-picker-zoom'))
+    await user.click(screen.getByTestId('recordings-picker-dialog'))
+    expect(onClose).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('recordings-picker'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('SCRUM-462: clicking inside the dialog card does NOT close', async () => {
+  it('SCRUM-462: Esc closes', async () => {
     const onClose = vi.fn()
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
     const user = userEvent.setup()
     renderPicker({ onClose })
-    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recordings-picker-dialog'))
-    expect(onClose).not.toHaveBeenCalled()
-  })
-
-  it('SCRUM-462: Esc closes the picker', async () => {
-    const onClose = vi.fn()
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
-    const user = userEvent.setup()
-    renderPicker({ onClose })
-    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
     await user.keyboard('{Escape}')
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('SCRUM-462: close affordance is a small × button with an aria-label, not a full-width "Close" text button', async () => {
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+  it('SCRUM-462: × close affordance has aria-label and glyph', () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
     renderPicker()
     const closeBtn = screen.getByTestId('recordings-picker-close')
     expect(closeBtn.getAttribute('aria-label')).toBe('Close recordings picker')
-    // The visible glyph is × (not the word "Close").
     expect(closeBtn.textContent.trim()).toBe('×')
   })
 
-  it('SCRUM-462: rows with has_transcript=true render the transcript icon; rows without it do not', async () => {
+  it('SCRUM-462: rows with has_transcript=true render the transcript icon', async () => {
     global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
     renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    // std-instance has_transcript:true
     expect(screen.getByTestId('recording-transcript-icon-std-instance')).toBeTruthy()
-    // imported-instance has_transcript:false
     expect(screen.queryByTestId('recording-transcript-icon-imported-instance')).toBeNull()
-    // Verbose "Zoom transcript ready" / "No native transcript" copy is gone.
-    expect(screen.queryByTestId('recording-transcript-std-instance')).toBeNull()
   })
 
-  it('SCRUM-462: With transcript checkbox and Apply filters button are removed', async () => {
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
-    renderPicker()
-    expect(screen.queryByTestId('recordings-picker-transcript-only')).toBeNull()
-    expect(screen.queryByTestId('recordings-picker-transcript-only-label')).toBeNull()
-    expect(screen.queryByTestId('recordings-picker-apply-filters')).toBeNull()
-  })
-
-  it('SCRUM-462: typing in the search input refetches automatically after debounce', async () => {
+  it('SCRUM-462: typing in search auto-refetches AFTER initial Load (debounced)', async () => {
     const fetchSpy = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [] }) })
     global.fetch = fetchSpy
+    const user = userEvent.setup()
     renderPicker()
-    // Initial debounced refetch on mount.
+    await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 1500 })
-    // Drive the input directly so we don't fight userEvent's delays;
-    // the debounce in the hook handles the rest.
     fireEvent.change(screen.getByTestId('recordings-picker-search'), { target: { value: 'stand' } })
     await waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 1500 })
-    const lastCall = fetchSpy.mock.calls.at(-1)
-    expect(String(lastCall[0])).toMatch(/[?&]q=stand/)
+    expect(String(fetchSpy.mock.calls.at(-1)[0])).toMatch(/[?&]q=stand/)
+  })
+
+  // ──────────────────────────────────────────────────────────────────
+  // SCRUM-463: unified entry — platform selector, Load gating, etc.
+  // ──────────────────────────────────────────────────────────────────
+
+  it('SCRUM-463: renders segmented platform selector with three options', () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    renderPicker()
+    expect(screen.getByTestId('recordings-picker-platform-selector')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-platform-zoom')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-platform-google_meet')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-platform-teams')).toBeTruthy()
+  })
+
+  it('SCRUM-463: each platform segment shows a connection-status dot', () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    renderPicker({
+      integrations: {
+        zoom:        { enabled: true, connected: true, account_email: 'z@example.com' },
+        google_meet: { enabled: true, connected: false },
+        teams:       { enabled: true, connected: true, account_email: 't@example.com' },
+      },
+    })
+    expect(screen.getByTestId('recordings-picker-platform-zoom-status').getAttribute('data-status')).toBe('connected')
+    expect(screen.getByTestId('recordings-picker-platform-google_meet-status').getAttribute('data-status')).toBe('disconnected')
+    expect(screen.getByTestId('recordings-picker-platform-teams-status').getAttribute('data-status')).toBe('connected')
+  })
+
+  it('SCRUM-463: clicking a different platform resets filters + clears list + needs Load again', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker()
+    // First Load on Zoom populates the list.
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    // Type a search to verify filter state.
+    fireEvent.change(screen.getByTestId('recordings-picker-search'), { target: { value: 'stand' } })
+    expect(screen.getByTestId('recordings-picker-search').value).toBe('stand')
+    // Switch to Google Meet — list clears, filters reset, pre-load placeholder back.
+    await user.click(screen.getByTestId('recordings-picker-platform-google_meet'))
+    expect(screen.queryByTestId('recordings-picker-list')).toBeNull()
+    expect(screen.getByTestId('recordings-picker-preload')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-search').value).toBe('')
+  })
+
+  it('SCRUM-463: disconnected platform shows inline Connect CTA; Load button hidden', () => {
+    global.fetch = vi.fn()
+    renderPicker({
+      integrations: {
+        zoom:        { enabled: true, connected: false },
+        google_meet: { enabled: true, connected: false },
+        teams:       { enabled: true, connected: false },
+      },
+    })
+    expect(screen.getByTestId('recordings-picker-disconnected')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-connect-zoom')).toBeTruthy()
+    // Filters + Load are NOT in the disconnected variant.
+    expect(screen.queryByTestId('recordings-picker-load')).toBeNull()
+    expect(screen.queryByTestId('recordings-picker-search')).toBeNull()
+  })
+
+  it('SCRUM-463: Connect CTA in the disconnected variant fires onConnect with the active platform', async () => {
+    const onConnect = vi.fn()
+    global.fetch = vi.fn()
+    const user = userEvent.setup()
+    renderPicker({
+      onConnect,
+      integrations: {
+        zoom:        { enabled: true, connected: false },
+        google_meet: { enabled: true, connected: false },
+        teams:       { enabled: true, connected: true, account_email: 't@example.com' },
+      },
+      initialPlatform: 'zoom',
+    })
+    await user.click(screen.getByTestId('recordings-picker-connect-zoom'))
+    expect(onConnect).toHaveBeenCalledWith('zoom')
+  })
+
+  it('SCRUM-463: default platform is last-used from localStorage if available', () => {
+    try { window.localStorage.setItem('tb.import.lastPlatform', 'teams') } catch (_) {}
+    global.fetch = vi.fn()
+    renderPicker({ initialPlatform: undefined })
+    expect(screen.getByTestId('recordings-picker-platform-teams').getAttribute('data-active')).toBe('true')
+  })
+
+  it('SCRUM-463: with no lastPlatform, default is first connected platform', () => {
+    try { window.localStorage.removeItem('tb.import.lastPlatform') } catch (_) {}
+    global.fetch = vi.fn()
+    renderPicker({
+      initialPlatform: undefined,
+      integrations: {
+        zoom:        { enabled: true, connected: false },
+        google_meet: { enabled: true, connected: true, account_email: 'm@example.com' },
+        teams:       { enabled: true, connected: true, account_email: 't@example.com' },
+      },
+    })
+    expect(screen.getByTestId('recordings-picker-platform-google_meet').getAttribute('data-active')).toBe('true')
+  })
+
+  it('SCRUM-463: Switch account fires onSwitchAccount with active platform', async () => {
+    const onSwitchAccount = vi.fn()
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    const user = userEvent.setup()
+    renderPicker({ onSwitchAccount, initialPlatform: 'zoom' })
+    await user.click(screen.getByTestId('recordings-picker-switch-account'))
+    expect(onSwitchAccount).toHaveBeenCalledWith('zoom')
   })
 })

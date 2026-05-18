@@ -1,6 +1,5 @@
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { useIntegrationsStatus } from '../hooks/useIntegrationsStatus'
-import { PlatformConnectionTile } from './PlatformConnectionTile'
 
 export function AddContentSection({
   sessionId,
@@ -10,42 +9,18 @@ export function AddContentSection({
   uploading = false,
   uploadFeedback,
   defaultExpanded = true,
-  onBrowseZoom,
-  onBrowseGoogleMeet,
-  onBrowseTeams,
+  onBrowseImport,
 }) {
-  const { status: integrations, refresh: refreshIntegrations } = useIntegrationsStatus(apiBaseUrl)
+  // SCRUM-463: AddContentSection only needs to know whether ANY meeting
+  // integration is enabled — the per-platform selection now lives inside
+  // the unified RecordingsPicker modal. Integrations status is still read
+  // here so the import entry can hide when all platforms are disabled.
+  const { status: integrations } = useIntegrationsStatus(apiBaseUrl)
+  const anyMeetingPlatformEnabled =
+    !!(integrations?.zoom?.enabled ||
+       integrations?.google_meet?.enabled ||
+       integrations?.teams?.enabled)
 
-  // SCRUM-420 / SCRUM-422 / SCRUM-423: open the platform's OAuth flow in a
-  // popup. The popup-closed poll refreshes integrations status so the tile
-  // re-renders into the connected state without a full page reload.
-  const buildConnect = useCallback((connectPath, label) => () => {
-    const base = (apiBaseUrl || '').replace(/\/$/, '')
-    return new Promise((resolve, reject) => {
-      let popup
-      try {
-        popup = window.open(`${base}${connectPath}`, `${label}_oauth`, 'width=600,height=720')
-      } catch (err) {
-        reject(err)
-        return
-      }
-      if (!popup) {
-        reject(new Error(`Popup blocked — allow pop-ups for this site to connect ${label}.`))
-        return
-      }
-      const interval = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(interval)
-          refreshIntegrations()
-          resolve()
-        }
-      }, 500)
-    })
-  }, [apiBaseUrl, refreshIntegrations])
-
-  const connectZoom = useCallback(buildConnect('/api/zoom/connect', 'Zoom'), [buildConnect])
-  const connectGoogleMeet = useCallback(buildConnect('/api/google-meet/connect', 'Google Meet'), [buildConnect])
-  const connectTeams = useCallback(buildConnect('/api/teams/connect', 'Microsoft Teams'), [buildConnect])
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [urlInput, setUrlInput] = useState('')
   const [adding, setAdding] = useState(false)
@@ -151,49 +126,33 @@ export function AddContentSection({
 
           <hr style={{ border: 'none', borderTop: '1px solid #eee', margin: 0 }} />
 
-          {/* SCRUM-420 / 422 / 423: platform import tiles. SCRUM-461
-              compacts the layout — drop the between-tile <hr> separators
-              and tighten the per-tile container gap; the uppercase
-              subsection labels already provide enough visual separation. */}
-          {integrations && integrations.zoom?.enabled && (
+          {/* SCRUM-463: unified meeting-import entry. Single button that
+              opens the RecordingsPicker modal with an in-modal platform
+              selector. Replaces the three SCRUM-420 / 422 / 423 tiles.
+              Only renders when at least one of zoom/google_meet/teams is
+              enabled on the server (env flag). */}
+          {anyMeetingPlatformEnabled && (
             <div>
-              <div style={subsectionLabel}>Import from Zoom</div>
-              <PlatformConnectionTile
-                platform="zoom"
-                enabled={integrations.zoom.enabled}
-                connected={integrations.zoom.connected}
-                accountEmail={integrations.zoom.account_email}
-                onConnect={connectZoom}
-                onBrowse={onBrowseZoom}
-              />
-            </div>
-          )}
-
-          {integrations && integrations.google_meet?.enabled && (
-            <div>
-              <div style={subsectionLabel}>Import from Google Meet</div>
-              <PlatformConnectionTile
-                platform="google_meet"
-                enabled={integrations.google_meet.enabled}
-                connected={integrations.google_meet.connected}
-                accountEmail={integrations.google_meet.account_email}
-                onConnect={connectGoogleMeet}
-                onBrowse={onBrowseGoogleMeet}
-              />
-            </div>
-          )}
-
-          {integrations && integrations.teams?.enabled && (
-            <div>
-              <div style={subsectionLabel}>Import from Microsoft Teams</div>
-              <PlatformConnectionTile
-                platform="teams"
-                enabled={integrations.teams.enabled}
-                connected={integrations.teams.connected}
-                accountEmail={integrations.teams.account_email}
-                onConnect={connectTeams}
-                onBrowse={onBrowseTeams}
-              />
+              <div style={subsectionLabel}>Import meeting recording</div>
+              <button
+                type="button"
+                data-testid="import-meeting-recording-btn"
+                onClick={onBrowseImport}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #1976d2',
+                  borderRadius: '4px',
+                  backgroundColor: '#fff',
+                  color: '#1976d2',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                Import meeting recording
+              </button>
             </div>
           )}
 
