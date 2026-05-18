@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RecordingsPicker } from '../components/RecordingsPicker'
 
@@ -160,5 +160,97 @@ describe('RecordingsPicker', () => {
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
     await user.click(screen.getByTestId('recordings-picker-switch-account'))
     expect(onSwitchAccount).toHaveBeenCalledTimes(1)
+  })
+
+  // ──────────────────────────────────────────────────────────────────
+  // SCRUM-462: modal redesign — popup, X close, inline transcript icon,
+  // auto-apply filters with debounce.
+  // ──────────────────────────────────────────────────────────────────
+
+  it('SCRUM-462: renders as an aria-modal dialog (popup, not inline) with backdrop', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    renderPicker()
+    const dialog = screen.getByTestId('recordings-picker-zoom')
+    expect(dialog.getAttribute('role')).toBe('dialog')
+    expect(dialog.getAttribute('aria-modal')).toBe('true')
+    // The picker dialog card is a separate child so the backdrop can be
+    // clicked without dismissing on bubble from the card.
+    expect(screen.getByTestId('recordings-picker-dialog')).toBeTruthy()
+  })
+
+  it('SCRUM-462: clicking the backdrop closes the picker', async () => {
+    const onClose = vi.fn()
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ onClose })
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    // Click the overlay element itself (not the dialog card).
+    await user.click(screen.getByTestId('recordings-picker-zoom'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('SCRUM-462: clicking inside the dialog card does NOT close', async () => {
+    const onClose = vi.fn()
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ onClose })
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recordings-picker-dialog'))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('SCRUM-462: Esc closes the picker', async () => {
+    const onClose = vi.fn()
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ onClose })
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('SCRUM-462: close affordance is a small × button with an aria-label, not a full-width "Close" text button', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    renderPicker()
+    const closeBtn = screen.getByTestId('recordings-picker-close')
+    expect(closeBtn.getAttribute('aria-label')).toBe('Close recordings picker')
+    // The visible glyph is × (not the word "Close").
+    expect(closeBtn.textContent.trim()).toBe('×')
+  })
+
+  it('SCRUM-462: rows with has_transcript=true render the transcript icon; rows without it do not', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    renderPicker()
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    // std-instance has_transcript:true
+    expect(screen.getByTestId('recording-transcript-icon-std-instance')).toBeTruthy()
+    // imported-instance has_transcript:false
+    expect(screen.queryByTestId('recording-transcript-icon-imported-instance')).toBeNull()
+    // Verbose "Zoom transcript ready" / "No native transcript" copy is gone.
+    expect(screen.queryByTestId('recording-transcript-std-instance')).toBeNull()
+  })
+
+  it('SCRUM-462: With transcript checkbox and Apply filters button are removed', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    renderPicker()
+    expect(screen.queryByTestId('recordings-picker-transcript-only')).toBeNull()
+    expect(screen.queryByTestId('recordings-picker-transcript-only-label')).toBeNull()
+    expect(screen.queryByTestId('recordings-picker-apply-filters')).toBeNull()
+  })
+
+  it('SCRUM-462: typing in the search input refetches automatically after debounce', async () => {
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: [] }) })
+    global.fetch = fetchSpy
+    renderPicker()
+    // Initial debounced refetch on mount.
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1), { timeout: 1500 })
+    // Drive the input directly so we don't fight userEvent's delays;
+    // the debounce in the hook handles the rest.
+    fireEvent.change(screen.getByTestId('recordings-picker-search'), { target: { value: 'stand' } })
+    await waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThanOrEqual(2), { timeout: 1500 })
+    const lastCall = fetchSpy.mock.calls.at(-1)
+    expect(String(lastCall[0])).toMatch(/[?&]q=stand/)
   })
 })
