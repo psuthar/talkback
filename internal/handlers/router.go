@@ -103,9 +103,15 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid path", http.StatusNotFound)
 		return
 	}
+	// SCRUM-465: the three SCRUM-411 attach endpoints were dispatched
+	// without RequireAuth wrapping, so UserFromContext returned nil and
+	// the handlers returned {"message": "unauthorized"}. Tests passed
+	// because they manually injected the user; production requests
+	// always 401'd. Wrap each with RequireAuth, matching the rest of the
+	// sub-handlers in this router.
 	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "zoom" {
 		if r.Method == http.MethodPost {
-			h.SessionImportZoom(w, r)
+			h.RequireAuth(h.SessionImportZoom)(w, r)
 			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -113,7 +119,7 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "teams" {
 		if r.Method == http.MethodPost {
-			h.SessionImportTeams(w, r)
+			h.RequireAuth(h.SessionImportTeams)(w, r)
 			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -121,7 +127,7 @@ func (h *Handlers) APISessionsRouter(w http.ResponseWriter, r *http.Request) {
 	}
 	if parts[3] == "import" && len(parts) >= 5 && parts[4] == "google-meet" {
 		if r.Method == http.MethodPost {
-			h.SessionImportGoogleMeet(w, r)
+			h.RequireAuth(h.SessionImportGoogleMeet)(w, r)
 			return
 		}
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
