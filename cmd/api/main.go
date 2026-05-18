@@ -193,20 +193,14 @@ func main() {
 		if h.Hub != nil {
 			h.Hub.BroadcastSessionUpdated(sessionID)
 		}
-		// Whisper fallback: if a session_processing_job was awaiting transcript, mark it ready and broadcast.
-		// Look up the session's source_provider so the correct job row is targeted regardless of provider.
-		// Passing "" falls back to "zoom" inside GetSessionProcessingJobBySessionID (backward compat).
-		var jobSource string
-		if sess, err := db.GetSession(context.Background(), sessionID); err == nil && sess != nil {
-			jobSource = string(sess.SourceProvider)
-		}
-		procJob, _ := db.GetSessionProcessingJobBySessionID(context.Background(), sessionID, jobSource)
-		if procJob != nil && procJob.State == models.ProcessingStateAwaitingWhisper {
-			_ = db.UpdateSessionProcessingJobState(context.Background(), procJob.ID, models.ProcessingStateReady, models.ProcessingStageReady, procJob.AttemptCount, nil, nil, nil)
-			_ = db.UnlockSessionProcessingJob(context.Background(), procJob.ID)
-			_ = db.UpdateSessionProcessingMirror(context.Background(), sessionID, models.ProcessingStateReady)
+		// SCRUM-469: flip every awaiting_whisper job for this session
+		// to ready. Old code looked up ONE job by session.source_provider,
+		// which missed multi-recording sessions where the awaiting job
+		// has a different source than the session's original.
+		ctxBg := context.Background()
+		if flipped := processing.FlipAwaitingWhisperJobsToReady(ctxBg, db, sessionID); flipped > 0 {
+			_ = db.UpdateSessionProcessingMirror(ctxBg, sessionID, models.ProcessingStateReady)
 			onJobReady(sessionID)
-			log.Printf("Whisper fallback: marked processing job ready for session %s (source=%s)", sessionID, jobSource)
 		}
 	}
 	// When a material extraction job fails (or other session update without reindex): broadcast so UI shows failed state
