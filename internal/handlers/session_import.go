@@ -186,6 +186,9 @@ func (h *Handlers) ZoomImport(w http.ResponseWriter, r *http.Request) {
 		MeetingUUID:     &meetingUUID,
 		InstanceUUID:    &instanceUUID,
 		CreatorIdentity: &creatorIdentity,
+		// SCRUM-471: legacy ZoomImport = session created WITH this video.
+		// Keep auto-primary.
+		SetAsPrimary: true,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("ZoomImport create job error: %v", err)
@@ -409,6 +412,9 @@ func (h *Handlers) SessionImportZoom(w http.ResponseWriter, r *http.Request) {
 		MeetingUUID:     meetingUUIDPtr,
 		InstanceUUID:    instanceUUIDPtr,
 		CreatorIdentity: creatorIdentityPtr,
+		// SCRUM-471: post-creation attach — never auto-promote to primary.
+		// User picks primary via the SCRUM-426 RecordingsSection kebab.
+		SetAsPrimary: false,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("Create session processing job error: %v", err)

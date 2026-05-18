@@ -117,6 +117,13 @@ export function PrimaryStage({
 		// the session has no resolvable primary and no fallback video. Copy
 		// differs by mode so participants get a "waiting for the creator"
 		// hint while creators see a direct call to action.
+		//
+		// SCRUM-471 NOTE: the user-facing "post-creation imports should not
+		// auto-primary" rule lives entirely in the backend. The UI continues
+		// to render the player from whichever video_source is selected; a
+		// dedicated "no primary, pick one" chooser is deferred to a follow-up
+		// so this story doesn't break the MP4-upload / SCRUM-327 / SCRUM-328
+		// e2e flows that rely on video_sources-only rendering.
 		const isCreator = mode !== 'participant'
 		const heading = isCreator
 			? 'No primary content yet'

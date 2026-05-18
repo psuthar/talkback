@@ -24,8 +24,8 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 	query := `
 		INSERT INTO session_processing_jobs (
 			id, session_id, source, state, stage, attempt_count, next_retry_at,
-			meeting_uuid, instance_uuid, creator_identity
-		) VALUES ($1, $2, $3, $4, $5, 0, now(), $6, $7, $8)
+			meeting_uuid, instance_uuid, creator_identity, set_as_primary
+		) VALUES ($1, $2, $3, $4, $5, 0, now(), $6, $7, $8, $9)
 		ON CONFLICT (session_id, source, COALESCE(meeting_uuid, ''), COALESCE(instance_uuid, '')) DO UPDATE SET
 			state = CASE
 				WHEN session_processing_jobs.state IN ('fetching','downloading','parsing','chunking','embedding','awaiting_whisper')
@@ -66,7 +66,7 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 			END,
 			updated_at = now()
 		RETURNING id, state, stage, attempt_count, next_retry_at, last_error_code, last_error_message,
-			locked_at, lock_owner, meeting_uuid, instance_uuid, creator_identity, created_at, updated_at
+			locked_at, lock_owner, meeting_uuid, instance_uuid, creator_identity, set_as_primary, created_at, updated_at
 	`
 	var nextRetryAt, lockedAt *time.Time
 	var lastCode, lastMsg, lockOwner *string
@@ -80,6 +80,7 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 		job.MeetingUUID,
 		job.InstanceUUID,
 		job.CreatorIdentity,
+		job.SetAsPrimary,
 	).Scan(
 		&job.ID,
 		&job.State,
@@ -93,6 +94,7 @@ func (db *DB) CreateOrGetSessionProcessingJob(ctx context.Context, job *models.S
 		&meetingUUID,
 		&instanceUUID,
 		&creatorIdentity,
+		&job.SetAsPrimary,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 	)
@@ -267,10 +269,10 @@ func (db *DB) ClaimNextSessionProcessingJob(ctx context.Context, owner string, l
 			SET locked_at = $1, lock_owner = $3, updated_at = now()
 			FROM candidate c WHERE j.id = c.id
 			RETURNING j.id, j.session_id, j.source, j.state, j.stage, j.attempt_count, j.next_retry_at,
-				j.last_error_code, j.last_error_message, j.meeting_uuid, j.instance_uuid, j.creator_identity, j.created_at, j.updated_at
+				j.last_error_code, j.last_error_message, j.meeting_uuid, j.instance_uuid, j.creator_identity, j.set_as_primary, j.created_at, j.updated_at
 		)
 		SELECT id, session_id, source, state, stage, attempt_count, next_retry_at,
-			last_error_code, last_error_message, meeting_uuid, instance_uuid, creator_identity, created_at, updated_at
+			last_error_code, last_error_message, meeting_uuid, instance_uuid, creator_identity, set_as_primary, created_at, updated_at
 		FROM updated
 	`
 	rows, err := db.Pool.Query(ctx, query, now, lockDuration.String(), owner)
@@ -298,6 +300,7 @@ func (db *DB) ClaimNextSessionProcessingJob(ctx context.Context, owner string, l
 		&meetingUUID,
 		&instanceUUID,
 		&creatorIdentity,
+		&j.SetAsPrimary,
 		&j.CreatedAt,
 		&j.UpdatedAt,
 	)

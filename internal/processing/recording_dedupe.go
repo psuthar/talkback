@@ -68,11 +68,19 @@ func shouldSkipMP4Ingest(ctx context.Context, db *database.DB, sessionID uuid.UU
 	return fa.Status == models.FileArtifactStatusReady
 }
 
-// setPrimaryIfNotSet calls SetSessionPrimaryVideoArtifact only when the
-// session does NOT already have a ready primary. The first recording
-// ingested becomes primary; subsequent ones land as secondary and the
-// user can flip primary explicitly via SCRUM-412's PATCH endpoint.
-func setPrimaryIfNotSet(ctx context.Context, db *database.DB, sessionID, artifactID uuid.UUID) error {
+// setPrimaryIfNotSet calls SetSessionPrimaryVideoArtifact only when:
+//   - shouldPromote is true (the job's set_as_primary flag — SCRUM-471), AND
+//   - the session does NOT already have a ready primary.
+//
+// shouldPromote distinguishes "session created WITH this video" (legacy
+// CreateSession*FromZoom / GoogleMeetImport / TeamsImport paths set true)
+// from post-creation imports via the SCRUM-411 SessionImport* attach
+// endpoints (set false — recording lands as secondary; user picks primary
+// explicitly via SCRUM-426 RecordingsSection kebab).
+func setPrimaryIfNotSet(ctx context.Context, db *database.DB, sessionID, artifactID uuid.UUID, shouldPromote bool) error {
+	if !shouldPromote {
+		return nil
+	}
 	sess, err := db.GetSession(ctx, sessionID)
 	if err == nil && sess != nil && sess.PrimaryVideoArtifactID != nil {
 		fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)

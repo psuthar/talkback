@@ -184,7 +184,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, mergeEtagIntoMetadata(meta, etag)); err != nil {
 				log.Printf("[meet] update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("[meet] set primary video: %v", err)
 			}
 		} else {
@@ -232,7 +232,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("[meet] update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("[meet] set primary video: %v", err)
 			}
 		}

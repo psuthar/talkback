@@ -180,7 +180,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, metaWithEtag); err != nil {
 				log.Printf("teams job: update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("teams job: set primary video: %v", err)
 			}
 			log.Printf("teams_ingest_completed session_id=%s artifact_id=%s size_bytes=%d duration_ms=%d", sessionID, artifactID, size, time.Since(ingestStart).Milliseconds())
@@ -232,7 +232,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("teams job: update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("teams job: set primary video: %v", err)
 			}
 		}

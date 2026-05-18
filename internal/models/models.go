@@ -291,6 +291,13 @@ type SessionProcessingJob struct {
 	MeetingUUID      *string    `json:"meeting_uuid,omitempty"`
 	InstanceUUID     *string    `json:"instance_uuid,omitempty"`
 	CreatorIdentity  *string    `json:"creator_identity,omitempty"`
+	// SCRUM-471: when true, the worker promotes the newly-created
+	// file_artifact to session primary (via setPrimaryIfNotSet). When
+	// false (set by post-creation SessionImport* handlers), the recording
+	// lands as secondary; the user picks primary explicitly. Default TRUE
+	// preserves pre-SCRUM-471 behavior for CreateSessionFromZoom and any
+	// other "session born with video" entry points.
+	SetAsPrimary     bool       `json:"set_as_primary"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }

@@ -108,19 +108,43 @@ func TestSetPrimaryIfNotSet_PreservesExistingPrimary(t *testing.T) {
 	a1 := insertReadyArtifact()
 	a2 := insertReadyArtifact()
 
-	// First call: no primary yet → a1 becomes primary.
-	require.NoError(t, setPrimaryIfNotSet(ctx, db, session.ID, a1))
+	// First call (shouldPromote=true): no primary yet → a1 becomes primary.
+	require.NoError(t, setPrimaryIfNotSet(ctx, db, session.ID, a1, true))
 	sess, err := db.GetSession(ctx, session.ID)
 	require.NoError(t, err)
 	require.NotNil(t, sess.PrimaryVideoArtifactID)
 	assert.Equal(t, a1, *sess.PrimaryVideoArtifactID)
 
 	// Second call: primary exists + ready → unchanged.
-	require.NoError(t, setPrimaryIfNotSet(ctx, db, session.ID, a2))
+	require.NoError(t, setPrimaryIfNotSet(ctx, db, session.ID, a2, true))
 	sess, err = db.GetSession(ctx, session.ID)
 	require.NoError(t, err)
 	require.NotNil(t, sess.PrimaryVideoArtifactID)
 	assert.Equal(t, a1, *sess.PrimaryVideoArtifactID, "existing primary must not be overwritten by SCRUM-467")
+}
+
+// TestSetPrimaryIfNotSet_ShouldPromoteFalseSkipsPromotion pins the
+// SCRUM-471 opt-in behavior: when the job's set_as_primary flag is false,
+// the helper must NOT promote even when the session has no primary yet.
+func TestSetPrimaryIfNotSet_ShouldPromoteFalseSkipsPromotion(t *testing.T) {
+	db, cleanup := setupTestDBForProcessing(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	session := createTestSession(t, db, "scrum471-no-promote")
+
+	artifactID := uuid.New()
+	_, err := db.Pool.Exec(ctx, `
+		INSERT INTO file_artifacts (id, session_id, kind, content_type, storage_provider, storage_bucket, storage_key, status, created_at, updated_at)
+		VALUES ($1, $2, 'video', 'video/mp4', 'r2', 'b', $3, 'ready', now(), now())
+	`, artifactID, session.ID, "k-"+artifactID.String())
+	require.NoError(t, err)
+
+	// shouldPromote=false → no primary should be set even with empty session.
+	require.NoError(t, setPrimaryIfNotSet(ctx, db, session.ID, artifactID, false))
+	sess, err := db.GetSession(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Nil(t, sess.PrimaryVideoArtifactID, "shouldPromote=false must NOT set primary (SCRUM-471)")
 }
 
 // --- test helpers ---

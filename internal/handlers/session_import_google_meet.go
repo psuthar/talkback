@@ -121,6 +121,9 @@ func (h *Handlers) GoogleMeetImport(w http.ResponseWriter, r *http.Request) {
 		MeetingUUID:     &cr,
 		InstanceUUID:    &rec,
 		CreatorIdentity: creatorPtr,
+		// SCRUM-471: legacy GoogleMeetImport = session created WITH this
+		// video. Keep auto-primary.
+		SetAsPrimary: true,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("GoogleMeetImport create job: %v", err)
@@ -230,6 +233,8 @@ func (h *Handlers) SessionImportGoogleMeet(w http.ResponseWriter, r *http.Reques
 		MeetingUUID:     &cr,
 		InstanceUUID:    &rec,
 		CreatorIdentity: creatorPtr,
+		// SCRUM-471: post-creation attach — never auto-promote to primary.
+		SetAsPrimary: false,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("SessionImportGoogleMeet create job: %v", err)

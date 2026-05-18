@@ -220,7 +220,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, metaWithEtag); err != nil {
 				log.Printf("processing job: update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
 			}
 			durationMs := time.Since(ingestStart).Milliseconds()
@@ -279,7 +279,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("processing job: update artifact ready: %v", err)
 			}
-			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID, job.SetAsPrimary); err != nil {
 				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
 			}
 			log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s storage=local", artifactID, localRelKey)
