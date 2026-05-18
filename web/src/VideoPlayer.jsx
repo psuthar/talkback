@@ -495,17 +495,21 @@ export function VideoPlayer({
 
   const embedUrl = video.embed_url || (video.video_url && playbackMode === 'embed' ? video.video_url : null)
 
-  // Prefer in-app MP4 playback: use primary stream only when this video is the primary; otherwise use media_url or session stream for uploads.
+  // Prefer in-app MP4 playback: use primary stream when this video is the primary; otherwise use the per-recording stream endpoint
+  // for any video_source that has a file_artifact (uploads, Zoom Cloud Recordings, Teams, Meet — all download to R2). Before SCRUM-472
+  // this only fired for uploads, so non-primary Teams/Meet recordings fell through to the embed-iframe branch and failed to render
+  // because their provider playback URLs are auth-walled / X-Frame-Options-protected.
   // apiBaseUrl can be '' for same-origin-relative requests; build relative stream URLs in that case.
   const baseForSessions = (apiBaseUrl ?? '').replace(/\/$/, '').replace(/\/api\/?$/, '')
-  const streamUrlForUpload = (video.source_type === 'upload' && sessionId)
+  const canStreamFromFileArtifact = (video.source_type === 'upload' || !!video.file_artifact_id)
+  const streamUrlForRecording = (canStreamFromFileArtifact && sessionId && video.id && video.id !== 'primary')
     ? `${baseForSessions}/sessions/${sessionId}/video-sources/${video.id}/stream`
     : null
   const isPrimaryR2Video = primaryVideoAccessUrl && primaryVideoArtifactId && (String(video.id) === String(primaryVideoArtifactId) || video.id === 'primary')
   const mediaUrl = isPrimaryR2Video
     ? primaryVideoAccessUrl
     : (video.media_url ||
-      streamUrlForUpload ||
+      streamUrlForRecording ||
       (video.provider !== 'zoom' && video.video_url && playbackMode === 'direct' ? video.video_url : null))
 
   const openUrl = video.video_url || embedUrl
