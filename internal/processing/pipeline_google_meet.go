@@ -103,12 +103,13 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 	driveFileID := rec.DriveDestination.File
 	exportURI := rec.DriveDestination.ExportURI
 
-	// --- Stage: download + upload (idempotent on existing primary) ---
+	// --- Stage: download + upload — SCRUM-467 per-recording dedupe ---
+	// Skip ONLY when this specific (provider, conferenceRecord,
+	// recordingName) already has a ready video_source on this session.
 	doMp4Ingest := true
-	if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
-		if fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID); fa != nil && fa.Status == models.FileArtifactStatusReady {
-			doMp4Ingest = false
-		}
+	if shouldSkipMP4Ingest(ctx, db, sessionID, "google_meet", &conferenceRecord, &recordingName) {
+		doMp4Ingest = false
+		log.Printf("google_meet_ingest_skip session_id=%s conference_record=%q recording=%q reason=already_ingested_this_recording", sessionID, conferenceRecord, recordingName)
 	}
 
 	if doMp4Ingest {
@@ -183,7 +184,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, mergeEtagIntoMetadata(meta, etag)); err != nil {
 				log.Printf("[meet] update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("[meet] set primary video: %v", err)
 			}
 		} else {
@@ -231,7 +232,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("[meet] update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("[meet] set primary video: %v", err)
 			}
 		}

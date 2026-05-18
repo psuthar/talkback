@@ -88,13 +88,14 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 		return handleZoomError(ctx, db, job, attempt, fetchErr, updateMirror)
 	}
 
-	// Zoom MP4 ingest: R2 when configured, else local disk (for local debugging). Idempotent: skip if session already has primary.
+	// Zoom MP4 ingest — R2 when configured, else local disk (for local
+	// debugging). SCRUM-467: skip ONLY when this specific
+	// (provider, meeting_uuid, instance_uuid) already has a ready
+	// video_source on this session.
 	doMp4Ingest := true
-	if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
-		if fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID); fa != nil && fa.Status == models.FileArtifactStatusReady {
-			doMp4Ingest = false
-			log.Printf("IMPORT_START session_id=%s meeting_uuid=%s skip_mp4=already_ingested", sessionID, instanceUUID)
-		}
+	if shouldSkipMP4Ingest(ctx, db, sessionID, "zoom", job.MeetingUUID, job.InstanceUUID) {
+		doMp4Ingest = false
+		log.Printf("IMPORT_START session_id=%s meeting_uuid=%s skip_mp4=already_ingested_this_recording", sessionID, instanceUUID)
 	}
 
 	if doMp4Ingest {
@@ -219,7 +220,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, metaWithEtag); err != nil {
 				log.Printf("processing job: update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
 			}
 			durationMs := time.Since(ingestStart).Milliseconds()
@@ -278,7 +279,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("processing job: update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("processing job: set primary_video_artifact_id error: session_id=%s error=%v", sessionID, err)
 			}
 			log.Printf("IMPORT_DONE artifact_id=%s storage_key=%s storage=local", artifactID, localRelKey)
