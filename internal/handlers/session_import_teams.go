@@ -143,6 +143,8 @@ func (h *Handlers) TeamsImport(w http.ResponseWriter, r *http.Request) {
 		MeetingUUID:     &mtg,
 		InstanceUUID:    &rec,
 		CreatorIdentity: creatorIdentityPtr,
+		// SCRUM-471: legacy TeamsImport = session created WITH this video.
+		SetAsPrimary: true,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("TeamsImport create job error: %v", err)
@@ -280,6 +282,8 @@ func (h *Handlers) SessionImportTeams(w http.ResponseWriter, r *http.Request) {
 		MeetingUUID:     &mtg,
 		InstanceUUID:    &rec,
 		CreatorIdentity: creatorIdentityPtr,
+		// SCRUM-471: post-creation attach — never auto-promote to primary.
+		SetAsPrimary: false,
 	}
 	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
 		log.Printf("SessionImportTeams create job error: %v", err)

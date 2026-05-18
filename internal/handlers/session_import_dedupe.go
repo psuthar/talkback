@@ -77,6 +77,9 @@ func dedupeExistingAttach(
 			MeetingUUID:     meetingUUID,
 			InstanceUUID:    instanceUUID,
 			CreatorIdentity: creatorIdentity,
+			// SCRUM-471: dedupeExistingAttach is only called from the
+			// post-creation SessionImport* handlers — never promote.
+			SetAsPrimary: false,
 		}
 		if err := db.CreateOrGetSessionProcessingJob(ctx, retryJob); err != nil {
 			return dedupeAttachResult{}, err

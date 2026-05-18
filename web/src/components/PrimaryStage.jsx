@@ -112,17 +112,24 @@ export function PrimaryStage({
 
 	const hasVideoSources = currentSession?.video_sources && currentSession.video_sources.length > 0
 	const hasPrimaryArtifact = !!currentSession?.session?.primary_video_artifact_id
-	if (!hasVideoSources && !hasPrimaryArtifact) {
+	// SCRUM-471: also fire the empty state when the session has videos but
+	// no primary set. Post-creation imports land as secondary (the user
+	// picks primary explicitly), so this case is now reachable in normal
+	// flow — not just on brand-new empty sessions.
+	if (!hasPrimaryArtifact) {
 		// SCRUM-288: render a useful empty-state instead of a blank pane when
-		// the session has no resolvable primary and no fallback video. Copy
-		// differs by mode so participants get a "waiting for the creator"
-		// hint while creators see a direct call to action.
+		// the session has no resolvable primary. Copy differs by mode so
+		// participants get a "waiting for the creator" hint while creators
+		// see a direct call to action. SCRUM-471 adds a recording-specific
+		// hint when there ARE imported recordings available to promote.
 		const isCreator = mode !== 'participant'
 		const heading = isCreator
 			? 'No primary content yet'
 			: 'Waiting for the creator to choose primary content'
 		const body = isCreator
-			? 'Pick any material, link, or video from the left to make it primary.'
+			? (hasVideoSources
+				? 'Pick a recording from the left and use its menu → Make primary.'
+				: 'Pick any material, link, or video from the left to make it primary.')
 			: 'The creator hasn’t set a primary yet. The center pane will update when they do.'
 		return (
 			<div
