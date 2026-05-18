@@ -13,9 +13,13 @@
 // filter edits. Last platform is remembered per-user in localStorage so
 // the common case (same user, same platform week-over-week) is one click.
 //
-// The data flow (fetch, multi-select, confirm dialog, attach POST, 429
-// cap handling, already-imported / oversized disabling, switch-account)
-// is unchanged from SCRUM-421.
+// SCRUM-479 (create mode): the picker can now drive the Create Session
+// flow in addition to the in-session attach flow. Pass mode="create" to
+// chain `POST /sessions` (with a user-editable title in the confirm step)
+// followed by `POST /api/sessions/{id}/import/{platform}`. Selection is
+// single-only in create mode (one new session per click). The legacy
+// `/api/{platform}/import` endpoints are SCRUM-416 deprecated, so we
+// reuse the canonical attach endpoint for the second leg.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const MAX_DURATION_MINUTES = 240 // 4 hours; mirrors SCRUM-421 spec default
@@ -125,8 +129,10 @@ export function RecordingsPicker({
   onImported,
   userEmail,
   initialPlatform,     // optional override; rarely used in production
+  mode = 'attach',     // SCRUM-479: "attach" (default) or "create"
 }) {
   const importedSet = useMemo(() => new Set(importedExternalIds), [importedExternalIds])
+  const isCreateMode = mode === 'create'
 
   const [platform, setPlatform] = useState(() => initialPlatform || pickDefaultPlatform(integrations))
   const meta = PLATFORM_META[platform] || PLATFORM_META.zoom
@@ -143,6 +149,11 @@ export function RecordingsPicker({
   const [confirming, setConfirming] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importErrors, setImportErrors] = useState([])
+  // SCRUM-479: editable session title shown in create-mode confirm. Defaults
+  // to the selected recording's meeting_topic / subject; resets each time
+  // the confirm dialog opens so a prior edit doesn't bleed into the next.
+  const [createTitle, setCreateTitle] = useState('')
+  const [createTitleError, setCreateTitleError] = useState('')
 
   const closeBtnRef = useRef(null)
   const base = useMemo(() => (apiBaseUrl || '').replace(/\/$/, ''), [apiBaseUrl])
@@ -258,6 +269,12 @@ export function RecordingsPicker({
 
   const toggleOne = (idx) => {
     setSelected((prev) => {
+      // SCRUM-479: create-mode is single-select (one new session per click).
+      // SCRUM-480 will extend single-select to attach-mode too.
+      if (isCreateMode) {
+        if (prev.has(idx) && prev.size === 1) return new Set()
+        return new Set([idx])
+      }
       const next = new Set(prev)
       if (next.has(idx)) next.delete(idx)
       else next.add(idx)
@@ -268,14 +285,34 @@ export function RecordingsPicker({
   const beginImport = () => {
     if (selected.size === 0) return
     setImportErrors([])
+    if (isCreateMode) {
+      // SCRUM-479: seed the title field from the (single) selected recording.
+      const idx = selected.values().next().value
+      const rec = visible[idx]
+      const seed = (rec?.meeting_topic || rec?.subject || rec?.recording_topic || 'Meeting recording').trim()
+      setCreateTitle(seed)
+      setCreateTitleError('')
+    }
     setConfirming(true)
   }
-  const cancelConfirm = () => setConfirming(false)
+  const cancelConfirm = () => {
+    setConfirming(false)
+    setCreateTitleError('')
+  }
 
   const performImport = useCallback(async () => {
     // SCRUM-464: same-origin SPA gives apiBaseUrl="" → empty base.
-    // Only bail when sessionId is missing.
-    if (!sessionId) return
+    // SCRUM-479: attach-mode still requires a sessionId; create-mode
+    // produces the sessionId via POST /sessions before the attach POST.
+    if (!isCreateMode && !sessionId) return
+    if (isCreateMode) {
+      const trimmed = (createTitle || '').trim()
+      if (!trimmed) {
+        setCreateTitleError('Session title is required.')
+        return
+      }
+      setCreateTitleError('')
+    }
     setImporting(true)
     const errors = []
     const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
@@ -284,7 +321,34 @@ export function RecordingsPicker({
     const importedJobs = []
     for (const rec of selectedRecordings) {
       try {
-        const res = await fetch(`${base}${meta.attachPath(sessionId)}`, {
+        let targetSessionId = sessionId
+        let createdSession = null
+        if (isCreateMode) {
+          // SCRUM-479: step 1 — create the session. The legacy
+          // /api/{platform}/import endpoints are SCRUM-416 deprecated;
+          // we use the canonical POST /sessions + attach pair instead.
+          const title = (createTitle || '').trim()
+          const cRes = await fetch(`${base}/sessions`, {
+            method: 'POST',
+            credentials: 'include',
+            headers,
+            body: JSON.stringify({ title }),
+          })
+          const cBody = await cRes.json().catch(() => ({}))
+          if (!cRes.ok) {
+            const dupe = cRes.status === 409 || /already exists|unique name/i.test(cBody.error || cBody.message || '')
+            errors.push({
+              recording: rec,
+              message: dupe
+                ? 'A session with this name already exists. Use a unique name.'
+                : (cBody.error || cBody.message || `HTTP ${cRes.status} creating session`),
+            })
+            continue
+          }
+          targetSessionId = cBody.id
+          createdSession = cBody
+        }
+        const res = await fetch(`${base}${meta.attachPath(targetSessionId)}`, {
           method: 'POST',
           credentials: 'include',
           headers,
@@ -299,7 +363,7 @@ export function RecordingsPicker({
           errors.push({ recording: rec, message: body.message || `HTTP ${res.status}` })
           continue
         }
-        importedJobs.push(body)
+        importedJobs.push(isCreateMode ? { ...body, session: createdSession } : body)
       } catch (err) {
         errors.push({ recording: rec, message: err.message || String(err) })
       }
@@ -312,7 +376,7 @@ export function RecordingsPicker({
       if (typeof onImported === 'function') onImported(importedJobs)
       if (typeof onClose === 'function') onClose()
     }
-  }, [base, sessionId, meta, selected, visible, userEmail, onImported, onClose])
+  }, [base, sessionId, meta, selected, visible, userEmail, onImported, onClose, isCreateMode, createTitle])
 
   const onBackdropClick = (e) => {
     if (e.target === e.currentTarget && typeof onClose === 'function') onClose()
@@ -342,7 +406,9 @@ export function RecordingsPicker({
         </button>
 
         <header data-testid="recordings-picker-header" style={headerStyle}>
-          <h2 style={{ margin: 0, fontSize: '18px' }}>Import meeting recording</h2>
+          <h2 style={{ margin: 0, fontSize: '18px' }}>
+            {isCreateMode ? 'Create from meeting recording' : 'Import meeting recording'}
+          </h2>
         </header>
 
         {/* SCRUM-463: segmented platform selector with status dots. */}
@@ -528,7 +594,9 @@ export function RecordingsPicker({
             disabled={selected.size === 0 || importing || !connected}
             style={primaryButtonStyle}
           >
-            {`Import ${selected.size} recording${selected.size === 1 ? '' : 's'}`}
+            {isCreateMode
+              ? 'Continue'
+              : `Import ${selected.size} recording${selected.size === 1 ? '' : 's'}`}
           </button>
           {connected && hasLoaded && selectableIndexes.length === 0 && visible.length > 0 && (
             <p data-testid="recordings-picker-none-selectable" style={mutedStyle}>
@@ -539,7 +607,11 @@ export function RecordingsPicker({
 
         {confirming && (
           <div data-testid="recordings-picker-confirm" role="dialog" aria-label="Confirm import" style={confirmStyle}>
-            <p>Import {selected.size} recording{selected.size === 1 ? '' : 's'}? Each takes ~3–10 min to ingest.</p>
+            <p>
+              {isCreateMode
+                ? 'Create a new session from this recording? Ingest takes ~3–10 min.'
+                : `Import ${selected.size} recording${selected.size === 1 ? '' : 's'}? Each takes ~3–10 min to ingest.`}
+            </p>
             <ul data-testid="recordings-picker-confirm-list">
               {Array.from(selected).map((idx) => {
                 const rec = visible[idx]
@@ -551,6 +623,36 @@ export function RecordingsPicker({
                 )
               })}
             </ul>
+            {isCreateMode && (
+              <div data-testid="recordings-picker-confirm-title-field" style={{ marginTop: '8px' }}>
+                <label
+                  htmlFor="recordings-picker-confirm-title"
+                  style={{ display: 'block', fontSize: '12px', color: '#555', marginBottom: '4px' }}
+                >
+                  Session title
+                </label>
+                <input
+                  id="recordings-picker-confirm-title"
+                  data-testid="recordings-picker-confirm-title"
+                  type="text"
+                  value={createTitle}
+                  onChange={(e) => { setCreateTitle(e.target.value); if (createTitleError) setCreateTitleError('') }}
+                  disabled={importing}
+                  style={{ ...inputStyle, width: '100%' }}
+                  aria-invalid={createTitleError ? 'true' : 'false'}
+                  aria-describedby={createTitleError ? 'recordings-picker-confirm-title-error' : undefined}
+                />
+                {createTitleError && (
+                  <p
+                    id="recordings-picker-confirm-title-error"
+                    data-testid="recordings-picker-confirm-title-error"
+                    style={{ ...errorStyle, marginTop: '4px' }}
+                  >
+                    {createTitleError}
+                  </p>
+                )}
+              </div>
+            )}
             {importErrors.length > 0 && (
               <ul data-testid="recordings-picker-import-errors">
                 {importErrors.map((e, i) => (
@@ -566,7 +668,9 @@ export function RecordingsPicker({
               disabled={importing}
               style={primaryButtonStyle}
             >
-              {importing ? 'Importing…' : `Import ${selected.size}`}
+              {importing
+                ? (isCreateMode ? 'Creating…' : 'Importing…')
+                : (isCreateMode ? 'Create session' : `Import ${selected.size}`)}
             </button>
             <button data-testid="recordings-picker-confirm-cancel" onClick={cancelConfirm} disabled={importing} style={secondaryButtonStyle}>
               Back
