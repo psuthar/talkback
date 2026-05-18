@@ -92,13 +92,15 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		return nil
 	}
 
-	// --- MP4 ingest (idempotent if primary already set) ---
+	// --- MP4 ingest (idempotent per-recording: SCRUM-467) ---
+	// Skip ONLY when this specific (provider, meeting_uuid, instance_uuid)
+	// already has a ready video_source on this session. The pre-SCRUM-467
+	// check skipped on session.PrimaryVideoArtifactID, which broke every
+	// 2nd-and-later import.
 	doMp4Ingest := true
-	if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
-		if fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID); fa != nil && fa.Status == models.FileArtifactStatusReady {
-			doMp4Ingest = false
-			log.Printf("teams_ingest_skip session_id=%s reason=already_ingested", sessionID)
-		}
+	if shouldSkipMP4Ingest(ctx, db, sessionID, "teams", &meetingID, &recordingID) {
+		doMp4Ingest = false
+		log.Printf("teams_ingest_skip session_id=%s meeting_id=%q recording_id=%q reason=already_ingested_this_recording", sessionID, meetingID, recordingID)
 	}
 
 	if doMp4Ingest {
@@ -178,7 +180,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 			if err := db.UpdateFileArtifactToReadyWithMetadata(ctx, artifactID, size, ct, metaWithEtag); err != nil {
 				log.Printf("teams job: update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("teams job: set primary video: %v", err)
 			}
 			log.Printf("teams_ingest_completed session_id=%s artifact_id=%s size_bytes=%d duration_ms=%d", sessionID, artifactID, size, time.Since(ingestStart).Milliseconds())
@@ -230,7 +232,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 			if err := db.UpdateFileArtifactToReady(ctx, artifactID, size, "video/mp4"); err != nil {
 				log.Printf("teams job: update artifact ready: %v", err)
 			}
-			if err := db.SetSessionPrimaryVideoArtifact(ctx, sessionID, &artifactID); err != nil {
+			if err := setPrimaryIfNotSet(ctx, db, sessionID, artifactID); err != nil {
 				log.Printf("teams job: set primary video: %v", err)
 			}
 		}

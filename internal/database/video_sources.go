@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/psuthar/talkback/internal/models"
 )
 
@@ -246,6 +247,31 @@ func (db *DB) GetVideoSourcesBySessionID(ctx context.Context, sessionID uuid.UUI
 	}
 
 	return videoSources, nil
+}
+
+// GetVideoSourceByExternalRecordingID looks up the video_sources row for
+// the given (session_id, provider, external_recording_id) tuple. Used by
+// SCRUM-467's worker-layer dedupe to detect "this specific recording is
+// already in this session" before re-ingesting MP4 bytes.
+//
+// Returns (nil, nil) when no row matches; an error only on DB failure.
+func (db *DB) GetVideoSourceByExternalRecordingID(ctx context.Context, sessionID uuid.UUID, provider, externalRecordingID string) (*models.VideoSource, error) {
+	if externalRecordingID == "" {
+		return nil, nil
+	}
+	var id uuid.UUID
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id FROM video_sources
+		WHERE session_id = $1 AND provider = $2 AND external_recording_id = $3
+		LIMIT 1
+	`, sessionID, provider, externalRecordingID).Scan(&id)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get video source by external recording id: %w", err)
+	}
+	return db.GetVideoSourceByID(ctx, id)
 }
 
 func (db *DB) GetVideoSourceByID(ctx context.Context, videoID uuid.UUID) (*models.VideoSource, error) {
