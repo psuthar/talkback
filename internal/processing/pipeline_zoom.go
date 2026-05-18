@@ -330,28 +330,26 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 							}
 							artifactID = artifact.ID
 						}
-						sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-						var videoID uuid.UUID
-						if len(sources) > 0 {
-							videoID = sources[0].ID
-						} else {
-							videoID = uuid.New()
-							zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
-							vs := &models.VideoSource{
-								ID:               videoID,
-								ArtifactID:       artifactID,
-								SessionID:        sessionID,
-								Provider:         "zoom",
-								VideoURL:         zoomURL,
-								PlaybackMode:     "embed",
-								OriginalURL:      &zoomURL,
-								TranscriptStatus: models.VideoTranscriptStatusPending,
-								SourceType:       models.VideoSourceTypeEmbedURL,
-							}
-							if err := db.CreateVideoSource(ctx, vs); err != nil {
-								log.Printf("Zoom Whisper fallback: create video source: %v", err)
-								// fall through to waiting
-							}
+						// SCRUM-470: always create a new video_source per Zoom
+						// Whisper-fallback import. Reusing sources[0] was
+						// single-recording-era logic that silently dropped the
+						// 2nd-and-later recording.
+						videoID := uuid.New()
+						zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
+						vs := &models.VideoSource{
+							ID:               videoID,
+							ArtifactID:       artifactID,
+							SessionID:        sessionID,
+							Provider:         "zoom",
+							VideoURL:         zoomURL,
+							PlaybackMode:     "embed",
+							OriginalURL:      &zoomURL,
+							TranscriptStatus: models.VideoTranscriptStatusPending,
+							SourceType:       models.VideoSourceTypeEmbedURL,
+						}
+						if err := db.CreateVideoSource(ctx, vs); err != nil {
+							log.Printf("Zoom Whisper fallback: create video source: %v", err)
+							// fall through to waiting
 						}
 						if videoID != uuid.Nil {
 							jobKey := "zoom_whisper:" + sessionID.String()
@@ -491,30 +489,31 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 		artifactID = artifact.ID
 	}
 
-	sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-	if len(sources) == 0 {
-		zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
-		videoID := uuid.New()
-		zoomAPI := "zoom_api"
-		vs := &models.VideoSource{
-			ID:                  videoID,
-			ArtifactID:          artifactID,
-			SessionID:           sessionID,
-			Provider:            "zoom",
-			VideoURL:            zoomURL,
-			PlaybackMode:        "embed",
-			OriginalURL:         &zoomURL,
-			TranscriptStatus:    models.VideoTranscriptStatusReady,
-			TranscriptionSource: &zoomAPI,
-			SourceType:          models.VideoSourceTypeEmbedURL,
-		}
-		if err := db.CreateVideoSource(ctx, vs); err != nil {
-			setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments)
+	// SCRUM-470: always create a new video_source per Zoom import. Old
+	// `if len(sources) == 0` gate skipped row creation for any session
+	// that already had a video, silently dropping the 2nd-and-later
+	// recording from the VIDEOS list.
+	zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
+	videoID := uuid.New()
+	zoomAPI := "zoom_api"
+	vs := &models.VideoSource{
+		ID:                  videoID,
+		ArtifactID:          artifactID,
+		SessionID:           sessionID,
+		Provider:            "zoom",
+		VideoURL:            zoomURL,
+		PlaybackMode:        "embed",
+		OriginalURL:         &zoomURL,
+		TranscriptStatus:    models.VideoTranscriptStatusReady,
+		TranscriptionSource: &zoomAPI,
+		SourceType:          models.VideoSourceTypeEmbedURL,
 	}
+	if err := db.CreateVideoSource(ctx, vs); err != nil {
+		setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+		updateMirror(models.ProcessingStateFailedPermanent)
+		return nil
+	}
+	_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttContent, videoSegments)
 
 	// --- Stage: chunk + embed ---
 	updateJobState(ctx, db, jobID, models.ProcessingStateChunking, models.ProcessingStageChunk, attempt, nil, nil, nil)

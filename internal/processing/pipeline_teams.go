@@ -292,27 +292,25 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 						}
 						artifactID = artifact.ID
 					}
-					sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-					var videoID uuid.UUID
-					if len(sources) > 0 {
-						videoID = sources[0].ID
-					} else {
-						videoID = uuid.New()
-						teamsURL := "https://teams.microsoft.com/"
-						vs := &models.VideoSource{
-							ID:               videoID,
-							ArtifactID:       artifactID,
-							SessionID:        sessionID,
-							Provider:         "teams",
-							VideoURL:         teamsURL,
-							PlaybackMode:     "embed",
-							OriginalURL:      &teamsURL,
-							TranscriptStatus: models.VideoTranscriptStatusPending,
-							SourceType:       models.VideoSourceTypeEmbedURL,
-						}
-						if err := db.CreateVideoSource(ctx, vs); err != nil {
-							log.Printf("Teams Whisper fallback: create video source: %v", err)
-						}
+					// SCRUM-470: always create a new video_source per Teams
+					// Whisper-fallback import. Reusing sources[0] was
+					// single-recording-era logic that silently dropped the
+					// 2nd-and-later recording.
+					videoID := uuid.New()
+					teamsURL := "https://teams.microsoft.com/"
+					vs := &models.VideoSource{
+						ID:               videoID,
+						ArtifactID:       artifactID,
+						SessionID:        sessionID,
+						Provider:         "teams",
+						VideoURL:         teamsURL,
+						PlaybackMode:     "embed",
+						OriginalURL:      &teamsURL,
+						TranscriptStatus: models.VideoTranscriptStatusPending,
+						SourceType:       models.VideoSourceTypeEmbedURL,
+					}
+					if err := db.CreateVideoSource(ctx, vs); err != nil {
+						log.Printf("Teams Whisper fallback: create video source: %v", err)
 					}
 					if videoID != uuid.Nil {
 						jobKey := "teams_whisper:" + sessionID.String()
@@ -426,30 +424,28 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		}
 		artifactID = artifact.ID
 	}
-	sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-	if len(sources) == 0 {
-		teamsURL := "https://teams.microsoft.com/"
-		videoID := uuid.New()
-		ts := "teams_api"
-		vs := &models.VideoSource{
-			ID:                  videoID,
-			ArtifactID:          artifactID,
-			SessionID:           sessionID,
-			Provider:            "teams",
-			VideoURL:            teamsURL,
-			PlaybackMode:        "embed",
-			OriginalURL:         &teamsURL,
-			TranscriptStatus:    models.VideoTranscriptStatusReady,
-			TranscriptionSource: &ts,
-			SourceType:          models.VideoSourceTypeEmbedURL,
-		}
-		if err := db.CreateVideoSource(ctx, vs); err != nil {
-			setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttStr, videoSegments)
+	// SCRUM-470: always create a new video_source per Teams import.
+	teamsURL := "https://teams.microsoft.com/"
+	videoID := uuid.New()
+	ts := "teams_api"
+	vs := &models.VideoSource{
+		ID:                  videoID,
+		ArtifactID:          artifactID,
+		SessionID:           sessionID,
+		Provider:            "teams",
+		VideoURL:            teamsURL,
+		PlaybackMode:        "embed",
+		OriginalURL:         &teamsURL,
+		TranscriptStatus:    models.VideoTranscriptStatusReady,
+		TranscriptionSource: &ts,
+		SourceType:          models.VideoSourceTypeEmbedURL,
 	}
+	if err := db.CreateVideoSource(ctx, vs); err != nil {
+		setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+		updateMirror(models.ProcessingStateFailedPermanent)
+		return nil
+	}
+	_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, &vttStr, videoSegments)
 
 	updateJobState(ctx, db, jobID, models.ProcessingStateChunking, models.ProcessingStageChunk, attempt, nil, nil, nil)
 	updateMirror(models.ProcessingStateChunking)
