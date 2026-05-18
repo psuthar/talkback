@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/citation"
@@ -58,6 +59,39 @@ type GetSessionResponse struct {
 	MaterialSlidesReady  map[string]bool       `json:"material_slides_ready,omitempty"`   // material ID -> true when slides manifest exists (PPT/PPTX only)
 	MaterialSlidesStatus map[string]string     `json:"material_slides_status,omitempty"`  // material ID -> processing|ready|failed (PPT/PPTX only)
 	Primary              *SessionPrimaryDescriptor `json:"primary,omitempty"`             // SCRUM-271: resolved center-pane primary (kind + id; legacy primary_video_artifact_id falls back to kind="video")
+	// SCRUM-468: active session_processing_jobs surfaced for in-progress
+	// import UI. Only non-terminal states are included so the frontend
+	// can render a placeholder row per import-in-flight.
+	ProcessingJobs       []SessionProcessingJobView `json:"processing_jobs,omitempty"`
+}
+
+// SessionProcessingJobView is the SCRUM-468 SPA-facing shape for an
+// active import job. Mirrors the columns the placeholder row needs
+// (source, state, stage, last error) without leaking lock columns or
+// retry counters that the worker uses internally.
+type SessionProcessingJobView struct {
+	ID               string  `json:"id"`
+	Source           string  `json:"source"`           // "zoom" | "google_meet" | "teams"
+	State            string  `json:"state"`            // queued, fetching, downloading, ... — see models.ProcessingState*
+	Stage            string  `json:"stage"`
+	MeetingUUID      *string `json:"meeting_uuid,omitempty"`
+	InstanceUUID     *string `json:"instance_uuid,omitempty"`
+	LastErrorCode    *string `json:"last_error_code,omitempty"`
+	LastErrorMessage *string `json:"last_error_message,omitempty"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
+}
+
+// isActiveProcessingState returns true for states the SPA should render
+// a placeholder row for. Terminal states (ready, canceled,
+// failed_permanent) are excluded; failed_transient is INCLUDED because
+// the worker retries it and the user benefits from seeing "Retrying…".
+func isActiveProcessingState(state string) bool {
+	switch state {
+	case models.ProcessingStateReady, models.ProcessingStateCanceled, models.ProcessingStateFailedPermanent:
+		return false
+	}
+	return true
 }
 
 // SessionWithRole is one session plus the current user's role for it (for GET /api/sessions).
@@ -884,6 +918,30 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 	primary = enrichSessionPrimaryFromLinks(primary, links)
 	primary = enrichSessionPrimaryFromFileArtifact(primary, primaryVideoArtifact)
 
+	// SCRUM-468: surface active session_processing_jobs so the SPA can
+	// render a placeholder row per in-flight import. Errors here are
+	// non-fatal — the rest of the session payload is still useful.
+	var processingJobs []SessionProcessingJobView
+	if rawJobs, jerr := h.DB.ListSessionProcessingJobsBySessionID(r.Context(), sessionID); jerr == nil {
+		for _, j := range rawJobs {
+			if j == nil || !isActiveProcessingState(j.State) {
+				continue
+			}
+			processingJobs = append(processingJobs, SessionProcessingJobView{
+				ID:               j.ID.String(),
+				Source:           j.Source,
+				State:            j.State,
+				Stage:            j.Stage,
+				MeetingUUID:      j.MeetingUUID,
+				InstanceUUID:     j.InstanceUUID,
+				LastErrorCode:    j.LastErrorCode,
+				LastErrorMessage: j.LastErrorMessage,
+				CreatedAt:        j.CreatedAt.UTC().Format(time.RFC3339),
+				UpdatedAt:        j.UpdatedAt.UTC().Format(time.RFC3339),
+			})
+		}
+	}
+
 	response := GetSessionResponse{
 		Session:              session,
 		Artifacts:            artifacts,
@@ -903,6 +961,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		MaterialSlidesReady:  materialSlidesReady,
 		MaterialSlidesStatus: materialSlidesStatus,
 		Primary:              primary,
+		ProcessingJobs:       processingJobs,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
