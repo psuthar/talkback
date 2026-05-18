@@ -137,7 +137,7 @@ export function ParticipantSessionMenu({
           {isAdmin && (
             <a
               role="menuitem"
-              href="?mode=admin"
+              href="/?mode=admin"
               data-testid="menu-admin-link"
               onClick={() => setOpen(false)}
               className={`${styles.menuItem} ${styles.menuItemLink}`}
