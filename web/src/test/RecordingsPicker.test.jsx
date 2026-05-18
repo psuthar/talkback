@@ -434,4 +434,157 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     expect(postCall).toBeTruthy()
     expect(String(postCall[0]).startsWith('/api/sessions/sess-1/import/')).toBe(true)
   })
+
+  // ──────────────────────────────────────────────────────────────────
+  // SCRUM-479: create-mode — picker drives Create Session flow via
+  // chained POST /sessions + POST /api/sessions/{id}/import/{platform}.
+  // ──────────────────────────────────────────────────────────────────
+
+  it('SCRUM-479: create-mode header reads "Create from meeting recording"', () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: [] }) }])
+    renderPicker({ mode: 'create', sessionId: undefined })
+    expect(screen.getByText('Create from meeting recording')).toBeTruthy()
+    expect(screen.queryByText('Import meeting recording')).toBeNull()
+  })
+
+  it('SCRUM-479: create-mode enforces single-select (picking a second row deselects the first)', async () => {
+    const extra = [...recordings, {
+      meeting_topic: 'Second selectable',
+      start_time: '2026-05-11T15:00:00Z',
+      duration_minutes: 20,
+      meeting_uuid: 'second-uuid',
+      instance_uuid: 'second-instance',
+      has_video: true,
+      has_transcript: true,
+      recording_count: 1,
+    }]
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: extra }) }])
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(true)
+    await user.click(screen.getByTestId('recording-checkbox-second-instance'))
+    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(false)
+    expect(screen.getByTestId('recording-checkbox-second-instance').checked).toBe(true)
+  })
+
+  it('SCRUM-479: create-mode footer button reads "Continue"', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Continue')
+  })
+
+  it('SCRUM-479: create-mode confirm dialog renders title field pre-filled from recording', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    const titleInput = screen.getByTestId('recordings-picker-confirm-title')
+    expect(titleInput).toBeTruthy()
+    expect(titleInput.value).toBe('Standup')
+  })
+
+  it('SCRUM-479: create-mode empty title blocks submit and surfaces validation error', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    fireEvent.change(screen.getByTestId('recordings-picker-confirm-title'), { target: { value: '  ' } })
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+    expect(screen.getByTestId('recordings-picker-confirm-title-error')).toBeTruthy()
+    // No POST should have fired (only the initial GET listing call).
+    const postCalls = global.fetch.mock.calls.filter(([_url, init]) => init?.method === 'POST')
+    expect(postCalls.length).toBe(0)
+  })
+
+  it('SCRUM-479: create-mode chains POST /sessions then POST /api/sessions/{id}/import/{platform}', async () => {
+    const onImported = vi.fn()
+    const onClose = vi.fn()
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 'new-sess-99', title: 'Standup' }) })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => ({ job_id: 'j-create', state: 'queued' }) })
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined, apiBaseUrl: '', onImported, onClose })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+    await waitFor(() => expect(onImported).toHaveBeenCalled())
+    const postCalls = global.fetch.mock.calls.filter(([_url, init]) => init?.method === 'POST')
+    expect(postCalls.length).toBe(2)
+    expect(String(postCalls[0][0])).toBe('/sessions')
+    expect(JSON.parse(postCalls[0][1].body)).toEqual({ title: 'Standup' })
+    expect(String(postCalls[1][0])).toBe('/api/sessions/new-sess-99/import/zoom')
+    expect(JSON.parse(postCalls[1][1].body)).toEqual({ meeting_uuid: 'std-uuid', instance_uuid: 'std-instance' })
+    expect(onImported.mock.calls[0][0]).toHaveLength(1)
+    expect(onImported.mock.calls[0][0][0].session).toEqual({ id: 'new-sess-99', title: 'Standup' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('SCRUM-479: create-mode 409 on session create surfaces "already exists" error and skips attach POST', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ error: 'session already exists' }) })
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined, apiBaseUrl: '' })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-import-errors')).toBeTruthy())
+    expect(screen.getByTestId('recordings-picker-import-error-0').textContent).toContain('already exists')
+    const postCalls = global.fetch.mock.calls.filter(([_url, init]) => init?.method === 'POST')
+    // Only the failed create-session POST — no attach POST.
+    expect(postCalls.length).toBe(1)
+    expect(String(postCalls[0][0])).toBe('/sessions')
+  })
+
+  it('SCRUM-479: create-mode does not require sessionId and Continue is enabled after select', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker({ mode: 'create', sessionId: undefined })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    const importBtn = screen.getByTestId('recordings-picker-import')
+    expect(importBtn.disabled).toBe(true)
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    expect(importBtn.disabled).toBe(false)
+  })
+
+  it('SCRUM-479: attach-mode (default) keeps multi-select behavior — no regression', async () => {
+    const extra = [...recordings, {
+      meeting_topic: 'Second selectable',
+      start_time: '2026-05-11T15:00:00Z',
+      duration_minutes: 20,
+      meeting_uuid: 'second-uuid',
+      instance_uuid: 'second-instance',
+      has_video: true,
+      has_transcript: true,
+      recording_count: 1,
+    }]
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: extra }) }])
+    const user = userEvent.setup()
+    renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-checkbox-second-instance'))
+    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(true)
+    expect(screen.getByTestId('recording-checkbox-second-instance').checked).toBe(true)
+  })
 })
