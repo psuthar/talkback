@@ -348,8 +348,13 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 						// Whisper-fallback import. Reusing sources[0] was
 						// single-recording-era logic that silently dropped the
 						// 2nd-and-later recording.
+						// SCRUM-475: point the new video_source at the ingested
+						// file_artifact so VideoPlayer's per-recording stream URL
+						// resolves and the row plays from R2 instead of falling
+						// back to the un-embeddable zoom.us iframe.
 						videoID := uuid.New()
 						zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
+						faID := fallbackArtifactID
 						vs := &models.VideoSource{
 							ID:               videoID,
 							ArtifactID:       artifactID,
@@ -360,6 +365,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 							OriginalURL:      &zoomURL,
 							TranscriptStatus: models.VideoTranscriptStatusPending,
 							SourceType:       models.VideoSourceTypeEmbedURL,
+							FileArtifactID:   &faID,
 						}
 						if err := db.CreateVideoSource(ctx, vs); err != nil {
 							log.Printf("Zoom Whisper fallback: create video source: %v", err)
@@ -507,9 +513,17 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 	// `if len(sources) == 0` gate skipped row creation for any session
 	// that already had a video, silently dropping the 2nd-and-later
 	// recording from the VIDEOS list.
+	// SCRUM-475: link the new video_source to the ingested file_artifact
+	// so VideoPlayer streams the MP4 from R2 instead of trying to iframe
+	// the zoom.us URL.
 	zoomURL := "https://zoom.us/recording/detail?meeting_id=" + url.QueryEscape(instanceUUID)
 	videoID := uuid.New()
 	zoomAPI := "zoom_api"
+	var zoomFAID *uuid.UUID
+	if ingestedArtifactID != uuid.Nil {
+		id := ingestedArtifactID
+		zoomFAID = &id
+	}
 	vs := &models.VideoSource{
 		ID:                  videoID,
 		ArtifactID:          artifactID,
@@ -521,6 +535,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 		TranscriptStatus:    models.VideoTranscriptStatusReady,
 		TranscriptionSource: &zoomAPI,
 		SourceType:          models.VideoSourceTypeEmbedURL,
+		FileArtifactID:      zoomFAID,
 	}
 	if err := db.CreateVideoSource(ctx, vs); err != nil {
 		setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())

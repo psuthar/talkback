@@ -381,6 +381,14 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 	if playbackURL == "" {
 		playbackURL = "https://meet.google.com/"
 	}
+	// SCRUM-475: link the row to the just-ingested file_artifact so the
+	// frontend's per-recording stream URL resolves and the row plays from
+	// R2 instead of the Drive viewer iframe ("You need access" page).
+	var meetFAID *uuid.UUID
+	if ingestedArtifactID != uuid.Nil {
+		id := ingestedArtifactID
+		meetFAID = &id
+	}
 	vs := &models.VideoSource{
 		ID:                  videoID,
 		ArtifactID:          artifactID,
@@ -392,6 +400,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		TranscriptStatus:    models.VideoTranscriptStatusReady,
 		TranscriptionSource: &ts,
 		SourceType:          models.VideoSourceTypeEmbedURL,
+		FileArtifactID:      meetFAID,
 	}
 	if err := db.CreateVideoSource(ctx, vs); err != nil {
 		setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
@@ -568,6 +577,11 @@ func enqueueGoogleMeetWhisperFallback(
 		playbackURL = "https://meet.google.com/"
 	}
 	ts := "whisper"
+	// SCRUM-475: artifactID resolved at top of this function (SCRUM-473)
+	// is the file_artifact backing this recording — link it so the
+	// frontend's per-recording stream URL hits the MP4 in R2 instead of
+	// falling back to the Drive viewer iframe.
+	whisperFAID := artifactID
 	vs := &models.VideoSource{
 		ID:                  videoID,
 		ArtifactID:          legacyArtifactID,
@@ -579,6 +593,7 @@ func enqueueGoogleMeetWhisperFallback(
 		TranscriptStatus:    models.VideoTranscriptStatusPending,
 		TranscriptionSource: &ts,
 		SourceType:          models.VideoSourceTypeEmbedURL,
+		FileArtifactID:      &whisperFAID,
 	}
 	if err := db.CreateVideoSource(ctx, vs); err != nil {
 		log.Printf("Meet Whisper fallback: create video source: %v", err)
