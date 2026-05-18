@@ -117,11 +117,14 @@ describe('ParticipantSessionMenu', () => {
     expect(screen.queryByTestId('participant-session-menu')).toBeNull()
   })
 
-  it('renders an Admin link when global_role is admin', () => {
+  it('renders an Admin link when global_role is admin (SCRUM-474: absolute /?mode=admin so the link works from session URLs)', () => {
     renderMenu({ authUser: { ...baseUser, global_role: 'admin' } })
     fireEvent.click(screen.getByTestId('participant-session-menu-btn'))
     const adminLink = screen.getByTestId('menu-admin-link')
-    expect(adminLink.getAttribute('href')).toBe('?mode=admin')
+    // Must be root-anchored: the relative form "?mode=admin" resolves against
+    // the current pathname, so from /app/sessions/{id} it would navigate to
+    // /app/sessions/{id}?mode=admin which the App router ignores.
+    expect(adminLink.getAttribute('href')).toBe('/?mode=admin')
     // Identity row also shows the Admin badge
     expect(screen.getByTestId('participant-session-menu').textContent).toContain('Admin')
   })
