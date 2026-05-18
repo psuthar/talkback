@@ -366,33 +366,31 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		}
 		artifactID = artifact.ID
 	}
-	sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-	if len(sources) == 0 {
-		videoID := uuid.New()
-		ts := "google_meet_api"
-		playbackURL := exportURI
-		if playbackURL == "" {
-			playbackURL = "https://meet.google.com/"
-		}
-		vs := &models.VideoSource{
-			ID:                  videoID,
-			ArtifactID:          artifactID,
-			SessionID:           sessionID,
-			Provider:            "google_meet",
-			VideoURL:            playbackURL,
-			PlaybackMode:        "embed",
-			OriginalURL:         &playbackURL,
-			TranscriptStatus:    models.VideoTranscriptStatusReady,
-			TranscriptionSource: &ts,
-			SourceType:          models.VideoSourceTypeEmbedURL,
-		}
-		if err := db.CreateVideoSource(ctx, vs); err != nil {
-			setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
-			updateMirror(models.ProcessingStateFailedPermanent)
-			return nil
-		}
-		_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, nil, videoSegments)
+	// SCRUM-470: always create a new video_source per Meet import.
+	videoID := uuid.New()
+	ts := "google_meet_api"
+	playbackURL := exportURI
+	if playbackURL == "" {
+		playbackURL = "https://meet.google.com/"
 	}
+	vs := &models.VideoSource{
+		ID:                  videoID,
+		ArtifactID:          artifactID,
+		SessionID:           sessionID,
+		Provider:            "google_meet",
+		VideoURL:            playbackURL,
+		PlaybackMode:        "embed",
+		OriginalURL:         &playbackURL,
+		TranscriptStatus:    models.VideoTranscriptStatusReady,
+		TranscriptionSource: &ts,
+		SourceType:          models.VideoSourceTypeEmbedURL,
+	}
+	if err := db.CreateVideoSource(ctx, vs); err != nil {
+		setJobFailedPermanent(ctx, db, jobID, attempt, "db_error", err.Error())
+		updateMirror(models.ProcessingStateFailedPermanent)
+		return nil
+	}
+	_ = db.UpdateVideoSourceZoomTranscript(ctx, videoID, rawText, nil, videoSegments)
 
 	// --- Stage: index ---
 	updateJobState(ctx, db, jobID, models.ProcessingStateChunking, models.ProcessingStageChunk, attempt, nil, nil, nil)
@@ -540,33 +538,31 @@ func enqueueGoogleMeetWhisperFallback(
 		}
 		artifactID = artifact.ID
 	}
-	sources, _ := db.GetVideoSourcesBySessionID(ctx, sessionID)
-	var videoID uuid.UUID
-	if len(sources) > 0 {
-		videoID = sources[0].ID
-	} else {
-		videoID = uuid.New()
-		playbackURL := exportURI
-		if playbackURL == "" {
-			playbackURL = "https://meet.google.com/"
-		}
-		ts := "whisper"
-		vs := &models.VideoSource{
-			ID:                  videoID,
-			ArtifactID:          artifactID,
-			SessionID:           sessionID,
-			Provider:            "google_meet",
-			VideoURL:            playbackURL,
-			PlaybackMode:        "embed",
-			OriginalURL:         &playbackURL,
-			TranscriptStatus:    models.VideoTranscriptStatusPending,
-			TranscriptionSource: &ts,
-			SourceType:          models.VideoSourceTypeEmbedURL,
-		}
-		if err := db.CreateVideoSource(ctx, vs); err != nil {
-			log.Printf("Meet Whisper fallback: create video source: %v", err)
-			return false
-		}
+	// SCRUM-470: always create a NEW video_source per import. Reusing
+	// sources[0] was single-recording-era logic — for multi-recording it
+	// silently overwrote the Whisper transcript on an unrelated row and
+	// never produced a new VIDEOS entry for the imported recording.
+	videoID := uuid.New()
+	playbackURL := exportURI
+	if playbackURL == "" {
+		playbackURL = "https://meet.google.com/"
+	}
+	ts := "whisper"
+	vs := &models.VideoSource{
+		ID:                  videoID,
+		ArtifactID:          artifactID,
+		SessionID:           sessionID,
+		Provider:            "google_meet",
+		VideoURL:            playbackURL,
+		PlaybackMode:        "embed",
+		OriginalURL:         &playbackURL,
+		TranscriptStatus:    models.VideoTranscriptStatusPending,
+		TranscriptionSource: &ts,
+		SourceType:          models.VideoSourceTypeEmbedURL,
+	}
+	if err := db.CreateVideoSource(ctx, vs); err != nil {
+		log.Printf("Meet Whisper fallback: create video source: %v", err)
+		return false
 	}
 
 	jobKey := "google_meet_whisper:" + sessionID.String()
