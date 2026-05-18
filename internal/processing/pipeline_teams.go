@@ -312,8 +312,14 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 					// Whisper-fallback import. Reusing sources[0] was
 					// single-recording-era logic that silently dropped the
 					// 2nd-and-later recording.
+					// SCRUM-475: link to the file_artifact resolved above
+					// (fallbackArtifactID — either ingestedArtifactID or
+					// the session's primary). Frontend's per-recording
+					// stream URL hits the MP4 in R2 instead of trying to
+					// iframe teams.microsoft.com.
 					videoID := uuid.New()
 					teamsURL := "https://teams.microsoft.com/"
+					teamsFAID := fallbackArtifactID
 					vs := &models.VideoSource{
 						ID:               videoID,
 						ArtifactID:       artifactID,
@@ -324,6 +330,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 						OriginalURL:      &teamsURL,
 						TranscriptStatus: models.VideoTranscriptStatusPending,
 						SourceType:       models.VideoSourceTypeEmbedURL,
+						FileArtifactID:   &teamsFAID,
 					}
 					if err := db.CreateVideoSource(ctx, vs); err != nil {
 						log.Printf("Teams Whisper fallback: create video source: %v", err)
@@ -441,9 +448,16 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		artifactID = artifact.ID
 	}
 	// SCRUM-470: always create a new video_source per Teams import.
+	// SCRUM-475: link to the just-ingested file_artifact so the frontend
+	// streams from R2 instead of trying to iframe teams.microsoft.com.
 	teamsURL := "https://teams.microsoft.com/"
 	videoID := uuid.New()
 	ts := "teams_api"
+	var teamsHappyFAID *uuid.UUID
+	if ingestedArtifactID != uuid.Nil {
+		id := ingestedArtifactID
+		teamsHappyFAID = &id
+	}
 	vs := &models.VideoSource{
 		ID:                  videoID,
 		ArtifactID:          artifactID,
@@ -452,6 +466,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		VideoURL:            teamsURL,
 		PlaybackMode:        "embed",
 		OriginalURL:         &teamsURL,
+		FileArtifactID:      teamsHappyFAID,
 		TranscriptStatus:    models.VideoTranscriptStatusReady,
 		TranscriptionSource: &ts,
 		SourceType:          models.VideoSourceTypeEmbedURL,

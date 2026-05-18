@@ -2099,8 +2099,12 @@ export function CreatorMode({
               </div>
             )}
 
-            {/* Session-level transcript (when no inline transcript from video) */}
-            {sessionId && !(hasPrimaryR2Video && (video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0))) && (
+            {/* Session-level transcript (when no inline transcript from video).
+                SCRUM-475: also hide when the SELECTED video has a transcript
+                — without this guard, picking a non-primary imported recording
+                (Teams/Meet/Zoom) showed the real transcript inline AND a
+                duplicate "No transcript yet" placeholder beneath it. */}
+            {sessionId && !(hasPrimaryR2Video && (video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0))) && !(video?.transcript_text || (video?.transcript_segments && video?.transcript_segments?.length > 0)) && (
               <div style={{ marginBottom: '12px' }}>
                 <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '8px', color: '#555' }}>Transcript</div>
                 {!transcriptData ? (
