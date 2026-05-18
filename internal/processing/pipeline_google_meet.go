@@ -112,6 +112,13 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		log.Printf("google_meet_ingest_skip session_id=%s conference_record=%q recording=%q reason=already_ingested_this_recording", sessionID, conferenceRecord, recordingName)
 	}
 
+	// SCRUM-473: track the artifact ingested by THIS job so the Whisper
+	// fallback can target it directly. Pre-fix, the fallback read
+	// session.PrimaryVideoArtifactID — which post-SCRUM-471 is nil for
+	// post-creation imports, leaving the job stuck on
+	// "No FILE_GENERATED transcript yet" forever.
+	var ingestedArtifactID uuid.UUID
+
 	if doMp4Ingest {
 		updateJobState(ctx, db, jobID, models.ProcessingStateDownloading, models.ProcessingStageDownload, attempt, nil, nil, nil)
 		updateMirror(models.ProcessingStateDownloading)
@@ -138,6 +145,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 
 		mp4Name := "google-meet.mp4"
 		artifactID := uuid.New()
+		ingestedArtifactID = artifactID // SCRUM-473: expose to Whisper fallback
 		meta := googleMeetArtifactMetadata(conferenceRecord, recordingName, driveFileID, exportURI)
 
 		if store != nil {
@@ -266,7 +274,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 		// recording exceeds MEET_TRANSCRIPT_POLL_MAX_AGE we give up and fall
 		// back to Whisper instead.
 		if shouldEnqueueMeetWhisperFallback(transcripts) {
-			if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
+			if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror, ingestedArtifactID) {
 				return nil
 			}
 			// Fallback wanted but couldn't be enqueued (no processor, no primary
@@ -277,7 +285,7 @@ func runGoogleMeetJob(ctx context.Context, db *database.DB, job *models.SessionP
 			recEnd, _ := time.Parse(time.RFC3339, rec.EndTime)
 			if nativeTranscriptPollExpired(recEnd, time.Now()) {
 				// Max-age exhausted — fall back to Whisper to unblock the user.
-				if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror) {
+				if enqueueGoogleMeetWhisperFallback(ctx, db, sessionID, jobID, attempt, store, jobProcessor, exportURI, updateMirror, ingestedArtifactID) {
 					return nil
 				}
 				// Fallback unavailable; fall through to waiting (will retry).
@@ -485,15 +493,25 @@ func enqueueGoogleMeetWhisperFallback(
 	jobProcessor *utils.JobProcessor,
 	exportURI string,
 	updateMirror func(string),
+	ingestedArtifactID uuid.UUID,
 ) bool {
 	if jobProcessor == nil {
 		return false
 	}
-	sess, _ := db.GetSession(ctx, sessionID)
-	if sess == nil || sess.PrimaryVideoArtifactID == nil {
-		return false
+	// SCRUM-473: prefer the artifact JUST ingested by this job; fall back
+	// to session.PrimaryVideoArtifactID for legacy callers/sessions that
+	// auto-promoted to primary (pre-SCRUM-471 / from-zoom flows).
+	var artifactID uuid.UUID
+	if ingestedArtifactID != uuid.Nil {
+		artifactID = ingestedArtifactID
+	} else {
+		sess, _ := db.GetSession(ctx, sessionID)
+		if sess == nil || sess.PrimaryVideoArtifactID == nil {
+			return false
+		}
+		artifactID = *sess.PrimaryVideoArtifactID
 	}
-	fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
+	fa, _ := db.GetFileArtifactByID(ctx, artifactID)
 	if fa == nil || fa.Status != models.FileArtifactStatusReady || fa.StorageKey == "" {
 		return false
 	}
@@ -520,15 +538,17 @@ func enqueueGoogleMeetWhisperFallback(
 		return false
 	}
 
-	// Ensure artifact + video_source rows exist (same idempotent pattern as the
-	// happy path).
+	// Ensure legacy artifacts + video_source rows exist (same idempotent
+	// pattern as the happy path). SCRUM-473 renamed `artifactID` here to
+	// `legacyArtifactID` to disambiguate from the outer scope's file-
+	// artifact id (used as the Whisper source URL above).
 	artifacts, _ := db.GetArtifactsBySessionID(ctx, sessionID)
-	var artifactID uuid.UUID
+	var legacyArtifactID uuid.UUID
 	if len(artifacts) > 0 {
-		artifactID = artifacts[0].ID
+		legacyArtifactID = artifacts[0].ID
 	} else {
 		title := "Google Meet Recording"
-		if sess.Title != "" {
+		if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.Title != "" {
 			title = sess.Title
 		}
 		artifact, createErr := db.CreateArtifact(ctx, sessionID, title, nil)
@@ -536,7 +556,7 @@ func enqueueGoogleMeetWhisperFallback(
 			log.Printf("Meet Whisper fallback: create artifact: %v", createErr)
 			return false
 		}
-		artifactID = artifact.ID
+		legacyArtifactID = artifact.ID
 	}
 	// SCRUM-470: always create a NEW video_source per import. Reusing
 	// sources[0] was single-recording-era logic — for multi-recording it
@@ -550,7 +570,7 @@ func enqueueGoogleMeetWhisperFallback(
 	ts := "whisper"
 	vs := &models.VideoSource{
 		ID:                  videoID,
-		ArtifactID:          artifactID,
+		ArtifactID:          legacyArtifactID,
 		SessionID:           sessionID,
 		Provider:            "google_meet",
 		VideoURL:            playbackURL,

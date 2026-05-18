@@ -98,6 +98,10 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 		log.Printf("IMPORT_START session_id=%s meeting_uuid=%s skip_mp4=already_ingested_this_recording", sessionID, instanceUUID)
 	}
 
+	// SCRUM-473: expose the just-ingested artifact to the Whisper fallback
+	// block below — post-SCRUM-471 the session may not have a primary.
+	var ingestedArtifactID uuid.UUID
+
 	if doMp4Ingest {
 		// Enforce configurable max Zoom recording duration (default 10 minutes) before download.
 		maxDurationSec := zoomMaxVideoDurationSeconds()
@@ -159,6 +163,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 			// R2 path: create artifact pending, Put, HEAD verify, then mark ready with size/etag. storagePrefix may be "" (keys under sessions/).
 			ingestStart := time.Now()
 			artifactID := uuid.New()
+			ingestedArtifactID = artifactID // SCRUM-473
 			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, "zoom.mp4")
 			bucket := os.Getenv("R2_BUCKET")
 			if bucket == "" {
@@ -229,6 +234,7 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 		} else {
 			// Local path (for local debugging without R2)
 			artifactID := uuid.New()
+			ingestedArtifactID = artifactID // SCRUM-473
 			localRelKey := filepath.Join(storage.SessionStorageRoot, sessionID.String(), "videos", "zoom.mp4")
 			uploadRoot := storage.UploadRoot()
 			dir := filepath.Join(uploadRoot, storage.SessionStorageRoot, sessionID.String(), "videos")
@@ -291,9 +297,17 @@ func runZoomJob(ctx context.Context, db *database.DB, job *models.SessionProcess
 	if transcriptFile == nil || transcriptStatus == utils.TranscriptStatusProcessing {
 		// Whisper fallback: if we have the video stored locally, enqueue a transcript job and move to awaiting_whisper
 		if jobProcessor != nil {
-			sess, _ := db.GetSession(ctx, sessionID)
-			if sess != nil && sess.PrimaryVideoArtifactID != nil {
-				fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
+			// SCRUM-473: prefer this job's just-ingested artifact; fall back
+			// to session.PrimaryVideoArtifactID for legacy / from-zoom
+			// sessions that auto-promoted to primary.
+			var fallbackArtifactID uuid.UUID
+			if ingestedArtifactID != uuid.Nil {
+				fallbackArtifactID = ingestedArtifactID
+			} else if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
+				fallbackArtifactID = *sess.PrimaryVideoArtifactID
+			}
+			if fallbackArtifactID != uuid.Nil {
+				fa, _ := db.GetFileArtifactByID(ctx, fallbackArtifactID)
 				if fa != nil && fa.Status == models.FileArtifactStatusReady && (fa.StorageProvider == "local" || fa.StorageProvider == "r2") && fa.StorageKey != "" {
 					// Resolve source URL based on storage provider.
 					var whisperSourceURL string

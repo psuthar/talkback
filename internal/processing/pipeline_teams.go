@@ -103,6 +103,12 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		log.Printf("teams_ingest_skip session_id=%s meeting_id=%q recording_id=%q reason=already_ingested_this_recording", sessionID, meetingID, recordingID)
 	}
 
+	// SCRUM-473: surface the just-ingested artifact ID so the Whisper
+	// fallback below can target it directly instead of reading
+	// session.PrimaryVideoArtifactID (which is nil for post-SCRUM-471
+	// post-creation imports).
+	var ingestedArtifactID uuid.UUID
+
 	if doMp4Ingest {
 		log.Printf("[teams] session_id=%s job_id=%s attempt=%d mp4_download_start subject=%q", sessionID, jobID, attempt, rec.Subject)
 		resp, downErr := msgraph.DownloadHTTP(ctx, rec.RecordingContentURL, accessToken, httpClient)
@@ -134,6 +140,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 		if store != nil {
 			ingestStart := time.Now()
 			artifactID := uuid.New()
+			ingestedArtifactID = artifactID // SCRUM-473: expose to Whisper fallback
 			storageKey := storage.BuildArtifactStorageKey(storagePrefix, sessionID, artifactID, teamsMp4)
 			bucket := os.Getenv("R2_BUCKET")
 			if bucket == "" {
@@ -186,6 +193,7 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 			log.Printf("teams_ingest_completed session_id=%s artifact_id=%s size_bytes=%d duration_ms=%d", sessionID, artifactID, size, time.Since(ingestStart).Milliseconds())
 		} else {
 			artifactID := uuid.New()
+			ingestedArtifactID = artifactID // SCRUM-473: expose to Whisper fallback
 			localRelKey := filepath.Join(storage.SessionStorageRoot, sessionID.String(), "videos", teamsMp4)
 			uploadRoot := storage.UploadRoot()
 			dir := filepath.Join(uploadRoot, storage.SessionStorageRoot, sessionID.String(), "videos")
@@ -254,9 +262,17 @@ func runTeamsJob(ctx context.Context, db *database.DB, job *models.SessionProces
 
 	if vttStr == "" {
 		if jobProcessor != nil {
-			sess, _ := db.GetSession(ctx, sessionID)
-			if sess != nil && sess.PrimaryVideoArtifactID != nil {
-				fa, _ := db.GetFileArtifactByID(ctx, *sess.PrimaryVideoArtifactID)
+			// SCRUM-473: prefer the artifact this job just ingested. Fall
+			// back to session.PrimaryVideoArtifactID for legacy callers
+			// (pre-SCRUM-471 sessions that auto-promoted to primary).
+			var fallbackArtifactID uuid.UUID
+			if ingestedArtifactID != uuid.Nil {
+				fallbackArtifactID = ingestedArtifactID
+			} else if sess, _ := db.GetSession(ctx, sessionID); sess != nil && sess.PrimaryVideoArtifactID != nil {
+				fallbackArtifactID = *sess.PrimaryVideoArtifactID
+			}
+			if fallbackArtifactID != uuid.Nil {
+				fa, _ := db.GetFileArtifactByID(ctx, fallbackArtifactID)
 				if fa != nil && fa.Status == models.FileArtifactStatusReady && (fa.StorageProvider == "local" || fa.StorageProvider == "r2") && fa.StorageKey != "" {
 					// Resolve source URL based on storage provider.
 					var whisperSourceURL string
