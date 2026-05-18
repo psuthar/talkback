@@ -217,7 +217,10 @@ export function RecordingsPicker({
   }, [onClose])
 
   // SCRUM-463: switching platforms wipes everything specific to the
-  // previously-viewed platform.
+  // previously-viewed platform. SCRUM-465: also clear confirming +
+  // importErrors so a stale "<old platform> meeting: unauthorized" line
+  // from a previous failed import doesn't survive into the new platform's
+  // view.
   const handlePlatformChange = (next) => {
     if (next === platform) return
     setPlatform(next)
@@ -229,6 +232,8 @@ export function RecordingsPicker({
     setCustomFrom('')
     setCustomTo('')
     setHasLoaded(false)
+    setConfirming(false)
+    setImportErrors([])
   }
 
   const handleConnect = () => {
@@ -236,20 +241,26 @@ export function RecordingsPicker({
   }
 
   const visible = recordings
-  const selectableIDs = useMemo(() => {
-    const ids = []
-    for (const r of visible) {
-      if (recordingIsImported(r, importedSet) || recordingIsOversized(r)) continue
-      ids.push(recordingExternalID(r))
-    }
-    return ids
+
+  // SCRUM-465: selection identity uses the row index, not the recording's
+  // external_recording_id. Upstream APIs occasionally return rows where
+  // both meeting_uuid and instance_uuid are empty (untitled cloud
+  // recordings); using externalID as the selection key caused every such
+  // row to collide on the empty string "" and toggle as one.
+  const selectableIndexes = useMemo(() => {
+    const idxs = []
+    visible.forEach((r, i) => {
+      if (recordingIsImported(r, importedSet) || recordingIsOversized(r)) return
+      idxs.push(i)
+    })
+    return idxs
   }, [visible, importedSet])
 
-  const toggleOne = (id) => {
+  const toggleOne = (idx) => {
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(idx)) next.delete(idx)
+      else next.add(idx)
       return next
     })
   }
@@ -269,7 +280,7 @@ export function RecordingsPicker({
     const errors = []
     const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
     if (userEmail) headers['X-Creator-Identity'] = userEmail
-    const selectedRecordings = visible.filter((r) => selected.has(recordingExternalID(r)))
+    const selectedRecordings = visible.filter((_r, i) => selected.has(i))
     const importedJobs = []
     for (const rec of selectedRecordings) {
       try {
@@ -462,15 +473,18 @@ export function RecordingsPicker({
 
             {hasLoaded && visible.length > 0 && (
               <ul data-testid="recordings-picker-list" style={listStyle}>
-                {visible.map((r) => {
-                  const id = recordingExternalID(r)
+                {visible.map((r, i) => {
+                  // SCRUM-465: row identity uses index, not externalID,
+                  // so rows with empty meeting_uuid/instance_uuid (which
+                  // upstream sometimes returns) don't collide.
+                  const id = recordingExternalID(r) || `row-${i}`
                   const isImported = recordingIsImported(r, importedSet)
                   const isOversized = recordingIsOversized(r)
                   const isDisabled = isImported || isOversized
-                  const isSelected = selected.has(id)
+                  const isSelected = selected.has(i)
                   return (
                     <li
-                      key={id || `${r.meeting_topic}:${r.start_time}`}
+                      key={`${i}:${id}`}
                       data-testid={`recording-row-${id}`}
                       data-state={isImported ? 'imported' : isOversized ? 'oversized' : isSelected ? 'selected' : 'available'}
                       aria-disabled={isDisabled}
@@ -480,7 +494,7 @@ export function RecordingsPicker({
                         type="checkbox"
                         data-testid={`recording-checkbox-${id}`}
                         checked={isSelected}
-                        onChange={() => toggleOne(id)}
+                        onChange={() => toggleOne(i)}
                         disabled={isDisabled}
                         aria-label={`Select ${r.meeting_topic}`}
                       />
@@ -516,7 +530,7 @@ export function RecordingsPicker({
           >
             {`Import ${selected.size} recording${selected.size === 1 ? '' : 's'}`}
           </button>
-          {connected && hasLoaded && selectableIDs.length === 0 && visible.length > 0 && (
+          {connected && hasLoaded && selectableIndexes.length === 0 && visible.length > 0 && (
             <p data-testid="recordings-picker-none-selectable" style={mutedStyle}>
               All listed recordings are either already imported or oversized.
             </p>
@@ -527,11 +541,12 @@ export function RecordingsPicker({
           <div data-testid="recordings-picker-confirm" role="dialog" aria-label="Confirm import" style={confirmStyle}>
             <p>Import {selected.size} recording{selected.size === 1 ? '' : 's'}? Each takes ~3–10 min to ingest.</p>
             <ul data-testid="recordings-picker-confirm-list">
-              {Array.from(selected).map((id) => {
-                const rec = visible.find((r) => recordingExternalID(r) === id)
+              {Array.from(selected).map((idx) => {
+                const rec = visible[idx]
+                const rowId = rec ? (recordingExternalID(rec) || `row-${idx}`) : `row-${idx}`
                 return (
-                  <li key={id} data-testid={`recordings-picker-confirm-row-${id}`}>
-                    {rec ? rec.meeting_topic : id}
+                  <li key={rowId} data-testid={`recordings-picker-confirm-row-${rowId}`}>
+                    {rec ? rec.meeting_topic : rowId}
                   </li>
                 )
               })}

@@ -371,6 +371,52 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     expect(url.startsWith('/api/zoom/recordings')).toBe(true)
   })
 
+  // ──────────────────────────────────────────────────────────────────
+  // SCRUM-465: selection collision + stale confirm dialog on platform switch.
+  // ──────────────────────────────────────────────────────────────────
+
+  it('SCRUM-465: rows with empty external IDs do NOT collide in selection', async () => {
+    const collidingRows = [
+      { meeting_topic: 'A', start_time: '2026-03-21T21:00:00Z', duration_minutes: 30, meeting_uuid: '', instance_uuid: '', has_transcript: false },
+      { meeting_topic: 'B', start_time: '2026-03-21T21:00:00Z', duration_minutes: 30, meeting_uuid: '', instance_uuid: '', has_transcript: false },
+      { meeting_topic: 'C', start_time: '2026-03-21T21:20:00Z', duration_minutes: 20, meeting_uuid: '', instance_uuid: '', has_transcript: false },
+    ]
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: collidingRows }) }])
+    const user = userEvent.setup()
+    renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    // Click the FIRST row's checkbox. Only one row should select.
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes.length).toBe(3)
+    await user.click(checkboxes[0])
+    expect(checkboxes[0].checked).toBe(true)
+    expect(checkboxes[1].checked).toBe(false)
+    expect(checkboxes[2].checked).toBe(false)
+    // Import label reflects ONE selection.
+    expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Import 1 recording')
+  })
+
+  it('SCRUM-465: switching platforms clears the confirm dialog and stale import errors', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ items: recordings }) })
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({ message: 'unauthorized' }) })
+    const user = userEvent.setup()
+    renderPicker({ initialPlatform: 'zoom' })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+    // Confirm dialog open + error visible.
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-import-errors')).toBeTruthy())
+    expect(screen.getByTestId('recordings-picker-confirm')).toBeTruthy()
+    // Switch to a different platform → confirm dialog dismounts, import errors gone.
+    await user.click(screen.getByTestId('recordings-picker-platform-teams'))
+    expect(screen.queryByTestId('recordings-picker-confirm')).toBeNull()
+    expect(screen.queryByTestId('recordings-picker-import-errors')).toBeNull()
+  })
+
   it('SCRUM-464: Import POST fires with a same-origin relative URL when apiBaseUrl=""', async () => {
     const onImported = vi.fn()
     global.fetch = vi.fn()
