@@ -45,34 +45,16 @@ describe('PrimaryStage (SCRUM-273)', () => {
     expect(empty.textContent).not.toMatch(/Pick any material/i)
   })
 
-  it('renders the video container when currentSession has video_sources AND a primary artifact', () => {
-    // SCRUM-471: a video_source alone is no longer enough to render the
-    // player. The session must also have primary_video_artifact_id set,
-    // since post-creation imports now land as secondary and the user
-    // explicitly promotes one to primary.
-    render(
-      <PrimaryStage
-        selectedDocument={null}
-        currentSession={{ session: { primary_video_artifact_id: 'fa-1' }, video_sources: [{ id: 'vs-1' }] }}
-        video={{ id: 'vs-1', transcript_status: 'ready' }}
-        primaryVideoAccessUrl="https://example.com/v.mp4"
-      />,
-    )
-    expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
-    expect(screen.getByTestId('video-player')).toBeInTheDocument()
-  })
-
-  it('SCRUM-471: video_sources present but no primary → empty state with "Make primary" hint', () => {
+  it('renders the video container when currentSession has video_sources', () => {
     render(
       <PrimaryStage
         selectedDocument={null}
         currentSession={{ session: {}, video_sources: [{ id: 'vs-1' }] }}
         video={{ id: 'vs-1', transcript_status: 'ready' }}
-        mode="creator"
       />,
     )
-    const empty = screen.getByTestId('primary-empty-state')
-    expect(empty.textContent).toMatch(/Make primary/i)
+    expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
+    expect(screen.getByTestId('video-player')).toBeInTheDocument()
   })
 
   it('renders the ingest-pending message in place of the video player when primary_video_artifact_id is set but not ready', () => {
@@ -199,16 +181,12 @@ describe('PrimaryStage (SCRUM-273)', () => {
           apiBaseUrl=""
           sessionId="s1"
           currentSession={{
-            // SCRUM-471: a session with video_sources but no primary now
-            // renders the empty state; the SCRUM-328 fallback guard only
-            // matters when there IS a primary artifact set. Add one here.
-            session: { primary_video_artifact_id: 'fa-vs-1' },
+            session: {},
             video_sources: [{ id: 'vs-1' }],
             materials: [{ id: 'mat-42', filename: 'spec.pdf', text_status: 'ready' }],
             primary: { kind: 'document', id: 'mat-42' },
           }}
           video={{ id: 'vs-1', transcript_status: 'ready' }}
-          primaryVideoAccessUrl="https://example.com/v.mp4"
         />,
       )
       expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
@@ -224,13 +202,12 @@ describe('PrimaryStage (SCRUM-273)', () => {
           apiBaseUrl=""
           sessionId="s1"
           currentSession={{
-            session: { primary_video_artifact_id: 'fa-vs-2' },
+            session: {},
             video_sources: [{ id: 'vs-2' }],
             links: [{ id: 'link-7', url: 'https://example.com', title: 'ref' }],
             primary: { kind: 'link', id: 'link-7' },
           }}
           video={{ id: 'vs-2', transcript_status: 'ready' }}
-          primaryVideoAccessUrl="https://example.com/v.mp4"
         />,
       )
       expect(screen.getByTestId('video-player-container')).toBeInTheDocument()
