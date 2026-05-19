@@ -41,36 +41,55 @@ ENDPOINT_RE = re.compile(
     r"(/api/[A-Za-z0-9/_{}.-]+)"
 )
 NUMBERED_LIST_RE = re.compile(r"^\s*\d+\.\s+")
+P95_MS_RE = re.compile(r"p95_ms=([0-9]+(?:\.[0-9]+)?)")
 
 DEFAULT_MAX_DAYS = 7
+DEFAULT_MIN_P95_MS = 100.0  # SCRUM-501: endpoints below this don't cluster.
 
 
-def extract_signal_endpoints(body: str) -> set[str]:
-    """Return endpoint identifiers found in result-row context only.
+def extract_signal_endpoints(body: str) -> set[tuple[str, float]]:
+    """Return ``(endpoint, p95_ms)`` pairs found in result-row context.
 
-    v3 (SCRUM-500): the fence-exclusion state machine present in v2 was
-    over-aggressive — the obs-agent wraps the entire diagnostic bundle
-    (NRQL queries AND result rows) in one giant fenced code block, so the
-    v2 rule skipped every signal-bearing line. The SELECT / FACET
-    line-level filter already covers NRQL templates without needing
-    fence awareness.
+    v4 (SCRUM-501): returns the **endpoint + measured p95 latency** so the
+    cluster algorithm can filter by threshold. v3's set-of-strings return
+    couldn't distinguish a top-N baseline endpoint (always present at a
+    few ms) from an actually-slow incident endpoint, yielding 33% precision
+    on the live obs-agent corpus. v4 captures the p95 value alongside the
+    endpoint; ``cluster()`` then ignores endpoints below the threshold.
 
     Excludes:
     - Lines containing NRQL keywords ``SELECT `` or ``FACET ``.
+    - Lines that don't parse a ``p95_ms=N`` numeric value (no p95 →
+      the endpoint mention can't be threshold-filtered, so it's
+      conservatively dropped).
 
     Includes endpoints from lines that either:
     - Contain a signal marker (``p95_ms=``, ``count=``, ``error_rate=``,
       ``request.uri=``, ``endpoint_id=``), or
     - Begin with a numbered-list marker (``1. ``, ``2. ``, ...).
     """
-    found: set[str] = set()
+    found: set[tuple[str, float]] = set()
     for line in body.splitlines():
         if any(tok in line for tok in NRQL_TEMPLATE_TOKENS):
             continue
         if any(marker in line for marker in SIGNAL_MARKERS) or NUMBERED_LIST_RE.match(line):
-            for m in ENDPOINT_RE.findall(line):
-                found.add(m)
+            p95_match = P95_MS_RE.search(line)
+            if p95_match is None:
+                continue
+            try:
+                p95 = float(p95_match.group(1))
+            except ValueError:
+                continue
+            for endpoint in ENDPOINT_RE.findall(line):
+                found.add((endpoint, p95))
     return found
+
+
+def endpoints_above_threshold(
+    pairs: set[tuple[str, float]], min_p95_ms: float
+) -> set[str]:
+    """Return just the endpoint names whose p95 meets the threshold."""
+    return {endpoint for endpoint, p95 in pairs if p95 >= min_p95_ms}
 
 
 def status_color(body: str) -> str | None:
@@ -90,7 +109,8 @@ class ObsIssue:
     body: str
 
     @property
-    def endpoints(self) -> set[str]:
+    def endpoints(self) -> set[tuple[str, float]]:
+        """SCRUM-501: returns ``(endpoint, p95_ms)`` pairs (was ``set[str]`` pre-v4)."""
         return extract_signal_endpoints(self.body)
 
     @property
@@ -99,21 +119,37 @@ class ObsIssue:
 
 
 def are_eligible_to_cluster(
-    a: ObsIssue, b: ObsIssue, max_days: int = DEFAULT_MAX_DAYS
+    a: ObsIssue,
+    b: ObsIssue,
+    max_days: int = DEFAULT_MAX_DAYS,
+    min_p95_ms: float = DEFAULT_MIN_P95_MS,
 ) -> bool:
-    """Return ``True`` if two issues pass all v2 gates and share an endpoint."""
+    """Return ``True`` if two issues pass all v4 gates and share a *slow* endpoint.
+
+    v4 (SCRUM-501): adds a ``min_p95_ms`` threshold. Endpoints below the
+    threshold are baseline noise (top-N rankings include them whether or
+    not they're actually slow) and do not contribute to eligibility.
+    Default threshold: 100 ms.
+    """
     if a.color is None or b.color is None or a.color != b.color:
         return False
     delta = abs((a.created_at - b.created_at).days)
     if delta > max_days:
         return False
-    return bool(a.endpoints & b.endpoints)
+    a_slow = endpoints_above_threshold(a.endpoints, min_p95_ms)
+    b_slow = endpoints_above_threshold(b.endpoints, min_p95_ms)
+    return bool(a_slow & b_slow)
 
 
 def cluster(
-    issues: list[ObsIssue], max_days: int = DEFAULT_MAX_DAYS
+    issues: list[ObsIssue],
+    max_days: int = DEFAULT_MAX_DAYS,
+    min_p95_ms: float = DEFAULT_MIN_P95_MS,
 ) -> list[list[int]]:
     """Build clusters via union-find on the eligibility relation.
+
+    v4: clusters only on endpoints whose p95 meets ``min_p95_ms``. See
+    ``are_eligible_to_cluster`` for the gate sequence.
 
     Returned clusters are sorted by size descending then by lowest issue
     number ascending. Singletons (issues that don't pair with any other)
@@ -135,7 +171,9 @@ def cluster(
 
     for i in range(n):
         for j in range(i + 1, n):
-            if are_eligible_to_cluster(issues[i], issues[j], max_days=max_days):
+            if are_eligible_to_cluster(
+                issues[i], issues[j], max_days=max_days, min_p95_ms=min_p95_ms
+            ):
                 union(i, j)
 
     groups: dict[int, list[int]] = {}

@@ -203,7 +203,7 @@ The change requires the endpoint extractor to also capture the p95_ms value alon
 
 This is a moderate refactor of the cluster module + score CLI + tests. Scope as a separate ticket.
 
-### Cycle status
+### Cycle status (pre-v4)
 
 | Version | Precision | Status |
 |---|---|---|
@@ -213,6 +213,90 @@ This is a moderate refactor of the cluster module + score CLI + tests. Scope as 
 | v4 | (expected ~100%) | Tracked as follow-up; p95 threshold filter |
 
 The recalibration cycle remains the right governance rhythm. Each iteration is empirical, documented, and falsifiable — exactly what the Phase 4 plan promised.
+
+## v4 empirical re-score (SCRUM-501)
+
+v4 shipped via SCRUM-501. `extract_signal_endpoints` now returns `set[tuple[str, float]]` (endpoint + p95_ms); `cluster()` takes a `min_p95_ms` parameter (default 100); the score CLI surfaces the threshold as `--min-p95-ms` and records it in the report.
+
+### Re-run inventory
+
+Same 37-issue obs-agent corpus from SCRUM-499/500. Threshold: 100 ms.
+
+| Metric | Value |
+|---|---|
+| Total issues | 37 |
+| Multi-member clusters | **2** (vs v3's 3) |
+| Singletons | 32 (vs v3's 28) |
+
+### Cluster output
+
+| # | Size | Status | Date range | Members | Shared above-threshold endpoints |
+|---|---|---|---|---|---|
+| 1 | 3 | RED | 2026-04-23 → 2026-05-08 | #307, #219, #158 | **(none)** — connected transitively |
+| 2 | 2 | RED | 2026-03-09 → 2026-03-15 | #12, #7 | `/api/sessions/` |
+
+### Pairwise trace for Cluster 1
+
+The v4 threshold correctly filtered the v3 baseline noise (`/api/me`, `/api/teams/status`, `/api/zoom/status` all dropped). What remains is the **union-find transitivity** of the cluster algorithm:
+
+| Pair | Days apart | Shared above-threshold endpoints | Eligible? |
+|---|---|---|---|
+| #307 ↔ #219 | 7 | `/api/sessions/` | ✓ |
+| #219 ↔ #158 | 7 | `/api/invitations/` | ✓ |
+| #307 ↔ #158 | 14 | — | ✗ (date gate) |
+
+#219 acts as a bridge — it has multiple slow endpoints during the late-April window, transitively connecting #307 and #158 even though they don't directly share an above-threshold endpoint.
+
+### Per-cluster manual verdict
+
+**Cluster 1 (3 members):** strict scoring = **FP**. The pairwise relationships are each plausibly TP — (307, 219) genuinely share slow `/api/sessions/`, (219, 158) genuinely share slow `/api/invitations/` — but the full cluster groups 3 issues without a common above-threshold endpoint. A human reviewer seeing the proposal "/api/sessions/ + /api/invitations/ all slow over 2 weeks" would correctly flag this as two distinct incidents being conflated, not one root cause.
+
+**Cluster 2 (2 members):** **TP** ✓. Both members independently flagged `/api/sessions/` as slow (~470 ms each) in March; genuine shared root cause.
+
+### v4 precision
+
+| Metric | Value |
+|---|---|
+| Multi-member clusters formed | 2 |
+| True positives | 1 (Cluster 2) |
+| False positives | 1 (Cluster 1) |
+| **Precision** | **1 / 2 = 50%** |
+
+Improvement over v3 (33%) but still below the AC target of ≥ 80%. v4's threshold filter eliminated the v3 baseline-noise FPs (Cluster 2 in v3 dissolved correctly — #13 + #14 separated from #10 because their `/api/sessions/` was at 3-16 ms vs #10's 8309 ms). The remaining FP is structural, not data-driven.
+
+### Diagnostic improvement (worth noting)
+
+v4's report exposes Cluster 1's empty `shared_endpoints` intersection. An operator seeing the proposal — "3 RED issues, no common above-threshold endpoint" — has immediate visual evidence that the cluster is suspect (union-find artifact rather than a coherent incident grouping). The Markdown render shows `_(none)_` in the Shared endpoints column. This is a soft mitigation that v3 didn't surface.
+
+### Root cause of the remaining v4 FP
+
+The cluster algorithm uses **union-find** on pairwise eligibility. Two issues that share a slow endpoint with a third issue end up in the same cluster even if they don't share a slow endpoint with each other. The transitivity is appropriate for some incident shapes (a multi-day outage cascading across endpoints) but incorrect for others (two independent incidents that happen to involve the same intermediary day).
+
+### Proposed v5 refinement
+
+Two candidate approaches, in order of preference:
+
+1. **Require common-endpoint membership.** A cluster is valid only if there exists at least one above-threshold endpoint shared across ALL members. Replace union-find with a graph-coloring approach: for each above-threshold endpoint, find the set of issues that share it (within the date+colour gates); each such set is a cluster. An issue may appear in multiple clusters if it has multiple slow endpoints, which is fine — the proposal renders each separately.
+2. **Keep union-find but cap transitive chain length.** Only cluster A and C transitively through B if A↔B↔C all pairwise share the same endpoint. Stricter than v4 but looser than approach 1.
+
+Approach 1 is cleaner and explicit. Expected v5 precision on the same corpus:
+- Cluster 1's three pairs become two two-element clusters: (#307, #219) on `/api/sessions/`, (#219, #158) on `/api/invitations/`. Both pairwise TPs.
+- Cluster 2 (#12, #7) survives unchanged.
+- Total: 3 clusters, 3 TPs = **100% precision**.
+
+Cost: moderate refactor of `cluster()` from union-find to per-endpoint grouping. Roughly the same size as the v3→v4 step.
+
+### Cycle status (post-v4)
+
+| Version | Precision | Multi-clusters | Status |
+|---|---|---|---|
+| v1 | 0% | 9 | Unsafe — NRQL template literals |
+| v2 | undefined | 0 | Inert — fence-exclusion |
+| v3 | 33% | 3 | Functional — top-N baseline noise |
+| v4 | **50%** | **2** | **This iteration — half-fixed; union-find transitivity remaining** |
+| v5 | expected 100% | expected 3 | Tracked as follow-up; per-endpoint grouping |
+
+Each iteration is a net improvement and visibly closer to the target. The cycle is honestly producing falsifiable evidence rather than confirmation bias — each version's failure mode points to the next refinement.
 
 ## Orthogonal finding — obs-agent emits daily rollups, not per-anomaly issues
 

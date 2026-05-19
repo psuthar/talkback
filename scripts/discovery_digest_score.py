@@ -23,8 +23,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 from discovery_digest_cluster import (  # noqa: E402
+    DEFAULT_MAX_DAYS,
+    DEFAULT_MIN_P95_MS,
     ObsIssue,
     cluster,
+    endpoints_above_threshold,
 )
 
 
@@ -56,16 +59,26 @@ def _parse_issues(data) -> list[ObsIssue]:
     return issues
 
 
-def build_report(issues: list[ObsIssue], max_days: int = 7) -> dict:
-    """Run the v2 clustering algorithm and return a structured report."""
-    clusters = cluster(issues, max_days=max_days)
+def build_report(
+    issues: list[ObsIssue],
+    max_days: int = DEFAULT_MAX_DAYS,
+    min_p95_ms: float = DEFAULT_MIN_P95_MS,
+) -> dict:
+    """Run the v4 clustering algorithm and return a structured report."""
+    clusters = cluster(issues, max_days=max_days, min_p95_ms=min_p95_ms)
     by_number = {i.number: i for i in issues}
     out_clusters = []
     for idx, members in enumerate(clusters, start=1):
         member_issues = [by_number[n] for n in members if n in by_number]
         if member_issues:
+            # SCRUM-501: intersection over above-threshold endpoint *names*.
             shared_endpoints = sorted(
-                set.intersection(*(i.endpoints for i in member_issues))
+                set.intersection(
+                    *(
+                        endpoints_above_threshold(i.endpoints, min_p95_ms)
+                        for i in member_issues
+                    )
+                )
             )
         else:
             shared_endpoints = []
@@ -84,7 +97,8 @@ def build_report(issues: list[ObsIssue], max_days: int = 7) -> dict:
     multi = sum(1 for c in out_clusters if c["size"] >= 2)
     singletons = sum(1 for c in out_clusters if c["size"] == 1)
     return {
-        "version": "v3",
+        "version": "v4",
+        "min_p95_ms": min_p95_ms,
         "total_issues": len(issues),
         "cluster_count": len(out_clusters),
         "multi_member_clusters": multi,
@@ -95,9 +109,10 @@ def build_report(issues: list[ObsIssue], max_days: int = 7) -> dict:
 
 def render_markdown(report: dict) -> str:
     lines = [
-        "# Discovery-digest v2 cluster report",
+        f"# Discovery-digest {report['version']} cluster report",
         "",
         f"- **Version:** {report['version']}",
+        f"- **min_p95_ms threshold:** {report.get('min_p95_ms', 'n/a')}",
         f"- **Total issues:** {report['total_issues']}",
         f"- **Clusters (≥ 2 members):** {report['multi_member_clusters']}",
         f"- **Singletons:** {report['singleton_clusters']}",
@@ -149,8 +164,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--max-days",
         type=int,
-        default=7,
-        help="Date-proximity gate in calendar days (default 7).",
+        default=DEFAULT_MAX_DAYS,
+        help=f"Date-proximity gate in calendar days (default {DEFAULT_MAX_DAYS}).",
+    )
+    p.add_argument(
+        "--min-p95-ms",
+        type=float,
+        default=DEFAULT_MIN_P95_MS,
+        help=(
+            f"v4 threshold (default {DEFAULT_MIN_P95_MS}). Endpoints below "
+            "this p95 do NOT contribute to clustering — they're treated as "
+            "baseline noise (top-N latency rankings always include "
+            "high-traffic endpoints whether or not they're slow)."
+        ),
     )
     p.add_argument(
         "--format",
@@ -162,7 +188,9 @@ def main(argv: list[str] | None = None) -> int:
 
     data = json.loads(args.issues.read_text())
     issues = _parse_issues(data)
-    report = build_report(issues, max_days=args.max_days)
+    report = build_report(
+        issues, max_days=args.max_days, min_p95_ms=args.min_p95_ms
+    )
     if args.format == "json":
         print(json.dumps(report, indent=2))
     else:

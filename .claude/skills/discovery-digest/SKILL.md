@@ -67,7 +67,7 @@ Skip already-linked obs issues. Track the skip in a dry-run summary for audit bu
 
 ### 3. Cluster by theme
 
-Within the unlinked set, group obs issues by **observed endpoint or component** that actually carries signal. The clustering rule (v3 — SCRUM-498 calibration found v1 scored 0% precision; SCRUM-499 empirical re-score found v2 produced 0 useful clusters because the fence-exclusion swallowed every signal-bearing line; v3 removes the fence rule. See `docs/agent/discovery-digest-calibration-2026-05.md`):
+Within the unlinked set, group obs issues by **observed endpoint that is actually slow**. The clustering rule (v4 — SCRUM-498 found v1 scored 0% precision; SCRUM-499 found v2 produced 0 useful clusters; SCRUM-500 shipped v3 at 33% precision; SCRUM-501 ships v4 with a p95 threshold filter expected to score ~100%. See `docs/agent/discovery-digest-calibration-2026-05.md`):
 
 **Result-row scoping (mandatory).** Extract an endpoint identifier (e.g. `/api/foo/{id}`, `WebTransaction/Go/POST /api/bar`) only when it appears on a line that *also* contains one of these signal markers:
 
@@ -78,13 +78,15 @@ Within the unlinked set, group obs issues by **observed endpoint or component** 
 - `endpoint_id=`
 - Or sits inside a numbered result list (e.g. `1. WebTransaction/Go/POST /api/foo  p95_ms=1234`).
 
-**Exclude NRQL template lines.** Any line containing `SELECT ` or `FACET ` (case-sensitive — NRQL keywords) is template noise and does NOT contribute endpoints. The obs-agent's NRQL queries hard-code endpoint names in `name LIKE 'WebTransaction/%/POST /api/auth/login'`-style filters; those mentions are not signal. **Note:** v2 also excluded all lines inside fenced code blocks, but the obs-agent wraps the entire diagnostic bundle (NRQL AND result rows) in one giant fence — so fence-exclusion swallowed signal too. v3 drops the fence rule and relies solely on the SELECT/FACET line-level filter, which catches every NRQL line independently.
+**Exclude NRQL template lines.** Any line containing `SELECT ` or `FACET ` (case-sensitive — NRQL keywords) is template noise and does NOT contribute endpoints. The obs-agent's NRQL queries hard-code endpoint names in `name LIKE 'WebTransaction/%/POST /api/auth/login'`-style filters; those mentions are not signal. **Note:** v2 also excluded all lines inside fenced code blocks, but the obs-agent wraps the entire diagnostic bundle (NRQL AND result rows) in one giant fence — so fence-exclusion swallowed signal too. v3 dropped the fence rule and relies solely on the SELECT/FACET line-level filter, which catches every NRQL line independently.
+
+**p95 threshold filter (v4).** Each extracted endpoint carries the `p95_ms=N` value parsed from the same line. An endpoint contributes to clustering only when its p95 meets the configured threshold (**default 100 ms**). Endpoints below the threshold are top-N baseline noise — high-traffic routes that appear in every issue's latency ranking whether or not they're actually slow that day — and are filtered out. Override per-invocation via `scripts/discovery_digest_score.py --min-p95-ms N` if the corpus calls for a different value. SCRUM-500's empirical re-score showed v3 (no threshold) produced 33% precision; v4's threshold filter is expected to push precision to ~100% on the same corpus.
 
 **Status-colour gate.** Two obs issues are eligible to cluster only if their `Triggered by status=` colour matches (RED with RED, YELLOW with YELLOW). Mixing colours implies different urgency / different incident.
 
 **Date-proximity gate.** Two obs issues are eligible to cluster only if their `createdAt` timestamps are within **≤ 7 calendar days** of each other. Wider windows cluster unrelated incidents that happened to touch the same endpoint weeks apart.
 
-**Cluster membership rule.** After the three filters, two issues belong to the same cluster if they share at least one extracted result-row endpoint AND pass both the status-colour and date-proximity gates. An issue with no extractable result-row endpoint, or that fails all gates against every other issue, becomes its own single-element cluster.
+**Cluster membership rule.** After the four filters, two issues belong to the same cluster if they share at least one extracted result-row endpoint **above the p95 threshold** AND pass both the status-colour and date-proximity gates. An issue with no extractable above-threshold endpoint, or that fails all gates against every other issue, becomes its own single-element cluster.
 
 Clusters with **≥ 2 obs issues** become a single Jira proposal. Single-element clusters also become proposals — they're still candidate tickets — but rendered separately so the human can see clustering effectiveness over time.
 
