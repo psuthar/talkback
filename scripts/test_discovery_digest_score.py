@@ -94,7 +94,7 @@ class TestParseIssues(unittest.TestCase):
 class TestBuildReport(unittest.TestCase):
     def test_report_shape(self):
         report = score.build_report(score._parse_issues(_fixture_issues()))
-        self.assertEqual(report["version"], "v2")
+        self.assertEqual(report["version"], "v3")
         self.assertEqual(report["total_issues"], 3)
         # Expected: 1 multi (307 + 310 share endpoint) + 1 singleton (279).
         self.assertEqual(report["multi_member_clusters"], 1)

@@ -67,7 +67,7 @@ Skip already-linked obs issues. Track the skip in a dry-run summary for audit bu
 
 ### 3. Cluster by theme
 
-Within the unlinked set, group obs issues by **observed endpoint or component** that actually carries signal. The clustering rule (v2 — SCRUM-498 calibration found v1 scored 0% precision on the live corpus and was unsafe to ship; see `docs/agent/discovery-digest-calibration-2026-05.md`):
+Within the unlinked set, group obs issues by **observed endpoint or component** that actually carries signal. The clustering rule (v3 — SCRUM-498 calibration found v1 scored 0% precision; SCRUM-499 empirical re-score found v2 produced 0 useful clusters because the fence-exclusion swallowed every signal-bearing line; v3 removes the fence rule. See `docs/agent/discovery-digest-calibration-2026-05.md`):
 
 **Result-row scoping (mandatory).** Extract an endpoint identifier (e.g. `/api/foo/{id}`, `WebTransaction/Go/POST /api/bar`) only when it appears on a line that *also* contains one of these signal markers:
 
@@ -78,7 +78,7 @@ Within the unlinked set, group obs issues by **observed endpoint or component** 
 - `endpoint_id=`
 - Or sits inside a numbered result list (e.g. `1. WebTransaction/Go/POST /api/foo  p95_ms=1234`).
 
-**Exclude template literals.** Any endpoint mention inside a fenced code block, or on a line containing `SELECT ` or `FACET ` (case-sensitive — NRQL keywords), is template noise and does NOT count toward clustering. The obs-agent's NRQL queries hard-code endpoint names in `name LIKE 'WebTransaction/%/POST /api/auth/login'`-style filters; those mentions are not signal.
+**Exclude NRQL template lines.** Any line containing `SELECT ` or `FACET ` (case-sensitive — NRQL keywords) is template noise and does NOT contribute endpoints. The obs-agent's NRQL queries hard-code endpoint names in `name LIKE 'WebTransaction/%/POST /api/auth/login'`-style filters; those mentions are not signal. **Note:** v2 also excluded all lines inside fenced code blocks, but the obs-agent wraps the entire diagnostic bundle (NRQL AND result rows) in one giant fence — so fence-exclusion swallowed signal too. v3 drops the fence rule and relies solely on the SELECT/FACET line-level filter, which catches every NRQL line independently.
 
 **Status-colour gate.** Two obs issues are eligible to cluster only if their `Triggered by status=` colour matches (RED with RED, YELLOW with YELLOW). Mixing colours implies different urgency / different incident.
 
