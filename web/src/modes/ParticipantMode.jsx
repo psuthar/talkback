@@ -7,7 +7,6 @@ import { TranscriptViewer } from '../components/TranscriptViewer'
 import { DocumentViewer } from '../components/DocumentViewer'
 import { resolvePrimaryAutoSelection } from '../components/sessionPrimaryAutoSelect'
 import { getDefaultApiBaseUrl } from '../config'
-import { VideoStartOverlay } from '../components/VideoStartOverlay'
 import { SessionSkeleton } from '../components/SessionSkeleton'
 import { DecisionBriefHeader } from '../components/DecisionBriefHeader'
 import { DecisionBar } from '../components/DecisionBar'
@@ -28,6 +27,7 @@ import {
   resolveInitialExpanded,
 } from '../utils/sessionSidebar'
 import { ParticipantOnboardingDialog } from '../components/ParticipantOnboardingDialog'
+import { StartHereChip } from '../components/StartHereChip'
 import { ParticipantSessionMenu } from '../components/ParticipantSessionMenu'
 import styles from './ParticipantMode.module.css'
 
@@ -123,6 +123,11 @@ export function ParticipantMode({
   const [membersPanelExpanded, setMembersPanelExpandedState] = useState(false)
   const [materialsTreeExpanded, setMaterialsTreeExpandedState] = useState(true)
   const [showParticipantOnboarding, setShowParticipantOnboarding] = useState(false)
+  // SCRUM-484: the "Start here →" chip appears on the primary material row
+  // after the user dismisses the onboarding dialog. Its dismissed state is
+  // shared with the dialog via setParticipantOnboardingDismissed, so a returning
+  // participant whose dialog flag is set sees neither cue.
+  const [showStartHereChip, setShowStartHereChip] = useState(false)
   const setMembersPanelExpanded = useCallback((value) => {
     setMembersPanelExpandedState((prev) => {
       const next = typeof value === 'function' ? value(prev) : value
@@ -364,9 +369,11 @@ export function ParticipantMode({
     const sid = currentSession?.session?.id
     if (!sid) {
       setShowParticipantOnboarding(false)
+      setShowStartHereChip(false)
       return
     }
     setShowParticipantOnboarding(!isParticipantOnboardingDismissed(sid))
+    setShowStartHereChip(false)
   }, [currentSession?.session?.id])
 
   // When primary video has transcript text but no segments, fetch session transcript (e.g. Zoom). Do not fetch for additional videos — they use their own transcript only.
@@ -615,8 +622,17 @@ export function ParticipantMode({
 
   const dismissParticipantOnboarding = () => {
     const sid = currentSession?.session?.id
+    const wasOpen = showParticipantOnboarding
     setParticipantOnboardingDismissed(sid)
     setShowParticipantOnboarding(false)
+    // SCRUM-484: when the dialog is dismissed in-session, surface the
+    // "Start here →" chip on the primary row as a quieter follow-up cue.
+    // Skip if the dialog was never visible this session (e.g. returning user).
+    if (wasOpen) setShowStartHereChip(true)
+  }
+
+  const dismissStartHereChip = () => {
+    setShowStartHereChip(false)
   }
 
   return (
@@ -761,6 +777,10 @@ export function ParticipantMode({
                     hideTranscriptSection
                     hideHeader
                     lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
+                    currentPrimary={currentSession?.primary || null}
+                    startHereChip={
+                      <StartHereChip open={showStartHereChip} onDismiss={dismissStartHereChip} />
+                    }
                   />
                 </div>
               )}
@@ -805,10 +825,6 @@ export function ParticipantMode({
                         creatorIdentity={currentSession?.session?.created_by ?? creatorIdentity}
                         primaryVideoAccessUrl={primaryVideoAccessUrl}
                         primaryVideoArtifactId={currentSession?.session?.primary_video_artifact_id ?? null}
-                      />
-                      <VideoStartOverlay
-                        sessionId={currentSession?.session?.id}
-                        playing={isVideoPlaying}
                       />
                     </div>
                     <div className={styles.transcriptWrap}>
