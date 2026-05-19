@@ -97,7 +97,7 @@ def build_report(
     multi = sum(1 for c in out_clusters if c["size"] >= 2)
     singletons = sum(1 for c in out_clusters if c["size"] == 1)
     return {
-        "version": "v4",
+        "version": "v5",
         "min_p95_ms": min_p95_ms,
         "total_issues": len(issues),
         "cluster_count": len(out_clusters),

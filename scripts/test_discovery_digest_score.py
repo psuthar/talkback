@@ -94,7 +94,7 @@ class TestParseIssues(unittest.TestCase):
 class TestBuildReport(unittest.TestCase):
     def test_report_shape(self):
         report = score.build_report(score._parse_issues(_fixture_issues()))
-        self.assertEqual(report["version"], "v4")
+        self.assertEqual(report["version"], "v5")
         self.assertEqual(report["total_issues"], 3)
         # SCRUM-501: min_p95_ms surfaced in the report so consumers know
         # which threshold drove the clustering.
@@ -126,7 +126,7 @@ class TestRenderMarkdown(unittest.TestCase):
     def test_markdown_contains_required_sections(self):
         report = score.build_report(score._parse_issues(_fixture_issues()))
         md = score.render_markdown(report)
-        self.assertIn("# Discovery-digest v4 cluster report", md)
+        self.assertIn("# Discovery-digest v5 cluster report", md)
         self.assertIn("## Multi-member clusters", md)
         self.assertIn("## Singletons", md)
         self.assertIn("RED", md)
@@ -162,7 +162,7 @@ class TestCli(unittest.TestCase):
                 )
             self.assertEqual(rc, 0)
             self.assertIn(
-                "# Discovery-digest v4 cluster report", buf.getvalue()
+                "# Discovery-digest v5 cluster report", buf.getvalue()
             )
 
     def test_main_max_days_flag_changes_behaviour(self):

@@ -352,5 +352,162 @@ class TestV4ThresholdFilter(unittest.TestCase):
         self.assertEqual([len(c) for c in clusters], [1, 1])
 
 
+class TestV5PerEndpointGrouping(unittest.TestCase):
+    """SCRUM-502: cluster() rewritten from union-find to per-endpoint grouping.
+
+    A "bridge" issue (multiple above-threshold endpoints) may now appear in
+    multiple multi-member clusters — one per slow endpoint. Each cluster has
+    a concrete anchor.
+    """
+
+    def _issue(self, n, day_offset, body):
+        return ObsIssue(
+            number=n,
+            created_at=datetime(2026, 5, 8) + timedelta(days=day_offset),
+            body=body,
+        )
+
+    def test_bridge_issue_appears_in_multiple_clusters(self):
+        """SCRUM-501 v4 produced a 3-member chain (#307,#219,#158) with no
+        common slow endpoint because #219 bridged two pairs that shared
+        different endpoints. v5 must split this into two pairwise clusters,
+        each with its own anchor endpoint, and #219 appears in both.
+        """
+        body_a = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/sessions/  p95_ms=470\n"
+        )
+        body_bridge = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/sessions/    p95_ms=480\n"
+            "2. WebTransaction/Go/GET  /api/invitations/ p95_ms=341\n"
+        )
+        body_c = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/invitations/  p95_ms=444\n"
+        )
+        # Offsets chosen so the outer pair (#307, #158) is OUTSIDE the
+        # 7-day gate but each adjacent pair through the bridge is INSIDE.
+        # Tests that v5 splits the chain into two 2-member clusters.
+        a = self._issue(307, 0, body_a)
+        bridge = self._issue(219, -5, body_bridge)
+        c = self._issue(158, -10, body_c)
+        clusters = cluster([a, bridge, c])
+        # Expected: two 2-member clusters + zero singletons
+        # (#307+#219 on /api/sessions/, #219+#158 on /api/invitations/).
+        multi = [g for g in clusters if len(g) >= 2]
+        singletons = [g for g in clusters if len(g) == 1]
+        self.assertEqual(len(multi), 2, f"expected 2 multi-member clusters, got {multi}")
+        # Each multi-member cluster should be size 2.
+        self.assertEqual(sorted(len(g) for g in multi), [2, 2])
+        # #219 should appear in both multi-member clusters (bridge issue).
+        bridge_count = sum(1 for g in multi if 219 in g)
+        self.assertEqual(bridge_count, 2, "bridge issue must appear in both clusters")
+        # Each pairwise cluster should contain the bridge + the right partner.
+        all_pairs = sorted(tuple(g) for g in multi)
+        self.assertEqual(all_pairs, [(158, 219), (219, 307)])
+        # No singletons (every issue appears in at least one multi-member cluster).
+        self.assertEqual(singletons, [])
+
+    def test_dedup_same_pair_via_multiple_endpoints(self):
+        """When two issues share TWO different above-threshold endpoints,
+        they form ONE cluster (deduplicated by member set), not two.
+        """
+        body = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/foo  p95_ms=300\n"
+            "2. WebTransaction/Go/GET  /api/bar  p95_ms=400\n"
+        )
+        a = self._issue(1, 0, body)
+        b = self._issue(2, 1, body)
+        clusters = cluster([a, b])
+        multi = [g for g in clusters if len(g) >= 2]
+        # Same pair found via /api/foo and via /api/bar — dedup to one cluster.
+        self.assertEqual(len(multi), 1)
+        self.assertEqual(sorted(multi[0]), [1, 2])
+
+    def test_singletons_only_when_not_in_any_multi(self):
+        """An issue not in any multi-member cluster appears as a singleton.
+        An issue in a multi-member cluster does NOT also appear as a singleton.
+        """
+        slow = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/x  p95_ms=200\n"
+        )
+        baseline = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/y  p95_ms=5\n"
+        )
+        a = self._issue(1, 0, slow)
+        b = self._issue(2, 1, slow)
+        c = self._issue(3, 0, baseline)  # No above-threshold endpoint → singleton.
+        clusters = cluster([a, b, c])
+        multi = [g for g in clusters if len(g) >= 2]
+        singletons = [g for g in clusters if len(g) == 1]
+        self.assertEqual(len(multi), 1)
+        self.assertEqual(sorted(multi[0]), [1, 2])
+        self.assertEqual(singletons, [[3]])
+        # Members of the multi-member cluster do NOT also appear as singletons.
+        self.assertNotIn([1], singletons)
+        self.assertNotIn([2], singletons)
+
+    def test_color_mismatch_not_clustered_even_on_same_endpoint(self):
+        """An issue with RED status doesn't cluster with one carrying YELLOW
+        on the same slow endpoint. Same gate as v4.
+        """
+        body_template = (
+            "Triggered by status={color}\n"
+            "1. WebTransaction/Go/POST /api/x  p95_ms=300\n"
+        )
+        a = self._issue(1, 0, body_template.format(color="RED"))
+        b = self._issue(2, 1, body_template.format(color="YELLOW"))
+        clusters = cluster([a, b])
+        multi = [g for g in clusters if len(g) >= 2]
+        self.assertEqual(multi, [])
+
+    def test_date_outside_window_not_clustered_even_on_same_endpoint(self):
+        """v5 retains the ≤ max_days date-proximity gate (default 7)."""
+        body = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/x  p95_ms=300\n"
+        )
+        a = self._issue(1, 0, body)
+        b = self._issue(2, 8, body)  # 8 days apart
+        clusters = cluster([a, b])
+        multi = [g for g in clusters if len(g) >= 2]
+        self.assertEqual(multi, [])
+
+    def test_v4_residual_fp_eliminated_under_v5(self):
+        """SCRUM-501 residual: 3-member chain #307+#219+#158 with no common
+        endpoint. v5 must produce two 2-member clusters, neither containing
+        all three together.
+        """
+        body_307 = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/sessions/   p95_ms=470\n"
+        )
+        body_219 = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/POST /api/sessions/      p95_ms=480\n"
+            "2. WebTransaction/Go/GET  /api/invitations/   p95_ms=341\n"
+        )
+        body_158 = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/invitations/  p95_ms=444\n"
+        )
+        # Same offsets as the bridge-issue test: 0, -5, -10 → outer pair
+        # 10 days apart (outside gate), each adjacent pair 5 days (inside).
+        a = self._issue(307, 0, body_307)
+        b = self._issue(219, -5, body_219)
+        c = self._issue(158, -10, body_158)
+        clusters = cluster([a, b, c])
+        multi = [g for g in clusters if len(g) >= 2]
+        # No 3-member cluster — that was v4's structural FP.
+        self.assertFalse(
+            any(len(g) >= 3 for g in multi),
+            f"v5 must NOT produce 3-member chain: {multi}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
