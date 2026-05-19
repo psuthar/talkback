@@ -136,13 +136,38 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker()
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    expect(screen.getByTestId('recording-checkbox-imported-instance').disabled).toBe(true)
-    expect(screen.getByTestId('recording-checkbox-big-instance').disabled).toBe(true)
+    expect(screen.getByTestId('recording-radio-imported-instance').disabled).toBe(true)
+    expect(screen.getByTestId('recording-radio-big-instance').disabled).toBe(true)
   })
 
-  it('multi-select happy path: select two → confirm → POST each → onImported fires', async () => {
+  it('SCRUM-480: single-select happy path — select one → confirm → POST once → onImported fires', async () => {
     const onImported = vi.fn()
     const onClose = vi.fn()
+    global.fetch = mockFetch([
+      { ok: true, status: 200, json: async () => ({ items: recordings }) },
+      { ok: true, status: 202, json: async () => ({ job_id: 'j1', state: 'queued' }) },
+    ])
+    const user = userEvent.setup()
+    renderPicker({ onImported, onClose })
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
+    expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Import recording')
+
+    await user.click(screen.getByTestId('recordings-picker-import'))
+    expect(screen.getByTestId('recordings-picker-confirm')).toBeTruthy()
+    expect(screen.getByTestId('recordings-picker-confirm-button').textContent).toBe('Import')
+    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
+
+    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1))
+    expect(onImported.mock.calls[0][0]).toHaveLength(1)
+    const postCalls = global.fetch.mock.calls.filter(([_url, init]) => init?.method === 'POST')
+    expect(postCalls.length).toBe(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('SCRUM-480: clicking a second row deselects the first (radio semantics)', async () => {
     const extra = [...recordings, {
       meeting_topic: 'Second selectable',
       start_time: '2026-05-11T15:00:00Z',
@@ -153,30 +178,28 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
       has_transcript: true,
       recording_count: 1,
     }]
-    global.fetch = mockFetch([
-      { ok: true, status: 200, json: async () => ({ items: extra }) },
-      { ok: true, status: 202, json: async () => ({ job_id: 'j1', state: 'queued' }) },
-      { ok: true, status: 202, json: async () => ({ job_id: 'j2', state: 'queued' }) },
-    ])
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: extra }) }])
     const user = userEvent.setup()
-    renderPicker({ onImported, onClose })
+    renderPicker()
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
-    await user.click(screen.getByTestId('recording-checkbox-second-instance'))
-    expect(screen.getByTestId('recordings-picker-import').textContent).toContain('Import 2 recordings')
-
-    await user.click(screen.getByTestId('recordings-picker-import'))
-    expect(screen.getByTestId('recordings-picker-confirm')).toBeTruthy()
-    await user.click(screen.getByTestId('recordings-picker-confirm-button'))
-
-    await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1))
-    expect(onImported.mock.calls[0][0]).toHaveLength(2)
-    expect(onClose).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
+    expect(screen.getByTestId('recording-radio-std-instance').checked).toBe(true)
+    await user.click(screen.getByTestId('recording-radio-second-instance'))
+    expect(screen.getByTestId('recording-radio-std-instance').checked).toBe(false)
+    expect(screen.getByTestId('recording-radio-second-instance').checked).toBe(true)
   })
 
-  it('429 cap-exceeded stops the batch and surfaces an error', async () => {
+  it('SCRUM-480: list container exposes role="radiogroup"', async () => {
+    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: recordings }) }])
+    const user = userEvent.setup()
+    renderPicker()
+    await user.click(screen.getByTestId('recordings-picker-load'))
+    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
+    expect(screen.getByTestId('recordings-picker-list').getAttribute('role')).toBe('radiogroup')
+  })
+
+  it('429 cap-exceeded surfaces an error on attach-mode single import', async () => {
     global.fetch = mockFetch([
       { ok: true, status: 200, json: async () => ({ items: recordings }) },
       { ok: false, status: 429, json: async () => ({ error: 'session_recording_cap_exceeded', cap: 10, current: 10 }) },
@@ -185,7 +208,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker()
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-import-errors')).toBeTruthy())
@@ -386,15 +409,14 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker()
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    // Click the FIRST row's checkbox. Only one row should select.
-    const checkboxes = screen.getAllByRole('checkbox')
-    expect(checkboxes.length).toBe(3)
-    await user.click(checkboxes[0])
-    expect(checkboxes[0].checked).toBe(true)
-    expect(checkboxes[1].checked).toBe(false)
-    expect(checkboxes[2].checked).toBe(false)
-    // Import label reflects ONE selection.
-    expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Import 1 recording')
+    // Click the FIRST row's radio. Only that row should be selected.
+    const radios = screen.getAllByRole('radio')
+    expect(radios.length).toBe(3)
+    await user.click(radios[0])
+    expect(radios[0].checked).toBe(true)
+    expect(radios[1].checked).toBe(false)
+    expect(radios[2].checked).toBe(false)
+    expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Import recording')
   })
 
   it('SCRUM-465: switching platforms clears the confirm dialog and stale import errors', async () => {
@@ -405,7 +427,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ initialPlatform: 'zoom' })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
     // Confirm dialog open + error visible.
@@ -426,7 +448,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ apiBaseUrl: '', onImported })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
     await waitFor(() => expect(onImported).toHaveBeenCalled())
@@ -463,11 +485,11 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
-    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(true)
-    await user.click(screen.getByTestId('recording-checkbox-second-instance'))
-    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(false)
-    expect(screen.getByTestId('recording-checkbox-second-instance').checked).toBe(true)
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
+    expect(screen.getByTestId('recording-radio-std-instance').checked).toBe(true)
+    await user.click(screen.getByTestId('recording-radio-second-instance'))
+    expect(screen.getByTestId('recording-radio-std-instance').checked).toBe(false)
+    expect(screen.getByTestId('recording-radio-second-instance').checked).toBe(true)
   })
 
   it('SCRUM-479: create-mode footer button reads "Continue"', async () => {
@@ -476,7 +498,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     expect(screen.getByTestId('recordings-picker-import').textContent).toBe('Continue')
   })
 
@@ -486,7 +508,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     const titleInput = screen.getByTestId('recordings-picker-confirm-title')
     expect(titleInput).toBeTruthy()
@@ -499,7 +521,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     fireEvent.change(screen.getByTestId('recordings-picker-confirm-title'), { target: { value: '  ' } })
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
@@ -520,7 +542,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined, apiBaseUrl: '', onImported, onClose })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
     await waitFor(() => expect(onImported).toHaveBeenCalled())
@@ -543,7 +565,7 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     renderPicker({ mode: 'create', sessionId: undefined, apiBaseUrl: '' })
     await user.click(screen.getByTestId('recordings-picker-load'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     await user.click(screen.getByTestId('recordings-picker-import'))
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
     await waitFor(() => expect(screen.getByTestId('recordings-picker-import-errors')).toBeTruthy())
@@ -562,29 +584,8 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
     const importBtn = screen.getByTestId('recordings-picker-import')
     expect(importBtn.disabled).toBe(true)
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
+    await user.click(screen.getByTestId('recording-radio-std-instance'))
     expect(importBtn.disabled).toBe(false)
   })
 
-  it('SCRUM-479: attach-mode (default) keeps multi-select behavior — no regression', async () => {
-    const extra = [...recordings, {
-      meeting_topic: 'Second selectable',
-      start_time: '2026-05-11T15:00:00Z',
-      duration_minutes: 20,
-      meeting_uuid: 'second-uuid',
-      instance_uuid: 'second-instance',
-      has_video: true,
-      has_transcript: true,
-      recording_count: 1,
-    }]
-    global.fetch = mockFetch([{ ok: true, status: 200, json: async () => ({ items: extra }) }])
-    const user = userEvent.setup()
-    renderPicker()
-    await user.click(screen.getByTestId('recordings-picker-load'))
-    await waitFor(() => expect(screen.getByTestId('recordings-picker-list')).toBeTruthy())
-    await user.click(screen.getByTestId('recording-checkbox-std-instance'))
-    await user.click(screen.getByTestId('recording-checkbox-second-instance'))
-    expect(screen.getByTestId('recording-checkbox-std-instance').checked).toBe(true)
-    expect(screen.getByTestId('recording-checkbox-second-instance').checked).toBe(true)
-  })
 })
