@@ -67,7 +67,7 @@ Skip already-linked obs issues. Track the skip in a dry-run summary for audit bu
 
 ### 3. Cluster by theme
 
-Within the unlinked set, group obs issues by **observed endpoint that is actually slow**. The clustering rule (v4 — SCRUM-498 found v1 scored 0% precision; SCRUM-499 found v2 produced 0 useful clusters; SCRUM-500 shipped v3 at 33% precision; SCRUM-501 ships v4 with a p95 threshold filter expected to score ~100%. See `docs/agent/discovery-digest-calibration-2026-05.md`):
+Within the unlinked set, group obs issues by **observed endpoint that is actually slow**. The clustering rule (v5 — SCRUM-498 → SCRUM-502 recalibration cycle: v1 scored 0%, v2 inert, v3 33%, v4 50%, v5 expected ~100%. See `docs/agent/discovery-digest-calibration-2026-05.md`):
 
 **Result-row scoping (mandatory).** Extract an endpoint identifier (e.g. `/api/foo/{id}`, `WebTransaction/Go/POST /api/bar`) only when it appears on a line that *also* contains one of these signal markers:
 
@@ -86,7 +86,7 @@ Within the unlinked set, group obs issues by **observed endpoint that is actuall
 
 **Date-proximity gate.** Two obs issues are eligible to cluster only if their `createdAt` timestamps are within **≤ 7 calendar days** of each other. Wider windows cluster unrelated incidents that happened to touch the same endpoint weeks apart.
 
-**Cluster membership rule.** After the four filters, two issues belong to the same cluster if they share at least one extracted result-row endpoint **above the p95 threshold** AND pass both the status-colour and date-proximity gates. An issue with no extractable above-threshold endpoint, or that fails all gates against every other issue, becomes its own single-element cluster.
+**Cluster membership rule (v5 — per-endpoint grouping).** For each above-threshold endpoint, find the set of issues that contain it (passing colour + date-proximity gates). Each connected group within that set forms one cluster anchored on that endpoint. A bridge issue with two slow endpoints appears in two clusters — one per slow endpoint — each with its own concrete anchor. This replaces v4's union-find transitivity, which could create 3-member chains where no single endpoint was shared across all members (a structural false positive). Under v5, every multi-member cluster has a non-empty `shared_endpoints` field by construction. Member sets that arise multiple times (the same pair sharing two above-threshold endpoints) are deduplicated.
 
 Clusters with **≥ 2 obs issues** become a single Jira proposal. Single-element clusters also become proposals — they're still candidate tickets — but rendered separately so the human can see clustering effectiveness over time.
 

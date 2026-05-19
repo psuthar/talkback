@@ -124,12 +124,11 @@ def are_eligible_to_cluster(
     max_days: int = DEFAULT_MAX_DAYS,
     min_p95_ms: float = DEFAULT_MIN_P95_MS,
 ) -> bool:
-    """Return ``True`` if two issues pass all v4 gates and share a *slow* endpoint.
+    """Return ``True`` if two issues pass all gates and share a slow endpoint.
 
-    v4 (SCRUM-501): adds a ``min_p95_ms`` threshold. Endpoints below the
-    threshold are baseline noise (top-N rankings include them whether or
-    not they're actually slow) and do not contribute to eligibility.
-    Default threshold: 100 ms.
+    v5 (SCRUM-502): retained for backward compatibility and for callers that
+    want a pairwise eligibility check. The new ``cluster()`` no longer uses
+    this — it groups per-endpoint instead. See ``cluster()`` docstring.
     """
     if a.color is None or b.color is None or a.color != b.color:
         return False
@@ -146,37 +145,96 @@ def cluster(
     max_days: int = DEFAULT_MAX_DAYS,
     min_p95_ms: float = DEFAULT_MIN_P95_MS,
 ) -> list[list[int]]:
-    """Build clusters via union-find on the eligibility relation.
+    """Build clusters via **per-endpoint grouping** (v5 — SCRUM-502).
 
-    v4: clusters only on endpoints whose p95 meets ``min_p95_ms``. See
-    ``are_eligible_to_cluster`` for the gate sequence.
+    Replaces the v4 union-find algorithm, which over-grouped issues into
+    transitive chains without a common above-threshold endpoint (SCRUM-501
+    found a 3-member cluster #307+#219+#158 where #307 ↔ #158 had no shared
+    slow endpoint — only the bridge #219 connected them).
 
-    Returned clusters are sorted by size descending then by lowest issue
-    number ascending. Singletons (issues that don't pair with any other)
-    appear as one-element clusters.
+    Algorithm:
+      1. For each above-threshold endpoint, collect all issues that contain
+         it (with their status colour).
+      2. Within each (endpoint, colour) group, run union-find on pairwise
+         date proximity (≤ ``max_days``). Each connected sub-group with ≥ 2
+         members becomes a cluster anchored on that endpoint.
+      3. Deduplicate by member set: if two endpoints group the exact same
+         set of issues (e.g. #307+#219 share both /api/sessions/ and
+         /api/me above threshold), emit only one cluster.
+      4. Singletons are issues that don't appear in any multi-member
+         cluster — emitted as one-element lists.
+
+    A "bridge" issue (multiple above-threshold endpoints) may appear in
+    multiple multi-member clusters, one per slow endpoint. This is
+    intentional: each cluster has a concrete anchor endpoint and the
+    proposed Jira tickets render with non-empty shared_endpoints.
+
+    Returned clusters are sorted: multi-member first (size desc, then
+    lowest member asc), singletons after (by issue number asc).
     """
-    n = len(issues)
-    parent = list(range(n))
+    # Step 1: index above-threshold endpoint → list of issues with that color.
+    endpoint_to_color_issues: dict[str, dict[str, list[ObsIssue]]] = {}
+    for issue in issues:
+        if issue.color is None:
+            continue
+        slow = endpoints_above_threshold(issue.endpoints, min_p95_ms)
+        for ep in slow:
+            endpoint_to_color_issues.setdefault(ep, {}).setdefault(
+                issue.color, []
+            ).append(issue)
 
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    # Step 2: within each (endpoint, color) group, build date-proximity
+    # connected components via union-find.
+    multi_member: list[list[int]] = []
+    seen_member_sets: set[frozenset[int]] = set()
+    issues_in_multi: set[int] = set()
 
-    def union(i: int, j: int) -> None:
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
+    for endpoint, by_color in endpoint_to_color_issues.items():
+        for color, color_issues in by_color.items():
+            n = len(color_issues)
+            if n < 2:
+                continue
+            parent = list(range(n))
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            if are_eligible_to_cluster(
-                issues[i], issues[j], max_days=max_days, min_p95_ms=min_p95_ms
-            ):
-                union(i, j)
+            def find(i: int) -> int:
+                while parent[i] != i:
+                    parent[i] = parent[parent[i]]
+                    i = parent[i]
+                return i
 
-    groups: dict[int, list[int]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(issues[i].number)
-    return sorted(groups.values(), key=lambda g: (-len(g), g[0]))
+            def union(i: int, j: int) -> None:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+            for i in range(n):
+                for j in range(i + 1, n):
+                    days = abs(
+                        (color_issues[i].created_at - color_issues[j].created_at).days
+                    )
+                    if days <= max_days:
+                        union(i, j)
+
+            groups: dict[int, list[int]] = {}
+            for i in range(n):
+                groups.setdefault(find(i), []).append(color_issues[i].number)
+
+            for group in groups.values():
+                if len(group) < 2:
+                    continue
+                key = frozenset(group)
+                if key in seen_member_sets:
+                    continue
+                seen_member_sets.add(key)
+                multi_member.append(sorted(group))
+                issues_in_multi.update(group)
+
+    # Step 3: singletons — issues not in any multi-member cluster.
+    singletons: list[list[int]] = [
+        [i.number] for i in issues if i.number not in issues_in_multi
+    ]
+
+    multi_member.sort(key=lambda g: (-len(g), g[0]))
+    singletons.sort(key=lambda g: g[0])
+
+    return multi_member + singletons
