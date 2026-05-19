@@ -33,6 +33,30 @@ HALT_CATEGORY_VALUES = frozenset(
     }
 )
 
+# SCRUM-493: extended status enum for the authoring phase.
+VALID_STATUSES = frozenset(
+    {
+        "authoring",
+        "awaiting_approval",
+        "running",
+        "halted",
+        "complete",
+    }
+)
+
+# Legacy / historical status values that exist in pre-SCRUM-493 state files
+# but should not be produced by new code. validate_status tolerates these so
+# the test suite can confirm every existing file still passes; new state files
+# must use values from VALID_STATUSES.
+LEGACY_STATUSES = frozenset({"epic_deferred_for_sunset"})
+
+ALL_KNOWN_STATUSES = VALID_STATUSES | LEGACY_STATUSES
+
+# SCRUM-493: per-Epic LOC threshold override range.
+MAX_ESTIMATED_LOC_MIN = 100
+MAX_ESTIMATED_LOC_MAX = 800
+MAX_ESTIMATED_LOC_DEFAULT = 400
+
 
 def validate_halt_category(value) -> str | None:
     """Return ``None`` if ``value`` is ``None`` or a known enum member; else an error."""
@@ -44,6 +68,34 @@ def validate_halt_category(value) -> str | None:
         f"halt_category {value!r} not in enum: "
         f"{sorted(HALT_CATEGORY_VALUES)}"
     )
+
+
+def validate_status(value) -> str | None:
+    """SCRUM-493: validate status field against the extended enum.
+
+    Accepts ``VALID_STATUSES`` (the canonical enum for new state files) plus
+    ``LEGACY_STATUSES`` (historical values that exist in pre-SCRUM-493 files).
+    """
+    if value is None:
+        return None
+    if value in ALL_KNOWN_STATUSES:
+        return None
+    return f"status {value!r} not in enum: {sorted(VALID_STATUSES)}"
+
+
+def validate_max_estimated_loc(value) -> str | None:
+    """SCRUM-493: max_estimated_loc must be int in [100, 800] (or None)."""
+    if value is None:
+        return None
+    # bool is a subclass of int; reject explicitly.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"max_estimated_loc must be int, got {type(value).__name__}"
+    if not (MAX_ESTIMATED_LOC_MIN <= value <= MAX_ESTIMATED_LOC_MAX):
+        return (
+            f"max_estimated_loc {value} out of valid range "
+            f"[{MAX_ESTIMATED_LOC_MIN}, {MAX_ESTIMATED_LOC_MAX}]"
+        )
+    return None
 
 
 def _validate_other_requires_reason(
@@ -61,6 +113,15 @@ def validate_state(state) -> list[str]:
         return [f"state must be a dict, got {type(state).__name__}"]
 
     errors: list[str] = []
+
+    err = validate_status(state.get("status"))
+    if err:
+        errors.append(f"root: {err}")
+
+    err = validate_max_estimated_loc(state.get("max_estimated_loc"))
+    if err:
+        errors.append(f"root: {err}")
+
     root_category = state.get("halt_category")
     err = validate_halt_category(root_category)
     if err:

@@ -82,14 +82,44 @@ The only exception is if the **user explicitly** cancels epic mode or directs a 
 
 2. Query Jira for remaining work: `parent = SCRUM-XX AND statusCategory != Done ORDER BY created ASC` (use **`statusCategory`** so “Done” is consistent across workflows).
 
-3. Check each ticket for the parallel marker (see **Sequencing** below) and group into an
+3. **Authoring phase (SCRUM-493) — runs only if step 2 returned zero non-Done children.** This is how `run epic` handles an Epic that has no child tickets yet:
+
+   a. Write the initial state file with `status: "authoring"` (see **State file** for the shape; `max_estimated_loc` defaults to 400 unless the Epic has been pre-configured — see **Max estimated LOC override** below).
+   b. Invoke the `jira-work-decomposition` skill against the Epic description with the current `max_estimated_loc` threshold to produce a decomposition proposal: parent + a list of proposed children, each with summary, AC count, split rationale, and estimated LOC.
+   c. Cap: if decomposition would propose more than **8** children, **halt** with `halt_category: "spec_missing"` and `halt_reason: "decomposition produced N>8 children — Epic needs human re-scoping"`. Do not create any tickets.
+   d. Transition state to `status: "awaiting_approval"`. Render the proposal to the user in chat, including the current LOC threshold shown as either `"400 (default)"` or `"<N> (Epic override)"`.
+   e. Wait for user y/n. On **n**: halt with `halt_category: "human_requested_halt"`. On **y**: for each proposed child, call `jira_create_issue` via `jira-ticket-authoring` (each created ticket carries `agent-authored` per the Labels (mandatory) section of that skill). Then run `scripts/jira_ticket_lint.py` on each new ticket; if any returns non-zero, halt with `halt_category: "spec_missing"` (the authoring proposal should have produced lint-clean descriptions; a failure here means the LLM drift needs human review).
+   f. Re-query Jira with the same JQL; the work list is now non-empty. Proceed to step 4 with `status: "running"`.
+
+4. Check each ticket for the parallel marker (see **Sequencing** below) and group into an
    ordered work list of items, where each item is either a single ticket or a parallel batch.
 
-4. Write initial state file (see **State file**).
+5. Write initial state file (see **State file**) — or update it from `"awaiting_approval"` → `"running"` if step 3 ran.
 
-5. **Jira — epic In Progress** — Transition the **epic issue itself** (e.g. SCRUM-XX) to **In Progress** using `jira_get_transitions` + `jira_transition_issue`. Do this once, immediately before the first child ticket begins executing. If the epic is already **In Progress** (e.g. resumed run), skip this step (idempotent).
+6. **Jira — epic In Progress** — Transition the **epic issue itself** (e.g. SCRUM-XX) to **In Progress** using `jira_get_transitions` + `jira_transition_issue`. Do this once, immediately before the first child ticket begins executing. If the epic is already **In Progress** (e.g. resumed run or step 3 already transitioned it implicitly via child authoring), skip this step (idempotent).
 
-6. Execute work list items in order (see **Execution loop**).
+7. Execute work list items in order (see **Execution loop**).
+
+#### Status enum (SCRUM-493)
+
+| Value | Meaning |
+|---|---|
+| `authoring` | Step 3a–b: decomposition in progress, no children created yet. |
+| `awaiting_approval` | Step 3d: proposal rendered, waiting for user y/n. Run halts here if not progressed. |
+| `running` | Step 4+: children exist (or were just created), execution loop active. |
+| `halted` | Run stopped at a child or at the authoring approval gate; `halt_category` populated. |
+| `complete` | All children Done; epic transitioned to Done; Finish step ran. |
+
+#### Max estimated LOC override
+
+`.epic-run/<EPIC>.json` may include an optional integer `max_estimated_loc` field that overrides the decomposition LOC threshold for this Epic.
+
+- **Default** when the field is absent or `null`: `400`.
+- **Valid range:** `100 ≤ max_estimated_loc ≤ 800` (enforced by `scripts/epic_run_state_schema.py`).
+- **Below 100 or above 800:** rejected by `validate_state`. To use an out-of-range value for an exceptional Epic (e.g. a security audit Epic running at 50 LOC per PR), edit the state file directly **and** add a paragraph to the Epic description explaining why. The authoring proposal step will refuse to render with an out-of-range value loaded.
+- **Surfacing:** the authoring proposal in step 3d must render `current threshold: <N> (default)` or `current threshold: <N> (Epic override)` so the human approving the decomposition knows which threshold drove the splits.
+
+The threshold is consumed by `.claude/skills/jira-work-decomposition/SKILL.md` (SCRUM-494) when estimating per-child LOC and emitting "split candidate" annotations.
 
 ### Execution loop (per work-list item)
 
@@ -302,7 +332,8 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 {
   "epic": "SCRUM-29",
   "run_id": "<ISO-8601 timestamp of run start>",
-  "status": "running | halted | complete",
+  "status": "authoring | awaiting_approval | running | halted | complete",
+  "max_estimated_loc": null,
   "awaiting_human": false,
   "halted_at": null,
   "halt_reason": null,
@@ -330,6 +361,8 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
 
 **Field reference:**
 
+- `status` — enum from **Status enum** (above). Required.
+- `max_estimated_loc` — optional integer in [100, 800]; overrides the decomposition LOC threshold for this Epic. `null` (or absent) means use the default of 400. See **Max estimated LOC override**.
 - `halt_reason` — human-readable free text. Optional except when `halt_category == "other"`.
 - `halt_category` — enum from **Halt category enum** (above). Required on new halts; treat as `null` on legacy files.
 - `final_gate` (per-ticket) — terminal gate value when the ticket reached PASS, or `"manual_override"` if the user squash-merged after a WARN.

@@ -12,8 +12,13 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 from epic_run_state_schema import (  # noqa: E402
     HALT_CATEGORY_VALUES,
+    MAX_ESTIMATED_LOC_MAX,
+    MAX_ESTIMATED_LOC_MIN,
+    VALID_STATUSES,
     validate_halt_category,
+    validate_max_estimated_loc,
     validate_state,
+    validate_status,
 )
 
 
@@ -120,6 +125,77 @@ class TestValidateState(unittest.TestCase):
     def test_non_dict_ticket_entry_reports_error(self):
         errors = validate_state({"tickets": [42]})
         self.assertTrue(any("tickets[0]" in e for e in errors))
+
+
+class TestStatusEnum(unittest.TestCase):
+    """SCRUM-493: extended status enum."""
+
+    def test_valid_statuses(self):
+        expected = {"authoring", "awaiting_approval", "running", "halted", "complete"}
+        self.assertEqual(VALID_STATUSES, expected)
+
+    def test_validate_status_accepts_each(self):
+        for s in VALID_STATUSES:
+            self.assertIsNone(validate_status(s))
+
+    def test_validate_status_accepts_none(self):
+        self.assertIsNone(validate_status(None))
+
+    def test_validate_status_rejects_unknown(self):
+        err = validate_status("draft")
+        self.assertIsNotNone(err)
+        self.assertIn("draft", err)
+
+
+class TestMaxEstimatedLOC(unittest.TestCase):
+    """SCRUM-493: max_estimated_loc bounds."""
+
+    def test_constants(self):
+        self.assertEqual(MAX_ESTIMATED_LOC_MIN, 100)
+        self.assertEqual(MAX_ESTIMATED_LOC_MAX, 800)
+
+    def test_none_is_valid(self):
+        self.assertIsNone(validate_max_estimated_loc(None))
+
+    def test_lower_bound_inclusive(self):
+        self.assertIsNone(validate_max_estimated_loc(100))
+
+    def test_below_lower_bound_rejected(self):
+        err = validate_max_estimated_loc(99)
+        self.assertIsNotNone(err)
+        self.assertIn("99", err)
+
+    def test_upper_bound_inclusive(self):
+        self.assertIsNone(validate_max_estimated_loc(800))
+
+    def test_above_upper_bound_rejected(self):
+        err = validate_max_estimated_loc(801)
+        self.assertIsNotNone(err)
+        self.assertIn("801", err)
+
+    def test_default_in_range(self):
+        self.assertIsNone(validate_max_estimated_loc(400))
+
+    def test_string_rejected(self):
+        err = validate_max_estimated_loc("400")
+        self.assertIsNotNone(err)
+        self.assertIn("must be int", err)
+
+    def test_bool_rejected(self):
+        # bool is an int subclass in Python; explicitly excluded.
+        err = validate_max_estimated_loc(True)
+        self.assertIsNotNone(err)
+        self.assertIn("must be int", err)
+
+    def test_validate_state_includes_max_loc(self):
+        # In-range value passes through validate_state.
+        state = {"status": "running", "max_estimated_loc": 200, "tickets": []}
+        self.assertEqual(validate_state(state), [])
+
+    def test_validate_state_rejects_out_of_range_max_loc(self):
+        state = {"max_estimated_loc": 50, "tickets": []}
+        errors = validate_state(state)
+        self.assertTrue(any("max_estimated_loc" in e for e in errors))
 
 
 class TestRealRepoStateFiles(unittest.TestCase):
