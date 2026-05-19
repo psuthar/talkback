@@ -1,0 +1,105 @@
+name: Discovery Digest
+
+# SCRUM-497: weekly trigger that surfaces obs-agent YELLOW/RED signals as
+# Jira-creation candidates. The workflow does NOT call Jira itself — it
+# fetches obs issues via the GitHub API and posts a tracking issue per
+# week summarising candidates. The discovery-digest skill (SCRUM-496),
+# invoked locally by an operator, does the dedup / clustering / approval /
+# jira_create_issue. This split keeps Jira credentials out of CI.
+
+on:
+  schedule:
+    # 14:00 UTC every Monday (~07:00 Pacific). Aligns with weekly review
+    # rhythm; not hourly per .claude/skills/discovery-digest/SKILL.md
+    # Cadence section.
+    - cron: '0 14 * * MON'
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute week start (YYYY-MM-DD)
+        id: week
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Compute 4-week cutoff (ISO-8601)
+        id: cutoff
+        run: |
+          # Linux runners have GNU date; this is fine for the ubuntu-latest image.
+          since=$(date -u -d '28 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "since=${since}" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch open obs-agent issues from the last 4 weeks
+        id: fetch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue list \
+            --label observability \
+            --label agent \
+            --state open \
+            --json number,title,createdAt,url \
+            --limit 100 \
+            > raw.json
+          # Filter by createdAt >= cutoff at the jq layer; the gh CLI does not
+          # accept --created.
+          jq --arg since "${{ steps.cutoff.outputs.since }}" \
+            'map(select(.createdAt >= $since))' raw.json > candidates.json
+          count=$(jq 'length' candidates.json)
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Build summary markdown
+        id: summary
+        run: |
+          title="Discovery digest — week of ${{ steps.week.outputs.date }}"
+          if [ "${{ steps.fetch.outputs.count }}" -eq 0 ]; then
+            {
+              echo "## ${title}"
+              echo ""
+              echo "No open observability YELLOW/RED issues in the last 4 weeks."
+              echo ""
+              echo "The discovery-digest workflow runs weekly. See"
+              echo "\`.claude/skills/discovery-digest/SKILL.md\` for the full algorithm."
+            } > summary.md
+          else
+            {
+              echo "## ${title}"
+              echo ""
+              echo "${{ steps.fetch.outputs.count }} open observability issues from the last 4 weeks. Run \`discovery digest\` locally to dedup against Jira, cluster by endpoint, propose, and create tickets per \`.claude/skills/discovery-digest/SKILL.md\`."
+              echo ""
+              echo "### Candidate obs issues"
+              echo ""
+              jq -r '.[] | "- [#\(.number)](\(.url)) \(.title) _(created \(.createdAt))_"' candidates.json
+              echo ""
+              echo "_The discovery-digest skill dedups against Jira tickets carrying \`labels = \"source:obs-agent\"\` (or \`obs:<N>\`) before proposing. This list shows raw candidates; the skill may filter further._"
+            } > summary.md
+          fi
+          # Make the title available to subsequent steps.
+          echo "title=${title}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or comment on tracking issue (idempotent per week)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title='${{ steps.summary.outputs.title }}'
+          # in:title quotes are tricky with gh CLI — match by exact title via list+jq.
+          existing=$(gh issue list --state all --limit 50 --json number,title \
+            --jq "[.[] | select(.title == \"${title}\")][0].number")
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            echo "Existing issue #${existing} matches title — adding comment."
+            gh issue comment "$existing" --body-file summary.md
+          else
+            echo "No existing issue — creating new tracking issue."
+            gh issue create \
+              --title "${title}" \
+              --label "discovery-digest" \
+              --label "agent" \
+              --body-file summary.md
+          fi

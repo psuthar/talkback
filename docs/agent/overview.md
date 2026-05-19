@@ -59,3 +59,7 @@ Tradeoff: these rules bias toward correctness/caution over speed; for trivial ta
 - Do not change product behavior unless explicitly requested.
 - API style is REST with routes under `/sessions/{id}/...` and `/api/...`; use credentialed CORS where needed and WebSocket for session updates.
 
+## Observability → Jira loop
+
+The observability agent (`.github/workflows/observability-agent.yml` + `cmd/obsworker/`) files daily GitHub issues with labels `[observability, agent]` on YELLOW or RED status. The `discovery-digest` skill (`.claude/skills/discovery-digest/SKILL.md`) and its weekly workflow (`.github/workflows/discovery-digest.yml`, SCRUM-497) bridge those signals into proposed Jira tickets — dedup against existing `source:obs-agent`-labelled Jira tickets, cluster by endpoint, render a Markdown proposal, and on operator approval call `jira_create_issue` with a remote link back to the obs issue. The skill never auto-creates; the cron workflow only surfaces candidates as a tracking issue and stops at the approval gate.
+
