@@ -16,10 +16,14 @@
 // SCRUM-479 (create mode): the picker can now drive the Create Session
 // flow in addition to the in-session attach flow. Pass mode="create" to
 // chain `POST /sessions` (with a user-editable title in the confirm step)
-// followed by `POST /api/sessions/{id}/import/{platform}`. Selection is
-// single-only in create mode (one new session per click). The legacy
+// followed by `POST /api/sessions/{id}/import/{platform}`. The legacy
 // `/api/{platform}/import` endpoints are SCRUM-416 deprecated, so we
 // reuse the canonical attach endpoint for the second leg.
+//
+// SCRUM-480 (single-select everywhere): both modes now lock to one
+// recording per import action. Selection state is a single index, rows
+// render as a `role="radiogroup"` with `role="radio"` rows, and the
+// confirm/POST path is a single call (no per-recording loop).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const MAX_DURATION_MINUTES = 240 // 4 hours; mirrors SCRUM-421 spec default
@@ -145,7 +149,9 @@ export function RecordingsPicker({
   const [rangeKey, setRangeKey] = useState('30')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
-  const [selected, setSelected] = useState(new Set())
+  // SCRUM-480: single-select. selectedIndex is the row index of the
+  // single chosen recording, or null when nothing is selected.
+  const [selectedIndex, setSelectedIndex] = useState(null)
   const [confirming, setConfirming] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importErrors, setImportErrors] = useState([])
@@ -236,7 +242,7 @@ export function RecordingsPicker({
     if (next === platform) return
     setPlatform(next)
     setRecordings([])
-    setSelected(new Set())
+    setSelectedIndex(null)
     setLoadError(null)
     setQuery('')
     setRangeKey('30')
@@ -253,11 +259,11 @@ export function RecordingsPicker({
 
   const visible = recordings
 
-  // SCRUM-465: selection identity uses the row index, not the recording's
-  // external_recording_id. Upstream APIs occasionally return rows where
-  // both meeting_uuid and instance_uuid are empty (untitled cloud
-  // recordings); using externalID as the selection key caused every such
-  // row to collide on the empty string "" and toggle as one.
+  // SCRUM-465: row identity uses the index, not the external_recording_id,
+  // so rows with empty meeting_uuid/instance_uuid don't collide.
+  // SCRUM-480: this memo is no longer used for selection state (which is
+  // a single index); it's retained only to gate the "all listed are
+  // imported or oversized" footer message below.
   const selectableIndexes = useMemo(() => {
     const idxs = []
     visible.forEach((r, i) => {
@@ -267,28 +273,20 @@ export function RecordingsPicker({
     return idxs
   }, [visible, importedSet])
 
-  const toggleOne = (idx) => {
-    setSelected((prev) => {
-      // SCRUM-479: create-mode is single-select (one new session per click).
-      // SCRUM-480 will extend single-select to attach-mode too.
-      if (isCreateMode) {
-        if (prev.has(idx) && prev.size === 1) return new Set()
-        return new Set([idx])
-      }
-      const next = new Set(prev)
-      if (next.has(idx)) next.delete(idx)
-      else next.add(idx)
-      return next
-    })
+  // SCRUM-480: clicking a row sets it as the single selected recording.
+  // Clicking the already-selected row clears the selection (matches the
+  // previous create-mode toggle-off behavior; lets users back out without
+  // having to pick a different row first).
+  const selectRow = (idx) => {
+    setSelectedIndex((prev) => (prev === idx ? null : idx))
   }
 
   const beginImport = () => {
-    if (selected.size === 0) return
+    if (selectedIndex == null) return
     setImportErrors([])
     if (isCreateMode) {
-      // SCRUM-479: seed the title field from the (single) selected recording.
-      const idx = selected.values().next().value
-      const rec = visible[idx]
+      // SCRUM-479: seed the title field from the selected recording.
+      const rec = visible[selectedIndex]
       const seed = (rec?.meeting_topic || rec?.subject || rec?.recording_topic || 'Meeting recording').trim()
       setCreateTitle(seed)
       setCreateTitleError('')
@@ -304,7 +302,11 @@ export function RecordingsPicker({
     // SCRUM-464: same-origin SPA gives apiBaseUrl="" → empty base.
     // SCRUM-479: attach-mode still requires a sessionId; create-mode
     // produces the sessionId via POST /sessions before the attach POST.
+    // SCRUM-480: single recording per click (no per-recording loop).
     if (!isCreateMode && !sessionId) return
+    if (selectedIndex == null) return
+    const rec = visible[selectedIndex]
+    if (!rec) return
     if (isCreateMode) {
       const trimmed = (createTitle || '').trim()
       if (!trimmed) {
@@ -317,66 +319,63 @@ export function RecordingsPicker({
     const errors = []
     const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' }
     if (userEmail) headers['X-Creator-Identity'] = userEmail
-    const selectedRecordings = visible.filter((_r, i) => selected.has(i))
-    const importedJobs = []
-    for (const rec of selectedRecordings) {
-      try {
-        let targetSessionId = sessionId
-        let createdSession = null
-        if (isCreateMode) {
-          // SCRUM-479: step 1 — create the session. The legacy
-          // /api/{platform}/import endpoints are SCRUM-416 deprecated;
-          // we use the canonical POST /sessions + attach pair instead.
-          const title = (createTitle || '').trim()
-          const cRes = await fetch(`${base}/sessions`, {
-            method: 'POST',
-            credentials: 'include',
-            headers,
-            body: JSON.stringify({ title }),
-          })
-          const cBody = await cRes.json().catch(() => ({}))
-          if (!cRes.ok) {
-            const dupe = cRes.status === 409 || /already exists|unique name/i.test(cBody.error || cBody.message || '')
-            errors.push({
-              recording: rec,
-              message: dupe
-                ? 'A session with this name already exists. Use a unique name.'
-                : (cBody.error || cBody.message || `HTTP ${cRes.status} creating session`),
-            })
-            continue
-          }
-          targetSessionId = cBody.id
-          createdSession = cBody
-        }
-        const res = await fetch(`${base}${meta.attachPath(targetSessionId)}`, {
+    let importedJob = null
+    try {
+      let targetSessionId = sessionId
+      let createdSession = null
+      if (isCreateMode) {
+        // SCRUM-479: step 1 — create the session. The legacy
+        // /api/{platform}/import endpoints are SCRUM-416 deprecated;
+        // we use the canonical POST /sessions + attach pair instead.
+        const title = (createTitle || '').trim()
+        const cRes = await fetch(`${base}/sessions`, {
           method: 'POST',
           credentials: 'include',
           headers,
-          body: JSON.stringify(meta.buildAttachBody(rec)),
+          body: JSON.stringify({ title }),
         })
-        const body = await res.json().catch(() => ({}))
-        if (res.status === 429) {
-          errors.push({ recording: rec, message: `Cap exceeded (${body.cap || ''} max). Remove a recording from this session to add another.` })
-          break
+        const cBody = await cRes.json().catch(() => ({}))
+        if (!cRes.ok) {
+          const dupe = cRes.status === 409 || /already exists|unique name/i.test(cBody.error || cBody.message || '')
+          errors.push({
+            recording: rec,
+            message: dupe
+              ? 'A session with this name already exists. Use a unique name.'
+              : (cBody.error || cBody.message || `HTTP ${cRes.status} creating session`),
+          })
+          throw new Error('create_session_failed')
         }
-        if (!res.ok && res.status !== 202 && res.status !== 200) {
-          errors.push({ recording: rec, message: body.message || `HTTP ${res.status}` })
-          continue
-        }
-        importedJobs.push(isCreateMode ? { ...body, session: createdSession } : body)
-      } catch (err) {
+        targetSessionId = cBody.id
+        createdSession = cBody
+      }
+      const res = await fetch(`${base}${meta.attachPath(targetSessionId)}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(meta.buildAttachBody(rec)),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.status === 429) {
+        errors.push({ recording: rec, message: `Cap exceeded (${body.cap || ''} max). Remove a recording from this session to add another.` })
+      } else if (!res.ok && res.status !== 202 && res.status !== 200) {
+        errors.push({ recording: rec, message: body.message || `HTTP ${res.status}` })
+      } else {
+        importedJob = isCreateMode ? { ...body, session: createdSession } : body
+      }
+    } catch (err) {
+      if (err.message !== 'create_session_failed') {
         errors.push({ recording: rec, message: err.message || String(err) })
       }
     }
     setImporting(false)
     setImportErrors(errors)
-    if (errors.length === 0) {
+    if (errors.length === 0 && importedJob) {
       setConfirming(false)
-      setSelected(new Set())
-      if (typeof onImported === 'function') onImported(importedJobs)
+      setSelectedIndex(null)
+      if (typeof onImported === 'function') onImported([importedJob])
       if (typeof onClose === 'function') onClose()
     }
-  }, [base, sessionId, meta, selected, visible, userEmail, onImported, onClose, isCreateMode, createTitle])
+  }, [base, sessionId, meta, selectedIndex, visible, userEmail, onImported, onClose, isCreateMode, createTitle])
 
   const onBackdropClick = (e) => {
     if (e.target === e.currentTarget && typeof onClose === 'function') onClose()
@@ -538,7 +537,12 @@ export function RecordingsPicker({
             )}
 
             {hasLoaded && visible.length > 0 && (
-              <ul data-testid="recordings-picker-list" style={listStyle}>
+              <ul
+                data-testid="recordings-picker-list"
+                role="radiogroup"
+                aria-label="Recordings"
+                style={listStyle}
+              >
                 {visible.map((r, i) => {
                   // SCRUM-465: row identity uses index, not externalID,
                   // so rows with empty meeting_uuid/instance_uuid (which
@@ -547,7 +551,7 @@ export function RecordingsPicker({
                   const isImported = recordingIsImported(r, importedSet)
                   const isOversized = recordingIsOversized(r)
                   const isDisabled = isImported || isOversized
-                  const isSelected = selected.has(i)
+                  const isSelected = selectedIndex === i
                   return (
                     <li
                       key={`${i}:${id}`}
@@ -557,10 +561,11 @@ export function RecordingsPicker({
                       style={rowStyle(isDisabled)}
                     >
                       <input
-                        type="checkbox"
-                        data-testid={`recording-checkbox-${id}`}
+                        type="radio"
+                        name="recordings-picker-selection"
+                        data-testid={`recording-radio-${id}`}
                         checked={isSelected}
-                        onChange={() => toggleOne(i)}
+                        onChange={() => selectRow(i)}
                         disabled={isDisabled}
                         aria-label={`Select ${r.meeting_topic}`}
                       />
@@ -591,12 +596,10 @@ export function RecordingsPicker({
           <button
             data-testid="recordings-picker-import"
             onClick={beginImport}
-            disabled={selected.size === 0 || importing || !connected}
+            disabled={selectedIndex == null || importing || !connected}
             style={primaryButtonStyle}
           >
-            {isCreateMode
-              ? 'Continue'
-              : `Import ${selected.size} recording${selected.size === 1 ? '' : 's'}`}
+            {isCreateMode ? 'Continue' : 'Import recording'}
           </button>
           {connected && hasLoaded && selectableIndexes.length === 0 && visible.length > 0 && (
             <p data-testid="recordings-picker-none-selectable" style={mutedStyle}>
@@ -610,18 +613,18 @@ export function RecordingsPicker({
             <p>
               {isCreateMode
                 ? 'Create a new session from this recording? Ingest takes ~3–10 min.'
-                : `Import ${selected.size} recording${selected.size === 1 ? '' : 's'}? Each takes ~3–10 min to ingest.`}
+                : 'Import this recording into the session? Ingest takes ~3–10 min.'}
             </p>
             <ul data-testid="recordings-picker-confirm-list">
-              {Array.from(selected).map((idx) => {
-                const rec = visible[idx]
-                const rowId = rec ? (recordingExternalID(rec) || `row-${idx}`) : `row-${idx}`
+              {(() => {
+                const rec = selectedIndex != null ? visible[selectedIndex] : null
+                const rowId = rec ? (recordingExternalID(rec) || `row-${selectedIndex}`) : `row-${selectedIndex}`
                 return (
                   <li key={rowId} data-testid={`recordings-picker-confirm-row-${rowId}`}>
                     {rec ? rec.meeting_topic : rowId}
                   </li>
                 )
-              })}
+              })()}
             </ul>
             {isCreateMode && (
               <div data-testid="recordings-picker-confirm-title-field" style={{ marginTop: '8px' }}>
@@ -670,7 +673,7 @@ export function RecordingsPicker({
             >
               {importing
                 ? (isCreateMode ? 'Creating…' : 'Importing…')
-                : (isCreateMode ? 'Create session' : `Import ${selected.size}`)}
+                : (isCreateMode ? 'Create session' : 'Import')}
             </button>
             <button data-testid="recordings-picker-confirm-cancel" onClick={cancelConfirm} disabled={importing} style={secondaryButtonStyle}>
               Back
