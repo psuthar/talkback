@@ -24,6 +24,8 @@ import {
 } from './sessionNavigation'
 import { shouldShowAppAuthCluster } from './headerVisibility'
 import { ParticipantSessionMenu } from './components/ParticipantSessionMenu'
+import { RecordingsPicker } from './components/RecordingsPicker'
+import { useIntegrationsStatus } from './hooks/useIntegrationsStatus'
 import { googleMeetOAuthErrorMessage, googleMeetConnectionFromStatus, googleMeetRecordingsErrorMessage, googleMeetTranscriptBadge, googleMeetEmptyStateMessage, googleMeetImportErrorMessage, googleMeetImportTranscriptNote } from './googleMeetMessages'
 
 const API_BASE_URL_STORAGE_KEY = 'talkback.apiBaseUrl'
@@ -173,6 +175,11 @@ function App() {
   const [viewMode, setViewMode] = useState('session')
   const [sessionMode, setSessionMode] = useState('select') // 'create' or 'select' — default list; effect sets 'create' when no sessions and can create
   const [createSource, setCreateSource] = useState(CREATE_SOURCE.EMPTY) // CREATE_SOURCE.EMPTY | ZOOM | TEAMS when sessionMode === 'create'
+  // SCRUM-481: state for the unified "Create from meeting recording" picker on the Create New Session screen.
+  const [createPickerOpen, setCreatePickerOpen] = useState(false)
+  // SCRUM-481: integrations status drives both the picker's per-platform UI
+  // and the visibility of the "Create from meeting recording" button.
+  const { status: createIntegrations, refresh: refreshCreateIntegrations } = useIntegrationsStatus(apiBaseUrl)
   const [zoomPasteUrlExpanded, setZoomPasteUrlExpanded] = useState(false) // collapsible "Or paste Zoom recording URL"
   const [sessionIdInput, setSessionIdInput] = useState('')
   const [sessionSelectFeedback, setSessionSelectFeedback] = useState({ type: '', message: '' })
@@ -1322,6 +1329,31 @@ function App() {
       setLoading(false)
     }
   }
+
+  // SCRUM-481: opens an OAuth popup for the platform selected inside the picker.
+  // Mirrors CreatorMode's openOAuthPopup so the same UX (popup window +
+  // refresh integrations on close) works on the Create New Session screen.
+  const openCreateOAuthPopup = useCallback((platform) => {
+    if (!platform) return
+    const path = {
+      zoom: '/api/zoom/connect',
+      google_meet: '/api/google-meet/connect',
+      teams: '/api/teams/connect',
+    }[platform]
+    if (!path) return
+    const base = (apiBaseUrl || '').replace(/\/$/, '')
+    let popup
+    try {
+      popup = window.open(`${base}${path}`, `${platform}_oauth`, 'width=600,height=720')
+    } catch (_) { return }
+    if (!popup) return
+    const interval = setInterval(() => {
+      if (popup.closed) {
+        clearInterval(interval)
+        if (refreshCreateIntegrations) refreshCreateIntegrations()
+      }
+    }, 500)
+  }, [apiBaseUrl, refreshCreateIntegrations])
 
   // Phase 3: Session functions
   const createSession = async () => {
@@ -3940,53 +3972,34 @@ function App() {
                 </div>
                 <div style={{ marginBottom: '15px' }}>
                   <label style={{ fontWeight: 'bold', marginBottom: '10px', display: 'block' }}>How to create:</label>
+                  {/* SCRUM-481: collapsed the three platform-specific tiles
+                      ("From Zoom" / "From Google Meet" / "From Teams") into a
+                      single "Create from meeting recording" entry that opens
+                      the unified RecordingsPicker in mode="create". Platform
+                      selection + OAuth Connect now happen inside the modal.
+                      The standalone "Empty session" button is preserved. */}
                   <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => setCreateSource(CREATE_SOURCE.ZOOM)}
-                      style={{
-                        backgroundColor: createSource === CREATE_SOURCE.ZOOM ? 'var(--color-primary-mid)' : '#e0e0e0',
-                        color: createSource === CREATE_SOURCE.ZOOM ? 'white' : 'black',
-                        padding: '8px 16px',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      From Zoom
-                    </button>
-                    {googleMeetApiEnabled && (
+                    {(createIntegrations?.zoom?.enabled || createIntegrations?.google_meet?.enabled || createIntegrations?.teams?.enabled) && (
                       <button
                         type="button"
-                        onClick={() => setCreateSource(CREATE_SOURCE.GOOGLE_MEET)}
+                        data-testid="create-session-from-recording-btn"
+                        onClick={() => setCreatePickerOpen(true)}
                         style={{
-                          backgroundColor: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'var(--color-primary-mid)' : '#e0e0e0',
-                          color: createSource === CREATE_SOURCE.GOOGLE_MEET ? 'white' : 'black',
                           padding: '8px 16px',
-                          border: 'none',
+                          border: '1px solid #1976d2',
                           borderRadius: '4px',
-                          cursor: 'pointer'
+                          backgroundColor: '#fff',
+                          color: '#1976d2',
+                          fontWeight: 500,
+                          cursor: 'pointer',
                         }}
                       >
-                        From Google Meet
-                      </button>
-                    )}
-                    {teamsApiEnabled && (
-                      <button
-                        type="button"
-                        onClick={() => setCreateSource(CREATE_SOURCE.TEAMS)}
-                        style={{
-                          backgroundColor: createSource === CREATE_SOURCE.TEAMS ? '#6264A7' : '#e0e0e0',
-                          color: createSource === CREATE_SOURCE.TEAMS ? 'white' : 'black',
-                          padding: '8px 16px',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        From Teams
+                        Create from meeting recording
                       </button>
                     )}
                     <button
+                      type="button"
+                      data-testid="create-session-empty-btn"
                       onClick={() => setCreateSource(CREATE_SOURCE.EMPTY)}
                       style={{
                         backgroundColor: createSource === CREATE_SOURCE.EMPTY ? 'var(--color-primary-mid)' : '#e0e0e0',
@@ -4001,6 +4014,30 @@ function App() {
                     </button>
                   </div>
                 </div>
+
+                {/* SCRUM-481: unified picker for Create Session. Opens on
+                    "Create from meeting recording"; closes via onClose or
+                    successful import; routes to the newly created session
+                    via openSession on import. */}
+                {createPickerOpen && (
+                  <RecordingsPicker
+                    mode="create"
+                    apiBaseUrl={apiBaseUrl}
+                    userEmail={creatorIdentity || authUser?.email}
+                    integrations={createIntegrations}
+                    onClose={() => setCreatePickerOpen(false)}
+                    onConnect={openCreateOAuthPopup}
+                    onSwitchAccount={openCreateOAuthPopup}
+                    onImported={async (jobs) => {
+                      setCreatePickerOpen(false)
+                      const created = jobs?.[0]?.session
+                      if (created?.id) {
+                        if (authUser?.email) setCurrentUser(authUser.email)
+                        await openSession(created.id, 'creator', true)
+                      }
+                    }}
+                  />
+                )}
 
                 {createSource === CREATE_SOURCE.EMPTY && (
                   <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#fff', borderRadius: '5px' }}>

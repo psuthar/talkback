@@ -88,7 +88,15 @@ test.beforeEach(async ({ page }) => {
   )
 })
 
-test('From Google Meet tile renders, recordings list shows transcript-state badges, import modal opens', async ({
+// SCRUM-481 / SCRUM-482: the Create New Session screen no longer renders
+// per-platform "From Google Meet" tiles or the inline Google Meet UI this
+// test exercises (transcript-state badges, no-transcript modal). The new
+// flow opens RecordingsPicker in mode="create" which has its own unit
+// tests in web/src/test/RecordingsPicker.test.jsx. Skipped here pending
+// SCRUM-482's cleanup PR, which will rewrite this e2e to drive the picker
+// (different mock-response shape — unified meeting_uuid/instance_uuid —
+// and chained POST /sessions + POST /api/sessions/{id}/import/google-meet).
+test.skip('From Google Meet tile renders, recordings list shows transcript-state badges, import modal opens', async ({
   page,
   context,
   request,
