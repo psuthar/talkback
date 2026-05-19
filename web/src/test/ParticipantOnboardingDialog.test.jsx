@@ -13,7 +13,7 @@ describe('ParticipantOnboardingDialog', () => {
     const dialog = screen.getByRole('dialog', { name: 'How this session works' })
     expect(dialog).toBeTruthy()
     expect(screen.getByTestId('participant-onboarding-dismiss')).toBeTruthy()
-    expect(dialog.textContent).toMatch(/main presentation video/i)
+    expect(dialog.textContent).toMatch(/review the materials in the left panel/i)
   })
 
   it('calls onDismiss when Got it is clicked', () => {

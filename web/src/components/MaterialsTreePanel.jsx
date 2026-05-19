@@ -200,7 +200,7 @@ function ProcessingJobRow({ job }) {
   )
 }
 
-function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle, primaryBadge, rowHandlers }) {
+function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, deleting, testId, disabled, buttonTitle, primaryBadge, startHereChip, rowHandlers }) {
   const handlers = rowHandlers || {}
   return (
     <div
@@ -238,6 +238,9 @@ function TreeItem({ icon, title, meta, metaStyle, selected, onClick, onDelete, d
       </button>
       {primaryBadge && (
         <span className={styles.treeItemPrimarySlot}>{primaryBadge}</span>
+      )}
+      {startHereChip && (
+        <span className={styles.treeItemPrimarySlot}>{startHereChip}</span>
       )}
       {onDelete && (
         <button
@@ -289,6 +292,11 @@ export function MaterialsTreePanel({
   // badge the row that's already the session primary.
   currentPrimary = null,
   onPrimaryChanged,
+  // SCRUM-484: optional "Start here →" cue rendered next to the Primary badge
+  // on whichever row matches currentPrimary. Pass a ReactNode (e.g. <StartHereChip
+  // open={...} onDismiss={...} />); MaterialsTreePanel only places it on the
+  // primary row and stays out of its lifecycle.
+  startHereChip = null,
 }) {
   const scrollRef = useRef(null)
   const [probedSlidesStatus, setProbedSlidesStatus] = useState({})
@@ -601,6 +609,7 @@ export function MaterialsTreePanel({
                           disabled={rowDisabled}
                           buttonTitle={rowDisabled ? 'Video is still processing' : undefined}
                           primaryBadge={badge}
+                          startHereChip={videoIsPrimaryRow ? startHereChip : null}
                           rowHandlers={rowHandlers}
                         />
                         {menuNode}
@@ -702,6 +711,7 @@ export function MaterialsTreePanel({
                               : (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing'))
                             : undefined}
                           primaryBadge={badge}
+                          startHereChip={isCurrentPrimary ? startHereChip : null}
                           rowHandlers={rowHandlers}
                         />
                         {menuNode}
@@ -771,6 +781,7 @@ export function MaterialsTreePanel({
                           disabled={!viewable}
                           buttonTitle={!viewable ? (m?.text_status === 'failed' ? 'File processing failed' : 'File is still processing') : undefined}
                           primaryBadge={badge}
+                          startHereChip={isCurrentPrimary ? startHereChip : null}
                           rowHandlers={rowHandlers}
                         />
                         {menuNode}
@@ -855,6 +866,9 @@ export function MaterialsTreePanel({
                           </button>
                           {badge && (
                             <span className={styles.treeItemPrimarySlot}>{badge}</span>
+                          )}
+                          {isLinkPrimary && startHereChip && (
+                            <span className={styles.treeItemPrimarySlot}>{startHereChip}</span>
                           )}
                           {canManage && onDeleteLink && (
                             <button

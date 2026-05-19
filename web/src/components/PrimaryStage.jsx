@@ -25,9 +25,9 @@ import { DocumentViewer } from './DocumentViewer'
  * The ingest-pending / failed copy and Retry-ingest button are creator-level
  * concerns (retryProcessing, processingRetrying); pass them through to
  * preserve existing behavior. ParticipantMode still owns its own
- * transcript pane + VideoStartOverlay around the video case, so it does
- * not consume PrimaryStage end-to-end — but it CAN reuse the doc/link
- * fallback above by passing currentSession through.
+ * transcript pane around the video case, so it does not consume
+ * PrimaryStage end-to-end — but it CAN reuse the doc/link fallback above
+ * by passing currentSession through.
  */
 export function PrimaryStage({
 	selectedDocument,

@@ -55,7 +55,7 @@ export function ParticipantOnboardingDialog({ open, onDismiss }) {
           <p>For the best outcome, follow this flow:</p>
           <ul>
             <li>
-              <strong>Review</strong> the main presentation video and supporting materials (left panel).
+              <strong>Review</strong> the materials in the left panel.
             </li>
             <li>
               <strong>Ask</strong> clarifying questions in <strong>Q&A</strong> when something is unclear.
