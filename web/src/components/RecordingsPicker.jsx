@@ -612,8 +612,8 @@ export function RecordingsPicker({
           <div data-testid="recordings-picker-confirm" role="dialog" aria-label="Confirm import" style={confirmStyle}>
             <p>
               {isCreateMode
-                ? 'Create a new session from this recording? Ingest takes ~3–10 min.'
-                : 'Import this recording into the session? Ingest takes ~3–10 min.'}
+                ? 'Create a new session from this recording? Ingest could take a few minutes.'
+                : 'Import this recording into the session? Ingest could take a few minutes.'}
             </p>
             <ul data-testid="recordings-picker-confirm-list">
               {(() => {

@@ -36,6 +36,9 @@ describe('SCRUM-468: MaterialsTreePanel processing_jobs placeholder rows', () =>
     expect(screen.getByTestId('processing-job-row-job-1').textContent).toMatch(/Queued to import from Zoom/i)
     expect(screen.getByTestId('processing-job-row-job-2').textContent).toMatch(/Downloading from Microsoft Teams/i)
     expect(screen.getByTestId('processing-job-row-job-3').textContent).toMatch(/Indexing transcript/i)
+    // SCRUM-483: soft duration copy (avoid the older "3–10 min" implementation detail).
+    expect(screen.getByTestId('processing-job-row-job-1').textContent).toMatch(/this could take a few minutes/i)
+    expect(screen.getByTestId('processing-job-row-job-1').textContent).not.toMatch(/3.10 min/i)
   })
 
   it('shows the VIDEOS section even when there are zero real videos but a job is in flight', () => {

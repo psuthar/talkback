@@ -158,6 +158,9 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     await user.click(screen.getByTestId('recordings-picker-import'))
     expect(screen.getByTestId('recordings-picker-confirm')).toBeTruthy()
     expect(screen.getByTestId('recordings-picker-confirm-button').textContent).toBe('Import')
+    // SCRUM-483: soft duration copy (avoid the older "3–10 min" implementation detail).
+    expect(screen.getByTestId('recordings-picker-confirm').textContent).toMatch(/Ingest could take a few minutes/i)
+    expect(screen.getByTestId('recordings-picker-confirm').textContent).not.toMatch(/3.10 min/i)
     await user.click(screen.getByTestId('recordings-picker-confirm-button'))
 
     await waitFor(() => expect(onImported).toHaveBeenCalledTimes(1))
@@ -513,6 +516,8 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     const titleInput = screen.getByTestId('recordings-picker-confirm-title')
     expect(titleInput).toBeTruthy()
     expect(titleInput.value).toBe('Standup')
+    // SCRUM-483: create-mode confirm copy uses the soft duration phrase.
+    expect(screen.getByTestId('recordings-picker-confirm').textContent).toMatch(/Ingest could take a few minutes/i)
   })
 
   it('SCRUM-479: create-mode empty title blocks submit and surfaces validation error', async () => {
