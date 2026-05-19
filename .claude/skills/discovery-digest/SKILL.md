@@ -67,16 +67,28 @@ Skip already-linked obs issues. Track the skip in a dry-run summary for audit bu
 
 ### 3. Cluster by theme
 
-Within the unlinked set, group obs issues by **observed endpoint or component** signalled in the issue body. The clustering rule for v1:
+Within the unlinked set, group obs issues by **observed endpoint or component** that actually carries signal. The clustering rule (v2 — SCRUM-498 calibration found v1 scored 0% precision on the live corpus and was unsafe to ship; see `docs/agent/discovery-digest-calibration-2026-05.md`):
 
-- Extract every path of the form `/api/...` from the issue body.
-- Extract every NRQL `transaction` name or `endpoint_id` field if present.
-- Two obs issues belong to the same cluster if they share at least one extracted endpoint/component identifier.
-- An issue with no extractable identifier is its own single-element cluster.
+**Result-row scoping (mandatory).** Extract an endpoint identifier (e.g. `/api/foo/{id}`, `WebTransaction/Go/POST /api/bar`) only when it appears on a line that *also* contains one of these signal markers:
+
+- `p95_ms=`
+- `count=`
+- `error_rate=`
+- `request.uri=`
+- `endpoint_id=`
+- Or sits inside a numbered result list (e.g. `1. WebTransaction/Go/POST /api/foo  p95_ms=1234`).
+
+**Exclude template literals.** Any endpoint mention inside a fenced code block, or on a line containing `SELECT ` or `FACET ` (case-sensitive — NRQL keywords), is template noise and does NOT count toward clustering. The obs-agent's NRQL queries hard-code endpoint names in `name LIKE 'WebTransaction/%/POST /api/auth/login'`-style filters; those mentions are not signal.
+
+**Status-colour gate.** Two obs issues are eligible to cluster only if their `Triggered by status=` colour matches (RED with RED, YELLOW with YELLOW). Mixing colours implies different urgency / different incident.
+
+**Date-proximity gate.** Two obs issues are eligible to cluster only if their `createdAt` timestamps are within **≤ 7 calendar days** of each other. Wider windows cluster unrelated incidents that happened to touch the same endpoint weeks apart.
+
+**Cluster membership rule.** After the three filters, two issues belong to the same cluster if they share at least one extracted result-row endpoint AND pass both the status-colour and date-proximity gates. An issue with no extractable result-row endpoint, or that fails all gates against every other issue, becomes its own single-element cluster.
 
 Clusters with **≥ 2 obs issues** become a single Jira proposal. Single-element clusters also become proposals — they're still candidate tickets — but rendered separately so the human can see clustering effectiveness over time.
 
-The clustering rule is intentionally narrow for v1. SCRUM-498's dry-run calibration tunes the precision/recall trade-off; refinements (e.g. semantic similarity on titles) land in later phases if the v1 rule under-clusters.
+Re-calibration: re-run the procedure in `docs/agent/discovery-digest-calibration-2026-05.md` quarterly (or after any change to `cmd/obsworker/main.go`'s issue template) and update both this section and that doc with revised thresholds if precision drifts.
 
 ### 4. Render the proposal
 
