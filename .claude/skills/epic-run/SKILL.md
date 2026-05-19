@@ -206,13 +206,51 @@ If **`final_gate.status`** is **`WARN`**, **`BLOCK`**, or **missing / unreadable
 On any halt condition:
 
 1. Write halt state to `.epic-run/SCRUM-XX.json` (set `status: "halted"`, populate
-   `halted_at`, `halt_reason`, `awaiting_human: true`).
+   `halted_at`, `halt_reason`, **`halt_category`** (see **Halt category enum** below), `awaiting_human: true`).
 2. Post a Jira comment on the **epic** with:
    - Tickets completed so far (key, PR URL, merge SHA)
    - Halted ticket + reason (merge gate / **`final_gate.status` not `PASS`** / timeout / parse error)
    - Remaining tickets not yet started
    - Instruction: "Resume with `continue epic SCRUM-XX` once the blocker is resolved."
 3. **Stop completely.** Do not proceed to the next ticket, do not poll, do not self-resume.
+
+---
+
+## Halt category enum
+
+`halt_category` is the canonical enum that classifies *why* a halt occurred. It lives alongside `halt_reason` (human-readable free text) at both the **root** (epic-wide halt) and **per-ticket** levels of `.epic-run/<EPIC>.json`. New halts MUST populate both fields; consumers MUST tolerate the field being absent on legacy state files (treat as `null`).
+
+| Value | Meaning | Resume semantics |
+|---|---|---|
+| `spec_missing` | Ticket failed lint or otherwise lacks structural completeness (AC, scope, repro, etc.) needed to proceed. Source: `scripts/jira_ticket_lint.py` (SCRUM-490). | Resume after the human or auto-fix loop closes the gaps; on `continue epic` the lint runs again. |
+| `gate_warn` | Final Gate returned `WARN` (TalkBack PR Gate `action_required`). | Allows human override (see **User override: manual squash merge**); `continue epic` reconciles if the user merged. |
+| `gate_block` | Final Gate returned `BLOCK` (TalkBack PR Gate `failure`). | **Does not auto-resume.** Human must address the underlying issue and reopen/repush before `continue epic` can advance the ticket. |
+| `mergeable_blocked` | `mergeable_state` from `pull_request_read` was anything other than `clean` (e.g. `blocked`, `behind`, `unstable`) at the polling budget. | Resume once the PR is rebased / conflicts resolved / required reviews granted. |
+| `timeout` | 40-minute polling budget exhausted before a terminal Final Gate status. | Resume after CI completes or after human investigation of the slow run. |
+| `human_requested_halt` | User explicitly stopped the run (e.g. typed "halt", "stop", or rejected an authoring proposal). | Resume requires user direction — the agent should ask what changed before re-running. |
+| `other` | Escape hatch for halts that don't fit the above. **Requires** non-empty `halt_reason` free-text describing the situation. | If `other` halts recur with the same shape, the Phase 4 rule-effectiveness review promotes the pattern to a first-class enum value. |
+
+**Distinction — `gate_warn` vs `gate_block`:** the Final Gate semantics table earlier maps gate outcomes; the enum split here mirrors them so the resume code path can branch deterministically without re-reading gate output. `WARN` permits the human-override merge path; `BLOCK` does not.
+
+**Backward compatibility:** state files written before this enum landed do not carry `halt_category`. Consumers (`scripts/define_kpi_snapshot.py`, future tooling) MUST treat a missing field as `null` — there is no migration of the pre-existing files in `.epic-run/`.
+
+**Pairing with `halt_reason`:** `halt_category` is the machine-readable classification; `halt_reason` is the human-readable context (e.g. for `gate_warn`: `"TalkBack PR Gate returned action_required at 18:44:32Z; top signals: orchestration_regression_gate"`). The `other` category is the only one that strictly requires `halt_reason` to be non-empty; for the other six, `halt_reason` is encouraged but optional.
+
+### Per-category example halt entries
+
+Minimal `tickets[i]` shape for each enum value (other fields like `pr`, `merged_sha` omitted for brevity):
+
+| Category | Example ticket entry |
+|---|---|
+| `spec_missing` | `{"key": "S-1", "status": "halted", "halt_category": "spec_missing", "halt_reason": "missing AC + repro"}` |
+| `gate_warn` | `{"key": "S-2", "status": "halted", "halt_category": "gate_warn", "halt_reason": "TalkBack PR Gate action_required at 18:44Z"}` |
+| `gate_block` | `{"key": "S-3", "status": "halted", "halt_category": "gate_block", "halt_reason": "Final Gate BLOCK; release-readiness failed"}` |
+| `mergeable_blocked` | `{"key": "S-4", "status": "halted", "halt_category": "mergeable_blocked", "halt_reason": "mergeable_state=behind after 40min budget"}` |
+| `timeout` | `{"key": "S-5", "status": "halted", "halt_category": "timeout", "halt_reason": "release-readiness still in_progress at budget end"}` |
+| `human_requested_halt` | `{"key": "S-6", "status": "halted", "halt_category": "human_requested_halt"}` |
+| `other` | `{"key": "S-7", "status": "halted", "halt_category": "other", "halt_reason": "GitHub MCP returned 500"}` (`halt_reason` mandatory for this value) |
+
+**Schema validator:** `scripts/epic_run_state_schema.py` exposes `validate_state(dict) -> list[str]` and `validate_halt_category(value) -> str | None` for ad-hoc and programmatic checks.
 
 ---
 
@@ -268,6 +306,7 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
   "awaiting_human": false,
   "halted_at": null,
   "halt_reason": null,
+  "halt_category": null,
   "tickets": [
     {
       "key": "SCRUM-43",
@@ -281,12 +320,21 @@ Location: `.epic-run/<EPIC-KEY>.json` (gitignored).
       "status": "halted",
       "pr": 79,
       "merged_sha": null,
-      "halt_reason": "final_gate_warn"
+      "halt_reason": "TalkBack PR Gate returned action_required at 18:44:32Z",
+      "halt_category": "gate_warn"
     }
   ],
   "next_pending": ["SCRUM-47", "SCRUM-48"]
 }
 ```
+
+**Field reference:**
+
+- `halt_reason` — human-readable free text. Optional except when `halt_category == "other"`.
+- `halt_category` — enum from **Halt category enum** (above). Required on new halts; treat as `null` on legacy files.
+- `final_gate` (per-ticket) — terminal gate value when the ticket reached PASS, or `"manual_override"` if the user squash-merged after a WARN.
+
+Both `halt_reason` / `halt_category` appear at the **root** (epic-wide halt — e.g. timeout while polling) and inside any **ticket entry** whose `status == "halted"`.
 
 ---
 
