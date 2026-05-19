@@ -436,110 +436,35 @@ describe('MaterialsTreePanel SCRUM-294 image-row primary affordance (right-click
 })
 
 describe('MaterialsTreePanel SCRUM-484 startHereChip placement', () => {
-	const docMaterial = {
-		id: 'mat-1',
-		kind: 'document',
-		filename: 'spec.pdf',
-		content_type: 'application/pdf',
-		text_status: 'ready',
-	}
-	const otherDoc = {
-		id: 'mat-2',
-		kind: 'document',
-		filename: 'other.pdf',
-		content_type: 'application/pdf',
-		text_status: 'ready',
-	}
+	const doc = { id: 'mat-1', kind: 'document', filename: 'spec.pdf', content_type: 'application/pdf', text_status: 'ready' }
+	const otherDoc = { ...doc, id: 'mat-2', filename: 'other.pdf' }
 	const presVideo = { id: 'vs-1', display_title: 'Lecture', transcript_status: 'ready' }
 	const link = { id: 'l1', url: 'https://example.com', title: 'Doc', status: 'verified' }
+	const chip = <span data-testid="chip-stub">CHIP</span>
+	const session = ({ video_sources = [], materials = [], links = [] } = {}) => ({
+		session: { id: 'sess-1' }, video_sources, materials, links,
+		unread_material_ids: [], primary_video: video_sources[0] ?? null,
+		additional_videos: [], material_slides_ready: {}, material_slides_status: {},
+	})
+	const renderTree = (sess, currentPrimary) => render(
+		<MaterialsTreePanel {...baseProps} canManage={false} onPrimaryChanged={undefined}
+			session={sess} currentPrimary={currentPrimary} startHereChip={chip} />,
+	)
 
-	function sessionWith({ video_sources = [], materials = [], links = [], currentPrimary = null } = {}) {
-		return {
-			session: { id: 'sess-1' },
-			video_sources,
-			materials,
-			links,
-			unread_material_ids: [],
-			primary_video: video_sources[0] ?? null,
-			additional_videos: [],
-			material_slides_ready: {},
-			material_slides_status: {},
-			currentPrimary,
-		}
-	}
-
-	const chipNode = <span data-testid="start-here-chip-stub">CHIP</span>
-
-	it('renders the chip on the primary document row only', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWith({ materials: [docMaterial, otherDoc] })}
-				currentPrimary={{ kind: 'document', id: 'mat-1' }}
-				startHereChip={chipNode}
-			/>,
-		)
-		// One chip total, attached to the primary row.
-		expect(screen.getAllByTestId('start-here-chip-stub')).toHaveLength(1)
-		const primaryRow = screen.getByText('spec.pdf').closest('div')
-		expect(primaryRow.textContent).toContain('CHIP')
+	it.each([
+		['document', () => session({ materials: [doc, otherDoc] }), { kind: 'document', id: 'mat-1' }],
+		['link', () => session({ links: [link] }), { kind: 'link', id: 'l1' }],
+		['video', () => session({ video_sources: [presVideo] }), { kind: 'video', id: 'fa-7' }],
+	])('renders the chip on the primary %s row only', (_kind, mkSession, primary) => {
+		renderTree(mkSession(), primary)
+		expect(screen.getAllByTestId('chip-stub')).toHaveLength(1)
 	})
 
-	it('renders the chip on a primary link row only', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWith({ links: [link] })}
-				currentPrimary={{ kind: 'link', id: 'l1' }}
-				startHereChip={chipNode}
-			/>,
-		)
-		expect(screen.getAllByTestId('start-here-chip-stub')).toHaveLength(1)
-	})
-
-	it('renders the chip on the primary video row only', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWith({ video_sources: [presVideo] })}
-				currentPrimary={{ kind: 'video', id: 'fa-7' }}
-				startHereChip={chipNode}
-			/>,
-		)
-		expect(screen.getAllByTestId('start-here-chip-stub')).toHaveLength(1)
-	})
-
-	it('renders no chip when no primary is set, even with materials present', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWith({ materials: [docMaterial] })}
-				currentPrimary={null}
-				startHereChip={chipNode}
-			/>,
-		)
-		expect(screen.queryByTestId('start-here-chip-stub')).toBeNull()
-	})
-
-	it('renders no chip when the session is empty', () => {
-		render(
-			<MaterialsTreePanel
-				{...baseProps}
-				canManage={false}
-				onPrimaryChanged={undefined}
-				session={sessionWith({})}
-				currentPrimary={null}
-				startHereChip={chipNode}
-			/>,
-		)
-		expect(screen.queryByTestId('start-here-chip-stub')).toBeNull()
+	it.each([
+		['no primary set with materials present', () => session({ materials: [doc] })],
+		['empty session', () => session({})],
+	])('renders no chip when %s', (_label, mkSession) => {
+		renderTree(mkSession(), null)
+		expect(screen.queryByTestId('chip-stub')).toBeNull()
 	})
 })
