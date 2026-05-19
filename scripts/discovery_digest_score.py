@@ -84,7 +84,7 @@ def build_report(issues: list[ObsIssue], max_days: int = 7) -> dict:
     multi = sum(1 for c in out_clusters if c["size"] >= 2)
     singletons = sum(1 for c in out_clusters if c["size"] == 1)
     return {
-        "version": "v2",
+        "version": "v3",
         "total_issues": len(issues),
         "cluster_count": len(out_clusters),
         "multi_member_clusters": multi,

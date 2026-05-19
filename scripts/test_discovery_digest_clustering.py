@@ -109,11 +109,51 @@ class TestEndpointExtraction(unittest.TestCase):
         endpoints = extract_signal_endpoints(body)
         self.assertEqual(endpoints, set())
 
-    def test_code_fence_blocks_excluded(self):
-        body = "```\n/api/inside_fence p95_ms=999\n```\n1. WebTransaction/Go/POST /api/outside  p95_ms=42\n"
+    def test_fenced_signal_lines_now_extract_v3(self):
+        """SCRUM-500: v3 removed the fence-exclusion. Signal-bearing lines
+        INSIDE fenced code blocks must now extract their endpoints, as long
+        as they pass the SELECT/FACET filter. This matches the obs-agent's
+        real-world output where the entire diagnostic bundle lives inside
+        one giant fence.
+        """
+        body = (
+            "```\n"
+            "/api/inside_fence p95_ms=999\n"
+            "1. WebTransaction/Go/GET /api/inside_numbered  p95_ms=42\n"
+            "```\n"
+            "1. WebTransaction/Go/POST /api/outside  p95_ms=42\n"
+        )
         endpoints = extract_signal_endpoints(body)
+        # All three should extract under v3:
+        self.assertIn(
+            "/api/inside_fence",
+            endpoints,
+            "v3 must extract signal-marker lines even inside fences",
+        )
+        self.assertIn(
+            "/api/inside_numbered",
+            endpoints,
+            "v3 must extract numbered-list lines even inside fences",
+        )
         self.assertIn("/api/outside", endpoints)
-        self.assertNotIn("/api/inside_fence", endpoints)
+
+    def test_fenced_nrql_still_excluded_v3(self):
+        """SCRUM-500: under v3, NRQL queries inside fences are still excluded
+        by the SELECT/FACET line-level filter — the rule that actually
+        protects against template-literal false positives.
+        """
+        body = (
+            "```\n"
+            "SELECT count(*) FROM Transaction\n"
+            "WHERE name LIKE '/api/auth/login' FACET name\n"
+            "```\n"
+        )
+        endpoints = extract_signal_endpoints(body)
+        self.assertEqual(
+            endpoints,
+            set(),
+            "NRQL lines must be excluded regardless of fence presence",
+        )
 
 
 class TestStatusColour(unittest.TestCase):

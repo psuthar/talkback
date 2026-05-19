@@ -134,6 +134,86 @@ Once v3 lands:
 3. Update this doc with v3 empirical numbers in a new section.
 4. If precision under v3 is ≥ 80%, declare the v2 → v3 refinement complete. If not, document v4 candidates.
 
+## v3 empirical re-score (SCRUM-500)
+
+The v3 rule (fence-exclusion removed) shipped via SCRUM-500. Re-running `scripts/discovery_digest_score.py` against the same 37-issue corpus now produces **3 multi-member clusters** — a meaningful improvement over v2's zero. Manual scoring below uses the same "same root cause? yes/no" method as the v1 pass.
+
+### Cluster output
+
+| # | Size | Status | Date range | Shared endpoints | Members |
+|---|---|---|---|---|---|
+| 1 | 4 | RED | 2026-04-23 → 2026-05-08 | `/api/invitations/`, `/api/me`, `/api/teams/status`, `/api/zoom/status` | #307, #294, #219, #158 |
+| 2 | 3 | YELLOW | 2026-03-12 → 2026-03-17 | `/api/sessions/` | #14, #13, #10 |
+| 3 | 2 | RED | 2026-03-09 → 2026-03-15 | `/api/me`, `/api/sessions`, `/api/sessions/`, `/api/zoom/status` | #12, #7 |
+
+### Per-cluster p95 inspection
+
+Looked up the p95 of each shared endpoint on each member issue to test whether the endpoint is **actually slow** there (real culprit) or **just present** in the top-N latency list (baseline noise).
+
+**Cluster 1 — `/api/invitations/` p95:**
+- #307: 8ms (baseline) · #294: 6ms (baseline) · #219: **341ms (slow)** · #158: **444ms (slow)**
+
+Only 2 of 4 members have actually-slow `/api/invitations/`. The other 2 (#307, #294) include it in their result rows because it's a top-traffic endpoint, not because it's the day's culprit (which was orchestration sync at 4.5s for #307). **Manual verdict: FALSE POSITIVE** — the cluster over-groups truly-related incidents (#219 + #158 invitations slowness) with unrelated incidents (#307 + #294).
+
+**Cluster 2 — `/api/sessions/` p95:**
+- #14: 3.7ms (baseline) · #13: 16ms (baseline) · #10: **8309ms (DRAMATIC slow, 8.3 s)**
+
+Only #10 has actually-slow `/api/sessions/`. #13 and #14 include the endpoint because it's high-traffic. The YELLOW status on those two days likely came from other signals (error rate, throughput, etc.). **Manual verdict: FALSE POSITIVE.**
+
+**Cluster 3 — `/api/sessions` and `/api/sessions/` p95:**
+- #12: `/api/sessions` 478ms, `/api/sessions/` 478ms · #7: `/api/sessions` 465ms, `/api/sessions/` 465ms
+
+Both members have a slow `/api/sessions(.)` pattern around the same time (Mar 9–15) at consistent ~470ms. **Manual verdict: TRUE POSITIVE** — genuine shared root cause.
+
+### v3 precision
+
+| Metric | Value |
+|---|---|
+| Multi-member clusters formed | 3 |
+| True positives | 1 (Cluster 3) |
+| False positives | 2 (Clusters 1 + 2) |
+| **Precision** | **1 / 3 = 33%** |
+
+Below the AC target of ≥ 80%. v3 is a material improvement over v2 (v2 produced nothing useful; v3 produces 3 clusters, 1 of which is correct), but the "top-N baseline endpoints appear in every issue regardless of culprit" failure mode keeps precision low.
+
+### Root cause of the v3 false positives
+
+The obs-agent's diagnostic bundle includes the **top-20 transactions by p95 latency** every day. That list is rank-based, not threshold-based — `/api/me`, `/api/sessions/`, `/api/teams/status`, `/api/zoom/status` appear in nearly every issue because they're high-traffic endpoints, not because they're slow.
+
+v3's "shared endpoint identifier" rule is too coarse: it matches endpoints that *appear* together rather than endpoints that *are slow* together.
+
+### Proposed v4 refinement
+
+Require the shared endpoint to have **elevated p95** to count toward clustering. Concrete rule:
+
+> An endpoint contributes to clustering only when the line containing it shows `p95_ms=N` with **N ≥ 100** (or some threshold the next calibration tunes). Endpoints with p95 < threshold are baseline noise and ignored.
+
+Applied to the v3 clusters:
+- Cluster 1 would split: (#219, #158) on `/api/invitations/` would survive (both slow); (#307, #294) would NOT cluster with them because their `/api/invitations/` p95 is 6–8ms.
+- Cluster 2 would dissolve: #10's slow `/api/sessions/` (8309ms) would not cluster with #13/#14 (16ms / 3.7ms).
+- Cluster 3 would survive intact: both members have `/api/sessions` at ~470ms, well above any reasonable threshold.
+
+Expected v4 precision on this corpus: **2/2 = 100%** (Cluster 3 survives intact as TP; Cluster 1 reduces to a 2-member TP; Cluster 2 dissolves to singletons; no FPs).
+
+The threshold should be calibrated empirically — start at 100ms; tune in the v4 calibration pass.
+
+### Implementation note for v4 (tracked as a follow-up)
+
+The change requires the endpoint extractor to also capture the p95_ms value alongside the endpoint. Today `extract_signal_endpoints` returns `set[str]`. For v4 it would need to return something like `set[tuple[str, float]]` (endpoint + p95) so clustering can filter on the value. The `cluster()` function then ignores entries below the threshold when intersecting.
+
+This is a moderate refactor of the cluster module + score CLI + tests. Scope as a separate ticket.
+
+### Cycle status
+
+| Version | Precision | Status |
+|---|---|---|
+| v1 | 0% (0/9) | Unsafe to ship — false clusters from NRQL template literals |
+| v2 | undefined (0/0) | Safe but inert — fence-exclusion swallowed signal |
+| v3 | 33% (1/3) | Better than v2; below AC; v4 proposed |
+| v4 | (expected ~100%) | Tracked as follow-up; p95 threshold filter |
+
+The recalibration cycle remains the right governance rhythm. Each iteration is empirical, documented, and falsifiable — exactly what the Phase 4 plan promised.
+
 ## Orthogonal finding — obs-agent emits daily rollups, not per-anomaly issues
 
 The calibration surfaced that the obs-agent itself is shaped wrong for incident-style clustering. Every issue is a daily snapshot of the full diagnostic bundle, not one issue per detected anomaly. This means:

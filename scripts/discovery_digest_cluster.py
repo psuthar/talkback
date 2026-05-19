@@ -41,7 +41,6 @@ ENDPOINT_RE = re.compile(
     r"(/api/[A-Za-z0-9/_{}.-]+)"
 )
 NUMBERED_LIST_RE = re.compile(r"^\s*\d+\.\s+")
-CODE_FENCE_RE = re.compile(r"^```")
 
 DEFAULT_MAX_DAYS = 7
 
@@ -49,8 +48,14 @@ DEFAULT_MAX_DAYS = 7
 def extract_signal_endpoints(body: str) -> set[str]:
     """Return endpoint identifiers found in result-row context only.
 
+    v3 (SCRUM-500): the fence-exclusion state machine present in v2 was
+    over-aggressive — the obs-agent wraps the entire diagnostic bundle
+    (NRQL queries AND result rows) in one giant fenced code block, so the
+    v2 rule skipped every signal-bearing line. The SELECT / FACET
+    line-level filter already covers NRQL templates without needing
+    fence awareness.
+
     Excludes:
-    - Lines inside fenced code blocks.
     - Lines containing NRQL keywords ``SELECT `` or ``FACET ``.
 
     Includes endpoints from lines that either:
@@ -59,13 +64,7 @@ def extract_signal_endpoints(body: str) -> set[str]:
     - Begin with a numbered-list marker (``1. ``, ``2. ``, ...).
     """
     found: set[str] = set()
-    in_code_fence = False
     for line in body.splitlines():
-        if CODE_FENCE_RE.match(line):
-            in_code_fence = not in_code_fence
-            continue
-        if in_code_fence:
-            continue
         if any(tok in line for tok in NRQL_TEMPLATE_TOKENS):
             continue
         if any(marker in line for marker in SIGNAL_MARKERS) or NUMBERED_LIST_RE.match(line):
