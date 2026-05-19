@@ -1,0 +1,15 @@
+{
+  "timestamp": "2026-05-19T18:42:27Z",
+  "lint_pass_rate": null,
+  "time_in_progress_to_pr_median_hours": null,
+  "agent_authoring_pct": 0.0,
+  "source_obs_agent_count": 0,
+  "spec_halt_count": 0,
+  "raw": {
+    "lint_runs_total": 0,
+    "lint_passes": 0,
+    "agent_authored_count": 0,
+    "total_tickets_sampled": 100,
+    "halts_by_category": {}
+  }
+}
