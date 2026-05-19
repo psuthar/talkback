@@ -16,6 +16,15 @@ Use `epic-run` skill (`.claude/skills/epic-run/SKILL.md`):
 - In this repo, deployed means code merged to `main` with gate expectations met for that PR.
 - A single `continue epic` should drain all remaining work unless halted by policy.
 
+## Authoring phase (SCRUM-493/494)
+
+When `run epic SCRUM-X` finds zero non-Done children (i.e. the Epic has not been decomposed yet), the skill transitions through a pre-running authoring phase before executing any work. The full algorithm lives in `.claude/skills/epic-run/SKILL.md` Start step 3; the contract this doc owns:
+
+- **Single command.** Users invoke `run epic` only — there is no separate `kickoff epic`. The skill detects the empty-Epic case and enters authoring automatically.
+- **Approval before creation.** The agent renders a decomposition proposal in chat (parent + children with summary, AC count, split rationale, estimated LOC, current threshold) and waits for user y/n. On **n** → halt with `halt_category: "human_requested_halt"`. On **y** → the skill calls `jira_create_issue` per child (each carrying `agent-authored` per the labels rule of `jira-ticket-authoring`) and runs `scripts/jira_ticket_lint.py` on each new ticket; any non-zero lint exit halts with `halt_category: "spec_missing"`.
+- **Children-per-authoring cap: 8.** If `jira-work-decomposition` would propose more than 8 children, halt with `halt_category: "spec_missing"` and `halt_reason` describing the scope mismatch. No tickets are created. The Epic needs human re-scoping (`jira-work-decomposition` Splitting Oversized Work rules say so).
+- **`max_estimated_loc` override.** Optional integer in `.epic-run/<EPIC>.json` (range `[100, 800]`, default `400`). Below 100 or above 800 is rejected at the proposal step — out-of-range overrides require direct state-file edit AND a paragraph in the Epic description explaining the deviation (e.g. a security-audit Epic running at 50 LOC per PR). The proposal renders the current threshold as `"400 (default)"` or `"<N> (Epic override)"`.
+
 ## Epic-vs-Standalone FULL_AUTO
 
 - Standalone FULL_AUTO may merge on `mergeable_state: clean` + TalkBack PR Gate success.
