@@ -55,6 +55,50 @@ A ticket is too large if any of these are true:
 
 ---
 
+## Estimated LOC heuristic (SCRUM-494)
+
+When invoked from the `epic-run` authoring phase (see `.claude/skills/epic-run/SKILL.md` Start step 3), this skill estimates LOC per proposed child and emits a "split candidate" annotation when the estimate exceeds the Epic's `max_estimated_loc` threshold.
+
+**Estimation method (files-touched × complexity factor):**
+
+For each proposed child, compute an estimated LOC based on what the description says will change:
+
+| Signal | Factor |
+|---|---|
+| Each new or substantially-modified source file | **+40 LOC** (default per-file complexity factor) |
+| Each file that ships paired tests | **+50%** test overhead (multiply that file's estimate by 1.5) |
+| Each new HTTP endpoint or handler | **+50 LOC** on top of the file factor (route registration + request/response shaping) |
+| Each new DB migration | **+100 LOC** (SQL + migration runner glue + rollback) |
+| Each new frontend route or page-level component | **+80 LOC** (state wiring + render) |
+| Each new background job / cron / scheduled worker | **+80 LOC** |
+| Docs-only or config-only change | flat **+20 LOC** (description prose) |
+
+These factors are **starting points**, not gospel. The Phase 4 rule-effectiveness review (every 2 sprints) compares estimated vs actual merged-PR LOC across Epic children and recalibrates the factors if estimates drift more than 30% on aggregate. Recalibration findings land as a Jira comment on the active uplift Epic plus an edit to this section.
+
+**Threshold rendering (mandatory):** the authoring proposal MUST display the current `max_estimated_loc` value alongside the per-child estimates so the human approver sees which threshold drove the splits. Format:
+
+```
+Current LOC threshold: 400 (default)        [or "100 (Epic override)"]
+
+Proposed children (3):
+  1. SCRUM-XX  Foo handler                            ~140 LOC
+  2. SCRUM-XY  Foo frontend                           ~180 LOC
+  3. SCRUM-XZ  Foo migration                          ~120 LOC  (split candidate: > threshold)
+```
+
+**Split-candidate annotations:** when a single child's estimate exceeds `max_estimated_loc`, emit `(split candidate: > threshold)` in the proposal. The human reviewer decides whether to accept, split further, or override. Do NOT auto-split during the proposal — the decomposition is the user's call.
+
+**Estimate-vs-actual review process (Phase 4 governance):**
+
+Every 2 sprints, query merged PRs for tickets that came from epic-run authoring (filter Jira by label `agent-authored` AND a parent with `.epic-run/<EPIC>.json`). For each, compare:
+
+- `estimated_loc` recorded in the authoring proposal (capture this in the Jira comment posted at proposal time)
+- Actual `additions` from the merged PR via GitHub MCP
+
+If aggregate variance > 30% for 2 consecutive reviews, adjust the per-file complexity factor or the endpoint/migration adders. Document the change in this section's table and post a summary comment on the active DEFINE uplift Epic. The lint-runs.log (`ops/define-kpis/lint-runs.log`) records the threshold in effect at each run; cross-reference for trend.
+
+---
+
 ## Story vs Task Distinction
 
 | Story | Task |
