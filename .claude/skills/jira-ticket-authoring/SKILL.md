@@ -182,6 +182,32 @@ Do not reorder sections. Do not merge sections.
 
 ---
 
+## Labels (mandatory)
+
+**Every ticket created via this skill MUST carry the Jira label `agent-authored`** in the `labels` array passed to `jira_create_issue` (alongside any other labels the user or skill needs).
+
+Why this matters: `agent-authored` is the only safe authorship signal — Jira's `creator` field is misleading because the agent acts under a human's Atlassian account. The lint auto-fix loop (`.claude/skills/jira-ticket-lint/SKILL.md`, SCRUM-491) gates on this label:
+
+- Lint exit 2 (fixable gaps) **with** `agent-authored` → agent runs the auto-fix loop (max 1 retry per `scripts/jira_ticket_lint.py --max-retries`) before halting.
+- Lint exit 2 **without** `agent-authored` → halt immediately and post a comment to the human author. The agent never silently mutates human-authored ticket prose.
+- Lint exit 1 (unfixable) → halt regardless of label.
+
+How to apply:
+
+```python
+mcp__atlassian__jira_create_issue(
+    projectKey="SCRUM",
+    issueType="Task",
+    summary="...",
+    description="...",
+    labels=["agent-authored", "<other-labels-as-needed>"],
+)
+```
+
+Do not omit `agent-authored` even on quick one-off ticket creates from this skill. Do not retroactively add the label to historical tickets that were authored by a human and lack it — the absence of the label on a pre-existing ticket means "human-authored, do not auto-rewrite."
+
+---
+
 ## Separation of Business Outcome and Execution
 
 - **Epic / Story:** lead with the outcome for the user or business. Do not open with implementation detail.
