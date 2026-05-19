@@ -188,7 +188,7 @@ function ProcessingJobRow({ job }) {
       <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <span style={{ fontSize: 13, color: '#444' }}>{copy}</span>
         <span style={{ fontSize: 11, color: '#777' }}>
-          {PROCESSING_PLATFORM_LABEL[job.source] || job.source} · this can take 3–10 min
+          {PROCESSING_PLATFORM_LABEL[job.source] || job.source} · this could take a few minutes
         </span>
         {errMsg && (
           <span data-testid={`processing-job-row-${job.id}-error`} style={{ fontSize: 11, color: '#c62828' }}>
