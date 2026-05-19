@@ -67,11 +67,72 @@ Captured from the corpus for regression test purposes. Each is a small excerpt o
 
 Fixture #279 is the unmistakable v2 test: under v1 it would falsely cluster with everything else mentioning `/api/auth/login`; under v2 it should produce a singleton because the only `/api/...` mention is in NRQL.
 
-## v2 empirical re-run — follow-up
+## v2 empirical re-score (SCRUM-499)
 
-Manual re-scoring of the same 25-issue sample under v2 is a follow-up. Expected outcome based on inspection: precision ≥ 80% (the result-row + status-colour + date-proximity filters together eliminate every v1 false cluster). Capture the actual re-run findings as a comment on this doc when executed.
+The empirical re-score landed via `scripts/discovery_digest_score.py` (added in SCRUM-499) running over the full 37-issue corpus. The clustering logic was first refactored out of the test file into `scripts/discovery_digest_cluster.py` so the same module is used by both the test suite and the score CLI.
 
-Until the v2 re-run lands, the AC target ("≥ 80% precision") is met *in principle* by the rule refinement; the formal empirical confirmation remains pending. This trade-off is acceptable because v1 (0%) is unsafe to ship and v2 is the only viable path forward.
+### Re-run inventory
+
+| Metric | Value |
+|---|---|
+| Total issues processed | 37 |
+| Multi-member clusters (≥ 2 members) | **0** |
+| Singletons | 37 |
+| Singletons with extracted result-row endpoints | **0** |
+| Status colours | 8 RED, 25 YELLOW, 4 missing-color |
+
+### Precision result
+
+- **False-positive clusters: 0** (vs v1's 9). Every v1 false cluster eliminated, as predicted.
+- **True-positive clusters: 0** — but there were also zero candidate clusters to begin with.
+- **Precision: undefined (0/0).** Conventionally read as 100% — no false positives means no precision failure.
+- **Recall: indeterminate.** As in the v1 pass, the corpus contains zero per-incident pairs to recall; every issue is a daily diagnostic snapshot.
+
+The AC target ("≥ 80% precision") is met *in the precision sense* (zero false positives), but the **practical impact is zero useful clustering**. v2 is safe but inert on this corpus.
+
+### Diagnosis — the fence-exclusion is over-aggressive
+
+A trace on issue #307 (a known RED issue with result rows in the body) showed:
+
+- The NRQL queries and the result rows live **inside the same fenced code block**. The obs-agent wraps the entire diagnostic bundle in a single ``` ... ``` fence spanning ~290 lines.
+- v2's `CODE_FENCE_RE` excludes every line within the fence. Result: every signal-bearing line (numbered result rows with `p95_ms=`, `count=`, etc.) is skipped along with the template NRQL queries.
+- Per-line trace on `3. WebTransaction/Go/GET /api/sessions/: p95_ms=228.52 ms` (line 168 of issue #307): the line contains a signal marker, is a numbered list, has no NRQL keywords, and the endpoint regex matches `/api/sessions/`. But it's inside the giant fence, so `extract_signal_endpoints` skips it.
+
+The fence-exclusion was added in v2 to filter NRQL queries. In practice, the SELECT/FACET line-level exclusion already covers that case. The fence rule is redundant and over-broad.
+
+### Proposed v3 refinement
+
+Drop the fence-exclusion entirely. Keep the SELECT/FACET line-level exclusion and the marker / numbered-list inclusion. NRQL queries always contain SELECT or FACET, so the line-level filter catches them without needing fence awareness.
+
+Concrete change (to be tracked under a follow-up ticket):
+
+```diff
+- if CODE_FENCE_RE.match(line):
+-     in_code_fence = not in_code_fence
+-     continue
+- if in_code_fence:
+-     continue
+  if any(tok in line for tok in NRQL_TEMPLATE_TOKENS):
+      continue
+  if any(marker in line for marker in SIGNAL_MARKERS) or NUMBERED_LIST_RE.match(line):
+      ...
+```
+
+Expected outcome: with fence-exclusion removed, the empirical re-score on the same 37-issue corpus should surface clusters from the result rows of RED-status issues (e.g. multiple issues showing `WebTransaction/Go/GET /api/sessions/` with `p95_ms=` rows within 7 days of each other). Manual scoring will then test the AC target empirically against real clusters.
+
+### Lessons captured
+
+- **Calibration MUST run against real corpora, not just fixtures.** The fence-exclusion looked correct in unit tests because the test fixtures placed signal endpoints OUTSIDE fences. The real obs-agent puts them INSIDE one giant fence. A test-only validation would have shipped this bug.
+- **The recalibration cycle is doing its job.** The Phase 4 review-every-2-sprints rhythm is intended to catch exactly this kind of drift. SCRUM-499 made the rhythm concrete by running the cycle once.
+- **The orthogonal finding still holds.** Even with v3's fence-exclusion fix, the obs-agent's daily-rollup shape caps clustering ceiling. A `cmd/obsworker/` refactor (per-anomaly issues) is the structural fix.
+
+### Re-running this calibration after v3
+
+Once v3 lands:
+1. Re-run `scripts/discovery_digest_score.py` against the same corpus.
+2. Manually score each multi-member cluster.
+3. Update this doc with v3 empirical numbers in a new section.
+4. If precision under v3 is ≥ 80%, declare the v2 → v3 refinement complete. If not, document v4 candidates.
 
 ## Orthogonal finding — obs-agent emits daily rollups, not per-anomaly issues
 
