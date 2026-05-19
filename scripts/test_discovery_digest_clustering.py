@@ -24,9 +24,11 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT / "scripts"))
 
 from discovery_digest_cluster import (  # noqa: E402
+    DEFAULT_MIN_P95_MS,
     ObsIssue,
     are_eligible_to_cluster,
     cluster,
+    endpoints_above_threshold,
     extract_signal_endpoints,
     status_color,
 )
@@ -95,14 +97,28 @@ class TestEndpointExtraction(unittest.TestCase):
         self.assertEqual(endpoints, set(), f"v1 false-cluster fixture leaked: {endpoints}")
 
     def test_result_row_endpoints_are_extracted(self):
+        """SCRUM-501: v4 returns (endpoint, p95_ms) tuples instead of strings."""
         endpoints = extract_signal_endpoints(ISSUE_WITH_RESULT_ROW_RED)
-        self.assertIn("/api/sessions/{id}/orchestration/recommendations/sync", endpoints)
-        self.assertIn("/api/me", endpoints)
+        # Tuple form: ("/api/sessions/{id}/orchestration/recommendations/sync", 4521.0)
+        self.assertIn(
+            ("/api/sessions/{id}/orchestration/recommendations/sync", 4521.0),
+            endpoints,
+        )
+        self.assertIn(("/api/me", 145.0), endpoints)
 
-    def test_numbered_list_without_signal_marker_still_extracts(self):
+    def test_v4_requires_p95_ms_for_extraction(self):
+        """SCRUM-501: numbered-list line WITHOUT p95_ms doesn't extract.
+        v3 extracted any numbered-list endpoint; v4 needs the value to
+        compare against the threshold.
+        """
         body = "1. WebTransaction/Go/POST /api/foo  some annotation\n"
         endpoints = extract_signal_endpoints(body)
-        self.assertIn("/api/foo", endpoints)
+        self.assertEqual(endpoints, set())
+
+    def test_v4_numbered_list_with_p95_extracts(self):
+        body = "1. WebTransaction/Go/POST /api/foo  p95_ms=42\n"
+        endpoints = extract_signal_endpoints(body)
+        self.assertIn(("/api/foo", 42.0), endpoints)
 
     def test_nrql_line_does_not_leak_even_without_code_fence(self):
         body = "SELECT count(*) FROM Transaction WHERE name LIKE '/api/leak'\n"
@@ -112,9 +128,8 @@ class TestEndpointExtraction(unittest.TestCase):
     def test_fenced_signal_lines_now_extract_v3(self):
         """SCRUM-500: v3 removed the fence-exclusion. Signal-bearing lines
         INSIDE fenced code blocks must now extract their endpoints, as long
-        as they pass the SELECT/FACET filter. This matches the obs-agent's
-        real-world output where the entire diagnostic bundle lives inside
-        one giant fence.
+        as they pass the SELECT/FACET filter. SCRUM-501: assertions updated
+        to v4 tuple form.
         """
         body = (
             "```\n"
@@ -124,18 +139,17 @@ class TestEndpointExtraction(unittest.TestCase):
             "1. WebTransaction/Go/POST /api/outside  p95_ms=42\n"
         )
         endpoints = extract_signal_endpoints(body)
-        # All three should extract under v3:
         self.assertIn(
-            "/api/inside_fence",
+            ("/api/inside_fence", 999.0),
             endpoints,
-            "v3 must extract signal-marker lines even inside fences",
+            "v4 must extract signal-marker lines even inside fences",
         )
         self.assertIn(
-            "/api/inside_numbered",
+            ("/api/inside_numbered", 42.0),
             endpoints,
-            "v3 must extract numbered-list lines even inside fences",
+            "v4 must extract numbered-list lines even inside fences",
         )
-        self.assertIn("/api/outside", endpoints)
+        self.assertIn(("/api/outside", 42.0), endpoints)
 
     def test_fenced_nrql_still_excluded_v3(self):
         """SCRUM-500: under v3, NRQL queries inside fences are still excluded
@@ -241,6 +255,101 @@ class TestClusterFormation(unittest.TestCase):
         # 1 cluster of size 2 + 1 singleton.
         sizes = sorted(len(c) for c in clusters)
         self.assertEqual(sizes, [1, 2])
+
+
+class TestV4ThresholdFilter(unittest.TestCase):
+    """SCRUM-501: p95 threshold filter — endpoints below threshold are baseline noise."""
+
+    def _issue(self, n, day_offset, body):
+        return ObsIssue(
+            number=n,
+            created_at=datetime(2026, 5, 8) + timedelta(days=day_offset),
+            body=body,
+        )
+
+    def test_default_threshold_constant(self):
+        self.assertEqual(DEFAULT_MIN_P95_MS, 100.0)
+
+    def test_endpoints_above_threshold_filters(self):
+        pairs = {("/api/a", 50.0), ("/api/b", 200.0), ("/api/c", 100.0)}
+        # Threshold is inclusive at 100.
+        self.assertEqual(
+            endpoints_above_threshold(pairs, 100.0),
+            {"/api/b", "/api/c"},
+        )
+
+    def test_v4_p95_threshold_filters_baseline(self):
+        """Two issues both with /api/me at p95=5ms (baseline) must NOT cluster
+        under v4. Under v3 they would have shared endpoint /api/me.
+        """
+        baseline = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/me  p95_ms=5\n"
+        )
+        a = self._issue(1, 0, baseline)
+        b = self._issue(2, 1, baseline)
+        self.assertFalse(are_eligible_to_cluster(a, b))
+
+    def test_v4_above_threshold_clusters(self):
+        """Two issues with /api/foo at p95=200ms (above the 100ms threshold)
+        DO cluster under v4.
+        """
+        slow = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/foo  p95_ms=200\n"
+        )
+        a = self._issue(1, 0, slow)
+        b = self._issue(2, 1, slow)
+        self.assertTrue(are_eligible_to_cluster(a, b))
+
+    def test_v4_custom_threshold_override(self):
+        """The threshold parameter can be overridden per-invocation."""
+        body = (
+            "Triggered by status=YELLOW\n"
+            "1. WebTransaction/Go/GET /api/x  p95_ms=75\n"
+        )
+        a = self._issue(1, 0, body)
+        b = self._issue(2, 0, body)
+        # Default threshold (100): below → does NOT cluster.
+        self.assertFalse(are_eligible_to_cluster(a, b))
+        # Lower threshold (50): above → clusters.
+        self.assertTrue(are_eligible_to_cluster(a, b, min_p95_ms=50.0))
+        # Higher threshold (200): below → does NOT cluster.
+        self.assertFalse(are_eligible_to_cluster(a, b, min_p95_ms=200.0))
+
+    def test_v4_mixed_endpoints_only_slow_one_counts(self):
+        """When issues share both a baseline and a slow endpoint, clustering
+        is driven by the slow one only.
+        """
+        body_a = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/baseline  p95_ms=5\n"
+            "2. WebTransaction/Go/GET /api/slow      p95_ms=300\n"
+        )
+        body_b = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/baseline  p95_ms=8\n"
+            "2. WebTransaction/Go/GET /api/slow      p95_ms=400\n"
+        )
+        a = self._issue(1, 0, body_a)
+        b = self._issue(2, 1, body_b)
+        self.assertTrue(are_eligible_to_cluster(a, b))
+
+    def test_v4_corpus_pattern_two_baseline_only_issues_dont_cluster(self):
+        """End-to-end via cluster(): two issues sharing only baseline endpoints
+        produce two singletons under v4 even though they share endpoint names.
+        This is the SCRUM-500 corpus failure mode reproduced as a fixture.
+        """
+        body = (
+            "Triggered by status=RED\n"
+            "1. WebTransaction/Go/GET /api/me              p95_ms=7\n"
+            "2. WebTransaction/Go/GET /api/teams/status    p95_ms=2\n"
+            "3. WebTransaction/Go/GET /api/zoom/status     p95_ms=3\n"
+        )
+        a = self._issue(1, 0, body)
+        b = self._issue(2, 1, body)
+        clusters = cluster([a, b])
+        self.assertEqual([len(c) for c in clusters], [1, 1])
 
 
 if __name__ == "__main__":
