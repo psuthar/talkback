@@ -15,6 +15,7 @@ Source of truth: This file maps each rule family to a single owning policy file 
 | Project context, architecture, global guardrails | `docs/agent/overview.md` | `repo-map`, `feature-plan` |
 | Repository commands and MCP setup | `docs/agent/mcp-servers.md` | `repo-map`, `epic-run` |
 | Jira implementation lifecycle | `docs/agent/workflow-jira.md` | `epic-run` |
+| Ticket-lint rule set, exit codes, rollout, rollback | `docs/agent/ticket-lint.md` | `jira-ticket-lint` |
 | FULL_AUTO merge gating and cleanup | `docs/agent/workflow-full-auto.md` | `epic-run` |
 | Epic orchestration policy | `docs/agent/workflow-epic-run.md` | `epic-run` |
 | Test requirements and validation gates | `docs/agent/testing-validation.md` | `smoke-tests`, `e2e-tests` |

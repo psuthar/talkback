@@ -40,7 +40,7 @@ These guardrails prioritize correctness and low-regression changes over speed.
 When asked to implement a Jira ticket:
 
 1. Read ticket and identify affected areas.
-2. Transition Jira to In Progress.
+2. Run ticket lint (`docs/agent/workflow-jira.md` step 0.5); on pass, transition Jira to In Progress. Warn-only for week 1 after rollout; hard stop from week 2.
 3. Create `feat/<ticket-number>` from latest `main`.
 4. Implement requested scope only.
 5. Add/update required tests per `docs/agent/testing-validation.md`.

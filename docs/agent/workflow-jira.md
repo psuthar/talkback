@@ -15,7 +15,29 @@ Source of truth: This file owns the standard Jira ticket implementation lifecycl
 
 ## Mandatory Sequence
 
-1. Transition issue to In Progress.
+### Step 0.5: Ticket-lint gate (mandatory; runs before step 1)
+
+Run the structural lint against the Jira description **before** any transition to In Progress. The agent fetches the description via `mcp__atlassian__jira_get_issue`, converts ADF → Markdown (per `.claude/skills/jira-ticket-lint/SKILL.md`), and invokes:
+
+```bash
+python3 scripts/jira_ticket_lint.py \
+  --description-file <tmp.md> --issue-type <type> --ticket <KEY>
+```
+
+| Lint exit | With `agent-authored` label | Action |
+|---|---|---|
+| `0` | n/a | Proceed to step 1. |
+| `2` | yes | Auto-fix loop (`.claude/skills/jira-ticket-lint/SKILL.md`, max 1 retry). On second exit-2 → halt with `halt_category: "spec_missing"`; do not transition. |
+| `2` | no | Halt immediately with Jira comment listing gaps; do not transition. Never mutate human-authored prose. |
+| `1` | any | Halt regardless of label; structural failure (empty body, bad issue type) needs human attention. |
+
+Rule set and rollback trigger are owned by `docs/agent/ticket-lint.md` (SCRUM-490).
+
+**Rollout:** warn-only for the first calendar week after this gate lands — the lint runs and logs results, but does **not** block transition. From week 2 onward the gate is enforced. The flip date is recorded by inserting a row tagged `mode: enforce` into `ops/define-kpis/lint-runs.log` (manual marker before flipping). A 20-ticket sample with ≥ 80% pass rate must be observed before flipping; if the sample falls short, extend warn-only.
+
+### Numbered sequence
+
+1. Transition issue to In Progress (only after step 0.5 passes, or — during warn-only week — after step 0.5 records its outcome regardless of exit code).
 2. Create and checkout `feat/<ticket-number>` from `main`.
 3. Implement + validate on that feature branch only.
 4. Push branch and create PR.
@@ -25,6 +47,7 @@ Source of truth: This file owns the standard Jira ticket implementation lifecycl
 
 Hard stops:
 
+- No In Progress transition before step 0.5 lint exits `0` (from week 2 onward; week 1 is warn-only).
 - No product-code edits/tests/PR finalization before step 1.
 - No implementation commits on `main`.
 - No In Review transition before PR exists.
