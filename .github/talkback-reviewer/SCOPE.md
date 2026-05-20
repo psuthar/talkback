@@ -49,3 +49,5 @@ The escalation path exists so that the skip filter can be aggressive without per
 ## Versioning and changes
 
 Changes to this contract follow the same PR review process as code. The reviewer's prompt SHA references the SCOPE.md commit SHA that produced it — when SCOPE.md changes, the prompt must be regenerated in the same PR, and the version pin in the workflow must update. This is the audit trail.
+
+The prompt itself lives at `.github/talkback-reviewer/PROMPT.md` (SCRUM-513). It pins to a SCOPE.md commit via a `SCOPE.md@<sha>` line at the top; the orchestration module (Phase 1b) enforces the pin at runtime.
