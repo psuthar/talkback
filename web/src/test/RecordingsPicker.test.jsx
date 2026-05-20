@@ -593,4 +593,26 @@ describe('RecordingsPicker (SCRUM-463 unified)', () => {
     expect(importBtn.disabled).toBe(false)
   })
 
+  // SCRUM-507: the filters-row search input, date-range select, and Load
+  // recordings button must share the same vertical padding so they baseline-
+  // align on the flex row (parent uses alignItems: center). Before this
+  // ticket the button had padding '8px 14px' while inputs had '6px 8px' —
+  // the asymmetric vertical padding visibly placed the button a few pixels
+  // below the dropdown in the Import meeting recording modal. The regression
+  // would re-emerge if anyone bumped primaryButtonStyle's vertical padding
+  // back up; this test pins the contract.
+  it('SCRUM-507: Load recordings button shares vertical padding with the filters-row inputs', () => {
+    global.fetch = vi.fn()
+    renderPicker({})
+    const searchInput = screen.getByTestId('recordings-picker-search')
+    const dateSelect = screen.getByTestId('recordings-picker-range')
+    const loadButton = screen.getByTestId('recordings-picker-load')
+
+    // Inline padding shorthand uses '6px' as the vertical value on all three.
+    // jsdom preserves the shorthand string when applied via React's style prop.
+    expect(searchInput.style.padding).toMatch(/^6px /)
+    expect(dateSelect.style.padding).toMatch(/^6px /)
+    expect(loadButton.style.padding).toMatch(/^6px /)
+  })
+
 })
