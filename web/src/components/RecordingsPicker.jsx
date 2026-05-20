@@ -745,12 +745,19 @@ const rowStyle = (disabled) => ({
 })
 const titleStyle = { fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }
 const footerStyle = { display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end' }
+// SCRUM-507: vertical padding reduced from 8px to 6px to match inputStyle
+// (which uses '6px 8px'). The filters row at line 471 places search input +
+// date-range select + this button on a shared flex baseline; the previous
+// 8px asymmetry caused the "Load recordings" button to sit a few pixels
+// below the dropdown. Horizontal padding (14px) kept for CTA breathing room.
+// Both primary and secondary updated together to preserve their visual
+// height parity in footer rows where they appear side-by-side.
 const primaryButtonStyle = {
-  padding: '8px 14px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '4px',
+  padding: '6px 14px', fontSize: '13px', fontWeight: 500, border: 'none', borderRadius: '4px',
   backgroundColor: '#1976d2', color: '#fff', cursor: 'pointer',
 }
 const secondaryButtonStyle = {
-  padding: '8px 14px', fontSize: '13px', fontWeight: 500, border: '1px solid #ccc', borderRadius: '4px',
+  padding: '6px 14px', fontSize: '13px', fontWeight: 500, border: '1px solid #ccc', borderRadius: '4px',
   backgroundColor: '#fff', color: '#444', cursor: 'pointer',
 }
 const confirmStyle = { borderTop: '1px solid #eee', paddingTop: '12px', marginTop: '4px' }
