@@ -41,6 +41,7 @@ Rule set and rollback trigger are owned by `docs/agent/ticket-lint.md` (SCRUM-49
 2. Create and checkout `feat/<ticket-number>` from `main`.
 3. Implement + validate on that feature branch only.
 4. Push branch and create PR.
+4.5. **PR-body lint gate (SCRUM-504, mandatory; same warn-only → enforce rollout as step 0.5).** Run the same `scripts/jira_ticket_lint.py` against the PR body with `--issue-type PR`; agent fetches the body via `mcp__github__pull_request_read (method: get)`. Three rules apply: `PR.jira_link` (body references `SCRUM-N`), `PR.summary` (≥ 1 bullet), `PR.test_plan` (≥ 1 checkbox). On exit 2 with `agent-authored` label on the linked Jira ticket → invoke the auto-fix loop in `.claude/skills/jira-ticket-lint/SKILL.md` (PR mode). On exit 2 without the label OR exit 1 → halt with a PR comment listing gaps; do not mutate the body. The lint runs against the same `ops/define-kpis/lint-runs.log` as Jira-ticket lint (each row carries `issue_type: "PR"` so the KPI snapshot can separate them).
 5. Transition issue to In Review.
 6. Post structured Jira completion comment.
 7. FULL_AUTO only: continue with post-PR automation rules.
@@ -48,6 +49,7 @@ Rule set and rollback trigger are owned by `docs/agent/ticket-lint.md` (SCRUM-49
 Hard stops:
 
 - No In Progress transition before step 0.5 lint exits `0` (from week 2 onward; week 1 is warn-only).
+- No In Review transition before step 4.5 PR lint exits `0` (from week 2 onward; week 1 is warn-only).
 - No product-code edits/tests/PR finalization before step 1.
 - No implementation commits on `main`.
 - No In Review transition before PR exists.

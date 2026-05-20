@@ -146,3 +146,52 @@ The lint script reads ATX (`#`/`##`/`###`) headers and `- [ ]` checkboxes. The c
 - **No auto-fix for exit 1.** Structural failures (empty body, bad issue type) always halt — humans must address.
 - **No write before transition.** The lint runs before `jira_transition_issue`; the auto-fix updates description but does not transition. The caller (`workflow-jira` step 0.5) transitions only after lint returns exit 0.
 - **Log every invocation.** The lint script writes a JSONL row to `ops/define-kpis/lint-runs.log` on every call (including auto-fix retries). Do not pass `--log=` to disable except in tests.
+
+---
+
+## PR-body lint (SCRUM-504)
+
+The same script lints PR descriptions via `--issue-type PR`. Three rules apply:
+
+| Rule | Constraint |
+|---|---|
+| `PR.jira_link` | body matches `SCRUM-\d+` somewhere |
+| `PR.summary` | `## Summary` section present + ≥ 1 non-empty bullet |
+| `PR.test_plan` | `## Test plan` section present + ≥ 1 checkbox |
+
+### When to run
+
+After `mcp__github__create_pull_request` returns the PR number, or against the prepared body before creation. The agent runtime invokes the lint as part of `docs/agent/workflow-jira.md` step 4.5 (warn-only week 1 → enforce week 2+, mirroring the step 0.5 rollout).
+
+### Algorithm
+
+1. Fetch the PR body via `mcp__github__pull_request_read (method: get)`; capture `body` field.
+2. Write the body to a temp file (e.g. `/tmp/pr-<N>-body.md`).
+3. Resolve the linked Jira ticket from the body (`SCRUM-\d+` regex match — the same pattern the lint enforces).
+4. Fetch the Jira ticket's labels via `mcp__atlassian__jira_get_issue`. Cache the labels alongside the PR check so this is one MCP call per PR per session.
+5. Run `python3 scripts/jira_ticket_lint.py --description-file /tmp/pr-<N>-body.md --issue-type PR --ticket SCRUM-XX`.
+6. Branch on exit code:
+   - `0` → proceed (transition Jira to In Review, post completion comment, FULL_AUTO polling per existing flow).
+   - `2` with `agent-authored` label on the linked Jira ticket → run the auto-fix patch loop (below) once; halt if second exit-2.
+   - `2` without `agent-authored` label → halt; post a PR comment listing gaps; do NOT mutate the body.
+   - `1` → halt regardless of label.
+
+### Auto-fix patch loop (PR mode)
+
+1. Read structured gaps from stdout JSON.
+2. Build a patched body by inserting/repairing only the named sections. Never overwrite the full body — preserve the human-written or human-edited prose.
+3. Apply via `mcp__github__update_pull_request` (or equivalent body-update path). Same section-only patching rule as Jira tickets.
+4. Re-run lint with `--max-retries=1` semantics (the cap lives in the lint script; the skill MUST NOT call lint a third time after a single patched re-run).
+5. On second exit-2 → halt with `halt_category: spec_missing` (epic context) or post a PR comment + halt the implement flow.
+
+### What auto-fix is allowed to change
+
+Same scope guard as Jira-ticket auto-fix:
+- **Allowed:** add a missing `## Jira` line with the SCRUM-N reference; add a missing `## Summary` section with a placeholder bullet (e.g. `- See commit message.`); add a missing `## Test plan` section with a single `- [ ]` placeholder ("(fill in)").
+- **Not allowed:** rewriting existing Summary/Test plan content, changing the PR title, modifying labels, restructuring sections beyond the failing rule's scope.
+
+### Authorship signal — why we check the Jira ticket, not the PR author
+
+The PR author is usually the human under whose GitHub account the agent acts (the same misleading signal as Jira `creator`). The linked Jira ticket's `agent-authored` label is the only reliable authorship signal. This is consistent with the Jira-ticket-mode loop. The agent runtime resolves the label once per PR per session and caches it.
+
+If a PR body has no Jira reference at all (`PR.jira_link` failed), the auto-fix loop CANNOT determine authorship and must halt with a comment regardless of any inferred label.

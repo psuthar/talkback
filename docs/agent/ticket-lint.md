@@ -14,10 +14,15 @@ The lint runs during step 0.5 of `docs/agent/workflow-jira.md` — before any Ji
 | `EPIC.goal` | Epic | Goal | non-empty section | 2 (fixable) |
 | `EPIC.scope_present` | Epic | Scope | non-empty section | 2 (fixable) |
 | `EPIC.success_criteria` | Epic | Success criteria | section present + ≥ 2 checkboxes | 2 (fixable) |
+| `PR.jira_link` | PR | (whole body) | matches `SCRUM-\d+` regex anywhere | 2 (fixable) |
+| `PR.summary` | PR | Summary | section present + ≥ 1 non-empty bullet | 2 (fixable) |
+| `PR.test_plan` | PR | Test plan | section present + ≥ 1 checkbox | 2 (fixable) |
 | `STRUCT.empty` | any | (whole body) | description non-empty | 1 (unfixable) |
-| `STRUCT.bad_type` | any | (meta) | `issue_type ∈ {Epic, Story, Task, Bug}` | 1 (unfixable) |
+| `STRUCT.bad_type` | any | (meta) | `issue_type ∈ {Epic, Story, Task, Bug, PR}` | 1 (unfixable) |
 
 Section-header matching is case-insensitive and tolerates ATX (`#`/`##`/`###`) and bold-only (`**Heading**`) styles. The rule list is intentionally small for v1; new rules land via the Phase 4 rule-effectiveness review (every 2 sprints) when log evidence shows they would block real issues.
+
+**PR-mode (SCRUM-504):** the same script lints PR bodies via `--issue-type PR`. Agent runtime invokes after `mcp__github__create_pull_request` (or against the prepared body before creation); rules mirror the canonical format documented in `docs/agent/workflow-jira.md` Jira Completion Comment section and surfaced at PR-creation time by `.github/PULL_REQUEST_TEMPLATE.md` (SCRUM-503). Auto-fix loop applies when the linked Jira ticket carries the `agent-authored` label — the lint script does not fetch the ticket itself; the agent runtime resolves the label before invoking the auto-fix patch.
 
 ## Exit codes
 
@@ -30,9 +35,16 @@ Section-header matching is case-insensitive and tolerates ATX (`#`/`##`/`###`) a
 ## Invocation
 
 ```bash
+# Jira ticket
 python3 scripts/jira_ticket_lint.py \
   --description-file /tmp/SCRUM-XX.md \
   --issue-type Story \
+  --ticket SCRUM-XX
+
+# PR body (SCRUM-504)
+python3 scripts/jira_ticket_lint.py \
+  --description-file /tmp/pr-N-body.md \
+  --issue-type PR \
   --ticket SCRUM-XX
 ```
 

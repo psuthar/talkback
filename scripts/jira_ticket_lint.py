@@ -45,7 +45,7 @@ class LintResult:
     fixable: bool
 
 
-VALID_ISSUE_TYPES = ("Epic", "Story", "Task", "Bug")
+VALID_ISSUE_TYPES = ("Epic", "Story", "Task", "Bug", "PR")
 
 
 _HEADING_PATTERNS = (
@@ -200,6 +200,69 @@ def rule_epic_success_criteria(description: str, issue_type: str) -> list[Gap]:
     return []
 
 
+# SCRUM-504: PR-body lint rules. Issue type "PR" routes through these instead
+# of the Jira-ticket rules. Mirror the existing AC/Epic-style structure.
+
+_JIRA_LINK_RE = re.compile(r"SCRUM-\d+")
+_BULLET_RE = re.compile(r"^\s*[-*]\s+\S")
+
+
+def rule_pr_jira_link(description: str, issue_type: str) -> list[Gap]:
+    if issue_type != "PR":
+        return []
+    if not _JIRA_LINK_RE.search(description):
+        return [
+            Gap(
+                "PR.jira_link",
+                "Jira",
+                "PR body must reference a SCRUM-N Jira ticket",
+            )
+        ]
+    return []
+
+
+def rule_pr_summary(description: str, issue_type: str) -> list[Gap]:
+    if issue_type != "PR":
+        return []
+    body = _find_section(description, "Summary")
+    if body is None:
+        return [
+            Gap("PR.summary", "Summary", "PR requires a 'Summary' section")
+        ]
+    if not any(_BULLET_RE.match(line) for line in body.split("\n")):
+        return [
+            Gap(
+                "PR.summary",
+                "Summary",
+                "Summary section needs at least one non-empty bullet",
+            )
+        ]
+    return []
+
+
+def rule_pr_test_plan(description: str, issue_type: str) -> list[Gap]:
+    if issue_type != "PR":
+        return []
+    body = _find_section(description, "Test plan")
+    if body is None:
+        return [
+            Gap(
+                "PR.test_plan",
+                "Test plan",
+                "PR requires a 'Test plan' section",
+            )
+        ]
+    if _count_checkboxes(body) < 1:
+        return [
+            Gap(
+                "PR.test_plan",
+                "Test plan",
+                "Test plan section needs at least one checkbox item",
+            )
+        ]
+    return []
+
+
 RULES: list[Callable[[str, str], list[Gap]]] = [
     rule_ac_present,
     rule_ac_min_count,
@@ -207,6 +270,9 @@ RULES: list[Callable[[str, str], list[Gap]]] = [
     rule_epic_goal,
     rule_epic_scope_present,
     rule_epic_success_criteria,
+    rule_pr_jira_link,
+    rule_pr_summary,
+    rule_pr_test_plan,
 ]
 
 

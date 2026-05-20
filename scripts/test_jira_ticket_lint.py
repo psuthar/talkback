@@ -171,6 +171,90 @@ EPIC_MULTI_GAP = """## Goal
 Maybe?
 """
 
+# SCRUM-504: PR-mode fixtures derived from the canonical PR body format used
+# across SCRUM-485 → SCRUM-503 (the agent-authored uplift PRs all follow it).
+
+PR_OK = """## Jira
+
+SCRUM-499
+
+## Summary
+
+- New thing shipped.
+- Old thing improved.
+
+## Test plan
+
+- [x] Tests pass.
+- [ ] CI green.
+
+## Risks / follow-ups
+
+- Edge case noted.
+"""
+
+PR_MISSING_JIRA = """## Summary
+
+- Bullet here.
+
+## Test plan
+
+- [ ] Tested.
+"""
+
+PR_MISSING_SUMMARY = """## Jira
+
+SCRUM-100
+
+## Test plan
+
+- [ ] Tested.
+"""
+
+PR_MISSING_TEST_PLAN = """## Jira
+
+SCRUM-100
+
+## Summary
+
+- Bullet.
+"""
+
+PR_EMPTY_SUMMARY = """## Jira
+
+SCRUM-100
+
+## Summary
+
+## Test plan
+
+- [ ] Tested.
+"""
+
+PR_EMPTY_TEST_PLAN = """## Jira
+
+SCRUM-100
+
+## Summary
+
+- Bullet here.
+
+## Test plan
+
+(none yet)
+"""
+
+PR_JIRA_LINK_IN_BODY_TEXT = """## Summary
+
+This change is required by SCRUM-42 (link shows up in prose, not in a Jira section).
+
+- Bullet.
+
+## Test plan
+
+- [x] Done.
+"""
+
 
 class TestPassCases(unittest.TestCase):
     def test_story_ok(self):
@@ -229,6 +313,57 @@ class TestFailCases(unittest.TestCase):
         result = lint.lint(EPIC_SC_ONE_CHECKBOX, "Epic")
         self.assertEqual(result.exit_code, 2)
         self.assertIn("EPIC.success_criteria", _rule_ids(result))
+
+
+class TestPRMode(unittest.TestCase):
+    """SCRUM-504: --issue-type PR routes through 3 new rules."""
+
+    def test_pr_ok(self):
+        result = lint.lint(PR_OK, "PR")
+        self.assertEqual(result.exit_code, 0, result.gaps)
+
+    def test_pr_missing_jira_link(self):
+        result = lint.lint(PR_MISSING_JIRA, "PR")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("PR.jira_link", _rule_ids(result))
+
+    def test_pr_missing_summary(self):
+        result = lint.lint(PR_MISSING_SUMMARY, "PR")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("PR.summary", _rule_ids(result))
+
+    def test_pr_missing_test_plan(self):
+        result = lint.lint(PR_MISSING_TEST_PLAN, "PR")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("PR.test_plan", _rule_ids(result))
+
+    def test_pr_empty_summary_section(self):
+        result = lint.lint(PR_EMPTY_SUMMARY, "PR")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("PR.summary", _rule_ids(result))
+
+    def test_pr_empty_test_plan_section(self):
+        result = lint.lint(PR_EMPTY_TEST_PLAN, "PR")
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("PR.test_plan", _rule_ids(result))
+
+    def test_pr_jira_link_in_body_text_counts(self):
+        """A SCRUM-N reference anywhere in the body satisfies PR.jira_link.
+        Per the rule's intent — Jira section is a convention, but the
+        requirement is the *link* exists, not the section heading.
+        """
+        result = lint.lint(PR_JIRA_LINK_IN_BODY_TEXT, "PR")
+        # PR.jira_link should NOT fire (link is in prose).
+        self.assertNotIn("PR.jira_link", _rule_ids(result))
+
+    def test_pr_jira_rules_dont_apply_to_other_types(self):
+        # The 3 new PR rules should not affect Story / Task / Epic / Bug lint.
+        # STORY_OK has no Jira link or Test plan section but should still pass.
+        for t in ("Story", "Task", "Epic", "Bug"):
+            result = lint.lint(STORY_OK if t == "Story" else BUG_OK if t == "Bug" else TASK_OK if t == "Task" else EPIC_OK, t)
+            self.assertNotIn("PR.jira_link", _rule_ids(result))
+            self.assertNotIn("PR.summary", _rule_ids(result))
+            self.assertNotIn("PR.test_plan", _rule_ids(result))
 
 
 class TestStructural(unittest.TestCase):
