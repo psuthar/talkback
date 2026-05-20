@@ -63,3 +63,7 @@ Tradeoff: these rules bias toward correctness/caution over speed; for trivial ta
 
 The observability agent (`.github/workflows/observability-agent.yml` + `cmd/obsworker/`) files daily GitHub issues with labels `[observability, agent]` on YELLOW or RED status. The `discovery-digest` skill (`.claude/skills/discovery-digest/SKILL.md`) and its weekly workflow (`.github/workflows/discovery-digest.yml`, SCRUM-497) bridge those signals into proposed Jira tickets — dedup against existing `source:obs-agent`-labelled Jira tickets, cluster by endpoint, render a Markdown proposal, and on operator approval call `jira_create_issue` with a remote link back to the obs issue. The skill never auto-creates; the cron workflow only surfaces candidates as a tracking issue and stops at the approval gate.
 
+## TalkBack reviewer (PR-time AI review)
+
+The talkback-reviewer agent (Epic SCRUM-508) comments on PRs at open with high-signal observations — risk-surface framing, missing test coverage on the changed surface, cross-file behavior deltas, regression sniffing on consolidated branches. Scope is bounded by `.github/talkback-reviewer/SCOPE.md` (the policy contract — any prompt change must update the contract first). The reviewer skips draft PRs, docs-only diffs, `skip-reviewer`-labelled PRs, bot authors, and source-LOC under threshold; explicit summon via `/talkback-review` bypasses the filter. A daily token-budget cap stops cost runaway. Reviewer is silent when it has nothing specific to say — a blank review is a successful outcome.
+
