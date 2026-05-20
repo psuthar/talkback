@@ -1,6 +1,6 @@
 # TalkBack Reviewer — Prompt
 
-**Authored against:** `SCOPE.md@9223abb` (SCRUM-509).
+**Authored against:** `SCOPE.md@1b77fe3` (last touched by SCRUM-513; the versioning paragraph linking SCOPE.md → PROMPT.md is the only substantive edit since SCRUM-509). Bumped by SCRUM-514 as the first exercise of the pin-bump rule.
 
 This is the prompt the talkback-reviewer model runs on each invocation. Owner: epic SCRUM-512. Phase 1a ticket: SCRUM-513.
 
