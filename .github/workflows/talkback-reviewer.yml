@@ -22,6 +22,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so scripts/reviewer/run.py:_resolve_scope_sha can
+          # find the last commit that touched SCOPE.md. The default depth=1
+          # makes `git log -1 -- SCOPE.md` fall back to HEAD when HEAD did
+          # not touch SCOPE.md, which trips StalePromptPinError on every
+          # invocation after an unrelated commit lands (SCRUM-517).
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
