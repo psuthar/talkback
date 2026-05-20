@@ -76,9 +76,18 @@ class _GhGitHubClient:
         _, files = _gh_api(
             "GET", f"/repos/{repo}/pulls/{pr_number}/files?per_page=300", token=self._token
         )
-        diff_url = pr.get("diff_url", "")
+        # SCRUM-518: fetch the diff via the API endpoint with an Accept header
+        # rather than `pr.diff_url`. The diff_url is the web UI URL
+        # (github.com/.../N.diff), which 404s under Bearer-token auth on
+        # private repos. The API endpoint + `Accept: application/vnd.github.v3.diff`
+        # returns the raw unified diff and authenticates with the workflow token.
         diff_req = urllib.request.Request(
-            diff_url, headers={"Authorization": f"Bearer {self._token}"}
+            f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/vnd.github.v3.diff",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
         )
         diff_text = urllib.request.urlopen(diff_req).read().decode("utf-8", errors="replace")
         return PRContent(
