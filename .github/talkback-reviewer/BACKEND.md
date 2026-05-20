@@ -48,11 +48,29 @@ These steps must be done by a repo admin before the workflow can succeed:
    git commit -m "Initialise reviewer-state branch (SCRUM-515)"
    git push origin reviewer-state
    ```
-2. **Protect the branch.** Repo Settings → Branches → Add rule for `reviewer-state`:
-   - Require pull request reviews before merging: **off** (the workflow needs unrestricted write).
-   - Restrict pushes that create matching branches: **on**.
-   - Allowed actors: just `github-actions[bot]` (the workflow identity).
-   This prevents accidental human pushes from corrupting the counter.
+2. **Protect the branch (soft protection, configurable).** This repo currently runs with **soft protection** — no server-side push lockdown, only convention. Hardening is available if you need it.
+
+   *Why soft protection is acceptable here:*
+   - The maintainer is the only human with push access to the repo. Accidental writes from outsiders are not in the threat model.
+   - The branch's `README.md` literally says "do not edit by hand".
+   - The workflow's CAS (SHA-based PUT via the Contents API, `GitBackedBudgetStore` in `scripts/reviewer/git_backed_budget_store.py`) prevents concurrent-write *corruption* even without a server-side lock; the worst a bad manual push could do is roll the counter back, which the next workflow run will detect on the conflict retry path.
+
+   *Why we didn't enable hard protection out of the box:* the "Restrict who can push to matching branches" option in classic GitHub branch protection is only available on Pro/Team/Enterprise plans for private repos. On a free plan it does not appear in the rule UI. None of the other classic-rule checkboxes restrict actors — most of them (PR-required, status-checks, lock-branch, signed-commits) would actively *break* the workflow's direct push.
+
+   *If you do want hard protection*, use **Rulesets** instead of classic branch protection (Rulesets are free on all plans):
+
+   - Repo Settings → Rules → Rulesets → **New ruleset**.
+   - Target: branch name pattern `reviewer-state`.
+   - Enforcement status: **Active**.
+   - Rules:
+     - ✅ Restrict creations
+     - ✅ Restrict updates
+     - ✅ Restrict deletions
+     - ✅ Block force pushes
+     - Leave everything else unchecked. *Do not* check "Require a pull request before merging" or anything that requires a status check — those would block the workflow.
+   - Bypass list: add the actor that the workflow runs as. On most setups that's the **"Repository admin"** role (or whichever role/app GitHub offers in the bypass picker). Without a bypass entry, "Restrict updates" blocks the workflow itself and bricks the budget store.
+
+   After saving, verify by trying a manual `git push origin reviewer-state` (after touching the local checkout) — it should be rejected with a ruleset-prevents-this-push error. The workflow continues to succeed because it pushes via the GitHub Contents API with the bypassed identity.
 3. **Wire the secret.** Repo Settings → Secrets and variables → Actions → New repository secret:
    - Name: `ANTHROPIC_API_KEY`
    - Value: a key with `messages:write` permission.
