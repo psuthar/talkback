@@ -1,0 +1,48 @@
+name: talkback-reviewer
+
+# SCRUM-515 — Phase 1c of SCRUM-512.
+# Triggers when someone comments `/talkback-review` on a PR. Bypasses the
+# skip filter (Phase 0b) per SCOPE.md "Escalation path". Phase 2 will add
+# an auto-trigger on `pull_request.opened` that does consult the filter.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  review:
+    if: |
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '/talkback-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Acknowledge invocation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.issue.number }}" \
+            --body "talkback-reviewer acknowledged — running. (workflow run: ${{ github.run_id }})"
+
+      - name: Run reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REVIEWER_MODEL: ${{ vars.REVIEWER_MODEL || 'claude-sonnet-4-6' }}
+          REVIEWER_DAILY_TOKEN_CAP: ${{ vars.REVIEWER_DAILY_TOKEN_CAP || '500000' }}
+          REVIEWER_MAX_INPUT_TOKENS: ${{ vars.REVIEWER_MAX_INPUT_TOKENS || '100000' }}
+        run: |
+          python -m scripts.reviewer \
+            --pr "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --source manual
