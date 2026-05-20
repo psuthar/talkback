@@ -2,3 +2,4 @@
 {"ts": "2026-05-20T18:44:15Z", "ticket": "SCRUM-507", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
 {"ts": "2026-05-20T18:44:33Z", "ticket": "SCRUM-507", "issue_type": "Task", "exit": 0, "gaps": []}
 {"ts": "2026-05-20T19:06:42Z", "ticket": "SCRUM-509", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-20T21:13:53Z", "ticket": "SCRUM-511", "issue_type": "Task", "exit": 0, "gaps": []}
