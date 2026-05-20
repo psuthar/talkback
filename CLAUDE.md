@@ -12,6 +12,7 @@ This is the repository entrypoint for agent behavior. Keep this file concise and
 - Testing and validation requirements: `docs/agent/testing-validation.md`
 - Subagent and test routing: `docs/agent/subagent-routing.md`
 - Rule ownership map: `docs/agent/rule-ownership.md`
+- TalkBack reviewer scope contract: `.github/talkback-reviewer/SCOPE.md`
 
 ## Feature Specs
 
