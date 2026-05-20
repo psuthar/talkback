@@ -193,3 +193,63 @@ func TestUserCanAccessSession_SCRUM228_MatrixCoverage(t *testing.T) {
 		require.True(t, ok, "creator with a membership row keeps access even when created_by is NULL")
 	})
 }
+
+// TestGetUsersByIDs_BatchLookup pins the SCRUM-506 contract: GetUsersByIDs
+// returns a map of id -> User for the given IDs in a single batched query,
+// eliminating the N+1 GetUserByID-in-a-loop pattern that caused the
+// /api/invitations/ p95 regression (341–444 ms observed in obs#158, obs#219).
+func TestGetUsersByIDs_BatchLookup(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	// Create three users.
+	users := make([]*models.User, 3)
+	for i := range users {
+		u := &models.User{
+			ID:          uuid.New(),
+			Email:       "scrum506-batch-" + uuid.New().String() + "@example.com",
+			DisplayName: "Batch User",
+			Status:      models.UserStatusActive,
+			GlobalRole:  models.GlobalRoleParticipant,
+		}
+		require.NoError(t, db.CreateUser(ctx, u))
+		users[i] = u
+	}
+
+	// Include one missing UUID alongside the real ones.
+	missing := uuid.New()
+	ids := []uuid.UUID{users[0].ID, missing, users[1].ID, users[2].ID}
+
+	result, err := db.GetUsersByIDs(ctx, ids)
+	require.NoError(t, err)
+	assert.Len(t, result, 3, "missing UUID is absent from result; existing users all present")
+	for _, u := range users {
+		got, ok := result[u.ID]
+		require.True(t, ok, "user %s missing from batch result", u.ID)
+		assert.Equal(t, u.Email, got.Email)
+		assert.Equal(t, u.DisplayName, got.DisplayName)
+	}
+	_, ok := result[missing]
+	assert.False(t, ok, "missing UUID must not appear in result")
+}
+
+// TestGetUsersByIDs_EmptyInput pins the SCRUM-506 contract: GetUsersByIDs
+// returns an empty map and issues no query on empty input. Hot-path callers
+// (ListInvitations on a session with zero invitations + zero memberships)
+// rely on this to avoid a wasted round trip.
+func TestGetUsersByIDs_EmptyInput(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	defer test.TruncateTables(t, db.Pool)
+	ctx := context.Background()
+
+	result, err := db.GetUsersByIDs(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	result, err = db.GetUsersByIDs(ctx, []uuid.UUID{})
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}

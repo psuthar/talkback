@@ -141,11 +141,33 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 	for _, m := range memberships {
 		liveRoleByUserID[m.UserID] = m.Role
 	}
+	// SCRUM-506: batch the user lookups in one query instead of N+1
+	// GetUserByID calls inside the per-invitation and per-membership loops.
+	// The N+1 was the likely cause of the 341–444 ms p95 observed in
+	// obs#158 and obs#219; a session with N invitations and M memberships
+	// previously incurred up to N+M extra round trips just to resolve
+	// inviter and member display names / emails.
+	userIDSet := make(map[uuid.UUID]struct{}, len(list)+len(memberships))
+	for _, inv := range list {
+		userIDSet[inv.InviterUserID] = struct{}{}
+	}
+	for _, m := range memberships {
+		userIDSet[m.UserID] = struct{}{}
+	}
+	userIDs := make([]uuid.UUID, 0, len(userIDSet))
+	for id := range userIDSet {
+		userIDs = append(userIDs, id)
+	}
+	usersByID, err := h.DB.GetUsersByIDs(ctx, userIDs)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to resolve users"})
+		return
+	}
 	items := make([]map[string]interface{}, 0, len(list)+len(memberships))
 	invitedUserIDs := make(map[uuid.UUID]struct{}, len(list))
 	for _, inv := range list {
 		inviterName := ""
-		if u, _ := h.DB.GetUserByID(ctx, inv.InviterUserID); u != nil {
+		if u, ok := usersByID[inv.InviterUserID]; ok && u != nil {
 			inviterName = u.DisplayName
 		}
 		var acceptedByUserID *string
@@ -180,8 +202,8 @@ func (h *Handlers) ListInvitations(w http.ResponseWriter, r *http.Request) {
 		if _, alreadyListed := invitedUserIDs[m.UserID]; alreadyListed {
 			continue
 		}
-		u, _ := h.DB.GetUserByID(ctx, m.UserID)
-		if u == nil {
+		u, ok := usersByID[m.UserID]
+		if !ok || u == nil {
 			// Membership references a user that has been deleted; skip rather
 			// than render a row with no email.
 			continue

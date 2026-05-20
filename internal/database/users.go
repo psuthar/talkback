@@ -59,6 +59,43 @@ func (db *DB) getUserBy(ctx context.Context, where string, arg interface{}) (*mo
 	return u, nil
 }
 
+// GetUsersByIDs returns a map of user ID -> User for the given IDs in a single
+// batched query. IDs with no matching user are absent from the result. Used by
+// ListInvitations to eliminate the N+1 GetUserByID-in-a-loop pattern that
+// caused the /api/invitations/ p95 regression observed in SCRUM-506
+// (obs#158, obs#219 both flagged the endpoint at 340–444 ms p95).
+//
+// Returns an empty map on empty input (no query issued).
+func (db *DB) GetUsersByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]*models.User, error) {
+	out := make(map[uuid.UUID]*models.User, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id, email, display_name, status, global_role, email_verified_at, created_at, updated_at, last_login_at
+		FROM users
+		WHERE id = ANY($1)
+	`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("get users by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		u := &models.User{}
+		if err := rows.Scan(
+			&u.ID, &u.Email, &u.DisplayName, &u.Status, &u.GlobalRole,
+			&u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan user: %w", err)
+		}
+		out[u.ID] = u
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate users by ids: %w", err)
+	}
+	return out, nil
+}
+
 // GetDisplayNamesByEmails returns a map of lowercased email -> display_name for the
 // given email addresses. Inputs are matched case-insensitively (lower(email) on
 // both sides). Emails with no matching user are absent from the result. Used by

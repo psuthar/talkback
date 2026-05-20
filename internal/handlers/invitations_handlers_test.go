@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -595,4 +596,83 @@ func TestResolveInvitation_NoToken_BadRequest(t *testing.T) {
 	h.ResolveInvitation(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestListInvitations_BatchedUserLookup_SCRUM506 pins the SCRUM-506 contract:
+// ListInvitations resolves all inviter and member display names / emails via
+// a single batched GetUsersByIDs call rather than N+1 GetUserByID lookups
+// inside the per-invitation and per-membership loops. The N+1 pattern was the
+// likely cause of the 341–444 ms p95 latency regression observed in obs#158
+// and obs#219.
+//
+// The test creates a session with 5 invitations from the same creator and
+// asserts the response is correct after the batched refactor — same data
+// shape, no missing inviter_name fields, creator surfaced once via the
+// SCRUM-226 synthetic-member path. The previous N+1 implementation would
+// have executed 5 + 1 = 6 GetUserByID round trips; v2 executes one.
+func TestListInvitations_BatchedUserLookup_SCRUM506(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersWithInvitations(t)
+	defer cleanup()
+
+	// Seed creator + session + first invitation via the existing helper.
+	firstInviteeEmail := "scrum506-invitee-0@smoke.test"
+	creator, ls, sess, _ := seedInvitationContext(t, h, firstInviteeEmail, "scrum506")
+
+	// Create 4 additional invitations against the same session by the same
+	// creator. Each one previously incurred a separate GetUserByID lookup for
+	// the inviter; under the batched refactor, all five share the one query.
+	for i := 1; i < 5; i++ {
+		email := fmt.Sprintf("scrum506-invitee-%d@smoke.test", i)
+		body, _ := json.Marshal(map[string]any{"email": email, "role": "participant"})
+		invReq := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sess.ID.String()+"/invitations", bytes.NewReader(body))
+		invReq.Header.Set("Content-Type", "application/json")
+		invReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+		invReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+		invW := httptest.NewRecorder()
+		h.RequireAuth(h.CreateInvitation)(invW, invReq)
+		require.Equal(t, http.StatusCreated, invW.Code, "creating invitation %d: %s", i, invW.Body.String())
+	}
+
+	// List invitations and verify all 5 are returned with the correct
+	// inviter_name (set, because the batched lookup resolved the creator).
+	listReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID.String()+"/invitations", nil)
+	listReq.URL.Path = "/api/sessions/" + sess.ID.String() + "/invitations"
+	listReq.AddCookie(&http.Cookie{Name: auth.Config.SessionCookieName, Value: ls.ID.String()})
+	listW := httptest.NewRecorder()
+	h.RequireAuth(h.ListInvitations)(listW, listReq)
+	require.Equal(t, http.StatusOK, listW.Code, listW.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(listW.Body).Decode(&resp))
+	list, ok := resp["invitations"].([]any)
+	require.True(t, ok)
+
+	// Expected: 5 pending invitations + 1 synthetic creator membership row
+	// (SCRUM-226: the creator has a session_memberships row but no
+	// session_invitations row, so they're surfaced as a synthetic row).
+	require.Len(t, list, 6, "expected 5 invitations + 1 synthetic creator row")
+
+	// Every pending invitation must carry the creator's DisplayName as
+	// inviter_name. A regression to N+1 would still satisfy this assertion;
+	// the value of this test is that the batched path correctly populates
+	// inviter_name for every row (regression-bed for the refactor itself).
+	pendingCount := 0
+	for _, raw := range list {
+		item, _ := raw.(map[string]any)
+		switch item["status"] {
+		case "pending":
+			pendingCount++
+			assert.Equal(t, creator.DisplayName, item["inviter_name"],
+				"pending invitation %s missing inviter_name", item["invited_email"])
+		case "accepted":
+			// Synthetic creator row — empty inviter_name, accepted_at set.
+			assert.Equal(t, "", item["inviter_name"], "synthetic creator row has empty inviter_name")
+			assert.Equal(t, creator.Email, item["invited_email"],
+				"synthetic creator row carries creator email")
+		default:
+			t.Fatalf("unexpected status: %v", item["status"])
+		}
+	}
+	assert.Equal(t, 5, pendingCount, "expected 5 pending invitations")
 }
