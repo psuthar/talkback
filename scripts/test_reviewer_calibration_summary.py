@@ -99,6 +99,24 @@ class RenderTest(unittest.TestCase):
         self.assertIn("Phase 2 gate: Phase 2 can proceed", out)
         self.assertIn("100.0%", out)
 
+    def test_render_shows_halt_decision(self):
+        # Any single harmful overrides high useful% per the rubric.
+        rows = [_row("useful") for _ in range(9)] + [_row("harmful")]
+        out = render(summarise(rows))
+        self.assertIn("Phase 2 gate: HALT", out)
+
+    def test_render_shows_revise_decision(self):
+        # 60% useful sits inside the 50-70 revise band.
+        rows = [_row("useful") for _ in range(6)] + [_row("noisy") for _ in range(4)]
+        out = render(summarise(rows))
+        self.assertIn("Phase 2 gate: Revise", out)
+
+    def test_render_shows_reframe_decision(self):
+        # 40% useful is below the reframe threshold.
+        rows = [_row("useful") for _ in range(4)] + [_row("noisy") for _ in range(6)]
+        out = render(summarise(rows))
+        self.assertIn("Phase 2 gate: Reframe", out)
+
     def test_render_warns_on_skipped_rows(self):
         rows = [_row("useful"), _row("not_a_bucket")]
         out = render(summarise(rows))
