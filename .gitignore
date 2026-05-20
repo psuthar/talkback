@@ -1,6 +1,13 @@
 # Claude Code
 .claude/worktrees/
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Top-level git worktree directory (complement to .claude/worktrees/)
+.worktrees/
+
+# Cursor IDE plan drafts (personal working docs)
+.cursor/plans/
 
 # Epic-run agent state files (transient; may contain API tokens in PR URLs)
 .epic-run/
@@ -100,4 +107,11 @@ artifacts/release-readiness/*
 artifacts/release-readiness-fixture-test/
 artifacts/rr-test/
 artifacts/gap-test/
+
+# Local pr-risk script output (reproducible via scripts/pr_risk_run.py)
+artifacts/pr-risk.json
+artifacts/release-readiness.json
+
+# npm package install output (root-level cache; web/node_modules already implicit)
+node_modules/
 

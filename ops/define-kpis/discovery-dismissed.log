@@ -1,0 +1,2 @@
+{"ts": "2026-05-20T17:48:18Z", "cluster": "cluster_2_api_sessions", "obs_issue_numbers": [219, 307], "anchor": "/api/sessions/", "dismissal_reason": "operator approved only y1; cluster 2 deferred to a future digest run"}
+{"ts": "2026-05-20T17:48:18Z", "cluster": "candidate_3_api_auth_login_singleton", "obs_issue_numbers": [294], "anchor": "/api/auth/login", "dismissal_reason": "operator approved only y1; single-snapshot spike — re-evaluate if it recurs in next digest run"}
