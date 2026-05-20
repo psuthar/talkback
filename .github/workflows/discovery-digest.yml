@@ -23,6 +23,30 @@ jobs:
   digest:
     runs-on: ubuntu-latest
     steps:
+      - name: Ensure labels exist (SCRUM-505 self-heal)
+        # SCRUM-505: the original SCRUM-497 workflow failed on first manual run
+        # because the discovery-digest label didn't exist in the repo and
+        # `gh issue create --label discovery-digest` returned non-zero. This
+        # step creates the labels if missing — idempotent across reruns
+        # (check first, create only if absent; never mutates existing label
+        # color/description on an existing label).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          existing=$(gh label list --json name --jq '.[].name')
+          ensure() {
+            local name="$1" color="$2" desc="$3"
+            if echo "$existing" | grep -qx "$name"; then
+              echo "label exists: $name"
+            else
+              gh label create "$name" --color "$color" --description "$desc"
+              echo "label created: $name"
+            fi
+          }
+          ensure "discovery-digest" "BFD4F2" "Weekly tracking issue from .github/workflows/discovery-digest.yml (SCRUM-497)"
+          ensure "agent" "74A918" "Agent-posted issues (observability, discovery-digest)"
+
       - name: Compute week start (YYYY-MM-DD)
         id: week
         run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
