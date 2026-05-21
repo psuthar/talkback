@@ -1,0 +1,25 @@
+{
+  "ticket": "SCRUM-526",
+  "pr_number": 466,
+  "path": "polling",
+  "snapshot": {
+    "number": 466,
+    "state": "merged",
+    "merged": true,
+    "merge_commit_sha": "6d4e2df3a6aac588c4189415f99c19528aba584e",
+    "mergeable_state": "unknown",
+    "head_ref": "feat/SCRUM-526",
+    "base_ref": "main"
+  },
+  "actions_taken": [
+    "read PR #466: state=merged merged=True mergeable_state=unknown",
+    "PR already merged at 6d4e2df (manual override)",
+    "would: fetch + checkout main + pull --ff-only + branch -D feat/SCRUM-526",
+    "no state file references SCRUM-526; skipping state update",
+    "would transition SCRUM-526 to Done",
+    "would post closure comment (410 chars)"
+  ],
+  "aborted_reason": null,
+  "merged_sha_in_dryrun": "6d4e2df3a6aac588c4189415f99c19528aba584e",
+  "would_post_comment": "FULL_AUTO complete \u2014 polling path (default). PR #466 squash-merged at 6d4e2df3a6aac588c4189415f99c19528aba584e. Final Gate PASS (TalkBack PR Gate + release-readiness), mergeable_state clean (verified via pre-merge guard re-read immediately before merge_pull_request call).\n\nLocal cleanup done:\n- git checkout main, git pull --ff-only origin main (main now at <main-sha-after-pull>)\n- git branch -D feat/SCRUM-526\n"
+}

@@ -1,0 +1,25 @@
+{
+  "ticket": "SCRUM-511",
+  "pr_number": 456,
+  "path": "polling",
+  "snapshot": {
+    "number": 456,
+    "state": "merged",
+    "merged": true,
+    "merge_commit_sha": "491b8f471177916f197756704c515486a2054994",
+    "mergeable_state": "unknown",
+    "head_ref": "feat/SCRUM-511",
+    "base_ref": "main"
+  },
+  "actions_taken": [
+    "read PR #456: state=merged merged=True mergeable_state=unknown",
+    "PR already merged at 491b8f4 (manual override)",
+    "would: fetch + checkout main + pull --ff-only + branch -D feat/SCRUM-511",
+    "would update state file: /Users/psuthar/code/talkback/.epic-run/SCRUM-508.json",
+    "would transition SCRUM-511 to Done",
+    "would post closure comment (410 chars)"
+  ],
+  "aborted_reason": null,
+  "merged_sha_in_dryrun": "491b8f471177916f197756704c515486a2054994",
+  "would_post_comment": "FULL_AUTO complete \u2014 polling path (default). PR #456 squash-merged at 491b8f471177916f197756704c515486a2054994. Final Gate PASS (TalkBack PR Gate + release-readiness), mergeable_state clean (verified via pre-merge guard re-read immediately before merge_pull_request call).\n\nLocal cleanup done:\n- git checkout main, git pull --ff-only origin main (main now at <main-sha-after-pull>)\n- git branch -D feat/SCRUM-511\n"
+}
