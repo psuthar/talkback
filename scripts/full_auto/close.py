@@ -59,7 +59,16 @@ class CloseResult:
     main_sha_after: str | None = None
     jira_transitioned: bool = False
     branch_deleted: bool = False
-    state_file_updated: bool = False
+    # SCRUM-538: tri-state replacing the old bool. Values:
+    #   "updated"        — state.mark_done modified the file
+    #   "already_done"   — file found, but the ticket entry was already done
+    #                       (idempotent re-run)
+    #   "no_state_file"  — no .epic-run/<EPIC>.json references this ticket
+    #                       (standalone, non-epic ticket — the default case)
+    #   "would_update"   — dry-run preview: the file would have been written
+    # The earlier bool-typed `state_file_updated: bool = False` ambiguously
+    # collapsed "no_state_file" and "already_done" into the same `false` value.
+    state_file_status: str = "no_state_file"
     closure_comment_id: int | None = None
     actions_taken: list[str] = field(default_factory=list)
     aborted_reason: str | None = None
@@ -174,7 +183,7 @@ def close(
     state_path = state.find_state_file(ticket, repo_root=repo_root)
     if state_path is not None:
         if dry_run:
-            result.state_file_updated = True
+            result.state_file_status = "would_update"
             _act(result, f"would update state file: {state_path}")
         else:
             updated = state.mark_done(
@@ -186,9 +195,10 @@ def close(
                     "manual_override" if path_indicator == MANUAL_OVERRIDE else "PASS"
                 ),
             )
-            result.state_file_updated = updated
+            result.state_file_status = "updated" if updated else "already_done"
             _act(result, f"state file {'updated' if updated else 'already current'}: {state_path}")
     else:
+        result.state_file_status = "no_state_file"
         _act(result, f"no state file references {ticket}; skipping state update")
 
     # Step 4: Jira → Done
@@ -273,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         "main_sha_after": result.main_sha_after,
         "jira_transitioned": result.jira_transitioned,
         "branch_deleted": result.branch_deleted,
-        "state_file_updated": result.state_file_updated,
+        "state_file_status": result.state_file_status,
         "closure_comment_id": result.closure_comment_id,
         "aborted_reason": result.aborted_reason,
         "actions_taken": result.actions_taken,
