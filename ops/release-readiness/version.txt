@@ -12,6 +12,6 @@
 #      psuthar/release-readiness-core.
 #   2. Re-run the SCRUM-262 CLI inventory + composite-action existence checks.
 #   3. Re-run the SCRUM-263 gap-test harness against the new pin.
-version=0.4.0
-sha=3bd6902daec4d5145707d86190dd36f09add5fcf
-ref=v0.4.0
+version=0.5.0
+sha=6abd22d2b4752b578663a801547ed1b85a53c540
+ref=v0.5.0
