@@ -16,3 +16,4 @@
 {"ts": "2026-05-21T19:16:56Z", "ticket": "SCRUM-532", "issue_type": "Task", "exit": 0, "gaps": []}
 {"ts": "2026-05-21T20:04:06Z", "ticket": "SCRUM-533", "issue_type": "Task", "exit": 0, "gaps": []}
 {"ts": "2026-05-21T20:28:00Z", "ticket": "SCRUM-428", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
+{"ts": "2026-05-21T20:50:57Z", "ticket": "SCRUM-534", "issue_type": "Bug", "exit": 0, "gaps": []}

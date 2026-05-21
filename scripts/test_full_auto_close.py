@@ -109,7 +109,15 @@ def _patch_git_ops():
         close_mod.git_ops, "checkout_and_pull_main", return_value="fffeeeddd000"
     )
     p3 = mock.patch.object(close_mod.git_ops, "delete_branch")
-    return p1, p2, p3
+    # SCRUM-534: close.py now probes the working tree for a dirty lint log
+    # before checkout. Default the probe to "clean" so the existing test
+    # fixtures (which use a non-git tmp dir as repo_root) keep working.
+    p4 = mock.patch.object(
+        close_mod.git_ops, "lint_log_only_dirty", return_value=False
+    )
+    p5 = mock.patch.object(close_mod.git_ops, "stash_lint_log")
+    p6 = mock.patch.object(close_mod.git_ops, "pop_stash")
+    return p1, p2, p3, p4, p5, p6
 
 
 # ── close() tests ────────────────────────────────────────────────────────────
@@ -120,8 +128,8 @@ class CloseHappyPathTest(unittest.TestCase):
         jira = FakeJiraAPI()
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
-            p1, p2, p3 = _patch_git_ops()
-            with p1, p2, p3:
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
                 r = close_mod.close(
                     "SCRUM-999",
                     pr_number=999,
@@ -139,6 +147,65 @@ class CloseHappyPathTest(unittest.TestCase):
         # Closure comment matches the polling template.
         self.assertIn("polling path (default)", jira.comments[0][1])
         self.assertIn("merged_sha_xyz", jira.comments[0][1])
+
+
+class CloseLintLogAutoStashTest(unittest.TestCase):
+    """SCRUM-534: dirty lint log triggers stash + restore around checkout."""
+
+    def test_actions_taken_records_stash_when_lint_log_dirty(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_lint")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            # Pretend the working tree has a dirty lint-runs.log; the patched
+            # stash/pop are no-ops. close.py should call both and add the
+            # explanatory line to actions_taken.
+            p4 = mock.patch.object(
+                close_mod.git_ops, "lint_log_only_dirty", return_value=True
+            )
+            with p1, p2, p3, p4 as ld_mock, p5 as stash_mock, p6 as pop_mock:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=repo_root,
+                )
+        ld_mock.assert_called_once()
+        stash_mock.assert_called_once()
+        pop_mock.assert_called_once()
+        # Stash precedes checkout, pop follows it — the explanatory line must
+        # appear in actions_taken after the SHA-change line.
+        stash_line = next(
+            (a for a in r.actions_taken if "stashed and restored" in a), None
+        )
+        self.assertIsNotNone(stash_line)
+        self.assertIn("ops/define-kpis/lint-runs.log", stash_line)
+        self.assertIn("SCRUM-534", stash_line)
+
+    def test_clean_tree_skips_stash_path(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_clean")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5 as stash_mock, p6 as pop_mock:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=repo_root,
+                )
+        stash_mock.assert_not_called()
+        pop_mock.assert_not_called()
+        stash_line = next(
+            (a for a in r.actions_taken if "stashed and restored" in a), None
+        )
+        self.assertIsNone(stash_line)
 
 
 class CloseAbortTest(unittest.TestCase):
@@ -167,8 +234,8 @@ class CloseManualOverrideTest(unittest.TestCase):
         gh = FakeGitHubAPI(_merged_pr(sha="user_pre_merged"))
         jira = FakeJiraAPI()
         with tempfile.TemporaryDirectory() as tmp:
-            p1, p2, p3 = _patch_git_ops()
-            with p1, p2, p3:
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
                 r = close_mod.close(
                     "SCRUM-999",
                     pr_number=999,
