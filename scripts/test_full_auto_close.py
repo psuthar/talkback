@@ -282,6 +282,92 @@ class CloseInvalidPathTest(unittest.TestCase):
             close_mod.close("SCRUM-999", pr_number=1, path_indicator="bogus")
 
 
+class CloseSummaryLineTest(unittest.TestCase):
+    """SCRUM-536: actions_taken ends with a single grep-able summary line."""
+
+    def test_pass_path_ends_with_succeeded_summary(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_536p")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=repo_root,
+                )
+        last = r.actions_taken[-1]
+        self.assertTrue(
+            last.startswith("close.py succeeded:") and "no aborts" in last,
+            f"unexpected summary line: {last!r}",
+        )
+        # N reflects the preceding entries, not including the summary itself.
+        self.assertIn(f"{len(r.actions_taken) - 1} actions", last)
+
+    def test_abort_path_ends_with_aborted_summary(self):
+        gh = FakeGitHubAPI(_open_pr_blocked())
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            r = close_mod.close(
+                "SCRUM-999",
+                pr_number=999,
+                path_indicator=POLLING,
+                github_api=gh,
+                jira_api=jira,
+                repo_root=Path(tmp),
+            )
+        last = r.actions_taken[-1]
+        self.assertTrue(
+            last.startswith("close.py aborted:"),
+            f"unexpected summary line: {last!r}",
+        )
+        # The summary should embed the abort reason verbatim.
+        self.assertIn(r.aborted_reason, last)
+
+    def test_dry_run_ends_with_dry_run_summary(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="never_merges_in_dry_run")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            r = close_mod.close(
+                "SCRUM-999",
+                pr_number=999,
+                path_indicator=POLLING,
+                github_api=gh,
+                jira_api=jira,
+                repo_root=Path(tmp),
+                dry_run=True,
+            )
+        last = r.actions_taken[-1]
+        self.assertTrue(
+            last.startswith("close.py dry-run:") and "previewed" in last,
+            f"unexpected summary line: {last!r}",
+        )
+
+    def test_manual_override_ends_with_succeeded_summary(self):
+        gh = FakeGitHubAPI(_merged_pr(sha="user_squashed_536"))
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=MANUAL_OVERRIDE,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=Path(tmp),
+                )
+        last = r.actions_taken[-1]
+        self.assertTrue(
+            last.startswith("close.py succeeded:"),
+            f"unexpected summary line: {last!r}",
+        )
+
+
 # ── state-file tests ─────────────────────────────────────────────────────────
 
 class StateFileTest(unittest.TestCase):
