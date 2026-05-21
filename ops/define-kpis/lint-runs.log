@@ -83,3 +83,5 @@
 {"ts": "2026-05-21T23:27:04Z", "ticket": "SCRUM-998", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
 {"ts": "2026-05-21T23:27:04Z", "ticket": "SCRUM-996", "issue_type": "Task", "exit": 0, "gaps": []}
 {"ts": "2026-05-21T23:27:04Z", "ticket": "SCRUM-995", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-21T23:27:42Z", "ticket": "SCRUM-544", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-21T23:37:48Z", "ticket": "SCRUM-545", "issue_type": "Task", "exit": 0, "gaps": []}
