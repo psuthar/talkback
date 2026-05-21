@@ -1,0 +1,25 @@
+{
+  "ticket": "SCRUM-515",
+  "pr_number": 459,
+  "path": "manual-override",
+  "snapshot": {
+    "number": 459,
+    "state": "merged",
+    "merged": true,
+    "merge_commit_sha": "4a7723b0c9202d51743d6180498729751fc34af5",
+    "mergeable_state": "unknown",
+    "head_ref": "feat/SCRUM-515",
+    "base_ref": "main"
+  },
+  "actions_taken": [
+    "read PR #459: state=merged merged=True mergeable_state=unknown",
+    "PR already merged at 4a7723b (manual override)",
+    "would: fetch + checkout main + pull --ff-only + branch -D feat/SCRUM-515",
+    "would update state file: /Users/psuthar/code/talkback/.epic-run/SCRUM-512.json",
+    "would transition SCRUM-515 to Done",
+    "would post closure comment (327 chars)"
+  ],
+  "aborted_reason": null,
+  "merged_sha_in_dryrun": "4a7723b0c9202d51743d6180498729751fc34af5",
+  "would_post_comment": "Closure (user-override squash-merge path). PR #459 squash-merged by user at 4a7723b0c9202d51743d6180498729751fc34af5. Did NOT call merge_pull_request (the user merged). Local cleanup: feat/SCRUM-515 deleted; main fast-forwarded to <main-sha-after-pull>. State file updated. Treated as PASS-equivalent for the purpose of the epic.\n"
+}
