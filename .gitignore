@@ -18,6 +18,7 @@ plan.json
 
 # Environment variables
 .env
+.env.local
 web/.env.e2e
 web/.env.e2e.local
 
