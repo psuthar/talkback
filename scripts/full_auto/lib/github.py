@@ -48,6 +48,12 @@ class GitHubAPI(Protocol):
         auto-fix patch loop (agent-authored exit-2)."""
         ...
 
+    def get_check_runs(self, repo: str, ref: str) -> list[dict]:
+        """SCRUM-544: return the list of check runs for ``ref`` (a SHA or
+        branch name). Each entry has at least ``name``, ``status``,
+        ``conclusion`` fields. Used by poll.py to classify TalkBack PR Gate."""
+        ...
+
 
 def _request(method: str, url: str, *, token: str, body: dict | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(
@@ -126,6 +132,16 @@ class HttpGitHubAPI:
         )
         if status >= 400:
             raise RuntimeError(f"PATCH /pulls/{pr_number} -> {status}: {resp}")
+
+    def get_check_runs(self, repo: str, ref: str) -> list[dict]:
+        status, resp = _request(
+            "GET",
+            f"{GITHUB_API}/repos/{repo}/commits/{ref}/check-runs",
+            token=self._token,
+        )
+        if status >= 400:
+            raise RuntimeError(f"GET check-runs for {ref} -> {status}: {resp}")
+        return list(resp.get("check_runs", []) or [])
 
 
 __all__ = ["GITHUB_API", "GitHubAPI", "HttpGitHubAPI", "PRSnapshot"]
