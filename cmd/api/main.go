@@ -419,7 +419,6 @@ func main() {
 	http.HandleFunc(wrapNR("/api/zoom/connect", corsMiddleware(h.ZoomAPIConnect)))
 	http.HandleFunc(wrapNR("/api/zoom/disconnect", corsMiddleware(h.ZoomAPIDisconnect)))
 	http.HandleFunc(wrapNR("/api/zoom/recordings", corsMiddleware(h.ZoomAPIRecordings)))
-	http.HandleFunc(wrapNR("/api/zoom/import", corsWithCredentials(h.RequireAuth(h.ZoomImport))))
 
 	// Teams: always register GET /api/teams/status so split-origin dev (e.g. Vite :3000 → API :8081) gets CORS
 	// headers even when ENABLE_TEAMS is false (handler returns enabled:false). Unregistered /api/* falls through
@@ -474,7 +473,6 @@ func main() {
 		http.HandleFunc(wrapNR("/api/teams/connect", corsMiddleware(h.TeamsAPIConnect)))
 		http.HandleFunc(wrapNR("/api/teams/disconnect", corsMiddleware(h.TeamsAPIDisconnect)))
 		http.HandleFunc(wrapNR("/api/teams/recordings", corsMiddleware(h.TeamsAPIRecordings)))
-		http.HandleFunc(wrapNR("/api/teams/import", corsWithCredentials(h.RequireAuth(h.TeamsImport))))
 		log.Println("Teams integration: ENABLE_TEAMS=true; OAuth and /api/teams/* routes registered")
 	} else {
 		log.Println("Teams integration: ENABLE_TEAMS not set; OAuth and other /api/teams/* routes disabled (GET /api/teams/status still returns enabled:false)")
@@ -488,7 +486,6 @@ func main() {
 		http.HandleFunc(wrapNR("/auth/google-meet/disconnect", corsMiddleware(h.GoogleMeetAuthDisconnect)))
 		http.HandleFunc(wrapNR("/api/google-meet/connect", corsMiddleware(h.GoogleMeetAPIConnect)))
 		http.HandleFunc(wrapNR("/api/google-meet/disconnect", corsMiddleware(h.GoogleMeetAPIDisconnect)))
-		http.HandleFunc(wrapNR("/api/google-meet/import", corsWithCredentials(h.RequireAuth(h.GoogleMeetImport))))
 		http.HandleFunc(wrapNR("/api/google-meet/recordings", corsMiddleware(h.GoogleMeetAPIRecordings)))
 		log.Println("Google Meet integration: ENABLE_GOOGLE_MEET=true; OAuth and /api/google-meet/* routes registered")
 	} else {
