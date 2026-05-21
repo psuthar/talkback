@@ -113,8 +113,12 @@ def poll(
         while True:
             result.ticks += 1
             pr = github_api.read_pr(repo, pr_number)
-            head_sha = pr.merge_commit_sha or _head_sha_from_ref(github_api, repo, pr.head_ref)
-            checks = github_api.get_check_runs(repo, head_sha)
+            # SCRUM-547: query check runs against the PR head ref, NOT
+            # ``pr.merge_commit_sha``. For an open PR the merge_commit_sha
+            # is the synthetic test-merge GitHub computes — check runs are
+            # recorded against the actual head commit. The earlier code
+            # used the synthetic SHA and looped past every terminal state.
+            checks = github_api.get_check_runs(repo, pr.head_ref)
             gate = next(
                 (
                     c for c in checks
@@ -164,13 +168,6 @@ def poll(
         result.actions_taken.append(f"aborted: {result.aborted_reason}")
         _summarize(result)
         return result
-
-
-def _head_sha_from_ref(api: GitHubAPI, repo: str, ref: str) -> str:
-    """Resolve a branch ref to its tip SHA via a second PR read. Pre-merge
-    PRs have ``merge_commit_sha`` populated (a synthetic test merge), but
-    in some states it can be ``None`` — fall back to the branch ref."""
-    return ref
 
 
 def _summarize(result: PollResult) -> None:

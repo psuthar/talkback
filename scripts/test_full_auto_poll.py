@@ -30,36 +30,57 @@ class _Clock:
         self.now += secs
 
 
+_HEAD_REF = "feat/SCRUM-999"
+
+
 class _FakeGitHubAPI:
-    """Returns scripted responses per tick."""
+    """Returns scripted responses per tick.
+
+    SCRUM-547 hardened: ``get_check_runs`` enforces that poll.py queries
+    against the PR ``head_ref`` (NOT ``merge_commit_sha``). The earlier
+    fixture keyed off whatever ref was passed, masking the production
+    bug where poll.py was using the synthetic test-merge SHA.
+    """
 
     def __init__(self, ticks: list[dict]):
         # Each tick: {"mergeable_state": str, "gate_conclusion": str|None, "gate_status": str}
         self._ticks = ticks
-        self._i = count()
+        self._read_tick = count()
+        # Track every ref used to query check_runs so tests can assert
+        # poll.py used the head_ref and never the merge_commit_sha.
+        self.check_run_refs: list[str] = []
 
     def read_pr(self, repo, pr_number):
-        i = next(self._i)
+        i = next(self._read_tick)
         t = self._ticks[min(i, len(self._ticks) - 1)]
         return PRSnapshot(
             number=pr_number,
             state="open",
             merged=False,
-            merge_commit_sha=f"sha-tick-{i}",
+            # SCRUM-547: distinct synthetic merge SHA per tick. If poll.py
+            # ever regresses and queries against this, ``get_check_runs``
+            # raises a hard error so the bug can't sneak back in.
+            merge_commit_sha=f"synthetic-merge-sha-tick-{i}",
             mergeable_state=t["mergeable_state"],
-            head_ref="feat/SCRUM-999",
+            head_ref=_HEAD_REF,
             base_ref="main",
         )
 
     def get_check_runs(self, repo, ref):
-        # Need to mirror the tick index from read_pr — read_pr already
-        # consumed it, so look at the last value. Simplest: re-read by
-        # parsing ref ``sha-tick-N``.
-        try:
-            i = int(ref.rsplit("-", 1)[-1])
-        except ValueError:
-            i = 0
-        t = self._ticks[min(i, len(self._ticks) - 1)]
+        self.check_run_refs.append(ref)
+        if ref != _HEAD_REF:
+            raise AssertionError(
+                f"SCRUM-547 regression: get_check_runs called with "
+                f"{ref!r}, expected head_ref {_HEAD_REF!r} (poll.py must "
+                f"NOT query against pr.merge_commit_sha — that's the "
+                f"synthetic test-merge commit, not where check runs live)."
+            )
+        # Use the current read_tick value as the index — read_pr() was
+        # just called by poll.py before this, so the latest tick is one
+        # behind the counter.
+        i = max(0, next(count(start=len(self.check_run_refs) - 1)))
+        i = min(i, len(self._ticks) - 1)
+        t = self._ticks[i]
         return [
             {
                 "name": poll_mod.TALKBACK_GATE_NAME,
@@ -236,6 +257,33 @@ class PollClampingTest(unittest.TestCase):
         # Should have slept exactly once between the two ticks, at 300s
         # (the clamp), not 9999s.
         self.assertEqual(clock.sleeps, [300])
+
+
+class PollHeadRefRegressionTest(unittest.TestCase):
+    """SCRUM-547: dedicated regression test pinning that poll.py queries
+    check runs against ``pr.head_ref`` rather than ``pr.merge_commit_sha``.
+
+    The earlier code used the synthetic test-merge SHA, which has no check
+    runs attached — poll.py would loop past every terminal state until
+    the budget ran out. The fixture's ``get_check_runs`` raises if the
+    wrong ref is used, so this test also documents the contract."""
+
+    def test_uses_head_ref_not_merge_sha(self):
+        clock = _Clock()
+        gh = _FakeGitHubAPI(
+            [{"mergeable_state": "clean", "gate_conclusion": "success"}]
+        )
+        result = poll_mod.poll(
+            999,
+            github_api=gh,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+        self.assertEqual(result.terminal_state, "pass")
+        # Recorded ref MUST be the head_ref, never the synthetic merge sha.
+        self.assertEqual(gh.check_run_refs, [_HEAD_REF])
+        for ref in gh.check_run_refs:
+            self.assertNotIn("synthetic-merge-sha", ref)
 
 
 class PollErrorPathTest(unittest.TestCase):
