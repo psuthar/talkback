@@ -166,6 +166,9 @@ export function CreatorMode({
 }) {
   const [materialUploading, setMaterialUploading] = useState(false)
   const [materialUploadFeedback, setMaterialUploadFeedback] = useState({ type: '', message: '' })
+  // SCRUM-535: per-session "last seen" link count so the LINKS • NEW N badge
+  // clears when the creator clicks the link, matching ParticipantMode.
+  const [lastSeenLinkCountBySession, setLastSeenLinkCountBySession] = useState({})
   // SCRUM-463: import-modal open state (replaces SCRUM-460's per-platform
   // browsePlatform). The platform is now chosen inside the modal.
   const [importModalOpen, setImportModalOpen] = useState(false)
@@ -389,6 +392,21 @@ export function CreatorMode({
     })
     setSelectedDocumentId(`link-${link.id}`)
   }
+
+  // SCRUM-535: mirror ParticipantMode's "last seen" wiring so the
+  // LINKS • NEW N badge clears once the creator interacts with a link.
+  // Existing links on first session load are marked "seen" so we don't
+  // flash a stale NEW count; the badge re-appears only when links are
+  // added after the high-water mark was set.
+  const sessionIdForLinks = currentSession?.session?.id
+  useEffect(() => {
+    if (!sessionIdForLinks) return
+    const linkCount = currentSession?.links?.length ?? 0
+    setLastSeenLinkCountBySession((prev) => {
+      if (prev[sessionIdForLinks] !== undefined) return prev
+      return { ...prev, [sessionIdForLinks]: linkCount }
+    })
+  }, [sessionIdForLinks, currentSession?.links?.length])
 
   const startAnswering = (questionId, existingAnswer = null) => {
     setAnsweringQuestionId(questionId)
@@ -1854,13 +1872,24 @@ export function CreatorMode({
                     setVideoPlayerKey={setVideoPlayerKey}
                     onSelectDocument={handleSelectDocument}
                     onSelectVideo={handleBackToVideo}
-                    onSelectLink={handleSelectLink}
+                    onSelectLink={(link) => {
+                      handleSelectLink(link)
+                      // SCRUM-535: advance the per-session "last seen" mark
+                      // to the current link count so the NEW N badge clears.
+                      const sid = currentSession?.session?.id
+                      if (sid && currentSession?.links?.length != null) {
+                        setLastSeenLinkCountBySession((prev) => ({
+                          ...prev,
+                          [sid]: currentSession.links.length,
+                        }))
+                      }
+                    }}
                     selectedDocumentId={selectedDocumentId}
                     collapsed={leftPanelCollapsed}
                     onCollapsedChange={setLeftPanelCollapsed}
                     hideTranscriptSection
                     hideHeader
-                    lastSeenLinkCount={0}
+                    lastSeenLinkCount={sessionIdForLinks ? (lastSeenLinkCountBySession[sessionIdForLinks] ?? 0) : 0}
                     canManage={!!sessionId}
                     onDeleteMaterial={deleteMaterial}
                     onDeleteVideo={deleteMaterial}
