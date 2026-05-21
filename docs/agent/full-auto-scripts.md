@@ -138,16 +138,86 @@ python -m scripts.full_auto.close <TICKET> --pr <N> --path polling
 
 ### What stays Claude's responsibility (NOT delegated to close.py)
 
-- The **completion comment** posted at step 8 of `workflow-jira.md` (when the PR opens and Jira → In Review). That's per-ticket narrative; close.py's closure comment is the uniform shape at step 12.
 - The **WARN/BLOCK halt** path. close.py is the PASS path; halt.py is a future Epic.
 - The **worktree-based cleanup** (ExitWorktree + SCRUM-388 primary-tree FF). close.py only handles flat-checkout cleanup; worktree runs follow the prose in `workflow-full-auto.md`.
 - **Test analysis and implementation** (steps 4-5 of FULL_AUTO). The agentic part of the loop.
+- **PR body + completion-comment content.** `review.py` (below) accepts these via `--body-file` / `--completion-comment-file`; the agent composes the prose, the script passes it through.
+
+---
+
+## Companion scripts: start.py, review.py, poll.py (SCRUM-541)
+
+Three sibling scripts cover the rest of the `implement SCRUM-XX FULL_AUTO` workflow. All four scripts share a uniform contract:
+
+- Structured JSON output (a dataclass dumped to stdout by `main()`).
+- `actions_taken: list[str]` narrating each step.
+- Final entry of `actions_taken` is always a SCRUM-536 summary line — `<script>.py succeeded: N actions, no aborts` / `<script>.py aborted: <reason>` / `<script>.py dry-run: N actions previewed`. Single grep target for chat surface + log scrapers.
+- Enum-string fields (e.g. `lint_status`, `state_file_status`, `terminal_state`) replace ambiguous booleans.
+- `--dry-run` previews without mutations.
+- Auth shared via `lib/auth.py` — `.env.local` auto-load at module import (SCRUM-533).
+
+### start.py — pre-implementation orchestration (SCRUM-542)
+
+```sh
+python -m scripts.full_auto.start <TICKET> [--dry-run]
+```
+
+Steps: REST `GET /issue/<KEY>` → ADF → Markdown (via `lib/adf.py`) → `scripts/jira_ticket_lint.py` subprocess → auto-fix section-patch loop on agent-authored exit-2 (single retry) → resolve+apply "In Progress" transition → `git fetch origin --prune` + idempotent checkout of `feat/<TICKET>` from `origin/main`.
+
+`StartResult` fields: `summary`, `issue_type`, `labels`, `description_md`, `lint_status` (enum: `pass` / `patched_then_pass` / `halted_gaps` / `halted_unfixable`), `branch_name`, `jira_transitioned`.
+
+Halt conditions: lint exit 1 (unfixable structural), lint exit 2 without `agent-authored` label (human-authored gap), lint exit 2 after the single patch retry. The script never auto-patches human prose.
+
+### review.py — PR creation + completion comment + In Review transition (SCRUM-543)
+
+```sh
+python -m scripts.full_auto.review <TICKET> \
+    --title "<pr title>" \
+    --body-file <path-to-pr-body.md> \
+    --completion-comment-file <path-to-jira-comment.md> \
+    [--dry-run]
+```
+
+Steps: branch-mismatch guard (current branch must start with `feat/<TICKET>` — tolerates worktree-style suffixes like `feat/<TICKET>-worktree`) → REST `POST /pulls` → `scripts/jira_ticket_lint.py --issue-type PR` subprocess → auto-fix loop on agent-authored exit-2 with REST `PATCH /pulls/<N>` (single retry) → REST `add_comment` to Jira → resolve+apply "In Review" transition.
+
+`ReviewResult` fields: `pr_number`, `pr_url`, `pr_body_lint_status` (same enum as start.py), `comment_id`, `jira_transitioned`.
+
+Content vs. mechanism split: the agent owns the **content** of the PR body and the completion comment (composed in chat history). The script passes the files through verbatim; Atlassian converts Markdown → ADF on receipt.
+
+### poll.py — silent gate + mergeable_state polling (SCRUM-544)
+
+```sh
+python -m scripts.full_auto.poll --pr <N> [--interval 30] [--budget 2400] [--verbose]
+```
+
+Silent by default — no stdout until terminal. `--verbose` adds per-tick stderr lines for diagnostics.
+
+Steps per tick: REST `GET /pulls/<N>` → REST `GET /commits/<head_ref>/check-runs` (queries against `pr.head_ref`, NOT `merge_commit_sha` — SCRUM-547 fixed an earlier bug where the synthetic test-merge SHA was used) → find the `TalkBack PR Gate` check → classify.
+
+Terminal states: `pass` (gate `success` + mergeable `clean`, exit 0), `warn` (gate `action_required`, exit 2), `block` (gate `failure`, exit 2), `mergeable_blocked` (gate success but mergeable not clean, exit 2), `timeout` (budget exhausted, exit 2), `error` (API failure, exit 1).
+
+`--interval` clamped [10, 300]; `--budget` clamped [60, 3600] to prevent both rate-limit foot-guns and infinite loops.
+
+`PollResult` fields: `terminal_state` (enum), `gate_conclusion`, `mergeable_state`, `elapsed_seconds`, `ticks`.
+
+### Combined token savings vs the pre-extraction MCP flow
+
+| Script | What it replaces | Approx tokens saved/ticket |
+|---|---|---|
+| `close.py` (SCRUM-529) | merge + lib calls + add_comment + transition Done | ~5,000 |
+| `start.py` | get_issue + get_transitions + transition In Progress + branch | ~3,000 |
+| `review.py` | create_pull_request + lint orchestration + add_comment + transition In Review | ~4,000 |
+| `poll.py` | per-tick `gh pr checks` output during the polling loop | ~2,000 |
+| **Total** | | **~14,000** |
+
+Measured against this session's chat history (see SCRUM-541 closure comment for the full breakdown).
 
 ## What's coming next (forward links)
 
 - **SCRUM-530 / Phase 1** ✓ done — `scripts/full_auto/close.py` shipped.
 - **SCRUM-531 / Phase 2** ✓ done — dry-run validation against 5 historical FULL_AUTOs; zero unresolved drift; see `ops/full-auto-validation/SUMMARY.md`.
 - **SCRUM-532 / Phase 3** — this section. CLAUDE.md / workflow docs updated.
+- **SCRUM-541 Epic** ✓ done — start.py / review.py / poll.py shipped (SCRUM-542 / 543 / 544).
 - **(Future, separate Epic)** — Cloudflare-tunnel webhook listener that imports `close.py` for the post-gate close-out path. De-risked by Phase 0-3.
 
 ---
