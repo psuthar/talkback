@@ -89,7 +89,7 @@ When the gate completes with `conclusion: action_required` (WARN) or `failure` (
 
 ## Merge, Cleanup, and Done Transition
 
-After the gate reaches PASS, the post-merge close-out (merge + local cleanup + Jira → Done + closure comment) is owned by **`scripts/full_auto/close.py`** (Epic SCRUM-529). Claude invokes it instead of running each individual MCP / Bash call. See `docs/agent/full-auto-scripts.md` for the runbook + auth setup. Atlassian credentials are auto-loaded from `.env.local` at the repo root at module import time (SCRUM-533) — no shell sourcing required before invocation.
+After the gate reaches PASS, the post-merge close-out (merge + local cleanup + Jira → Done + closure comment) is owned by **`scripts/full_auto/close.py`** (Epic SCRUM-529). The companion scripts **`start.py`** (front-half: fetch + lint + In Progress + branch, SCRUM-542), **`review.py`** (PR + lint body + completion comment + In Review, SCRUM-543), and **`poll.py`** (silent gate + `mergeable_state` polling until terminal, SCRUM-544) round out the four-script suite (Epic SCRUM-541). Claude invokes each in turn instead of running individual MCP / Bash calls. See `docs/agent/full-auto-scripts.md` for the per-script invocation contract + auth setup. Atlassian credentials are auto-loaded from `.env.local` at the repo root at module import time (SCRUM-533) — no shell sourcing required before invocation.
 
 ### Common case — no worktree (default for `implement SCRUM-XX FULL_AUTO`)
 
