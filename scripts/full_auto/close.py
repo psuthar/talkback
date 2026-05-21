@@ -131,6 +131,7 @@ def close(
         if snap.mergeable_state != "clean":
             result.aborted_reason = f"mergeable_state was {snap.mergeable_state!r} not 'clean'"
             _act(result, f"aborted: {result.aborted_reason}")
+            _summarize(result)
             return result
         if dry_run:
             result.merged_sha = "<dry-run-merge-sha>"
@@ -218,7 +219,33 @@ def close(
         result.closure_comment_id = jira_api.add_comment(ticket, comment_body)
         _act(result, f"posted closure comment id={result.closure_comment_id}")
 
+    # SCRUM-536: single grep-able summary line at the end of actions_taken.
+    # Count preceding entries before appending so N reflects the work done,
+    # not the line itself.
+    _summarize(result)
     return result
+
+
+def _summarize(result: CloseResult) -> None:
+    """SCRUM-536: append a one-line summary as the final actions_taken entry.
+
+    Three shapes:
+      - PASS (no abort, no dry-run): "close.py succeeded: N actions, no aborts"
+      - dry-run (no abort): "close.py dry-run: N actions previewed"
+      - abort: "close.py aborted: <reason>"
+
+    The early-return abort path (pre-merge guard, mergeable_state != clean)
+    also routes here via the explicit ``_summarize`` call it now makes
+    before returning.
+    """
+    n = len(result.actions_taken)
+    if result.aborted_reason:
+        msg = f"close.py aborted: {result.aborted_reason}"
+    elif result.dry_run:
+        msg = f"close.py dry-run: {n} actions previewed"
+    else:
+        msg = f"close.py succeeded: {n} actions, no aborts"
+    result.actions_taken.append(msg)
 
 
 def main(argv: list[str] | None = None) -> int:
