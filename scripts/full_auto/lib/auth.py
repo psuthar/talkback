@@ -23,6 +23,8 @@ from __future__ import annotations
 import os
 import subprocess
 from functools import lru_cache
+from pathlib import Path
+from typing import MutableMapping
 
 DEFAULT_ATLASSIAN_BASE_URL = "https://suthar-team.atlassian.net"
 
@@ -40,6 +42,55 @@ JIRA_AUTH_ERROR = (
     "  CI: configure ATLASSIAN_API_TOKEN as a repo secret.\n"
     "  Generate a scoped token at https://id.atlassian.com/manage-profile/security/api-tokens"
 )
+
+
+def _load_dotenv_local(
+    start: Path | None = None,
+    target_env: MutableMapping[str, str] | None = None,
+) -> None:
+    """SCRUM-533: populate ``os.environ`` from ``.env.local`` at repo root.
+
+    Walks up from ``start`` (default: this file's directory) looking for a
+    ``.git`` directory. If found and a sibling ``.env.local`` exists, parses
+    its ``KEY=VALUE`` lines and applies them via :py:meth:`setdefault` so
+    existing environment variables always win. Shell-sourced values, CI repo
+    secrets, and webhook env injection therefore keep precedence — the file
+    is a zero-friction local fallback only. Missing file, malformed lines,
+    or filesystem errors are silent no-ops; the credential helpers below
+    raise their own actionable errors when creds are truly absent.
+    """
+    env = os.environ if target_env is None else target_env
+    cur = (start or Path(__file__).resolve().parent)
+    while True:
+        if (cur / ".git").exists():
+            break
+        if cur.parent == cur:
+            return
+        cur = cur.parent
+    dotenv = cur / ".env.local"
+    if not dotenv.is_file():
+        return
+    try:
+        contents = dotenv.read_text()
+    except OSError:
+        return
+    for line in contents.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        env.setdefault(key, value)
+
+
+_load_dotenv_local()
 
 
 @lru_cache(maxsize=1)
@@ -102,6 +153,7 @@ __all__ = [
     "DEFAULT_ATLASSIAN_BASE_URL",
     "GITHUB_TOKEN_ERROR",
     "JIRA_AUTH_ERROR",
+    "_load_dotenv_local",
     "atlassian_base_url",
     "github_token",
     "jira_auth",

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -132,6 +133,102 @@ class AtlassianBaseUrlTest(unittest.TestCase):
             os.environ, {"ATLASSIAN_BASE_URL": "https://other.atlassian.net/"}, clear=False
         ):
             self.assertEqual(auth.atlassian_base_url(), "https://other.atlassian.net")
+
+
+class LoadDotenvLocalTest(unittest.TestCase):
+    """SCRUM-533: ``.env.local`` auto-loader behavior."""
+
+    def _fake_repo(self, tmp: Path, body: str | None = None) -> Path:
+        (tmp / ".git").mkdir()
+        if body is not None:
+            (tmp / ".env.local").write_text(body)
+        return tmp
+
+    def test_file_present_sets_missing_keys(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td),
+                "ATLASSIAN_EMAIL=alice@example.com\nATLASSIAN_API_TOKEN=tok_dotenv\n",
+            )
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=root, target_env=env)
+            self.assertEqual(env["ATLASSIAN_EMAIL"], "alice@example.com")
+            self.assertEqual(env["ATLASSIAN_API_TOKEN"], "tok_dotenv")
+
+    def test_existing_env_wins_over_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td),
+                "ATLASSIAN_EMAIL=from_file@example.com\nATLASSIAN_API_TOKEN=from_file\n",
+            )
+            env: dict[str, str] = {
+                "ATLASSIAN_EMAIL": "from_shell@example.com",
+            }
+            auth._load_dotenv_local(start=root, target_env=env)
+            # Existing key untouched; missing key filled from file.
+            self.assertEqual(env["ATLASSIAN_EMAIL"], "from_shell@example.com")
+            self.assertEqual(env["ATLASSIAN_API_TOKEN"], "from_file")
+
+    def test_file_absent_is_silent_noop(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(Path(td), body=None)  # .git but no .env.local
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=root, target_env=env)
+            self.assertEqual(env, {})
+
+    def test_no_git_ancestor_is_silent_noop(self):
+        # Walk hits filesystem root without finding .git — must not raise.
+        with tempfile.TemporaryDirectory() as td:
+            # Don't create .git; the walk will eventually hit fs root.
+            (Path(td) / ".env.local").write_text("X=should_not_load\n")
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=Path(td), target_env=env)
+            self.assertNotIn("X", env)
+
+    def test_comments_and_blanks_skipped(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td),
+                "# leading comment\n\n   \nATLASSIAN_EMAIL=ok@example.com\n# trailing\n",
+            )
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=root, target_env=env)
+            self.assertEqual(env, {"ATLASSIAN_EMAIL": "ok@example.com"})
+
+    def test_malformed_lines_skipped(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td),
+                "garbage_no_equals\n=value_without_key\nGOOD=ok\n",
+            )
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=root, target_env=env)
+            self.assertEqual(env, {"GOOD": "ok"})
+
+    def test_quoted_values_stripped(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td),
+                'DQ="double"\nSQ=\'single\'\nMIXED="\'odd\'"\nBARE=plain\n',
+            )
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=root, target_env=env)
+            self.assertEqual(env["DQ"], "double")
+            self.assertEqual(env["SQ"], "single")
+            self.assertEqual(env["MIXED"], "'odd'")
+            self.assertEqual(env["BARE"], "plain")
+
+    def test_walks_up_from_nested_start(self):
+        # Mirrors real layout: auth.py lives 3 levels below repo root.
+        with tempfile.TemporaryDirectory() as td:
+            root = self._fake_repo(
+                Path(td), "ATLASSIAN_API_TOKEN=from_nested_walk\n"
+            )
+            nested = root / "scripts" / "full_auto" / "lib"
+            nested.mkdir(parents=True)
+            env: dict[str, str] = {}
+            auth._load_dotenv_local(start=nested, target_env=env)
+            self.assertEqual(env["ATLASSIAN_API_TOKEN"], "from_nested_walk")
 
 
 if __name__ == "__main__":

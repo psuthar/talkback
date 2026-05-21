@@ -14,7 +14,7 @@ The same Python code runs in three different environments. The only difference i
 
 | Where | When | `GITHUB_TOKEN` from | `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` from |
 |---|---|---|---|
-| Local laptop (you) | Today, replacing manual close-out steps | Auto-fallback to `gh auth token` (already logged in) | `.env.local` sourced into the shell (or via `direnv`) |
+| Local laptop (you) | Today, replacing manual close-out steps | Auto-fallback to `gh auth token` (already logged in) | Auto-loaded from `.env.local` at import time (SCRUM-533); shell-source / `direnv` also work and take precedence |
 | Webhook listener (future) | Cloudflare tunnel → local Flask app | Either `gh auth token` (if the listener runs as you) OR an env var | Listener's environment, populated from disk |
 | GitHub Actions (future) | Scheduled / event-triggered runs | `secrets.GITHUB_TOKEN` (auto-issued, repo-scoped) | Repo secrets injected as env vars |
 
@@ -52,26 +52,23 @@ ATLASSIAN_API_TOKEN=ATATT3xFfGF0...
 # GITHUB_TOKEN=        (optional; gh auth token fallback handles this)
 ```
 
-### 4. Source before running scripts
+### 4. Run scripts
 
-Two options:
-
-**Manual:**
+`.env.local` is auto-loaded from the repo root at import time (SCRUM-533) — no shell sourcing required:
 
 ```sh
-set -a; source .env.local; set +a
-python -m scripts.full_auto.close SCRUM-XX --pr N    # not yet shipped — Phase 1
+python -m scripts.full_auto.close SCRUM-XX --pr N --path polling
 ```
 
-**direnv (recommended):**
+Shell-sourced values, CI repo secrets, and webhook env injection always win over `.env.local`, so the file is a zero-friction *fallback*, not an override.
+
+**Optional: `direnv`.** If you want the same env vars available outside the FULL_AUTO scripts (for example, ad-hoc `curl` against the Jira API from your shell), keep using `direnv`:
 
 ```sh
 brew install direnv   # if needed
 echo "dotenv .env.local" > .envrc
 direnv allow
 ```
-
-Then any time you `cd` into the repo, the env loads automatically.
 
 ---
 
@@ -134,7 +131,7 @@ python -m scripts.full_auto.close <TICKET> --pr <N> --path polling
 
 | Symptom | Most likely cause | Fix |
 |---|---|---|
-| `RuntimeError: Missing Jira credentials.` | `.env.local` not sourced | `set -a; source .env.local; set +a` or set up direnv |
+| `RuntimeError: Missing Jira credentials.` | `.env.local` missing at repo root, malformed, or values still set to the example placeholders | Check the file exists at the repo root, that keys are spelled `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` exactly, and that values are real (not `you@example.com`) |
 | `RuntimeError: PUT /pulls/N/merge -> 405: ...` | PR is not mergeable (closed, has conflicts, branch protection failed) | Check `gh pr view N` for state; manual override may be required |
 | `RuntimeError: No 'Done' transition available on SCRUM-X` | Ticket workflow doesn't expose a Done transition (e.g., already Done, or in a non-standard state) | Check current Jira status; transition manually if needed |
 | `aborted_reason: "mergeable_state was 'blocked' not 'clean'"` | Pre-merge guard fired; PR state changed between polling and the guard re-read | Investigate the PR; usually a CI flake or a required check that re-triggered |
@@ -163,7 +160,7 @@ The script tried `GITHUB_TOKEN` env var (unset) and `gh auth token` (failed). Ru
 
 **`RuntimeError: Missing Jira credentials.`**
 
-Either `ATLASSIAN_EMAIL` or `ATLASSIAN_API_TOKEN` is unset or empty. Check `.env.local` is sourced (`echo $ATLASSIAN_EMAIL` should show it). If using direnv, run `direnv reload`.
+Either `ATLASSIAN_EMAIL` or `ATLASSIAN_API_TOKEN` is unset or empty. The auth module auto-loads `.env.local` from the repo root at import time (SCRUM-533); check the file exists, is at the repo root (next to `.git`), and that the keys are spelled exactly. If using `direnv`, run `direnv reload`. Note that any value already set in your shell takes precedence over `.env.local`, so a stale shell export can mask a corrected file.
 
 **Token works locally but not in CI.**
 
