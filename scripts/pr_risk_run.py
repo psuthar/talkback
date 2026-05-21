@@ -23,7 +23,7 @@ import sys
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 from release_readiness_core.pr_risk._runtime import PRRiskRuntime
-from release_readiness_core.pr_risk.gitdiff import extract_signals
+from release_readiness_core.pr_risk.gitdiff import extract_signals, is_test_path
 from release_readiness_core.pr_risk.integrations import ENV_JIRA_ISSUE_KEY
 from release_readiness_core.pr_risk.report import write_json, write_markdown
 from release_readiness_core.pr_risk.score import score
@@ -44,6 +44,26 @@ from release_readiness_core.pr_risk.version import (
 CREATOR_MODE_PATH_RE = re.compile(r"^web/src/modes/creatormode", re.IGNORECASE)
 ORCHESTRATION_TOKEN_RE = re.compile(r"orchestration|recommendation", re.IGNORECASE)
 STYLE_ONLY_PREFIXES = ("style-only:", "style only:")
+
+# SCRUM-545: Python test-path patterns the upstream ``is_test_path`` doesn't
+# recognize. Adding them here so the local "Large diff" discount applies on
+# agent-authored extraction tickets where the test surface lives at
+# ``scripts/test_*.py`` (see SCRUM-541 epic for the three-WARN evidence).
+_PY_TEST_PATH_RES = (
+    re.compile(r"(^|/)tests?/[^/]+\.py$", re.IGNORECASE),
+    re.compile(r"(^|/)test_[^/]+\.py$", re.IGNORECASE),
+    re.compile(r"(^|/)[^/]+_test\.py$", re.IGNORECASE),
+)
+
+# SCRUM-545: auto-generated audit-log paths whose line growth has no
+# review-attention cost. ``ops/define-kpis/lint-runs.log`` is the recurring
+# offender: the lint script appends a JSONL row per invocation, so every
+# FULL_AUTO ticket adds two rows whose content is mechanical (ts, ticket,
+# exit code). Reviewer attention shouldn't scale with these. Extend the set
+# if more append-only audit files appear later.
+_AUDIT_LOG_PATHS = frozenset({
+    "ops/define-kpis/lint-runs.log",
+})
 
 
 def _run_diff(repo_root: str, base_ref: str, path: str) -> str:
@@ -126,6 +146,95 @@ def reclassify_creatormode(
     if signals.domain_hits.get(DOMAIN_ORCHESTRATION, 0) <= 0:
         signals.domain_hits.pop(DOMAIN_ORCHESTRATION, None)
     return moved
+
+
+def is_test_path_extended(path: str) -> bool:
+    """SCRUM-545: superset of the upstream ``is_test_path``.
+
+    The upstream recognizes ``*_test.go``, ``/testdata/``, ``/e2e/``,
+    ``playwright``, ``*.spec.{ts,tsx}``, ``__tests__/``, and
+    ``.test.{ts,tsx,js,jsx}`` — but NOT Python tests. The TalkBack repo
+    holds its Python test surface at ``scripts/test_*.py`` and the
+    FULL_AUTO suite at ``scripts/test_full_auto_*.py``; without this
+    extension every agent-authored extraction ticket WARNs on the
+    "Large diff" signal even when half the diff is tests. Three real
+    incidents documented under SCRUM-541 (PRs #480, #481, #482).
+    """
+    if is_test_path(path):
+        return True
+    p = path.replace("\\", "/")
+    for pat in _PY_TEST_PATH_RES:
+        if pat.search(p):
+            return True
+    return False
+
+
+def is_audit_log_path(path: str) -> bool:
+    """SCRUM-545: True for auto-generated audit-log files (see
+    ``_AUDIT_LOG_PATHS``). Used alongside ``is_test_path_extended`` to
+    define what gets subtracted from the "Large diff" signal."""
+    return path.replace("\\", "/") in _AUDIT_LOG_PATHS
+
+
+def _is_discountable(path: str) -> bool:
+    """Combined predicate: a path is discountable from the "Large diff"
+    signal if it's either a test file or an auto-generated audit log."""
+    return is_test_path_extended(path) or is_audit_log_path(path)
+
+
+def discount_test_loc_from_large_diff(
+    signals: Signals,
+    *,
+    weights=None,
+    is_discountable=_is_discountable,
+) -> Optional[Tuple[int, int]]:
+    """SCRUM-545: when the production-code portion of the diff is below the
+    "Large diff" threshold, rewrite ``signals.total_loc`` (and the
+    ``total_added`` / ``total_deleted`` it derives from) to the prod-only
+    values so the upstream scorer's threshold check sees production
+    churn, not test bloat.
+
+    "Discountable" means either a test file (see
+    :func:`is_test_path_extended`) or an auto-generated audit-log file
+    (see :func:`is_audit_log_path`). Reviewer attention shouldn't scale
+    with either category.
+
+    The adjustment fires only when:
+      1. The original ``total_loc`` would have crossed the threshold
+         (otherwise the discount is meaningless), AND
+      2. The prod-only LOC is *below* the threshold (otherwise the PR
+         legitimately warrants the WARN on its production change alone).
+
+    Returns ``(prod_loc, original_total_loc)`` when the adjustment fires;
+    ``None`` otherwise. Mutates ``signals`` in place. Pure-prod or
+    pure-test edge cases:
+    * pure-test PR → prod_loc=0, adjustment fires.
+    * pure-prod PR → no discountable LOC to subtract, no adjustment.
+
+    ``weights`` defaults to ``default_weights()``; injectable for tests.
+    """
+    if weights is None:
+        weights = default_weights()
+    threshold = int(weights.large_diff_loc)
+    if signals.total_loc < threshold:
+        return None
+    prod_added = sum(
+        f.added for f in signals.files if not is_discountable(f.path)
+    )
+    prod_deleted = sum(
+        f.deleted for f in signals.files if not is_discountable(f.path)
+    )
+    prod_loc = prod_added + prod_deleted
+    if prod_loc >= threshold:
+        return None
+    if prod_loc == signals.total_loc:
+        # No discountable files contributed — nothing to subtract.
+        return None
+    original = signals.total_loc
+    signals.total_added = prod_added
+    signals.total_deleted = prod_deleted
+    signals.total_loc = prod_loc
+    return prod_loc, original
 
 
 def _git(repo_root: str, *args: str) -> Tuple[str, int]:
@@ -259,6 +368,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stderr.write(
             "pr_risk_run: SCRUM-442 fallback found Style-only marker on "
             "HEAD^2 (CI shallow-checkout case); upstream detector missed it.\n"
+        )
+    discount = discount_test_loc_from_large_diff(signals)
+    if discount is not None:
+        prod_loc, original = discount
+        sys.stderr.write(
+            f"pr_risk_run: SCRUM-545 discounted test LOC from Large diff "
+            f"signal: total_loc {original} → {prod_loc} (prod-only, below "
+            f"threshold {default_weights().large_diff_loc}).\n"
         )
 
     res = score(signals, default_weights(), jira_key, runtime=runtime)

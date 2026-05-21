@@ -22,6 +22,9 @@ from scripts.pr_risk_run import (  # noqa: E402
     apply_style_only_fallback,
     detect_style_only_from_pr_head,
     diff_mentions_orchestration,
+    discount_test_loc_from_large_diff,
+    is_audit_log_path,
+    is_test_path_extended,
     reclassify_creatormode,
 )
 
@@ -287,6 +290,194 @@ class TestStyleOnlyFallback(unittest.TestCase):
         )
         self.assertFalse(fired)
         self.assertFalse(s.style_only_note_found)
+
+
+# ── SCRUM-545: test-LOC discount for Large diff signal ───────────────────────
+
+def _sig_with_loc(file_loc: list[tuple[str, int]]) -> Signals:
+    """Build Signals with the given file/LOC pairs (added=loc, deleted=0).
+    Mirrors what ``extract_signals`` would compute for ``total_*``."""
+    files = [FileChange(path=p, added=loc, deleted=0) for p, loc in file_loc]
+    s = Signals(files=files, file_count=len(files))
+    s.total_added = sum(loc for _, loc in file_loc)
+    s.total_deleted = 0
+    s.total_loc = s.total_added + s.total_deleted
+    return s
+
+
+class TestIsTestPathExtended(unittest.TestCase):
+    def test_upstream_patterns_still_match(self):
+        for p in (
+            "internal/foo/bar_test.go",
+            "web/src/test/Foo.test.jsx",
+            "web/e2e/orchestration.spec.ts",
+            "internal/handlers/testdata/fixture.json",
+        ):
+            self.assertTrue(is_test_path_extended(p), p)
+
+    def test_python_test_paths_match(self):
+        for p in (
+            "scripts/test_full_auto_start.py",
+            "scripts/test_pr_risk_run.py",
+            "tests/test_something.py",
+            "internal/something_test.py",
+        ):
+            self.assertTrue(is_test_path_extended(p), p)
+
+    def test_non_test_paths_do_not_match(self):
+        for p in (
+            "scripts/full_auto/start.py",
+            "internal/handlers/session.go",
+            "web/src/modes/CreatorMode.jsx",
+            "scripts/full_auto/lib/jira.py",
+        ):
+            self.assertFalse(is_test_path_extended(p), p)
+
+
+class TestDiscountTestLocFromLargeDiff(unittest.TestCase):
+    def test_pure_test_diff_collapses_to_zero(self):
+        # 500 LOC, all tests — well above the 400 threshold but should
+        # collapse to prod-only=0 after discount.
+        s = _sig_with_loc([
+            ("scripts/test_full_auto_start.py", 300),
+            ("scripts/test_full_auto_review.py", 200),
+        ])
+        result = discount_test_loc_from_large_diff(s)
+        self.assertIsNotNone(result)
+        prod_loc, original = result
+        self.assertEqual(prod_loc, 0)
+        self.assertEqual(original, 500)
+        self.assertEqual(s.total_loc, 0)
+
+    def test_pure_prod_diff_is_unchanged(self):
+        s = _sig_with_loc([
+            ("scripts/full_auto/start.py", 350),
+            ("scripts/full_auto/lib/jira.py", 200),
+        ])
+        self.assertIsNone(discount_test_loc_from_large_diff(s))
+        self.assertEqual(s.total_loc, 550)
+        self.assertEqual(s.total_added, 550)
+
+    def test_mixed_prod_heavy_still_warns(self):
+        # 800 LOC, of which 200 tests, 600 prod. Prod is above threshold,
+        # so the discount must NOT fire — the WARN is legitimate.
+        s = _sig_with_loc([
+            ("scripts/full_auto/review.py", 600),
+            ("scripts/test_full_auto_review.py", 200),
+        ])
+        self.assertIsNone(discount_test_loc_from_large_diff(s))
+        self.assertEqual(s.total_loc, 800)
+
+    def test_mixed_test_heavy_collapses_below_threshold(self):
+        # 800 LOC, of which 500 tests, 300 prod. Prod is under 400, so the
+        # discount should fire and total_loc drops to 300.
+        s = _sig_with_loc([
+            ("scripts/full_auto/review.py", 300),
+            ("scripts/test_full_auto_review.py", 500),
+        ])
+        result = discount_test_loc_from_large_diff(s)
+        self.assertIsNotNone(result)
+        prod_loc, original = result
+        self.assertEqual(prod_loc, 300)
+        self.assertEqual(original, 800)
+        self.assertEqual(s.total_loc, 300)
+
+    def test_diff_below_threshold_is_a_noop(self):
+        # 300 LOC total, doesn't reach the 400 threshold. No-op even if
+        # half is tests — the original total_loc stays.
+        s = _sig_with_loc([
+            ("scripts/full_auto/start.py", 150),
+            ("scripts/test_full_auto_start.py", 150),
+        ])
+        self.assertIsNone(discount_test_loc_from_large_diff(s))
+        self.assertEqual(s.total_loc, 300)
+
+    def test_threshold_exactly_at_400_still_fires(self):
+        # 500 LOC, prod=399, tests=101 → prod < threshold (400), fires.
+        s = _sig_with_loc([
+            ("scripts/full_auto/start.py", 399),
+            ("scripts/test_full_auto_start.py", 101),
+        ])
+        result = discount_test_loc_from_large_diff(s)
+        self.assertIsNotNone(result)
+        prod_loc, _ = result
+        self.assertEqual(prod_loc, 399)
+
+    def test_threshold_exactly_at_prod_400_does_not_fire(self):
+        # prod=400 (exact threshold), tests=200 → prod >= threshold, no fire.
+        s = _sig_with_loc([
+            ("scripts/full_auto/start.py", 400),
+            ("scripts/test_full_auto_start.py", 200),
+        ])
+        self.assertIsNone(discount_test_loc_from_large_diff(s))
+        self.assertEqual(s.total_loc, 600)
+
+    def test_historical_pr_482_would_pass(self):
+        # SCRUM-544 PR #482: 508 net LOC, 264 of tests, 244 prod.
+        # Prod is well below 400 → discount fires.
+        s = _sig_with_loc([
+            ("scripts/full_auto/poll.py", 214),
+            ("scripts/full_auto/lib/github.py", 16),
+            ("ops/define-kpis/lint-runs.log", 14),
+            ("scripts/test_full_auto_poll.py", 264),
+        ])
+        result = discount_test_loc_from_large_diff(s)
+        self.assertIsNotNone(result, "PR #482's test-heavy diff should fire the discount")
+        prod_loc, original = result
+        self.assertLess(prod_loc, 400)
+        self.assertGreaterEqual(original, 400)
+
+    def test_historical_pr_481_would_pass_with_audit_log_discount(self):
+        # SCRUM-543 PR #481: 677 net LOC. Prod after test discount = 413,
+        # which is just above the 400 threshold. Subtracting the 26-line
+        # ops/define-kpis/lint-runs.log audit-log noise brings prod to 387,
+        # below the threshold → discount fires.
+        s = _sig_with_loc([
+            ("scripts/full_auto/review.py", 295),
+            ("scripts/test_full_auto_review.py", 264),
+            ("scripts/full_auto/start.py", 58),
+            ("scripts/full_auto/lib/github.py", 34),
+            ("ops/define-kpis/lint-runs.log", 26),
+        ])
+        result = discount_test_loc_from_large_diff(s)
+        self.assertIsNotNone(result, "PR #481 should fire the discount under the audit-log-extended rule")
+        prod_loc, _ = result
+        self.assertEqual(prod_loc, 387)
+        self.assertLess(prod_loc, 400)
+
+    def test_historical_pr_480_still_warns(self):
+        # SCRUM-542 PR #480: 802 net LOC. Prod after test+audit-log
+        # discount = 367 + 66 + 50 = 483, still above 400. The largest
+        # PR of the three legitimately stays at WARN — the discount
+        # doesn't paper over a real review surface.
+        s = _sig_with_loc([
+            ("scripts/full_auto/start.py", 367),
+            ("scripts/test_full_auto_start.py", 305),
+            ("scripts/full_auto/lib/adf.py", 66),
+            ("scripts/full_auto/lib/jira.py", 50),
+            ("ops/define-kpis/lint-runs.log", 14),
+        ])
+        self.assertIsNone(
+            discount_test_loc_from_large_diff(s),
+            "PR #480's prod portion (483) is still above threshold; WARN stays",
+        )
+        self.assertEqual(s.total_loc, 802)
+
+
+class TestIsAuditLogPath(unittest.TestCase):
+    def test_matches_lint_runs_log(self):
+        self.assertTrue(is_audit_log_path("ops/define-kpis/lint-runs.log"))
+
+    def test_does_not_match_other_log_extensions(self):
+        # Conservative: only the named audit-log path matches. Future
+        # additions go through the explicit _AUDIT_LOG_PATHS frozenset.
+        for p in (
+            "ops/some-other.log",
+            "scripts/full_auto/start.py",
+            "ops/define-kpis/snapshot.json",
+            "ops/define-kpis/lint-runs.log.bak",
+        ):
+            self.assertFalse(is_audit_log_path(p), p)
 
 
 if __name__ == "__main__":
