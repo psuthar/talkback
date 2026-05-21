@@ -89,20 +89,39 @@ When the gate completes with `conclusion: action_required` (WARN) or `failure` (
 
 ## Merge, Cleanup, and Done Transition
 
-On confirmed merge (after `merge_pull_request` returns success, or after a manual squash-merge detected via `pull_request_read`):
+After the gate reaches PASS, the post-merge close-out (merge + local cleanup + Jira → Done + closure comment) is owned by **`scripts/full_auto/close.py`** (Epic SCRUM-529). Claude invokes it instead of running each individual MCP / Bash call. See `docs/agent/full-auto-scripts.md` for the runbook + auth setup.
 
-- Call `merge_pull_request` with `merge_method: squash` (if not already merged by the user).
-- Remote branch: rely on auto-delete if configured; otherwise delete manually in GitHub UI.
-- Local cleanup — choose the path that matches how implementation actually happened:
+### Common case — no worktree (default for `implement SCRUM-XX FULL_AUTO`)
 
-  **If implementation ran in the main checkout** (no worktree was created for this ticket):
+If implementation ran in the main checkout, run:
 
-  ```
-  git checkout main
-  git fetch --prune origin
-  git pull --ff-only origin main
-  git branch -D feat/<ticket-number>
-  ```
+```sh
+python -m scripts.full_auto.close <TICKET> --pr <N> --path polling
+```
+
+`close.py` performs, in order:
+1. **Pre-merge guard** — re-reads the PR via the GitHub API; aborts if `mergeable_state` is not `clean` (and `--path polling` was passed for an open PR).
+2. **Merge** — calls `PUT /pulls/<N>/merge` with `merge_method: squash`. Skipped automatically if the PR is already merged at entry (manual-override case).
+3. **Local git** — `fetch + checkout main + pull --ff-only + git branch -D feat/<TICKET>`.
+4. **State file** — if `.epic-run/<EPIC>.json` references the ticket, updates the entry to `status: done` with the merge SHA + `final_gate`. No-op if the ticket is a standalone FULL_AUTO.
+5. **Jira** — transitions to Done.
+6. **Closure comment** — posts the polling-path closure template (see `scripts/full_auto/lib/templates.py`) with merge SHA, new main SHA, and deleted branch name.
+
+`close.py` returns a `CloseResult` dataclass; Claude surfaces its `actions_taken` list back to the user. On any per-step failure (auth, network, transition refused), close.py exits non-zero and Claude reports the error.
+
+### User-override case — manual squash-merge before close.py
+
+When the user has already squash-merged the PR (typically after a WARN halt that they accepted), Claude runs:
+
+```sh
+python -m scripts.full_auto.close <TICKET> --pr <N> --path manual-override
+```
+
+`close.py` detects the already-merged state from the GitHub API response, skips the merge call, and uses the manual-override closure template (which records that the agent did not invoke `merge_pull_request`).
+
+### Worktree case — preserves the original prose
+
+If implementation ran in a git worktree (visible as a `.worktrees/<ticket-number>` entry in `git worktree list`), `close.py`'s `lib/git_ops.py` does **not** handle ExitWorktree + the SCRUM-388 primary-tree FF logic. Use the worktree-specific steps below instead. (A future enhancement could extend `close.py` to detect and handle the worktree path; out of scope for SCRUM-529.)
 
   **If implementation ran in a git worktree** — for example, when the user explicitly asked for a worktree, when CLAUDE.md / project memory directed one, or when EnterWorktree was used (visible as a `.worktrees/<ticket-number>` entry in `git worktree list`) — run these steps in order:
 
@@ -128,16 +147,22 @@ On confirmed merge (after `merge_pull_request` returns success, or after a manua
 
   If `git worktree remove` refuses because of untracked files left in the worktree (test scratch, generated artifacts, downloaded fixtures), inspect them first via `cd .worktrees/<ticket-number> && git status --short`. If every untracked path is either also present (and ignored) in the main checkout or is plainly disposable scratch, re-run with `--force` and note in the closure comment which untracked paths were force-removed so any genuinely-needed file is not lost silently. Only escalate to `--force` after that inspection — never as a reflex.
 
-- Before transitioning Jira to Done, verify the ticket already has the structured implementation comment required by `docs/agent/workflow-jira.md`.
+### Jira → Done and the closure comment (worktree case only)
+
+For the worktree case above, the Jira transition + closure comment are still owned by Claude's prose (not `close.py`). Before transitioning:
+
+- Verify the ticket already has the structured implementation comment required by `docs/agent/workflow-jira.md`.
   - If missing, post that comment first and only then continue.
 - **Transition Jira ticket to Done** via `mcp__atlassian__jira_transition_issue` (target status name "Done").
 - Post a final closure Jira comment confirming FULL_AUTO completion with:
   1. merged PR URL,
   2. merge/landing commit SHA on `main`,
   3. local/remote branch cleanup result,
-  4. primary-tree FF outcome — one of: "FF'd to `<sha>`", "skipped — primary on `<branch>`", "skipped — primary has WIP on `main`", "skipped — `--ff-only` refused (divergence)". Omit this item only if implementation ran in the main checkout (no worktree was used).
+  4. primary-tree FF outcome — one of: "FF'd to `<sha>`", "skipped — primary on `<branch>`", "skipped — primary has WIP on `main`", "skipped — `--ff-only` refused (divergence)".
   5. path indicator — `"polling path (default)"`.
   6. any residual risk or follow-up note.
+
+For the common (non-worktree) case, `close.py` handles all of the above — Claude only relays its `CloseResult` summary to the user.
 
 ## Git Push Authentication Note
 
