@@ -16,11 +16,12 @@ import (
 )
 
 // LegacyImportSunsetDate is the date by which the legacy create-new
-// endpoints will be removed. SCRUM-XX17 schedules the removal; this date
-// is intentionally fixed so the Sunset header is stable across deploys.
-// Override at runtime via the LEGACY_IMPORT_SUNSET_DATE env var
-// (RFC1123 format), e.g. when the removal slips.
-const defaultLegacyImportSunsetDate = "Fri, 29 May 2026 00:00:00 GMT"
+// endpoints will be removed. SCRUM-428 brings the removal forward; the
+// originally-published date was Fri, 29 May 2026 but the removal ships
+// today (Thu, 21 May 2026), so the Sunset header is updated to match
+// the actual cutover. Override at runtime via the
+// LEGACY_IMPORT_SUNSET_DATE env var (RFC1123 format).
+const defaultLegacyImportSunsetDate = "Thu, 21 May 2026 00:00:00 GMT"
 
 // legacyImportSunsetHeader returns the value for the Sunset response
 // header. Env-override allows the deployment to push the removal date
