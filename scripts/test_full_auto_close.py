@@ -370,6 +370,109 @@ class CloseSummaryLineTest(unittest.TestCase):
 
 # ── state-file tests ─────────────────────────────────────────────────────────
 
+class CloseStateFileStatusTest(unittest.TestCase):
+    """SCRUM-538: tri-state state_file_status replaces the old bool."""
+
+    def _write_state(self, root: Path, epic: str, items: list[dict]) -> Path:
+        state_dir = root / ".epic-run"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        path = state_dir / f"{epic}.json"
+        path.write_text(json.dumps({"epic": epic, "work_list": items}))
+        return path
+
+    def test_no_state_file_default(self):
+        """No .epic-run/<EPIC>.json references the ticket — default standalone case."""
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_no_sf")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=Path(tmp),
+                )
+        self.assertEqual(r.state_file_status, "no_state_file")
+
+    def test_updated_status_when_mark_done_modifies(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_upd")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_state(
+                root,
+                "SCRUM-999",
+                [{"key": "SCRUM-999", "status": "pending"}],
+            )
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=root,
+                )
+        self.assertEqual(r.state_file_status, "updated")
+
+    def test_already_done_when_mark_done_is_idempotent(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="merged_sha_ad")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Entry exists but is already marked done — mark_done returns
+            # False (no changes), so close.py records "already_done".
+            self._write_state(
+                root,
+                "SCRUM-999",
+                [
+                    {
+                        "key": "SCRUM-999",
+                        "status": "done",
+                        "pr": 999,
+                        "merged_sha": "merged_sha_ad",
+                        "final_gate": "PASS",
+                    }
+                ],
+            )
+            p1, p2, p3, p4, p5, p6 = _patch_git_ops()
+            with p1, p2, p3, p4, p5, p6:
+                r = close_mod.close(
+                    "SCRUM-999",
+                    pr_number=999,
+                    path_indicator=POLLING,
+                    github_api=gh,
+                    jira_api=jira,
+                    repo_root=root,
+                )
+        self.assertEqual(r.state_file_status, "already_done")
+
+    def test_would_update_on_dry_run(self):
+        gh = FakeGitHubAPI(_open_pr_clean(), post_merge_sha="dry")
+        jira = FakeJiraAPI()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_state(
+                root,
+                "SCRUM-999",
+                [{"key": "SCRUM-999", "status": "pending"}],
+            )
+            r = close_mod.close(
+                "SCRUM-999",
+                pr_number=999,
+                path_indicator=POLLING,
+                github_api=gh,
+                jira_api=jira,
+                repo_root=root,
+                dry_run=True,
+            )
+        self.assertEqual(r.state_file_status, "would_update")
+
+
 class StateFileTest(unittest.TestCase):
     def _write_state(self, root: Path, epic: str, items: list[dict]) -> Path:
         state_dir = root / ".epic-run"
