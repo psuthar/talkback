@@ -89,7 +89,7 @@ When the gate completes with `conclusion: action_required` (WARN) or `failure` (
 
 ## Merge, Cleanup, and Done Transition
 
-After the gate reaches PASS, the post-merge close-out (merge + local cleanup + Jira → Done + closure comment) is owned by **`scripts/full_auto/close.py`** (Epic SCRUM-529). Claude invokes it instead of running each individual MCP / Bash call. See `docs/agent/full-auto-scripts.md` for the runbook + auth setup.
+After the gate reaches PASS, the post-merge close-out (merge + local cleanup + Jira → Done + closure comment) is owned by **`scripts/full_auto/close.py`** (Epic SCRUM-529). Claude invokes it instead of running each individual MCP / Bash call. See `docs/agent/full-auto-scripts.md` for the runbook + auth setup. Atlassian credentials are auto-loaded from `.env.local` at the repo root at module import time (SCRUM-533) — no shell sourcing required before invocation.
 
 ### Common case — no worktree (default for `implement SCRUM-XX FULL_AUTO`)
 
@@ -102,12 +102,12 @@ python -m scripts.full_auto.close <TICKET> --pr <N> --path polling
 `close.py` performs, in order:
 1. **Pre-merge guard** — re-reads the PR via the GitHub API; aborts if `mergeable_state` is not `clean` (and `--path polling` was passed for an open PR).
 2. **Merge** — calls `PUT /pulls/<N>/merge` with `merge_method: squash`. Skipped automatically if the PR is already merged at entry (manual-override case).
-3. **Local git** — `fetch + checkout main + pull --ff-only + git branch -D feat/<TICKET>`.
-4. **State file** — if `.epic-run/<EPIC>.json` references the ticket, updates the entry to `status: done` with the merge SHA + `final_gate`. No-op if the ticket is a standalone FULL_AUTO.
+3. **Local git** — `fetch + checkout main + pull --ff-only + git branch -D feat/<TICKET>`. If `ops/define-kpis/lint-runs.log` is the *only* dirty tracked file (the SCRUM-504 PR-body lint appends a row post-feature-commit), it is auto-stashed before the checkout and popped back after the SHA capture (SCRUM-534), so the audit row survives on main for the next PR to absorb. Any *other* dirty tracked file falls through to the original `git checkout` failure — manual recovery is still on the user.
+4. **State file** — if `.epic-run/<EPIC>.json` references the ticket, updates the entry to `status: done` with the merge SHA + `final_gate`. `CloseResult.state_file_status` (SCRUM-538) records the outcome as one of `updated` / `already_done` / `no_state_file` / `would_update` (the last for dry-run); standalone tickets get `no_state_file`.
 5. **Jira** — transitions to Done.
 6. **Closure comment** — posts the polling-path closure template (see `scripts/full_auto/lib/templates.py`) with merge SHA, new main SHA, and deleted branch name.
 
-`close.py` returns a `CloseResult` dataclass; Claude surfaces its `actions_taken` list back to the user. On any per-step failure (auth, network, transition refused), close.py exits non-zero and Claude reports the error.
+`close.py` returns a `CloseResult` dataclass; Claude surfaces its `actions_taken` list back to the user. The list always ends with a single grep-able summary line — `close.py succeeded: N actions, no aborts` / `close.py aborted: <reason>` / `close.py dry-run: N actions previewed` (SCRUM-536) — so chat surface / log scraping can classify runs without parsing the whole list. On any per-step failure (auth, network, transition refused), close.py exits non-zero and Claude reports the error.
 
 ### User-override case — manual squash-merge before close.py
 
