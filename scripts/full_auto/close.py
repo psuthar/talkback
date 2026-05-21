@@ -148,7 +148,23 @@ def close(
         _act(result, f"would: fetch + checkout main + pull --ff-only + branch -D {branch_name}")
     else:
         git_ops.fetch_main(cwd=repo_root)
+        # SCRUM-534: PR-mode lint at step 4.5 of workflow-jira.md appends a
+        # row to ops/define-kpis/lint-runs.log AFTER the feature commit is
+        # made. Auto-stash + restore it across the checkout so the audit row
+        # survives on main. Any other dirty tracked file falls through to
+        # the normal `git checkout` error.
+        stashed_lint_log = git_ops.lint_log_only_dirty(cwd=repo_root)
+        if stashed_lint_log:
+            git_ops.stash_lint_log(cwd=repo_root)
         result.main_sha_after = git_ops.checkout_and_pull_main(cwd=repo_root)
+        if stashed_lint_log:
+            git_ops.pop_stash(cwd=repo_root)
+            _act(
+                result,
+                "stashed and restored "
+                + git_ops.LINT_LOG_PATH
+                + " (SCRUM-534: PR-mode lint row preserved on main)",
+            )
         git_ops.delete_branch(branch_name, cwd=repo_root)
         result.branch_deleted = True
         _act(result, f"git: main → {result.main_sha_after[:7]}, deleted {branch_name}")
