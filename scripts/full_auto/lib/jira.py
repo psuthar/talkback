@@ -28,6 +28,17 @@ class JiraAPI(Protocol):
         """Add a comment with body ``body`` to ``key``. Returns comment id."""
         ...
 
+    def get_issue(self, key: str) -> dict:
+        """SCRUM-542: fetch the full issue payload (summary, description,
+        labels, issuetype, status). Returns the parsed JSON ``fields`` dict
+        plus ``key``."""
+        ...
+
+    def update_issue(self, key: str, fields: dict) -> None:
+        """SCRUM-542: PUT /issue/<key> with the given ``fields`` dict.
+        Used by start.py's auto-fix patch loop to rewrite the description."""
+        ...
+
 
 def _basic_auth(email: str, token: str) -> str:
     raw = f"{email}:{token}".encode("utf-8")
@@ -83,6 +94,34 @@ class HttpJiraAPI:
         if status >= 400:
             raise RuntimeError(f"POST transition {transition_id} on {key} -> {status}: {body}")
 
+    def get_issue(self, key: str) -> dict:
+        status, body = _request(
+            "GET",
+            f"{self._base}/rest/api/3/issue/{key}",
+            auth_header=self._auth,
+        )
+        if status >= 400:
+            raise RuntimeError(f"GET issue {key} -> {status}: {body}")
+        fields = body.get("fields", {}) or {}
+        return {
+            "key": body.get("key", key),
+            "summary": fields.get("summary", ""),
+            "description": fields.get("description"),
+            "labels": fields.get("labels", []) or [],
+            "issuetype": (fields.get("issuetype") or {}).get("name", ""),
+            "status": (fields.get("status") or {}).get("name", ""),
+        }
+
+    def update_issue(self, key: str, fields: dict) -> None:
+        status, resp = _request(
+            "PUT",
+            f"{self._base}/rest/api/3/issue/{key}",
+            auth_header=self._auth,
+            body={"fields": fields},
+        )
+        if status >= 400:
+            raise RuntimeError(f"PUT issue {key} -> {status}: {resp}")
+
     def add_comment(self, key: str, body: str) -> int:
         # ADF body shape — single paragraph node with the comment text. Mirrors
         # what the Atlassian MCP produces; readers see plain text in Jira UI.
@@ -114,10 +153,16 @@ def resolve_done_transition_id(api: JiraAPI, key: str) -> str:
 
     SCRUM project uses id "51" but resolving by name is more portable.
     """
+    return resolve_transition_id_by_name(api, key, DONE_TRANSITION_NAME)
+
+
+def resolve_transition_id_by_name(api: JiraAPI, key: str, name: str) -> str:
+    """SCRUM-542: generic version of ``resolve_done_transition_id`` used by
+    ``start.py`` ("In Progress") and ``review.py`` ("In Review")."""
     for t in api.get_transitions(key):
-        if t.get("name", "").lower() == DONE_TRANSITION_NAME.lower():
+        if t.get("name", "").lower() == name.lower():
             return str(t["id"])
-    raise RuntimeError(f"No '{DONE_TRANSITION_NAME}' transition available on {key}")
+    raise RuntimeError(f"No {name!r} transition available on {key}")
 
 
 __all__ = [
@@ -125,4 +170,5 @@ __all__ = [
     "HttpJiraAPI",
     "JiraAPI",
     "resolve_done_transition_id",
+    "resolve_transition_id_by_name",
 ]
