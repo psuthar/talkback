@@ -37,6 +37,17 @@ class GitHubAPI(Protocol):
         """Squash-merge ``pr_number`` in ``repo``. Returns merge commit SHA."""
         ...
 
+    def create_pr(
+        self, repo: str, *, title: str, head: str, base: str, body: str
+    ) -> tuple[int, str]:
+        """SCRUM-543: open a PR. Returns ``(pr_number, html_url)``."""
+        ...
+
+    def update_pr_body(self, repo: str, pr_number: int, body: str) -> None:
+        """SCRUM-543: PATCH the PR body. Used by review.py's PR-body
+        auto-fix patch loop (agent-authored exit-2)."""
+        ...
+
 
 def _request(method: str, url: str, *, token: str, body: dict | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(
@@ -92,6 +103,29 @@ class HttpGitHubAPI:
         if not sha:
             raise RuntimeError(f"merge response missing sha: {body}")
         return sha
+
+    def create_pr(
+        self, repo: str, *, title: str, head: str, base: str, body: str
+    ) -> tuple[int, str]:
+        status, resp = _request(
+            "POST",
+            f"{GITHUB_API}/repos/{repo}/pulls",
+            token=self._token,
+            body={"title": title, "head": head, "base": base, "body": body},
+        )
+        if status >= 400:
+            raise RuntimeError(f"POST /pulls -> {status}: {resp}")
+        return int(resp["number"]), resp.get("html_url", "")
+
+    def update_pr_body(self, repo: str, pr_number: int, body: str) -> None:
+        status, resp = _request(
+            "PATCH",
+            f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}",
+            token=self._token,
+            body={"body": body},
+        )
+        if status >= 400:
+            raise RuntimeError(f"PATCH /pulls/{pr_number} -> {status}: {resp}")
 
 
 __all__ = ["GITHUB_API", "GitHubAPI", "HttpGitHubAPI", "PRSnapshot"]

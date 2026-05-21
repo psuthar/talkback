@@ -125,7 +125,7 @@ _HEADING_RE = re.compile(r"^(\s*#+\s+)(.*?)(\s*)$")
 
 
 def _patch_description(description_md: str, gaps: list[dict]) -> str:
-    """SCRUM-542: minimal section-patch for agent-authored exit-2 gaps.
+    """SCRUM-542 / SCRUM-543: minimal section-patch for agent-authored exit-2 gaps.
 
     Mirrors the algorithm documented in ``.claude/skills/jira-ticket-lint``:
     for each gap whose ``rule_id`` is one of the known fixable shapes,
@@ -133,15 +133,22 @@ def _patch_description(description_md: str, gaps: list[dict]) -> str:
 
     Supported repairs (matching the lint rules — see ``docs/agent/ticket-lint.md``):
 
-    * ``AC.present`` / ``AC.min_count`` — ensure an ``## Acceptance criteria``
-      section exists with at least one (or three for Story) checkboxes.
-    * ``BUG.repro`` — ensure a non-empty ``## Reproduction`` section.
+    Jira-ticket rules:
+    * ``AC.present`` / ``AC.min_count`` — ensure ``## Acceptance criteria``
+      with at least one (or three for Story) checkboxes.
+    * ``BUG.repro`` — ensure non-empty ``## Reproduction``.
     * ``EPIC.goal`` / ``EPIC.scope_present`` / ``EPIC.success_criteria`` —
-      ensure the named section exists; success-criteria gets two
-      placeholder checkboxes.
+      ensure the named section; success-criteria gets two checkboxes.
 
-    Other rules fall through unpatched (the lint will fail a second
-    time and the loop halts).
+    PR-body rules (SCRUM-543; ``review.py`` reuses this helper):
+    * ``PR.summary`` — ensure ``## Summary`` with at least one bullet.
+    * ``PR.test_plan`` — ensure ``## Test plan`` with at least one checkbox.
+
+    Other rules fall through unpatched (the lint will fail a second time
+    and the loop halts). ``PR.jira_link`` is intentionally not patched —
+    the fix requires the ticket key, which this helper doesn't carry;
+    the agent's PR-body template should include the Jira section to begin
+    with, so a missing link is a real authoring gap that warrants halt.
     """
     text = description_md.rstrip() + "\n"
     for gap in gaps:
@@ -160,6 +167,10 @@ def _patch_description(description_md: str, gaps: list[dict]) -> str:
             text = _ensure_checkboxes(text, section, 2)
         elif rule_id in ("BUG.repro", "EPIC.goal", "EPIC.scope_present"):
             text = _ensure_section_body(text, section, "(fill in)")
+        elif rule_id == "PR.test_plan":
+            text = _ensure_checkboxes(text, section, 1)
+        elif rule_id == "PR.summary":
+            text = _ensure_bullets(text, section, 1)
     return text
 
 
@@ -193,6 +204,37 @@ def _ensure_section_body(text: str, section: str, placeholder: str) -> str:
 
 
 _CHECKBOX_RE = re.compile(r"^\s*-\s+\[[ xX]\]\s+\S")
+_BULLET_RE = re.compile(r"^\s*-\s+\S")  # any bullet (including checkboxes)
+
+
+def _ensure_bullets(text: str, section: str, need: int) -> str:
+    """SCRUM-543: PR-mode helper. Ensure the named section has at least
+    ``need`` non-empty bullets. Used for ``PR.summary``."""
+    lines = text.splitlines()
+    target = section.lower()
+    for i, line in enumerate(lines):
+        m = _HEADING_RE.match(line)
+        if not m or m.group(2).strip().rstrip(":").strip().lower() != target:
+            continue
+        count = 0
+        end = i + 1
+        for j in range(i + 1, len(lines)):
+            if _HEADING_RE.match(lines[j]):
+                end = j
+                break
+            if _BULLET_RE.match(lines[j]):
+                count += 1
+            end = j + 1
+        if count < need:
+            missing = need - count
+            insert_at = end
+            extra = ["- (fill in)" for _ in range(missing)]
+            if insert_at > 0 and not lines[insert_at - 1].strip():
+                lines[insert_at:insert_at] = extra
+            else:
+                lines[insert_at:insert_at] = [""] + extra
+        break
+    return "\n".join(lines) + "\n"
 
 
 def _ensure_checkboxes(text: str, section: str, need: int) -> str:
