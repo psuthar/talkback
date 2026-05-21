@@ -10,133 +10,14 @@ import (
 	"github.com/psuthar/talkback/internal/models"
 )
 
-// GoogleMeetImportRequest body for POST /api/google-meet/import.
-// conference_record and recording are full Meet resource names
-// (conferenceRecords/{c} and conferenceRecords/{c}/recordings/{r}).
+// GoogleMeetImportRequest is the JSON body for POST
+// /api/sessions/:id/import/google-meet. conference_record and recording
+// are full Meet resource names (conferenceRecords/{c} and
+// conferenceRecords/{c}/recordings/{r}).
 type GoogleMeetImportRequest struct {
 	Title            string `json:"title"`
 	ConferenceRecord string `json:"conference_record"`
 	Recording        string `json:"recording"`
-}
-
-// GoogleMeetImportResponse for POST /api/google-meet/import.
-type GoogleMeetImportResponse struct {
-	ID    string `json:"id"`
-	JobID string `json:"job_id"`
-	State string `json:"state"`
-}
-
-// GoogleMeetImport creates a session and enqueues a Google Meet processing job
-// (mirrors TeamsImport). Routes: POST /api/google-meet/import.
-//
-// SCRUM-416: legacy create-new endpoint, deprecated in favor of the
-// attach-to-existing-session POST /api/sessions/:id/import/google-meet path.
-// Every response carries the SCRUM-416 deprecation headers and emits a
-// DEPRECATED_ENDPOINT_HIT structured log. SCRUM-XX17 schedules removal.
-func (h *Handlers) GoogleMeetImport(w http.ResponseWriter, r *http.Request) {
-	markLegacyImportDeprecated(w, r, "/api/sessions/:id/import/google-meet")
-	if !googleMeetEnabled() {
-		http.Error(w, "Google Meet integration disabled", http.StatusNotFound)
-		return
-	}
-	if r.Method != http.MethodPost {
-		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]string{"message": "Method not allowed"})
-		return
-	}
-	user := UserFromContext(r.Context())
-	if user == nil {
-		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "unauthorized", "message": "unauthorized"})
-		return
-	}
-	if !user.GlobalRole.CanCreateSessions() {
-		writeJSONStatus(w, http.StatusForbidden, map[string]string{"code": "forbidden", "message": "your role does not allow creating sessions"})
-		return
-	}
-	creatorIdentity := readCreatorIdentity(r)
-	if creatorIdentity == "" {
-		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "creator_identity required"})
-		return
-	}
-	if creatorIdentity != user.Email {
-		writeJSONStatus(w, http.StatusForbidden, map[string]string{"code": "forbidden", "message": "creator identity must match the authenticated user"})
-		return
-	}
-	if _, _, err := h.GetValidGoogleMeetAccessTokenContext(r.Context(), creatorIdentity); err != nil {
-		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"code": "google_meet_not_connected", "message": "Google Meet not connected. Connect Google Meet first."})
-		return
-	}
-	var req GoogleMeetImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"message": "Invalid request body"})
-		return
-	}
-	conferenceRecord := strings.TrimSpace(req.ConferenceRecord)
-	recording := strings.TrimSpace(req.Recording)
-	if conferenceRecord == "" || recording == "" {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"message": "conference_record and recording required"})
-		return
-	}
-	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		title = "Google Meet Recording"
-	}
-	exists, err := h.DB.SessionWithTitleExistsForCreator(r.Context(), creatorIdentity, title, nil)
-	if err != nil {
-		log.Printf("GoogleMeetImport SessionWithTitleExistsForCreator: %v", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "Failed to check session title"})
-		return
-	}
-	if exists {
-		writeJSONStatus(w, http.StatusConflict, map[string]string{"message": "A session with this name already exists. Please use a unique name."})
-		return
-	}
-
-	sessionID := uuid.New()
-	session := &models.Session{
-		ID:             sessionID,
-		Title:          title,
-		CreatedBy:      &creatorIdentity,
-		Status:         models.SessionStatusOpen,
-		SourceProvider: models.SessionSourceGoogleMeet,
-	}
-	if err := h.DB.CreateSession(r.Context(), session); err != nil {
-		log.Printf("GoogleMeetImport create session: %v", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "Failed to create session"})
-		return
-	}
-	if _, err := h.DB.CreateArtifact(r.Context(), sessionID, title, nil); err != nil {
-		log.Printf("GoogleMeetImport create artifact: %v", err)
-	}
-
-	jobID := uuid.New()
-	cr := conferenceRecord
-	rec := recording
-	creatorPtr := &creatorIdentity
-	job := &models.SessionProcessingJob{
-		ID:              jobID,
-		SessionID:       sessionID,
-		Source:          models.SessionProcessingJobSourceGoogleMeet,
-		State:           models.ProcessingStateQueued,
-		Stage:           models.ProcessingStageFetch,
-		MeetingUUID:     &cr,
-		InstanceUUID:    &rec,
-		CreatorIdentity: creatorPtr,
-		// SCRUM-471: legacy GoogleMeetImport = session created WITH this
-		// video. Keep auto-primary.
-		SetAsPrimary: true,
-	}
-	if err := h.DB.CreateOrGetSessionProcessingJob(r.Context(), job); err != nil {
-		log.Printf("GoogleMeetImport create job: %v", err)
-		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"message": "Failed to create import job"})
-		return
-	}
-	_ = h.DB.UpdateSessionProcessingMirror(r.Context(), sessionID, job.State)
-
-	writeJSONStatus(w, http.StatusAccepted, GoogleMeetImportResponse{
-		ID:    sessionID.String(),
-		JobID: job.ID.String(),
-		State: job.State,
-	})
 }
 
 // SessionImportGoogleMeet enqueues a Google Meet job for an existing session.

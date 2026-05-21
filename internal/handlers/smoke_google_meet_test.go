@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -16,6 +15,27 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// seedGoogleMeetConnection inserts a GoogleMeetConnection for a creator with
+// valid encrypted tokens (encrypted with the default key the handler reads
+// when ENCRYPTION_KEY is unset). Returns the inserted connection.
+func seedGoogleMeetConnection(t *testing.T, h *Handlers, creatorIdentity string) *models.GoogleMeetConnection {
+	t.Helper()
+	access, err := utils.EncryptToken([]byte("fake-access"), "default-key-change-in-production")
+	require.NoError(t, err)
+	refresh, err := utils.EncryptToken([]byte("fake-refresh"), "default-key-change-in-production")
+	require.NoError(t, err)
+	conn := &models.GoogleMeetConnection{
+		ID:                    uuid.New(),
+		CreatorIdentityID:     creatorIdentity,
+		GoogleUserID:          "google-sub-test",
+		AccessTokenEncrypted:  access,
+		RefreshTokenEncrypted: refresh,
+		ExpiresAt:             time.Now().Add(time.Hour),
+	}
+	require.NoError(t, h.DB.CreateGoogleMeetConnection(context.Background(), conn))
+	return conn
+}
 
 // fakeGoogleServer is a single httptest server that handles all Google
 // endpoints the SPA / pipeline call: OAuth token + userinfo + workspace
@@ -159,42 +179,3 @@ func TestSmoke_GoogleMeet_RecordingsListFlattening(t *testing.T) {
 	assert.True(t, resp.Items[0].HasTranscript)
 }
 
-// TestSmoke_GoogleMeet_ImportEnqueuesJob covers the import handler: with a
-// connected creator and a valid request body, returns 202 with {id, job_id,
-// state=queued} and creates a session_processing_jobs row with
-// source=google_meet.
-func TestSmoke_GoogleMeet_ImportEnqueuesJob(t *testing.T) {
-	h, cleanup := setupTestHandlersParallel(t)
-	defer cleanup()
-	t.Setenv("ENABLE_GOOGLE_MEET", "true")
-
-	creator := "import-smoke@example.com"
-	user := makeImportTestUser(t, h, creator)
-	seedGoogleMeetConnection(t, h, creator)
-
-	body, _ := json.Marshal(GoogleMeetImportRequest{
-		Title:            "Smoke import",
-		ConferenceRecord: "conferenceRecords/A",
-		Recording:        "conferenceRecords/A/recordings/r1",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/api/google-meet/import", bytes.NewReader(body))
-	req.Header.Set("X-Creator-Identity", creator)
-	req = req.WithContext(context.WithValue(req.Context(), userContextKey, user))
-	w := httptest.NewRecorder()
-	h.GoogleMeetImport(w, req)
-	require.Equal(t, http.StatusAccepted, w.Code, w.Body.String())
-
-	var resp GoogleMeetImportResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, models.ProcessingStateQueued, resp.State)
-	jobID, err := uuid.Parse(resp.JobID)
-	require.NoError(t, err)
-	job, err := h.DB.GetSessionProcessingJobByID(context.Background(), jobID)
-	require.NoError(t, err)
-	require.NotNil(t, job)
-	assert.Equal(t, models.SessionProcessingJobSourceGoogleMeet, job.Source)
-	require.NotNil(t, job.MeetingUUID)
-	assert.Equal(t, "conferenceRecords/A", *job.MeetingUUID)
-	require.NotNil(t, job.InstanceUUID)
-	assert.Equal(t, "conferenceRecords/A/recordings/r1", *job.InstanceUUID)
-}

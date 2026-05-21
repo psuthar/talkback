@@ -73,10 +73,10 @@ func shouldSkipMP4Ingest(ctx context.Context, db *database.DB, sessionID uuid.UU
 //   - the session does NOT already have a ready primary.
 //
 // shouldPromote distinguishes "session created WITH this video" (legacy
-// CreateSession*FromZoom / GoogleMeetImport / TeamsImport paths set true)
-// from post-creation imports via the SCRUM-411 SessionImport* attach
-// endpoints (set false — recording lands as secondary; user picks primary
-// explicitly via SCRUM-426 RecordingsSection kebab).
+// CreateSession*FromZoom paths set true) from post-creation imports via the
+// SCRUM-411 SessionImport* attach endpoints (set false — recording lands
+// as secondary; user picks primary explicitly via SCRUM-426
+// RecordingsSection kebab).
 func setPrimaryIfNotSet(ctx context.Context, db *database.DB, sessionID, artifactID uuid.UUID, shouldPromote bool) error {
 	if !shouldPromote {
 		return nil
