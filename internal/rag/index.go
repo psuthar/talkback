@@ -181,6 +181,13 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 		}
 	}
 
+	// 2c) Session metadata chunk: decision fields + aggregate counts, embedded so retrieval
+	// can ground answers to questions like "what was the primary decision?" or
+	// "are there any videos?". Best-effort; errors are logged but don't fail indexing.
+	if metaChunks := buildSessionMetadataChunksForSession(ctx, db, sessionID, materials); len(metaChunks) > 0 {
+		allChunkInputs = append(allChunkInputs, metaChunks...)
+	}
+
 	if len(allChunkInputs) == 0 {
 		_ = setSessionIndexStatus(db, ctx, sessionID, "ready")
 		return nil
@@ -240,6 +247,56 @@ func IndexSession(ctx context.Context, db *database.DB, embedder Embedder, sessi
 	_ = setSessionIndexStatus(db, ctx, sessionID, "ready")
 	log.Printf("IndexSession: completed session_id=%s chunks=%d duration_ms=%d", sessionID, len(chunkIDs), time.Since(indexStart).Milliseconds())
 	return nil
+}
+
+// buildSessionMetadataChunksForSession fetches the session row + aggregate counts and renders
+// the session_metadata chunk. Returns nil (no chunk) if the session can't be loaded; individual
+// count failures degrade to zero so a partial signal still ships.
+func buildSessionMetadataChunksForSession(ctx context.Context, db *database.DB, sessionID uuid.UUID, materials []*models.Material) []ChunkInput {
+	session, err := db.GetSession(ctx, sessionID)
+	if err != nil || session == nil {
+		if err != nil {
+			log.Printf("IndexSession: get session for metadata chunk: %v", err)
+		}
+		return nil
+	}
+	counts := SessionMetadataCounts{MaterialsByKind: map[string]int{}}
+	for _, m := range materials {
+		counts.Materials++
+		counts.MaterialsByKind[strings.ToLower(string(m.Kind))]++
+	}
+	if n, err := db.CountMembersBySessionIDs(ctx, []uuid.UUID{sessionID}); err == nil {
+		counts.Participants = n[sessionID]
+	} else {
+		log.Printf("IndexSession: count members: %v", err)
+	}
+	if n, err := db.CountActiveRecordingsForSession(ctx, sessionID); err == nil {
+		counts.Recordings = n
+	} else {
+		log.Printf("IndexSession: count recordings: %v", err)
+	}
+	if n, err := db.CountQuestionsBySessionID(ctx, sessionID); err == nil {
+		counts.Questions = n
+	} else {
+		log.Printf("IndexSession: count questions: %v", err)
+	}
+	if n, err := db.CountSessionLinksBySessionID(ctx, sessionID); err == nil {
+		counts.Links = n
+	} else {
+		log.Printf("IndexSession: count links: %v", err)
+	}
+	if agg, err := db.GetStanceAggregate(ctx, sessionID); err == nil && agg != nil {
+		agg.Total = agg.Agree + agg.Disagree + agg.Conditional + agg.Abstain + agg.NeedMoreInfo
+		counts.Stances = agg
+	} else if err != nil {
+		log.Printf("IndexSession: stance aggregate: %v", err)
+	}
+	if trans, err := db.GetTranscriptBySessionID(ctx, sessionID, ""); err == nil && trans != nil {
+		counts.TranscriptStatus = string(trans.Status)
+	} else {
+		counts.TranscriptStatus = "none"
+	}
+	return BuildSessionMetadataChunks(session, counts)
 }
 
 func setSessionIndexStatus(db *database.DB, ctx context.Context, sessionID uuid.UUID, status string) error {

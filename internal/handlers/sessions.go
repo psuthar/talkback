@@ -1128,6 +1128,14 @@ func (h *Handlers) UpdateSessionStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// SCRUM-558: title / status / premise / primary_decision / decision_outcome changes
+	// alter the session_metadata RAG chunk; fire an async re-index so Q&A grounds on
+	// the latest values. Material / participant / question / stance / recording
+	// mutations rely on the lazy refresh in session_ask.go.
+	if req.Title != nil || req.Status != nil || req.Premise != nil || req.PrimaryDecision != nil || req.DecisionOutcome != nil {
+		h.triggerIndex(sessionID)
+	}
+
 	// Get updated session
 	session, err = h.DB.GetSession(r.Context(), sessionID)
 	if err != nil {

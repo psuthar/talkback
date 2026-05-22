@@ -6,9 +6,9 @@ Operational entrypoint for fixture-backed Q&A evaluation: inventory JSON, versio
 
 | Path | Purpose |
 |------|---------|
-| `fixture_fact_inventory.json` | Full candidate case list (24 cases) with source refs and expected keywords/status. |
-| `eval_cases_v1.json` | 24-case harness set with hallucination constraints (aligned with FF-001–FF-024). |
-| `expected_scores_v1.json` | Per-case correctness/hallucination targets and weights (FF-001–FF-024). |
+| `fixture_fact_inventory.json` | Full candidate case list (28 cases) with source refs and expected keywords/status. FF-025+ exercise the session_metadata RAG path. |
+| `eval_cases_v1.json` | 28-case harness set with hallucination constraints (aligned with FF-001–FF-028). |
+| `expected_scores_v1.json` | Per-case correctness/hallucination targets and weights (FF-001–FF-028). |
 | `schemas/` | JSON Schema (Draft 2020-12) for `eval_cases` and `expected_scores`. |
 | `runs/` | Timestamped runner output (gitignored except `.gitkeep`). |
 | `pilot_baseline.json` | Recorded baseline snapshot; currently dry-run-only and pending live refresh. |
@@ -136,7 +136,7 @@ Refresh when you change default inventory size, eval JSON, or runner behavior.
 
 - **Dry-run** validates orchestration and disk output only.
 - **Live runs** depend on auth, session limits, indexing latency, and model availability.
-- **`eval_cases_v1`** now explicitly covers **FF-001..FF-024**; keep it aligned with both `fixture_fact_inventory.json` and `expected_scores_v1.json`.
+- **`eval_cases_v1`** now explicitly covers **FF-001..FF-028**; keep it aligned with both `fixture_fact_inventory.json` and `expected_scores_v1.json`.
 
 ## Tests (CI)
 

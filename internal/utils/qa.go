@@ -150,7 +150,7 @@ CRITICAL RULES:
 3. If you are unsure or the context is insufficient, set answer_status="not_covered".
 4. When the question asks whether something is mentioned, present, or included (e.g. "Is X mentioned?", "Does the transcript say Y?", "Is 4 in the list?"), and the context explicitly lists or states what is mentioned (e.g. a list of numbers, names, or items), you MUST answer "Yes" or "No" from that context and use answer_status="answered" with citations. For example: if the context says "the first five prime numbers are 2, 3, 5, 7, 11" and the question is "Is the number 4 mentioned?", answer "No. The number 4 is not mentioned. The transcript mentions the first five prime numbers: 2, 3, 5, 7, and 11." with answer_status="answered" and cite the chunk. Do not use "not_covered" when the context clearly implies the answer is no (or yes).
 5. Provide citations from the context (2-5 citations max). Each citation MUST reference a chunk_id from the provided context.
-6. Each citation must include: chunk_id (REQUIRED), source_type ("material" or "transcript"), source_id, locator (if available), and a short snippet (~200-300 chars) extracted from the chunk text.
+6. Each citation must include: chunk_id (REQUIRED), source_type ("material", "transcript", or "session_metadata"), source_id, locator (if available), and a short snippet (~200-300 chars) extracted from the chunk text. A "session_metadata" chunk describes the session's structure (title, decision fields, counts of participants/materials/recordings/questions/links/stances) and is the authoritative source for questions about the session's shape rather than its content.
 7. Set confidence between 0.0 and 1.0 based on how well the context answers the question. If confidence < 0.55, set answer_status="not_covered".
 8. If the answer is not fully supported by the context, set answer_status="not_covered".`
 
@@ -163,7 +163,7 @@ You MUST respond in valid JSON format matching this exact structure:
   "citations": [
     {
       "chunk_id": "...",
-      "source_type": "material" | "transcript",
+      "source_type": "material" | "transcript" | "session_metadata",
       "source_id": "...",
       "locator": "...",
       "snippet": "..."

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -928,6 +929,74 @@ func TestUpdateSessionStatus(t *testing.T) {
 		h.RequireAuth(h.UpdateSessionStatus)(w, req)
 
 		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+}
+
+// TestUpdateSessionStatus_TriggersReindex (SCRUM-558) locks in the contract that title /
+// status / premise / primary_decision / decision_outcome edits fire IndexAsync so the
+// session_metadata RAG chunk stays fresh. No-op mutations don't trigger.
+func TestUpdateSessionStatus_TriggersReindex(t *testing.T) {
+	t.Parallel()
+	h, cleanup := setupTestHandlersParallel(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	var indexCalls atomic.Int64
+	var lastID atomic.Pointer[uuid.UUID]
+	h.IndexAsync = func(id uuid.UUID) {
+		indexCalls.Add(1)
+		copyID := id
+		lastID.Store(&copyID)
+	}
+
+	req0 := httptest.NewRequest(http.MethodPatch, "/sessions/"+uuid.New().String(), bytes.NewReader([]byte("{}")))
+	creator := addUserSessionCookie(t, h, req0, "reindex-trigger@example.com")
+	session := &models.Session{
+		ID:        uuid.New(),
+		Title:     "Reindex trigger session",
+		CreatedBy: &creator.Email,
+		Status:    models.SessionStatusOpen,
+	}
+	require.NoError(t, h.DB.CreateSession(ctx, session))
+
+	patch := func(body map[string]any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPatch, "/sessions/"+session.ID.String(), bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		for _, c := range req0.Cookies() {
+			req.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		h.RequireAuth(h.UpdateSessionStatus)(w, req)
+		return w
+	}
+
+	cases := []struct {
+		name string
+		body map[string]any
+	}{
+		{"title edit triggers", map[string]any{"title": "Renamed session"}},
+		{"status edit triggers", map[string]any{"status": "closed"}},
+		{"premise edit triggers", map[string]any{"premise": "Some premise."}},
+		{"primary_decision edit triggers", map[string]any{"primary_decision": "Approve X."}},
+		{"decision_outcome edit triggers", map[string]any{"decision_outcome": "Approved."}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := indexCalls.Load()
+			w := patch(tc.body)
+			require.Equal(t, http.StatusOK, w.Code, "%s: %s", tc.name, w.Body.String())
+			require.Equal(t, before+1, indexCalls.Load(), "%s should trigger exactly one IndexAsync", tc.name)
+			require.NotNil(t, lastID.Load())
+			require.Equal(t, session.ID, *lastID.Load())
+		})
+	}
+
+	t.Run("empty body does not trigger", func(t *testing.T) {
+		before := indexCalls.Load()
+		w := patch(map[string]any{})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, before, indexCalls.Load(), "no metadata fields means no reindex")
 	})
 }
 

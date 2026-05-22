@@ -356,6 +356,71 @@
         }
       ],
       "rationale": "Actor information not present in fixture payload."
+    },
+    {
+      "case_id": "FF-025",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What is the primary decision recorded in this session?",
+      "expected_status": "answered",
+      "expected_keywords": ["approve", "2.4m", "apac"],
+      "source_refs": [
+        {
+          "source_file": "internal/rag/chunker.go",
+          "source_symbol": "BuildSessionMetadataChunks",
+          "evidence": "Primary decision: Approve 2.4M budget for APAC. (emitted in session_metadata chunk when session.PrimaryDecision is set)"
+        },
+        {
+          "source_file": "scripts/run_qa_eval.py",
+          "source_symbol": "FIXTURE_SETUP[smoke_session_update_apac_decision].patch_session",
+          "evidence": "primary_decision: Approve 2.4M budget for APAC."
+        }
+      ],
+      "rationale": "Exercises session_metadata RAG path for primary_decision (SCRUM-558)."
+    },
+    {
+      "case_id": "FF-026",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What premise is recorded for this session?",
+      "expected_status": "answered",
+      "expected_keywords": ["decide", "apac expansion"],
+      "source_refs": [
+        {
+          "source_file": "internal/rag/chunker.go",
+          "source_symbol": "BuildSessionMetadataChunks",
+          "evidence": "Premise: We need to decide on the APAC expansion. (emitted in session_metadata chunk when session.Premise is set)"
+        }
+      ],
+      "rationale": "Exercises session_metadata RAG path for premise (SCRUM-558)."
+    },
+    {
+      "case_id": "FF-027",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Are there any video recordings in this session?",
+      "expected_status": "answered",
+      "expected_keywords": ["no"],
+      "source_refs": [
+        {
+          "source_file": "internal/rag/chunker.go",
+          "source_symbol": "BuildSessionMetadataChunks",
+          "evidence": "Video recordings: none. (emitted when counts.Recordings == 0)"
+        }
+      ],
+      "rationale": "Structural Q&A grounded in session_metadata; smoke fixture seeds zero recordings."
+    },
+    {
+      "case_id": "FF-028",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "How many materials does this session have?",
+      "expected_status": "answered",
+      "expected_keywords": ["1"],
+      "source_refs": [
+        {
+          "source_file": "internal/rag/chunker.go",
+          "source_symbol": "BuildSessionMetadataChunks",
+          "evidence": "Materials: 1 total (1 text). (emitted when counts.Materials == 1)"
+        }
+      ],
+      "rationale": "Count Q&A grounded in session_metadata; smoke fixture pastes exactly one material."
     }
   ]
 }
