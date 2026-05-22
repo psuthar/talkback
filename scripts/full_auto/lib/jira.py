@@ -39,6 +39,13 @@ class JiraAPI(Protocol):
         Used by start.py's auto-fix patch loop to rewrite the description."""
         ...
 
+    def search_issues(self, jql: str, *, max_results: int = 50) -> list[dict]:
+        """SCRUM-551: POST /rest/api/3/search/jql with the given JQL.
+        Returns a list of issue dicts with at minimum ``key`` and
+        ``fields`` (containing the fields requested). The caller
+        projects to the lean shape it needs."""
+        ...
+
 
 def _basic_auth(email: str, token: str) -> str:
     raw = f"{email}:{token}".encode("utf-8")
@@ -121,6 +128,21 @@ class HttpJiraAPI:
         )
         if status >= 400:
             raise RuntimeError(f"PUT issue {key} -> {status}: {resp}")
+
+    def search_issues(self, jql: str, *, max_results: int = 50) -> list[dict]:
+        status, resp = _request(
+            "POST",
+            f"{self._base}/rest/api/3/search/jql",
+            auth_header=self._auth,
+            body={
+                "jql": jql,
+                "maxResults": int(max_results),
+                "fields": ["summary", "status", "issuetype", "priority", "labels"],
+            },
+        )
+        if status >= 400:
+            raise RuntimeError(f"POST search/jql -> {status}: {resp}")
+        return list(resp.get("issues", []) or [])
 
     def add_comment(self, key: str, body: str) -> int:
         # ADF body shape — single paragraph node with the comment text. Mirrors
