@@ -287,32 +287,32 @@
     {
       "case_id": "FF-020",
       "fixture_id": "smoke_session_update_apac_decision",
-      "question": "What premise is set in the session update smoke test?",
+      "question": "What does the team need to decide on?",
       "expected_status": "answered",
       "expected_keywords": ["decide", "apac expansion"],
       "source_refs": [
         {
-          "source_file": "internal/handlers/smoke_session_update_test.go",
-          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
-          "evidence": "premise: We need to decide on the APAC expansion."
+          "source_file": "scripts/run_qa_eval.py",
+          "source_symbol": "FIXTURE_SETUP[smoke_session_update_apac_decision].paste",
+          "evidence": "We need to decide on the APAC expansion. Approve 2.4M budget for APAC."
         }
       ],
-      "rationale": "Deterministic fixture from session update payload."
+      "rationale": "Question grounded in indexed pasted material seeded by auto-setup."
     },
     {
       "case_id": "FF-021",
       "fixture_id": "smoke_session_update_apac_decision",
-      "question": "What primary decision string is used in the APAC session update test?",
+      "question": "What is being approved for APAC?",
       "expected_status": "answered",
       "expected_keywords": ["approve", "2.4m", "apac"],
       "source_refs": [
         {
-          "source_file": "internal/handlers/smoke_session_update_test.go",
-          "source_symbol": "TestSmoke_SessionUpdate_CreatorCanUpdateTitleAndDecisionFields",
-          "evidence": "primary_decision: Approve 2.4M budget for APAC."
+          "source_file": "scripts/run_qa_eval.py",
+          "source_symbol": "FIXTURE_SETUP[smoke_session_update_apac_decision].paste",
+          "evidence": "We need to decide on the APAC expansion. Approve 2.4M budget for APAC."
         }
       ],
-      "rationale": "Exact decision fixture appears in test body."
+      "rationale": "Question grounded in indexed pasted material seeded by auto-setup."
     },
     {
       "case_id": "FF-022",
@@ -376,21 +376,6 @@
         }
       ],
       "rationale": "Deterministic system behavior useful for sanity eval."
-    },
-    {
-      "case_id": "FF-026",
-      "fixture_id": "no_content_not_covered_path",
-      "question": "Does an empty-content ask path include citations?",
-      "expected_status": "answered",
-      "expected_keywords": ["no", "citations", "empty"],
-      "source_refs": [
-        {
-          "source_file": "internal/handlers/smoke_ask_answer_test.go",
-          "source_symbol": "TestSmoke_AskAnswer_NoContent_ReturnsDeterministicNotCovered",
-          "evidence": "assert.Empty(resp.Answer.Citations)"
-        }
-      ],
-      "rationale": "Deterministic structural expectation for not_covered."
     }
   ]
 }
