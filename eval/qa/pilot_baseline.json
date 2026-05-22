@@ -1,34 +1,41 @@
 {
-  "version": "2",
-  "description": "Live pilot baseline recorded for SCRUM-143. Captures end-to-end SessionAsk + judge + aggregate report metrics.",
-  "recorded_at": "2026-04-27T18:40:48Z",
-  "repo_baseline_commit": "dff9b5b12e34211a30ae431c16b667c91b4a8f12",
+  "version": "3",
+  "description": "Live pilot baseline recorded post-SCRUM-555 (FF-026 retirement + FF-020/021 question rewrite). Captures end-to-end SessionAsk + judge + aggregate report metrics. SCRUM-556 retires FF-025 (same meta-introspection antipattern); refresh after that merge for a clean post-retirement snapshot.",
+  "recorded_at": "2026-05-22T14:41:00Z",
+  "repo_baseline_commit": "b121cea5e8e272dd0cdc578b10f6eff7089fb406",
   "commands_executed": {
     "dataset_validation": "python3 scripts/qa_eval_datasets.py",
-    "runner_live": "python3 scripts/run_qa_eval.py --auto-setup --run-id scrum143-live-baseline-fix2"
+    "runner_live": "python3 scripts/run_qa_eval.py --auto-setup --run-id scrum555-post-merge-baseline-20260522-1441"
   },
   "metrics": {
     "qa_eval_datasets_exit_code": 0,
-    "fixture_fact_inventory_case_count": 26,
-    "eval_cases_v1_case_count": 18,
-    "run_id": "scrum143-live-baseline-fix2",
-    "judge_attempted": 26,
-    "judge_ok": 26,
+    "fixture_fact_inventory_case_count": 25,
+    "eval_cases_v1_case_count": 25,
+    "run_id": "scrum555-post-merge-baseline-20260522-1441",
+    "judge_attempted": 25,
+    "judge_ok": 25,
     "judge_error": 0,
-    "correctness_percentage": 88.46,
+    "correctness_percentage": 96.0,
     "hallucination_count": 0,
-    "weighted_correctness": 0.9034,
+    "weighted_correctness": 0.9913,
     "overall_pass": false,
-    "thresholds_evaluated": 26,
+    "thresholds_evaluated": 25,
     "failed_threshold_case_ids": [
-      "FF-020",
-      "FF-021",
-      "FF-026"
+      "FF-025"
     ]
+  },
+  "post_scrum_556_projection": {
+    "description": "Analytical projection of the same May 22 run with FF-025 excluded (this ticket retires it). A fresh live run after SCRUM-556 merges should match.",
+    "total_cases": 24,
+    "correctness_percentage": 100.0,
+    "hallucination_count": 0,
+    "weighted_correctness": 1.0,
+    "overall_pass": true,
+    "failed_threshold_case_ids": []
   },
   "limitations": [
     "Run artifacts under eval/qa/runs/ are gitignored; baseline metrics are captured here from report.json.",
     "Live run quality depends on local auth/session setup, OpenAI availability, and external network conditions.",
-    "overall_pass is false for this baseline due to threshold misses on FF-020, FF-021, and FF-026."
+    "FF-025 failure is the same meta-introspection antipattern that justified retiring FF-026 in SCRUM-555 — addressed by SCRUM-556."
   ]
 }

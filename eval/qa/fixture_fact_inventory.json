@@ -356,26 +356,6 @@
         }
       ],
       "rationale": "Actor information not present in fixture payload."
-    },
-    {
-      "case_id": "FF-025",
-      "fixture_id": "no_content_not_covered_path",
-      "question": "When there is no indexed content, what answer status should be returned?",
-      "expected_status": "answered",
-      "expected_keywords": ["not_covered"],
-      "source_refs": [
-        {
-          "source_file": "internal/handlers/smoke_ask_answer_test.go",
-          "source_symbol": "TestSmoke_AskAnswer_NoContent_ReturnsDeterministicNotCovered",
-          "evidence": "With no content, response MUST be not_covered."
-        },
-        {
-          "source_file": "internal/utils/qa.go",
-          "source_symbol": "GenerateAnswer",
-          "evidence": "Short-circuit returns answer_status not_covered when chunks are empty."
-        }
-      ],
-      "rationale": "Deterministic system behavior useful for sanity eval."
     }
   ]
 }

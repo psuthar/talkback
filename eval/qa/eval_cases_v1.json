@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-025.",
+  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-024.",
   "cases": [
     {
       "case_id": "FF-001",
@@ -418,23 +418,6 @@
         ],
         "notes": "Approver identity is not present in the fixture payload."
       }
-    },
-    {
-      "case_id": "FF-025",
-      "fixture_id": "no_content_not_covered_path",
-      "question": "When there is no indexed content, what answer status should be returned?",
-      "expected_status": "answered",
-      "hallucination_constraints": {
-        "answer_must_not_contain": [
-          "answered",
-          "covered",
-          "sufficient context"
-        ],
-        "notes": "No-content path should return not_covered status semantics."
-      },
-      "expected_keywords": [
-        "not_covered"
-      ]
     }
   ]
 }
