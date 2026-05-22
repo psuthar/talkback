@@ -200,17 +200,67 @@ Terminal states: `pass` (gate `success` + mergeable `clean`, exit 0), `warn` (ga
 
 `PollResult` fields: `terminal_state` (enum), `gate_conclusion`, `mergeable_state`, `elapsed_seconds`, `ticks`.
 
+---
+
+## Ad-hoc scripts: comment.py, children.py, get_issue.py (SCRUM-549)
+
+The four scripts above cover the inside-`implement-SCRUM-XX-FULL_AUTO` flow. SCRUM-549 added three more covering the **ad-hoc** Jira operations the agent does outside that flow — halt comments, JQL queries during epic-run drains, single-ticket investigation reads. Same contract as the four-script suite (structured JSON, SCRUM-536 summary line, enum-string fields, `--dry-run` where mutating).
+
+### comment.py — non-completion-comment posting (SCRUM-550)
+
+```sh
+python -m scripts.full_auto.comment <TICKET> --body-file <path> [--dry-run]
+```
+
+Posts a single Jira comment via REST. The agent owns the body content (read from `--body-file`); the script passes it through verbatim. Atlassian converts Markdown → ADF on receipt.
+
+`CommentResult` fields: `comment_id`, `body_chars`. Empty / whitespace-only body aborts cleanly with `comment.py aborted: comment body is empty or whitespace-only`.
+
+Used for epic halt comments, epic-summary Finish comments, manual audit notes, ad-hoc one-offs. The `jira_add_comment` MCP response — full ADF body + author + updateAuthor objects each with 8 avatar URLs — was the worst single echo in the workflow; this drops it from ~2k tokens to ~200.
+
+### children.py — lean-JSON wrapper for jira_search_issues (SCRUM-551)
+
+```sh
+# Preset: non-Done children of an epic (the shape epic-run drains use)
+python -m scripts.full_auto.children --epic SCRUM-XXX [--include-done]
+
+# Generic JQL passthrough (with soft SCRUM-guard)
+python -m scripts.full_auto.children --jql "..." [--max-results 50]
+```
+
+Wraps `lib/jira.py::HttpJiraAPI.search_issues` (new helper added at SCRUM-551, via `POST /rest/api/3/search/jql`). Projects each result to `{key, summary, status, issuetype, priority, labels}` strings — drops the per-issue iconUrls, statusCategory objects, avatar URLs that the MCP includes.
+
+`ChildrenResult` fields: `jql_used`, `count`, `children` (list of lean dicts). `--epic` and `--jql` are mutually exclusive; both missing or both present aborts.
+
+`--jql` soft guard: the string must reference `project = SCRUM` or `parent = SCRUM-N`. Sophisticated bypasses (`OR project = OTHER` etc.) aren't blocked; catches the accidental footgun.
+
+### get_issue.py — standalone CLI for ad-hoc Jira reads (SCRUM-552)
+
+```sh
+python -m scripts.full_auto.get_issue <TICKET> [--description] [--field <name>]
+```
+
+Thinnest of the three — reuses `lib/jira.py::HttpJiraAPI.get_issue` (added in SCRUM-542 for start.py) and the ADF→MD converter at `lib/adf.adf_to_md`. Default output drops the description (large + ADF-shaped); `--description` adds the Markdown-converted body. `--field <name>` restricts output to a single named field; repeatable.
+
+`GetIssueResult` fields: `summary`, `issuetype`, `status`, `labels`, `description_md` (only with `--description`). A 404 / API error classifies as `aborted_reason` with the underlying error text; the script exits non-zero.
+
+Used for "what's the status of SCRUM-XXX", "what's the parent epic", "check the description before filing a follow-up" — investigation reads that don't enter the implement flow.
+
 ### Combined token savings vs the pre-extraction MCP flow
 
-| Script | What it replaces | Approx tokens saved/ticket |
+| Script | What it replaces | Approx tokens saved/use |
 |---|---|---|
-| `close.py` (SCRUM-529) | merge + lib calls + add_comment + transition Done | ~5,000 |
-| `start.py` | get_issue + get_transitions + transition In Progress + branch | ~3,000 |
-| `review.py` | create_pull_request + lint orchestration + add_comment + transition In Review | ~4,000 |
-| `poll.py` | per-tick `gh pr checks` output during the polling loop | ~2,000 |
-| **Total** | | **~14,000** |
+| `close.py` (SCRUM-529) | merge + lib calls + add_comment + transition Done | ~5,000/ticket |
+| `start.py` (SCRUM-542) | get_issue + get_transitions + transition In Progress + branch | ~3,000/ticket |
+| `review.py` (SCRUM-543) | create_pull_request + lint orchestration + add_comment + transition In Review | ~4,000/ticket |
+| `poll.py` (SCRUM-544) | per-tick `gh pr checks` output during the polling loop | ~2,000/ticket |
+| **Implement-flow total** | | **~14,000/ticket** |
+| `comment.py` (SCRUM-550) | `jira_add_comment` for halt / epic-summary / audit comments | ~2,000/call |
+| `children.py` (SCRUM-551) | `jira_search_issues` for epic-drain JQL queries | ~1,000/call |
+| `get_issue.py` (SCRUM-552) | ad-hoc `jira_get_issue` investigation reads | ~1,000/call |
+| **Ad-hoc per-session total** | | **~21-29k/session** |
 
-Measured against this session's chat history (see SCRUM-541 closure comment for the full breakdown).
+Measured against this session's chat history (see SCRUM-541 + SCRUM-549 closure comments for the per-call breakdown).
 
 ## What's coming next (forward links)
 
@@ -218,6 +268,7 @@ Measured against this session's chat history (see SCRUM-541 closure comment for 
 - **SCRUM-531 / Phase 2** ✓ done — dry-run validation against 5 historical FULL_AUTOs; zero unresolved drift; see `ops/full-auto-validation/SUMMARY.md`.
 - **SCRUM-532 / Phase 3** — this section. CLAUDE.md / workflow docs updated.
 - **SCRUM-541 Epic** ✓ done — start.py / review.py / poll.py shipped (SCRUM-542 / 543 / 544).
+- **SCRUM-549 Epic** ✓ done — comment.py / children.py / get_issue.py shipped (SCRUM-550 / 551 / 552).
 - **(Future, separate Epic)** — Cloudflare-tunnel webhook listener that imports `close.py` for the post-gate close-out path. De-risked by Phase 0-3.
 
 ---
