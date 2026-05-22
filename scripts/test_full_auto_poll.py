@@ -259,6 +259,110 @@ class PollClampingTest(unittest.TestCase):
         self.assertEqual(clock.sleeps, [300])
 
 
+class PollMergeableBlockedConfirmationTest(unittest.TestCase):
+    """SCRUM-548: MERGEABLE_BLOCKED requires N consecutive observations.
+
+    Background: on the tick where TalkBack PR Gate flips to ``success``,
+    GitHub may still report ``mergeable_state: blocked`` because
+    branch-protection rules haven't recomputed against the just-completed
+    required check. Without confirmation, poll.py would terminal-classify
+    that transient as ``mergeable_blocked`` even though the next tick
+    reads ``clean``. Two-tick confirmation eliminates the false positive
+    while still terminating cleanly when the block is real."""
+
+    def test_single_transient_blocked_then_clean_resolves_to_pass(self):
+        # AC case (a): blocked on tick 1, clean on tick 2 → PASS.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+            {"mergeable_state": "clean", "gate_conclusion": "success"},
+        ])
+        result = poll_mod.poll(
+            999, github_api=gh, sleep_fn=clock.sleep, monotonic_fn=clock.monotonic
+        )
+        self.assertEqual(result.terminal_state, "pass")
+        self.assertEqual(result.ticks, 2)
+        self.assertEqual(clock.sleeps, [30])
+
+    def test_persistent_blocked_across_two_ticks_is_terminal(self):
+        # AC case (b): blocked on two consecutive ticks → MERGEABLE_BLOCKED.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+        ])
+        result = poll_mod.poll(
+            999, github_api=gh, sleep_fn=clock.sleep, monotonic_fn=clock.monotonic
+        )
+        self.assertEqual(result.terminal_state, "mergeable_blocked")
+        self.assertEqual(result.ticks, 2)
+
+    def test_blocked_then_unknown_then_clean_resolves_to_pass(self):
+        # AC case (c): blocked → unknown (pending) → clean → PASS.
+        # The intermediate "unknown" is pending (not a confirmation),
+        # so the confirmation window resets before the final clean tick.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+            {"mergeable_state": "unknown", "gate_conclusion": "success"},
+            {"mergeable_state": "clean", "gate_conclusion": "success"},
+        ])
+        result = poll_mod.poll(
+            999, github_api=gh, sleep_fn=clock.sleep, monotonic_fn=clock.monotonic
+        )
+        self.assertEqual(result.terminal_state, "pass")
+        self.assertEqual(result.ticks, 3)
+
+    def test_blocked_pending_blocked_blocked_eventually_confirms(self):
+        # Non-consecutive blocked observations don't confirm. The two
+        # final blocked ticks (positions 3+4) form a consecutive pair
+        # within the confirmation window → terminal.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+            {"mergeable_state": "unknown", "gate_conclusion": "success"},
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+        ])
+        result = poll_mod.poll(
+            999, github_api=gh, sleep_fn=clock.sleep, monotonic_fn=clock.monotonic
+        )
+        self.assertEqual(result.terminal_state, "mergeable_blocked")
+        self.assertEqual(result.ticks, 4)
+
+    def test_warn_is_immediate_terminal_even_with_confirmation_default(self):
+        # Sanity: hard terminals (WARN / BLOCK) still fire on first tick.
+        # Confirmation only applies to MERGEABLE_BLOCKED.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "clean", "gate_conclusion": "action_required"},
+        ])
+        result = poll_mod.poll(
+            999, github_api=gh, sleep_fn=clock.sleep, monotonic_fn=clock.monotonic
+        )
+        self.assertEqual(result.terminal_state, "warn")
+        self.assertEqual(result.ticks, 1)
+
+    def test_confirmation_ticks_one_restores_eager_old_behavior(self):
+        # confirmation_ticks=1 disables the new confirmation gate —
+        # mergeable_blocked fires on first observation. Provided as an
+        # escape hatch and to ease migration of any caller that wants
+        # the old behavior.
+        clock = _Clock()
+        gh = _FakeGitHubAPI([
+            {"mergeable_state": "blocked", "gate_conclusion": "success"},
+        ])
+        result = poll_mod.poll(
+            999,
+            github_api=gh,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+            confirmation_ticks=1,
+        )
+        self.assertEqual(result.terminal_state, "mergeable_blocked")
+        self.assertEqual(result.ticks, 1)
+
+
 class PollHeadRefRegressionTest(unittest.TestCase):
     """SCRUM-547: dedicated regression test pinning that poll.py queries
     check runs against ``pr.head_ref`` rather than ``pr.merge_commit_sha``.

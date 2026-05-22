@@ -101,3 +101,17 @@
 {"ts": "2026-05-21T23:52:10Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
 {"ts": "2026-05-21T23:52:53Z", "ticket": "SCRUM-547", "issue_type": "PR", "exit": 0, "gaps": []}
 {"ts": "2026-05-21T23:55:15Z", "ticket": "SCRUM-546", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-21T23:57:37Z", "ticket": "SCRUM-546", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:02:18Z", "ticket": "SCRUM-548", "issue_type": "Bug", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:44Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:44Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 2, "gaps": [{"rule_id": "PR.test_plan", "section": "Test plan", "message": "PR requires a 'Test plan' section"}]}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 2, "gaps": [{"rule_id": "PR.test_plan", "section": "Test plan", "message": "PR requires a 'Test plan' section"}]}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-999", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-997", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-997", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:45Z", "ticket": "SCRUM-998", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
+{"ts": "2026-05-22T00:03:46Z", "ticket": "SCRUM-996", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:03:46Z", "ticket": "SCRUM-995", "issue_type": "Task", "exit": 0, "gaps": []}

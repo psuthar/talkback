@@ -93,21 +93,37 @@ def poll(
     verbose: bool = False,
     sleep_fn: Callable[[float], None] = time.sleep,
     monotonic_fn: Callable[[], float] = time.monotonic,
+    confirmation_ticks: int = 2,
 ) -> PollResult:
     """SCRUM-544: poll the TalkBack PR Gate + mergeable_state until terminal.
 
     ``sleep_fn`` and ``monotonic_fn`` are injectable for tests — the real
     flow uses :py:func:`time.sleep` / :py:func:`time.monotonic`; tests
     can substitute fakes that advance a virtual clock without blocking.
+
+    SCRUM-548: ``confirmation_ticks`` (default 2) is the number of
+    consecutive ``MERGEABLE_BLOCKED`` observations required before
+    declaring the run terminally blocked. Without confirmation, a
+    transient ``mergeable_state == "blocked"`` on the same tick the
+    gate flips to ``success`` — observed in real-world runs while
+    GitHub recomputes branch-protection state — would false-positive
+    as a terminal block, even though the next tick reads ``clean``.
+    Tighten to 1 for tests that want the old eager behavior.
+    Hard terminals (PASS / WARN / BLOCK) still return on first observation.
     """
     interval = max(10, min(300, int(interval)))
     budget = max(60, min(3600, int(budget)))
+    confirmation_ticks = max(1, int(confirmation_ticks))
     if github_api is None:
         github_api = HttpGitHubAPI(auth.github_token())
 
     result = PollResult(pr_number=pr_number, terminal_state=ERROR)
     started = monotonic_fn()
     deadline = started + budget
+    # SCRUM-548: rolling buffer of the last ``confirmation_ticks``
+    # observations, used to require N-in-a-row before declaring
+    # MERGEABLE_BLOCKED terminal.
+    recent_classifications: list[str] = []
 
     try:
         while True:
@@ -131,11 +147,23 @@ def poll(
             result.gate_conclusion = gate_conclusion
             result.mergeable_state = pr.mergeable_state
             terminal = _classify(gate_conclusion, pr.mergeable_state)
+            recent_classifications.append(terminal)
+            recent_classifications = recent_classifications[-confirmation_ticks:]
             if verbose:
                 sys.stderr.write(
                     f"[poll #{result.ticks}] gate={gate_conclusion} "
                     f"mergeable={pr.mergeable_state} -> {terminal or 'pending'}\n"
                 )
+            # SCRUM-548: MERGEABLE_BLOCKED requires N consecutive observations.
+            # Hard terminals (PASS / WARN / BLOCK) still fire on first observation.
+            if terminal == MERGEABLE_BLOCKED:
+                if (
+                    len(recent_classifications) >= confirmation_ticks
+                    and all(t == MERGEABLE_BLOCKED for t in recent_classifications)
+                ):
+                    pass  # confirmed terminal — fall through to the if-terminal block below
+                else:
+                    terminal = ""  # not yet confirmed; keep polling
             if terminal:
                 result.terminal_state = terminal
                 result.elapsed_seconds = int(monotonic_fn() - started)
