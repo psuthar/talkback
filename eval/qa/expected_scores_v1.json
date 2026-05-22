@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-025.",
+  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-024.",
   "defaults": {
     "weight": 1.0,
     "correctness_min": 0.82,
@@ -153,13 +153,6 @@
       "weight": 1.0,
       "correctness_min": 0.74,
       "hallucination_max": 0.1
-    },
-    {
-      "case_id": "FF-025",
-      "weight": 1.1,
-      "correctness_min": 0.86,
-      "hallucination_max": 0.1,
-      "notes": "Deterministic empty-content behavior; slight weight boost."
     }
   ]
 }

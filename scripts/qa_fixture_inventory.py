@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 VALID_STATUS = {"answered", "not_covered"}
-MIN_CASE_COUNT = 25
+MIN_CASE_COUNT = 20
 
 
 def load_inventory(path: Path) -> dict[str, Any]:

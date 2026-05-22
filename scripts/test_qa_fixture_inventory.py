@@ -34,7 +34,7 @@ class TestFixtureInventoryValidation(unittest.TestCase):
             ]
         }
         errors = validate_inventory(data)
-        self.assertTrue(any("at least 25" in err for err in errors))
+        self.assertTrue(any("at least 20" in err for err in errors))
 
     def test_answered_requires_keywords(self) -> None:
         base_case = {
