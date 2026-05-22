@@ -495,24 +495,23 @@ class TestJudgeContracts(unittest.TestCase):
             "Fallback contract synthesized from fixture inventory.",
         )
 
-    def test_build_contracts_prefers_explicit_eval_case_for_ff025(self) -> None:
+    def test_build_contracts_prefers_explicit_eval_case_over_inventory(self) -> None:
         contracts = build_judge_contracts(
             _REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
             _REPO_ROOT / "eval" / "qa" / "expected_scores_v1.json",
             inventory_cases=[
                 {
-                    "case_id": "FF-025",
-                    "fixture_id": "no_content_not_covered_path",
+                    "case_id": "FF-024",
+                    "fixture_id": "smoke_session_update_apac_decision",
                     "question": "tampered question",
-                    "expected_status": "answered",
-                    "expected_keywords": ["tampered"],
+                    "expected_status": "not_covered",
                 }
             ],
         )
-        self.assertIn("FF-025", contracts)
+        self.assertIn("FF-024", contracts)
         self.assertEqual(
-            contracts["FF-025"]["case_contract"]["question"],
-            "When there is no indexed content, what answer status should be returned?",
+            contracts["FF-024"]["case_contract"]["question"],
+            "Who approved the APAC budget in the session update fixture?",
         )
 
 

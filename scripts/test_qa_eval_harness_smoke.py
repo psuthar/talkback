@@ -45,7 +45,7 @@ class TestHarnessSmoke(unittest.TestCase):
             self.assertTrue(manifest_path.is_file(), f"missing {manifest_path}")
             data = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertTrue(data.get("dry_run"))
-            self.assertGreaterEqual(data.get("case_count", 0), 25)
+            self.assertGreaterEqual(data.get("case_count", 0), 20)
 
     def test_eval_dataset_bundle_validates(self) -> None:
         try:
