@@ -175,6 +175,103 @@ func BuildMaterialChunksFromPDF(sessionID, materialID uuid.UUID, filePath string
 	return out
 }
 
+// SessionMetadataCounts holds the aggregate counts surfaced in the session metadata chunk.
+// Zero-valued fields are omitted from the rendered chunk so retrieval matches stay tight.
+type SessionMetadataCounts struct {
+	Participants     int
+	Materials        int
+	MaterialsByKind  map[string]int // e.g. {"text": 1, "pdf": 0, "video": 0, "presentation": 0}
+	Recordings       int
+	Questions        int
+	Links            int
+	TranscriptStatus string // "ready" | "parsing" | "failed" | "none"
+	Stances          *models.StanceAggregate
+}
+
+// BuildSessionMetadataChunks synthesizes a single chunk describing session-level metadata
+// (decision fields + aggregate counts) so it becomes retrievable via the existing RAG path.
+// Returns nil when the session yields no meaningful metadata (no title, no decision fields,
+// no joined rows) — keeps empty sessions clean.
+func BuildSessionMetadataChunks(session *models.Session, counts SessionMetadataCounts) []ChunkInput {
+	if session == nil {
+		return nil
+	}
+	var sb strings.Builder
+	title := strings.TrimSpace(session.Title)
+	if title == "" {
+		title = "(untitled session)"
+	}
+	fmt.Fprintf(&sb, "Session metadata for %q.\n", title)
+	fmt.Fprintf(&sb, "Status: %s. Created: %s. Last updated: %s.\n",
+		string(session.Status),
+		session.CreatedAt.UTC().Format("2006-01-02"),
+		session.UpdatedAt.UTC().Format("2006-01-02"),
+	)
+	if session.Premise != nil && strings.TrimSpace(*session.Premise) != "" {
+		fmt.Fprintf(&sb, "Premise: %s\n", strings.TrimSpace(*session.Premise))
+	}
+	if session.PrimaryDecision != nil && strings.TrimSpace(*session.PrimaryDecision) != "" {
+		fmt.Fprintf(&sb, "Primary decision: %s\n", strings.TrimSpace(*session.PrimaryDecision))
+	}
+	if session.DecisionOutcome != nil && strings.TrimSpace(*session.DecisionOutcome) != "" {
+		fmt.Fprintf(&sb, "Decision outcome: %s\n", strings.TrimSpace(*session.DecisionOutcome))
+	}
+	if counts.Participants > 0 {
+		fmt.Fprintf(&sb, "Participants: %d member(s).\n", counts.Participants)
+	}
+	if counts.Materials > 0 {
+		fmt.Fprintf(&sb, "Materials: %d total", counts.Materials)
+		var parts []string
+		for _, kind := range []string{"text", "pdf", "presentation", "video", "image", "audio"} {
+			if n := counts.MaterialsByKind[kind]; n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", n, kind))
+			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintf(&sb, " (%s)", strings.Join(parts, ", "))
+		}
+		sb.WriteString(".\n")
+	} else {
+		sb.WriteString("Materials: none.\n")
+	}
+	if counts.Recordings > 0 {
+		fmt.Fprintf(&sb, "Video recordings: %d.\n", counts.Recordings)
+	} else {
+		sb.WriteString("Video recordings: none.\n")
+	}
+	if counts.Questions > 0 {
+		fmt.Fprintf(&sb, "Questions asked: %d.\n", counts.Questions)
+	}
+	if counts.Links > 0 {
+		fmt.Fprintf(&sb, "External links: %d.\n", counts.Links)
+	}
+	if counts.Stances != nil && counts.Stances.Total > 0 {
+		s := counts.Stances
+		fmt.Fprintf(&sb, "Decision stances: %d agree, %d disagree, %d conditional, %d need more info, %d abstain.\n",
+			s.Agree, s.Disagree, s.Conditional, s.NeedMoreInfo, s.Abstain)
+	}
+	if counts.TranscriptStatus != "" && counts.TranscriptStatus != "none" {
+		fmt.Fprintf(&sb, "Transcript: %s.\n", counts.TranscriptStatus)
+	}
+
+	text := strings.TrimSpace(sb.String())
+	if text == "" {
+		return nil
+	}
+	anchor := map[string]interface{}{"type": "session_metadata"}
+	sessionIDCopy := session.ID
+	hash := ContentHash(text, anchor, session.ID, "session_metadata", session.ID.String(), 0)
+	return []ChunkInput{{
+		SessionID:   session.ID,
+		SourceType:  "session_metadata",
+		SourceID:    &sessionIDCopy,
+		ChunkIdx:    0,
+		Text:        text,
+		AnchorJSON:  anchor,
+		ContentHash: hash,
+	}}
+}
+
 // BuildMaterialChunksFromSlides builds chunks from per-slide text (e.g. PPTX) with page anchors.
 // slideTexts[i] is the text of slide i+1. Each chunk gets anchor "page" (1-based) so citations open the correct slide.
 func BuildMaterialChunksFromSlides(sessionID, materialID uuid.UUID, slideTexts []string) []ChunkInput {

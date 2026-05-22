@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-024.",
+  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-028.",
   "defaults": {
     "weight": 1.0,
     "correctness_min": 0.82,
@@ -153,6 +153,34 @@
       "weight": 1.0,
       "correctness_min": 0.74,
       "hallucination_max": 0.1
+    },
+    {
+      "case_id": "FF-025",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "Session-metadata grounding for primary_decision."
+    },
+    {
+      "case_id": "FF-026",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "Session-metadata grounding for premise."
+    },
+    {
+      "case_id": "FF-027",
+      "weight": 1.0,
+      "correctness_min": 0.74,
+      "hallucination_max": 0.1,
+      "notes": "Session-metadata structural Q&A (no videos present)."
+    },
+    {
+      "case_id": "FF-028",
+      "weight": 1.0,
+      "correctness_min": 0.74,
+      "hallucination_max": 0.1,
+      "notes": "Session-metadata count Q&A (1 material)."
     }
   ]
 }

@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-024.",
+  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-028. FF-025+ exercise the session_metadata RAG path (SCRUM-558).",
   "cases": [
     {
       "case_id": "FF-001",
@@ -417,6 +417,77 @@
           "jane "
         ],
         "notes": "Approver identity is not present in the fixture payload."
+      }
+    },
+    {
+      "case_id": "FF-025",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What is the primary decision recorded in this session?",
+      "expected_status": "answered",
+      "expected_keywords": [
+        "approve",
+        "2.4m",
+        "apac"
+      ],
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "not available in the provided context",
+          "1.2m",
+          "project omega"
+        ],
+        "notes": "Primary decision is captured in session_metadata; abstaining indicates the metadata chunk isn't being retrieved."
+      }
+    },
+    {
+      "case_id": "FF-026",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "What premise is recorded for this session?",
+      "expected_status": "answered",
+      "expected_keywords": [
+        "decide",
+        "apac expansion"
+      ],
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "not available in the provided context",
+          "project omega"
+        ],
+        "notes": "Premise is captured in session_metadata; abstaining indicates the metadata chunk isn't being retrieved."
+      }
+    },
+    {
+      "case_id": "FF-027",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "Are there any video recordings in this session?",
+      "expected_status": "answered",
+      "expected_keywords": [
+        "no"
+      ],
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes,",
+          "1 video",
+          "2 video",
+          "3 video"
+        ],
+        "notes": "Smoke fixture seeds no recordings; metadata chunk reports 'Video recordings: none.'"
+      }
+    },
+    {
+      "case_id": "FF-028",
+      "fixture_id": "smoke_session_update_apac_decision",
+      "question": "How many materials does this session have?",
+      "expected_status": "answered",
+      "expected_keywords": [
+        "1"
+      ],
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "zero",
+          "none",
+          "no materials"
+        ],
+        "notes": "Smoke fixture pastes exactly one material; metadata chunk reports 'Materials: 1 total (1 text).'"
       }
     }
   ]
