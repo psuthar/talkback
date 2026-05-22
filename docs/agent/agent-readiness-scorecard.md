@@ -12,6 +12,116 @@ Canonical assessment of this repo against the [DevExAI agent-readiness framework
 
 ---
 
+## 2026-05-22 — Orchestration-script depth uplift
+
+**Trigger:** completion of the FULL_AUTO orchestration-script extraction work — Epic SCRUM-529 (close.py + ancillary fixes), Epic SCRUM-541 (start.py / review.py / poll.py), Epic SCRUM-549 (comment.py / children.py / get_issue.py), plus the PR-risk heuristic calibration (SCRUM-545) and the runbook end-to-end diagram (commit `953e9d8`). 3 days after the prior assessment. **No stage scores moved; this is a frozen snapshot capturing the depth-strengthening below ceilings.**
+
+### Scorecard
+
+| # | Stage | Domain | Score | Δ vs 2026-05-19 |
+|---|---|---|---|---|
+| 1 | Problem discovery & prioritization | DEFINE | 3 | 0 |
+| 2 | Requirements & specification | DEFINE | 4 | 0 |
+| 3 | Work decomposition & planning | DEFINE | 4 | 0 |
+| 4 | Implementation | BUILD | 4 | 0 |
+| 5 | Testing & quality gates | VALIDATE | 4 | 0 |
+| 6 | Code review & knowledge transfer | VALIDATE | 3 | 0 |
+| 7 | Documentation & release readiness | SHIP | 4 | 0 |
+| 8 | Deployment & release | SHIP | 4 | 0 |
+| 9 | Observability & production intelligence | LEARN | 4 | 0 |
+| 10 | Customer value & feedback loop | LEARN | 3 | 0 |
+
+### Domain averages
+
+| Domain | Was (May-19) | Now | Δ |
+|---|---|---|---|
+| DEFINE | 3.67 / 4 | 3.67 / 4 | 0 |
+| BUILD | 4.00 / 4 | 4.00 / 4 | 0 |
+| VALIDATE | 3.50 / 4 | 3.50 / 4 | 0 |
+| SHIP | 4.00 / 4 | 4.00 / 4 | 0 |
+| LEARN | 3.50 / 4 | 3.50 / 4 | 0 |
+
+**Overall: 37 / 40 (92.5%) · average 3.7 / 4 — unchanged.**
+
+### Why no stage moved
+
+Stages 2 / 3 / 5 / 7 were already at the level-4 ceiling. The orchestration-script work strengthens reliability and lowers operational friction at those stages but cannot raise the score above 4. Stages 1 / 6 / 10 were unchanged because the lifts to 4 require categorically different work (product-analytics ingestion, more substantive PR-review automation, auto-create-without-approval) that this session did not pursue. The composite score holds at 3.7 not because no work happened, but because the work that happened was depth, not breadth.
+
+### Per-stage evidence (depth changes only)
+
+Stages with no new evidence this cycle have a one-line note; the canonical evidence remains in the 2026-05-19 entry below.
+
+#### Stage 1 — Problem Discovery & Prioritization · 3 (unchanged)
+
+No new evidence this cycle. `discovery-digest` skill + cron continue to operate per the 2026-05-19 entry.
+
+#### Stage 2 — Requirements & Specification · 4 (unchanged; depth strengthened)
+
+`start.py` (SCRUM-542) now automates the lint dispatch inside `implement SCRUM-XX FULL_AUTO` itself — agent invokes one CLI instead of writing a temp file + shelling out to `jira_ticket_lint.py`. The auto-fix patch loop (`start.py::_patch_description`) covers the same Jira-ticket rules the 2026-05-19 entry described, plus PR-mode rules (`PR.summary`, `PR.test_plan`) added at SCRUM-543. **15 of 16 agent-authored tickets in this session passed lint before transition; 1 (SCRUM-428) was a pre-existing human-authored ticket with intentional override.** The auto-fix loop is now exercised end-to-end through the orchestration suite, not just via the standalone skill.
+
+#### Stage 3 — Work Decomposition & Planning · 4 (unchanged; depth strengthened)
+
+Two complete authoring-phase epic runs this cycle: SCRUM-541 (3 children: start/review/poll.py) and SCRUM-549 (3 children: comment/children/get_issue.py). Both followed the `epic-run` skill end-to-end: author → drain → finish, including 3 manual-override halts on SCRUM-541 (all due to the now-fixed test-LOC heuristic) and 0 halts on SCRUM-549. `children.py` (SCRUM-551) makes the drain query lean.
+
+#### Stage 4 — Implementation · 4 (unchanged)
+
+16 tickets shipped this cycle. No changes to BUILD-domain automation per se; the orchestration scripts smoothed the surrounding ceremony.
+
+#### Stage 5 — Testing & Quality Gates · 4 (unchanged; depth strengthened)
+
+Three meaningful self-correction events this cycle:
+
+- **SCRUM-545** — PR-risk heuristic gains a test-LOC discount in `scripts/pr_risk_run.py`. Three consecutive false-positive "Large diff" WARNs (PRs #480 / #481 / #482, all under SCRUM-541) calibrated the fix. Subsequent extraction PRs (#483, #487, #488, #489, #490) all gate-PASSed on first try. **The gate self-corrects on its own false-positive pattern; this is the level-4 signature exercised live.**
+- **SCRUM-537** — end-to-end test fixture in `scripts/test_full_auto_close_e2e.py`. Runs `close.py` against a real ephemeral git repo + bare origin; only the GitHub + Jira REST APIs are mocked. Five scenarios pinned; catches dirty-tree regressions the mock-based suite missed.
+- **SCRUM-534 / 547 / 548** — three production bugs surfaced via dogfood (dirty-lint-log + merge-commit-sha + mergeable_blocked race), each fixed + pinned in tests. Test fixtures hardened so the same class of bug can't sneak back in.
+
+Test surface: 75 → 151 tests across `scripts/test_full_auto_*` + `scripts/test_pr_risk_run.py`.
+
+#### Stage 6 — Code Review & Knowledge Transfer · 3 (unchanged)
+
+**Open gap CLOSED** (was the top item on 2026-05-19): `.github/PULL_REQUEST_TEMPLATE.md` exists and is referenced by `review.py`'s PR-body lint loop. PR-mode lint (SCRUM-504) enforces `## Jira` + `## Summary` + `## Test plan` sections on every PR body. Cloud-side `talkback-reviewer` workflow continues to operate.
+
+Score doesn't lift to 4 because the template is table stakes — moving to 4 still requires more substantive review automation where the agent acts on reviewer feedback. Filing-cost is the lowest possible, but the lift to "agent self-corrects on PR review" remains unaddressed.
+
+#### Stage 7 — Documentation & Release Readiness · 4 (unchanged; depth strengthened)
+
+- End-to-end flow diagram added to `docs/agent/full-auto-scripts.md` (commit `953e9d8`) — visualizes all five phases of `implement SCRUM-XX FULL_AUTO` with local-vs-remote lanes + branch lifecycle.
+- Companion-script docs grew at SCRUM-546 (start/review/poll) and SCRUM-553 (comment/children/get_issue). CLAUDE.md kept terse at 63 lines per the maintenance convention.
+- `workflow-full-auto.md` doc sync (SCRUM-540) for the SCRUM-529 follow-up behaviors (auto-stash, summary line, tri-state).
+
+#### Stage 8 — Deployment & Release · 4 (unchanged)
+
+`close.py` polling-path squash-merge continues to operate. Render auto-deploy unchanged. All 16 PRs this cycle merged cleanly — 10 via polling-path PASS, 6 via manual-override (3 of those were the SCRUM-541-family WARN halts that pre-dated SCRUM-545's fix, included as evidence of the fix's necessity).
+
+#### Stage 9 — Observability & Production Intelligence · 4 (unchanged)
+
+No changes. `cmd/obsworker/` per-anomaly-vs-per-day refactor remains open per the 2026-05-19 entry's orthogonal finding.
+
+#### Stage 10 — Customer Value & Feedback Loop · 3 (unchanged)
+
+No changes. Product-analytics ingestion (Phase 3b) remains gated on the obs-source-acceptance KPI per the uplift plan; reassess when the cadence rule's KPI triggers fire.
+
+---
+
+### Highest-leverage gaps still open
+
+Updated from 2026-05-19. PR template gap is closed.
+
+1. **Stage 10 — product-analytics ingestion** (Phase 3b). Wires PostHog/Mixpanel/Amplitude as a second LEARN source feeding discovery-digest. Gated on obs-source acceptance KPI per the plan.
+2. **Stage 9 — `cmd/obsworker/` refactor** to emit per-anomaly issues rather than daily rollups. Surfaced as orthogonal finding in SCRUM-498/499; not blocking but caps clustering's ceiling. Future Epic candidate.
+3. **Stage 6 — agent acts on PR-review feedback.** PR template + `talkback-reviewer` cloud agent + PR-mode lint cover the "first-pass review" half; the missing half is the implementing agent self-correcting on review feedback (e.g., taking an `add_comment_to_pending_review` thread and patching). Larger surface, would lift Stage 6 to 4.
+4. **First Phase 4 rule-effectiveness review** — read `ops/define-kpis/lint-runs.log` + dismissal log, identify retire/revise/promote candidates. Schedule first review at the 2-sprint mark.
+
+### What this assessment doesn't yet have evidence for
+
+- **Stage 6's "agent self-corrects on review feedback" path** has not been exercised even at proof-of-concept. The gap is well-defined but the closing capability isn't drafted.
+- **Stage 9's `cmd/obsworker/` refactor** to per-anomaly issues is still hypothetical.
+- **Stage 10's product-analytics ingestion** still gated on the obs-source-acceptance KPI not yet collected enough data.
+
+These three are the carry-over items from 2026-05-19's "evidence" section.
+
+---
+
 ## 2026-05-19 — Post DEFINE-domain uplift
 
 **Trigger:** completion of the DEFINE-domain uplift plan (Epics SCRUM-485, SCRUM-486, SCRUM-487) plus the Phase 4 recalibration cycle (SCRUM-498 → SCRUM-502). 11 days after the baseline.
