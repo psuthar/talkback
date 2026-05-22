@@ -262,6 +262,135 @@ Used for "what's the status of SCRUM-XXX", "what's the parent epic", "check the 
 
 Measured against this session's chat history (see SCRUM-541 + SCRUM-549 closure comments for the per-call breakdown).
 
+## End-to-end flow — `implement SCRUM-XX FULL_AUTO`
+
+Visual map of what runs where (local vs remote) and where the agent's irreducible work lands between scripts. The five phases below correspond to the five script + agent steps that make up the workflow.
+
+```
+LOCAL  (user's machine)                            │   REMOTE
+═══════════════════════════════════════════════════╪═════════════════════════════════════════
+                                                   │
+  Claude Code (chat) — orchestrates                │
+        │                                          │
+        │  "implement SCRUM-XX FULL_AUTO"          │
+        ▼                                          │
+  ╔═══════════════════════════════════════════════╗│
+  ║ ① start.py (Python)                          ║│
+  ║   • fetch ticket ─────────────────────────────╫┼──▶ Atlassian REST  (GET /issue)
+  ║   • subprocess: jira_ticket_lint.py          ║│
+  ║   • PUT /issue if auto-fix patch fires ──────╫┼──▶ Atlassian REST
+  ║   • In Progress transition ───────────────────╫┼──▶ Atlassian REST  (POST /transitions)
+  ║   • git fetch origin --prune ─────────────────╫┼──▶ GitHub git-over-https
+  ║   • git checkout -b feat/<K> origin/main      ║│       ◀── branch CREATED locally
+  ╚════════════╤══════════════════════════════════╝│
+               │                                   │
+  ╔════════════▼══════════════════════════════════╗│
+  ║ ② Claude implementation phase                ║│   (irreducibly agent work — pure
+  ║   • Read codebase (Read, Grep, Bash find)    ║│    local except the final push)
+  ║   • Edit/Write source files                   ║│
+  ║   • Compose PR body + completion comment      ║│
+  ║     to /tmp/pr-N-*.md                         ║│
+  ║   • Run tests locally (Bash):                 ║│
+  ║       pytest / vitest / go test / go vet      ║│
+  ║   • git add + commit (Bash, local)           ║│
+  ║   • git push -u origin feat/<K> ──────────────╫┼──▶ GitHub git-over-https
+  ║                                               ║│       ◀── branch PUBLISHED to origin
+  ╚════════════╤══════════════════════════════════╝│
+               │                                   │
+  ╔════════════▼══════════════════════════════════╗│
+  ║ ③ review.py (Python)                         ║│
+  ║   • branch-mismatch guard (local)            ║│
+  ║   • Create PR ────────────────────────────────╫┼──▶ GitHub REST  (POST /pulls)
+  ║   • subprocess: jira_ticket_lint.py --PR     ║│
+  ║   • PATCH PR body if auto-fix fires ─────────╫┼──▶ GitHub REST  (PATCH /pulls/N)
+  ║   • Post completion comment ──────────────────╫┼──▶ Atlassian REST  (POST /comment)
+  ║   • In Review transition ─────────────────────╫┼──▶ Atlassian REST  (POST /transitions)
+  ╚════════════╤══════════════════════════════════╝│        │
+               │                                   │        │ triggers (push + label events)
+               │                                   │        ▼
+               │                                   │  ┌──────────────────────────────┐
+               │                                   │  │ GitHub Actions               │
+               │                                   │  │ release-readiness.yml         │
+               │                                   │  │   • PR Risk (pr_risk_run.py) │
+               │                                   │  │   • Release Readiness        │
+               │                                   │  │   • Combine                  │
+               │                                   │  │     → TalkBack PR Gate check │
+               │                                   │  └──────────────────────────────┘
+               │                                   │              ▲
+  ╔════════════▼══════════════════════════════════╗│              │ observes
+  ║ ④ poll.py (Python)                           ║│              │
+  ║   • Silent 30s loop, 40-min budget           ║│              │
+  ║   • GET /pulls/N + check-runs ─────────────────╫┼─────────────┘
+  ║   • Classify pass/warn/block/mergeable_      ║│
+  ║     blocked (2-tick confirm) /timeout/error   ║│
+  ║   • Exits when terminal                       ║│
+  ╚════════════╤══════════════════════════════════╝│
+               │                                   │
+  ╔════════════▼══════════════════════════════════╗│
+  ║ ⑤ close.py (Python)                          ║│
+  ║   • Pre-merge GET /pulls/N ───────────────────╫┼──▶ GitHub REST
+  ║   • PUT /pulls/N/merge (squash) ──────────────╫┼──▶ GitHub REST
+  ║                                               ║│       ◀── if repo "auto-delete head"
+  ║                                               ║│           on: remote branch DELETED
+  ║   • auto-stash lint-runs.log (SCRUM-534)      ║│
+  ║   • git fetch + checkout main + ──────────────╫┼──▶ GitHub git-over-https
+  ║     git pull --ff-only                        ║│
+  ║   • git branch -D feat/<K>                    ║│       ◀── local branch DELETED
+  ║   • State-file update (.epic-run/<E>.json)    ║│
+  ║   • Jira Done transition ─────────────────────╫┼──▶ Atlassian REST
+  ║   • Post closure comment ─────────────────────╫┼──▶ Atlassian REST
+  ╚════════════╤══════════════════════════════════╝│
+               ▼                                   │
+       "merged at <sha>"                           │
+                                                   │
+  ┌─────────────────────────────────────────────┐  │
+  │ Shared lib/ (no network — pure Python):     │  │
+  │   auth.py     credentials + .env.local       │  │
+  │   adf.py      ADF → Markdown                 │  │
+  │   state.py    .epic-run/<E>.json read/write  │  │
+  │   templates.py closure-comment rendering     │  │
+  │   git_ops.py  subprocess wrappers + stash    │  │
+  │   jira.py     HttpJiraAPI (REST client)      │  │
+  │   github.py   HttpGitHubAPI (REST client)    │  │
+  └─────────────────────────────────────────────┘  │
+                                                   │
+═══════════════════════════════════════════════════╪═════════════════════════════════════════
+```
+
+### Branch lifecycle for `feat/SCRUM-XX`
+
+| Step | Where | When | How |
+|---|---|---|---|
+| **CREATE (local)** | Local working tree | Phase ① (start.py) | `git checkout -b feat/<K> origin/main` |
+| **PUBLISH (origin)** | GitHub remote | Phase ② (agent) | Agent runs `git push -u origin feat/<K>` via Bash |
+| **DELETE (remote)** | GitHub remote | After PR squash-merge | GitHub auto-deletes IF the repo's "Automatically delete head branches" setting is on. `psuthar/talkback` has it enabled. |
+| **DELETE (local)** | Local working tree | Phase ⑤ (close.py) | `git branch -D feat/<K>` via `lib/git_ops.delete_branch` |
+
+### Local vs remote at a glance
+
+| Component | Where | Notes |
+|---|---|---|
+| Claude Code agent (chat) | Local | Composes prompts, code, prose, decisions |
+| `scripts/full_auto/*.py` (6 scripts + lib/) | Local | Python invoked via `python -m scripts.full_auto.<name>` |
+| `scripts/jira_ticket_lint.py` | Local | Subprocess from start.py + review.py |
+| Local git working tree | Local | Read+write by start.py, agent, close.py |
+| `git fetch` / `push` / `checkout` / `merge` | Local + git-over-https to remote | git protocol, distinct from REST |
+| Atlassian Jira REST | Remote | `suthar-team.atlassian.net` |
+| GitHub REST API | Remote | `api.github.com` |
+| `release-readiness.yml` workflow | Remote | GitHub Actions |
+| TalkBack PR Gate check | Remote | Produced by `release-readiness-combine` step |
+
+### What the agent does that no script does
+
+Phase ② (between start.py and review.py) is irreducibly the agent's work:
+
+- **Understanding scope** from the lint-clean description (start.py returns `description_md` so the agent doesn't re-fetch).
+- **Code edits** via Read/Edit/Write tools.
+- **Test runs** via Bash (`pytest`, `vitest`, `go test`, `go vet`).
+- **Iteration** on test failures until clean.
+- **Composing the PR body and completion comment** — these aren't auto-generated; the agent writes them based on the actual diff and context. The scripts only pass them through.
+- **Committing + pushing** via Bash. The agent decides commit boundaries; no script makes commits on the agent's behalf.
+
 ## What's coming next (forward links)
 
 - **SCRUM-530 / Phase 1** ✓ done — `scripts/full_auto/close.py` shipped.
