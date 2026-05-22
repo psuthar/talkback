@@ -131,3 +131,17 @@
 {"ts": "2026-05-22T00:22:01Z", "ticket": "SCRUM-998", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
 {"ts": "2026-05-22T00:22:01Z", "ticket": "SCRUM-996", "issue_type": "Task", "exit": 0, "gaps": []}
 {"ts": "2026-05-22T00:22:01Z", "ticket": "SCRUM-995", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:22:43Z", "ticket": "SCRUM-551", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:24:13Z", "ticket": "SCRUM-552", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:08Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 2, "gaps": [{"rule_id": "PR.test_plan", "section": "Test plan", "message": "PR requires a 'Test plan' section"}]}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 2, "gaps": [{"rule_id": "PR.test_plan", "section": "Test plan", "message": "PR requires a 'Test plan' section"}]}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "PR", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-999", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-997", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
+{"ts": "2026-05-22T00:25:09Z", "ticket": "SCRUM-997", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:10Z", "ticket": "SCRUM-998", "issue_type": "Task", "exit": 2, "gaps": [{"rule_id": "AC.present", "section": "Acceptance criteria", "message": "missing 'Acceptance criteria' section"}]}
+{"ts": "2026-05-22T00:25:10Z", "ticket": "SCRUM-996", "issue_type": "Task", "exit": 0, "gaps": []}
+{"ts": "2026-05-22T00:25:10Z", "ticket": "SCRUM-995", "issue_type": "Task", "exit": 0, "gaps": []}
