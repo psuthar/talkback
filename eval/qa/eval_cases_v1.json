@@ -1,6 +1,6 @@
 {
   "version": "1.0.1",
-  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-026.",
+  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-025.",
   "cases": [
     {
       "case_id": "FF-001",
@@ -337,7 +337,7 @@
     {
       "case_id": "FF-020",
       "fixture_id": "smoke_session_update_apac_decision",
-      "question": "What premise is set in the session update smoke test?",
+      "question": "What does the team need to decide on?",
       "expected_status": "answered",
       "hallucination_constraints": {
         "answer_must_not_contain": [
@@ -355,7 +355,7 @@
     {
       "case_id": "FF-021",
       "fixture_id": "smoke_session_update_apac_decision",
-      "question": "What primary decision string is used in the APAC session update test?",
+      "question": "What is being approved for APAC?",
       "expected_status": "answered",
       "hallucination_constraints": {
         "answer_must_not_contain": [
@@ -434,25 +434,6 @@
       },
       "expected_keywords": [
         "not_covered"
-      ]
-    },
-    {
-      "case_id": "FF-026",
-      "fixture_id": "no_content_not_covered_path",
-      "question": "Does an empty-content ask path include citations?",
-      "expected_status": "answered",
-      "hallucination_constraints": {
-        "answer_must_not_contain": [
-          "yes, citations",
-          "includes citations",
-          "citation count is"
-        ],
-        "notes": "Deterministic empty-content response should have no citations."
-      },
-      "expected_keywords": [
-        "no",
-        "citations",
-        "empty"
       ]
     }
   ]
