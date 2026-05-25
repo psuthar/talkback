@@ -105,6 +105,17 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		req.AskedVia = "text"
 	}
 
+	// SCRUM-564 (Slice 3): input guardrails. Block prompt-injection and
+	// obvious off-scope inputs before any LLM call. The structured
+	// refusal shape is contract-locked in docs/guardrails/refusal-shape.md
+	// (HTTP 200 + JSON body with error/guardrail/code/user_message). The
+	// refusal is logged to llm_call_log via guardrails.LogLLMCall so the
+	// admin telemetry rollup (SCRUM-568) surfaces guardrail activity.
+	if decision := guardrails.CheckQuestion(req.QuestionText); !decision.Allow {
+		writeInputGuardrailRefusal(ctx, w, req.QuestionText, decision)
+		return
+	}
+
 	var parentQuestionID *uuid.UUID
 	if req.ParentQuestionID != nil && *req.ParentQuestionID != "" {
 		parsed, err := uuid.Parse(*req.ParentQuestionID)

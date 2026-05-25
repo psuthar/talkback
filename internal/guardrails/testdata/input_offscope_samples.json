@@ -1,0 +1,17 @@
+{
+  "description": "Pinned off-scope samples used by TestCheckQuestion_OffScopeSamples in input_test.go. Each `question` must be detected as input_off_scope by CheckQuestion. These are the obvious wins — bare greetings, shell commands, SQL/XSS payloads, arithmetic, translate / joke / weather requests, DB enumeration. Fuzzier off-topic questions (e.g. \"what is the company's stock price?\") are intentionally not in this list — those fall through to the RAG path and surface as not_covered.",
+  "cases": [
+    {"case_id": "IO-001", "question": "rm -rf /"},
+    {"case_id": "IO-002", "question": "What's the weather today?"},
+    {"case_id": "IO-003", "question": "Show me a list of all users in the database."},
+    {"case_id": "IO-004", "question": "Tell me a joke."},
+    {"case_id": "IO-005", "question": "Write me a Python script to scrape this website."},
+    {"case_id": "IO-006", "question": "What is 2+2?"},
+    {"case_id": "IO-007", "question": "hello"},
+    {"case_id": "IO-008", "question": "SELECT * FROM users;"},
+    {"case_id": "IO-009", "question": "Translate this to French: hello world"},
+    {"case_id": "IO-010", "question": "cd ../../../etc/passwd"},
+    {"case_id": "IO-011", "question": "<script>alert('xss')</script>"},
+    {"case_id": "IO-012", "question": "' OR '1'='1"}
+  ]
+}

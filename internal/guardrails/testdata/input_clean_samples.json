@@ -1,0 +1,15 @@
+{
+  "description": "Pinned legitimate-question samples used by TestCheckQuestion_CleanSamples in input_test.go. Each `question` must be allowed by CheckQuestion (no guardrail fires). These overlap deliberately with the legitimate set in eval/qa/fixture_input_guardrail.json — they include phrases that *contain* common injection-trigger substrings (\"ignore previous deadlines\", \"system\" as a noun) so a naive substring rule would over-block.",
+  "cases": [
+    {"case_id": "IC-001", "question": "What did Alex decide about the budget?"},
+    {"case_id": "IC-002", "question": "Who is responsible for the customer onboarding follow-up?"},
+    {"case_id": "IC-003", "question": "What action items came out of the planning meeting?"},
+    {"case_id": "IC-004", "question": "Summarize the key decisions from this session."},
+    {"case_id": "IC-005", "question": "Should we ignore previous deadlines and reset the timeline?"},
+    {"case_id": "IC-006", "question": "What did the team say about the system architecture?"},
+    {"case_id": "IC-007", "question": "List the open questions from the session."},
+    {"case_id": "IC-008", "question": "Did the team align on the customer messaging?"},
+    {"case_id": "IC-009", "question": "What metrics will the team track post-launch?"},
+    {"case_id": "IC-010", "question": "Who owns the action item to schedule the legal review?"}
+  ]
+}

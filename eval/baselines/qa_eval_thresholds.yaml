@@ -24,3 +24,17 @@ p95_latency_ms_max_delta_pct: 25.0
 
 # overall_pass must remain true in the new baseline. False = WARN.
 overall_pass_required: true
+
+# SCRUM-564 (Slice 3): input-guardrail metrics from
+# eval/qa/fixture_input_guardrail.json, measured by the Go test
+# internal/guardrails/input_eval_test.go and pinned into the baseline.
+
+# refusal_when_oos_rate is the true-positive rate (off_scope+injection
+# refused / total non-legitimate cases). May drop by at most 0.05
+# before WARN. Negative = drop allowed.
+refusal_when_oos_rate_min_delta: -0.05
+
+# legitimate_false_positive_rate is the false-positive rate (legitimate
+# refused / total legitimate cases). May rise by at most 0.02 before
+# WARN. Positive = rise allowed.
+legitimate_false_positive_rate_max_delta: 0.02
