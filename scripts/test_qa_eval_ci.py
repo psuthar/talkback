@@ -42,6 +42,9 @@ _DEFAULT_THRESHOLDS_DICT = {
     "weighted_correctness_min_delta": -0.02,
     "p95_latency_ms_max_delta_pct": 25.0,
     "overall_pass_required": True,
+    # SCRUM-564 (Slice 3) — input-guardrail metrics
+    "refusal_when_oos_rate_min_delta": -0.05,
+    "legitimate_false_positive_rate_max_delta": 0.02,
 }
 
 
@@ -98,6 +101,54 @@ class TestEvaluateThresholdsFailures(unittest.TestCase):
         current = {**_PRIOR_METRICS, "overall_pass": False}
         e = _by_metric(evaluate_thresholds(current, _PRIOR_METRICS, _DEFAULT_THRESHOLDS_DICT))["overall_pass"]
         self.assertFalse(e["pass"])
+
+
+class TestSCRUM564InputGuardrailThresholds(unittest.TestCase):
+    """SCRUM-564 (Slice 3): refusal_when_oos_rate +
+    legitimate_false_positive_rate threshold rules."""
+
+    _PRIOR = {**_PRIOR_METRICS, "refusal_when_oos_rate": 1.0, "legitimate_false_positive_rate": 0.0}
+
+    def test_refusal_when_oos_rate_equal_to_baseline_passes(self) -> None:
+        e = _by_metric(evaluate_thresholds(self._PRIOR, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["refusal_when_oos_rate"]
+        self.assertTrue(e["pass"])
+        self.assertEqual(e["delta"], 0.0)
+
+    def test_refusal_when_oos_rate_small_drop_passes(self) -> None:
+        cur = {**self._PRIOR, "refusal_when_oos_rate": 0.97}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["refusal_when_oos_rate"]
+        self.assertTrue(e["pass"])
+        self.assertEqual(e["delta"], -0.03)
+
+    def test_refusal_when_oos_rate_large_drop_fails(self) -> None:
+        cur = {**self._PRIOR, "refusal_when_oos_rate": 0.80}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["refusal_when_oos_rate"]
+        self.assertFalse(e["pass"])
+        self.assertIn("threshold floor", e["note"])
+
+    def test_legitimate_false_positive_rate_equal_passes(self) -> None:
+        e = _by_metric(evaluate_thresholds(self._PRIOR, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["legitimate_false_positive_rate"]
+        self.assertTrue(e["pass"])
+
+    def test_legitimate_false_positive_rate_small_rise_passes(self) -> None:
+        cur = {**self._PRIOR, "legitimate_false_positive_rate": 0.01}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["legitimate_false_positive_rate"]
+        self.assertTrue(e["pass"])
+
+    def test_legitimate_false_positive_rate_large_rise_fails(self) -> None:
+        cur = {**self._PRIOR, "legitimate_false_positive_rate": 0.10}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["legitimate_false_positive_rate"]
+        self.assertFalse(e["pass"])
+        self.assertIn("threshold ceiling", e["note"])
+
+    def test_metrics_missing_in_prior_skipped(self) -> None:
+        # When the base ref pre-dates SCRUM-564, the prior baseline has
+        # no refusal_when_oos_rate key — the comparison must skip
+        # gracefully rather than blow up the gate.
+        prior = {k: v for k, v in self._PRIOR.items() if k != "refusal_when_oos_rate"}
+        e = _by_metric(evaluate_thresholds(self._PRIOR, prior, _DEFAULT_THRESHOLDS_DICT))["refusal_when_oos_rate"]
+        self.assertTrue(e["skipped"])
+        self.assertTrue(e["pass"])
 
 
 class TestEvaluateThresholdsSkipsMissingSignal(unittest.TestCase):

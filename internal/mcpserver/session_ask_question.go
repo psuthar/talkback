@@ -109,6 +109,16 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 		// guardrails.LogLLMCall(...) calls pick them up without threading.
 		ctx = guardrails.WithUserID(guardrails.WithSessionID(ctx, sessionID), user.ID)
 
+		// SCRUM-564 (Slice 3): input guardrails. Block prompt-injection
+		// and obvious off-scope inputs before any LLM call. Per
+		// docs/guardrails/refusal-shape.md, the MCP transport returns
+		// the same JSON shape as the HTTP transport, as tool-result
+		// *content* — not an MCP-protocol error (those signal the tool
+		// itself failed; this tool refused on purpose).
+		if decision := guardrails.CheckQuestion(qtext); !decision.Allow {
+			return mcpInputGuardrailRefusal(ctx, qtext, decision)
+		}
+
 		session, err := db.GetSession(ctx, sessionID)
 		if err != nil || session == nil {
 			if err != nil && strings.Contains(err.Error(), "not found") {

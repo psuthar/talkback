@@ -218,6 +218,36 @@ def evaluate_thresholds(
         note = "" if passed else f"overall_pass is {cur!r} (required: true)"
         _add("overall_pass", prior_metrics.get("overall_pass"), cur, True, "must_be_true", passed, note=note)
 
+    # SCRUM-564 (Slice 3): refusal_when_oos_rate — true-positive rate of
+    # the input guardrail against the labelled fixture
+    # (eval/qa/fixture_input_guardrail.json). May drop by at most the
+    # configured amount before the gate WARNs. Skipped if either side
+    # is missing (graceful rollout from before the metric existed).
+    threshold = thresholds.get("refusal_when_oos_rate_min_delta")
+    base = prior_metrics.get("refusal_when_oos_rate")
+    cur = current_metrics.get("refusal_when_oos_rate")
+    if threshold is None or not isinstance(base, (int, float)) or not isinstance(cur, (int, float)):
+        _add("refusal_when_oos_rate", base, cur, threshold, "min_delta", True, skipped=True, note="missing metric or threshold")
+    else:
+        delta = cur - base
+        passed = delta >= float(threshold)
+        note = "" if passed else f"dropped {delta:+.4f}; threshold floor is {float(threshold):+.4f}"
+        _add("refusal_when_oos_rate", base, cur, threshold, "min_delta", passed, note=note)
+
+    # SCRUM-564 (Slice 3): legitimate_false_positive_rate — fraction of
+    # legitimate session questions over-blocked by the input guardrail.
+    # May rise by at most the configured amount before the gate WARNs.
+    threshold = thresholds.get("legitimate_false_positive_rate_max_delta")
+    base = prior_metrics.get("legitimate_false_positive_rate")
+    cur = current_metrics.get("legitimate_false_positive_rate")
+    if threshold is None or not isinstance(base, (int, float)) or not isinstance(cur, (int, float)):
+        _add("legitimate_false_positive_rate", base, cur, threshold, "max_delta", True, skipped=True, note="missing metric or threshold")
+    else:
+        delta = cur - base
+        passed = delta <= float(threshold)
+        note = "" if passed else f"rose by {delta:+.4f}; threshold ceiling is {float(threshold):+.4f}"
+        _add("legitimate_false_positive_rate", base, cur, threshold, "max_delta", passed, note=note)
+
     return evals
 
 
@@ -268,7 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         "notes": [
             "Per-PR run is baseline-compare-only; not a live measurement.",
             "Live refresh via .github/workflows/qa-eval-refresh.yml (workflow_dispatch).",
-            "groundedness_rate / citation_rate / refusal_when_oos_rate are deferred to the slice that introduces each signal (Slices 3 / 4a / 4b) per SCRUM-569.",
+            "refusal_when_oos_rate + legitimate_false_positive_rate landed in Slice 3 (SCRUM-564) — measured by the Go input-guardrail eval test against eval/qa/fixture_input_guardrail.json.",
+            "groundedness_rate / citation_rate are still deferred to Slices 4a / 4b (SCRUM-565 / SCRUM-566) per SCRUM-569.",
         ],
     }
 
