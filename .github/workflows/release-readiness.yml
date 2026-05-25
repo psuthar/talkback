@@ -152,6 +152,21 @@ jobs:
             echo "base_ref=HEAD~1" >> "$GITHUB_OUTPUT"
           fi
 
+      # SCRUM-562: qa-eval baseline-compare gate (Slice 1 of SCRUM-560).
+      # Per-PR runs are NOT live — this compares eval/baselines/qa_eval_baseline.json
+      # against the same file on the base ref and applies eval/baselines/qa_eval_thresholds.yaml.
+      # Threshold breach → step fails → release-readiness flips to WARN. Live
+      # refresh is the .github/workflows/qa-eval-refresh.yml workflow_dispatch
+      # workflow. The summary lands at artifacts/qa-eval-summary.json and
+      # rides the existing release-readiness artifact upload.
+      - name: qa-eval baseline-compare (SCRUM-562)
+        shell: bash
+        env:
+          QA_EVAL_BASE_REF: ${{ steps.base.outputs.base_ref }}
+        run: |
+          python3 scripts/qa_eval_ci.py
+          python3 scripts/test_qa_eval_ci.py
+
       # SCRUM-369: detect changed-path categories so expensive job sections
       # (Go test + API binary, frontend build + Playwright E2E) can skip
       # entirely on PRs that don't touch the relevant code. Non-PR events

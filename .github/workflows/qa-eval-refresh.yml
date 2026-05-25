@@ -1,0 +1,77 @@
+name: qa-eval-refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id to embed in artifact filenames (default: timestamp)"
+        required: false
+        type: string
+
+# SCRUM-562 (Slice 1 of SCRUM-560): manual refresh path for the qa-eval
+# baseline that the per-PR scripts/qa_eval_ci.py gate compares against.
+#
+# This Slice ships a *placeholder* — it sanity-checks the harness CLI and
+# prints the human-runnable refresh procedure. The live wiring (docker-compose
+# pgvector + TalkBack API + OpenAI key + QA_EVAL_COOKIE) that would let CI
+# run scripts/run_qa_eval.py --auto-setup against a fresh stack is a
+# deliberate follow-up — see eval/baselines/README.md for the rationale.
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness dependencies
+        run: |
+          python3 -m pip install -r ops/release-readiness/requirements.txt
+
+      - name: Verify harness CLI surface
+        run: |
+          python3 scripts/run_qa_eval.py --help
+
+      - name: Print refresh instructions
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          cat <<INSTRUCTIONS
+          ========================================================================
+          qa-eval refresh — manual steps
+          ========================================================================
+          Run id (informational): ${RUN_ID:-<unset; use a timestamp locally>}
+
+          The live CI wiring is intentionally deferred. To refresh the baseline:
+
+          1. From a workstation that can reach a live TalkBack + has OpenAI keys:
+                 export QA_EVAL_COOKIE='tb_login=<uuid>'
+                 export OPENAI_API_KEY='sk-...'
+                 python3 scripts/run_qa_eval.py \\
+                   --auto-setup \\
+                   --run-id refresh-\$(date +%Y%m%d-%H%M%S)
+
+          2. Inspect eval/qa/runs/<run-id>/report.json — confirm correctness +
+             hallucination + latency look right and that the case set still
+             matches the inventory.
+
+          3. Copy the relevant metrics into eval/baselines/qa_eval_baseline.json
+             and bump source_recorded_at + source_commit.
+
+          4. PR the baseline bump. The per-PR qa-eval-ci gate (in
+             release-readiness.yml) validates that the bump is non-regression
+             vs. the prior baseline using eval/baselines/qa_eval_thresholds.yaml.
+             A breach makes the PR Gate flip to WARN.
+
+          See docs/guardrails/eval-harness.md for the full procedure +
+          rationale.
+          ========================================================================
+          INSTRUCTIONS

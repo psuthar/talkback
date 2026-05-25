@@ -1,0 +1,28 @@
+{
+  "schema": "qa-eval-baseline/v1",
+  "description": "Recorded baseline consumed by scripts/qa_eval_ci.py (Slice 1 / SCRUM-562). Refreshed by the qa-eval-refresh workflow_dispatch workflow when a real drift is confirmed via the live harness. Bumping this file in a PR triggers the baseline-compare gate — the PR must show non-regression vs. the prior baseline on origin/main.",
+  "source": "eval/qa/pilot_baseline.json",
+  "source_recorded_at": "2026-05-22T15:54:00Z",
+  "source_commit": "45ea790c298842a0da6590be317f50feeac7095c",
+  "metrics": {
+    "judge_attempted": 28,
+    "judge_ok": 28,
+    "judge_error": 0,
+    "correct_count": 28,
+    "correctness_percentage": 100.0,
+    "hallucination_count": 0,
+    "weighted_correctness": 1.0,
+    "overall_pass": true,
+    "thresholds_evaluated": 28,
+    "p95_latency_ms": null,
+    "status_breakdown": {
+      "answered": 18,
+      "not_covered": 10,
+      "other_or_missing": 0
+    }
+  },
+  "notes": [
+    "p95_latency_ms was added by SCRUM-562 — it is null in this seed because pilot_baseline.json (SCRUM-559) pre-dates the field. The first qa-eval-refresh after SCRUM-562 ships will populate it; until then the threshold check treats null on either side as 'no signal' and skips.",
+    "fixture_fact_inventory_case_count and eval_cases_v1_case_count are dataset-shape signals owned by scripts/qa_eval_datasets.py, not metric drift — intentionally omitted here so the comparison stays focused on quality + latency."
+  ]
+}
