@@ -5,9 +5,11 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/psuthar/talkback/internal/guardrails"
 )
 
 // collapseRepeatedWords removes consecutive duplicate words (e.g. "the the point" -> "the point").
@@ -79,6 +81,7 @@ func PolishSpokenQuestionWithLLM(ctx context.Context, raw string) (string, error
 			openai.UserMessage(raw),
 		},
 	}
+	llmStart := time.Now()
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return "", err
@@ -86,6 +89,20 @@ func PolishSpokenQuestionWithLLM(ctx context.Context, raw string) (string, error
 	if len(response.Choices) == 0 {
 		return raw, nil
 	}
+
+	// SCRUM-568: log this LLM round. site=question_polish per SCRUM-569
+	// (this is PolishSpokenQuestionWithLLM — user-question rewrite, NOT
+	// decision extraction).
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:         "question_polish",
+		Model:        string(params.Model),
+		PromptHash:   guardrails.HashPrompt("question_polish", systemPrompt+"\x00"+raw),
+		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
+		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
+		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
+		Decision:     "allowed",
+	})
+
 	out := strings.TrimSpace(response.Choices[0].Message.Content)
 	if out == "" {
 		return raw, nil

@@ -17,6 +17,7 @@ import (
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/guardrails"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/storage"
@@ -103,6 +104,10 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 		if user == nil {
 			return nil, askSessionQuestionOutput{}, mcpToolErr(403, "acting user not found in database")
 		}
+
+		// SCRUM-568: stamp acting user + session on ctx so downstream
+		// guardrails.LogLLMCall(...) calls pick them up without threading.
+		ctx = guardrails.WithUserID(guardrails.WithSessionID(ctx, sessionID), user.ID)
 
 		session, err := db.GetSession(ctx, sessionID)
 		if err != nil || session == nil {
