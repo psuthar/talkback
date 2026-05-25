@@ -258,6 +258,13 @@ func registerAskSessionQuestionTool(server *mcp.Server, db *database.DB, store s
 				Citations:    []models.Citation{},
 			}
 		}
+		// SCRUM-565 (Slice 4a): if an output guardrail refused upstream,
+		// propagate the structured refusal as MCP tool-result content
+		// per docs/guardrails/refusal-shape.md § Transport.
+		if qaResponse != nil && qaResponse.Refusal != nil {
+			res, refErr := mcpOutputGuardrailRefusal(*qaResponse.Refusal)
+			return res, askSessionQuestionOutput{}, refErr
+		}
 
 		chunkMap := make(citation.ChunkByID)
 		for _, c := range sessionChunks {

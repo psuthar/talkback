@@ -38,3 +38,10 @@ refusal_when_oos_rate_min_delta: -0.05
 # refused / total legitimate cases). May rise by at most 0.02 before
 # WARN. Positive = rise allowed.
 legitimate_false_positive_rate_max_delta: 0.02
+
+# SCRUM-565 (Slice 4a): citation_rate — fraction of `answered`
+# qa-eval responses where the LLM cited at least one retrieved chunk.
+# Measured by the live qa-eval-refresh path; CheckCitations in
+# internal/utils/qa.go now enforces this on every API path. May drop
+# by at most 0.02 before the gate WARNs. Negative = drop allowed.
+citation_rate_min_delta: -0.02

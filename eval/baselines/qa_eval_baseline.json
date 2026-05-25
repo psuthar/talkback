@@ -21,11 +21,13 @@
       "other_or_missing": 0
     },
     "refusal_when_oos_rate": 1.0,
-    "legitimate_false_positive_rate": 0.0
+    "legitimate_false_positive_rate": 0.0,
+    "citation_rate": 1.0
   },
   "notes": [
     "p95_latency_ms was added by SCRUM-562 — it is null in this seed because pilot_baseline.json (SCRUM-559) pre-dates the field. The first qa-eval-refresh after SCRUM-562 ships will populate it; until then the threshold check treats null on either side as 'no signal' and skips.",
     "fixture_fact_inventory_case_count and eval_cases_v1_case_count are dataset-shape signals owned by scripts/qa_eval_datasets.py, not metric drift — intentionally omitted here so the comparison stays focused on quality + latency.",
-    "refusal_when_oos_rate + legitimate_false_positive_rate landed in SCRUM-564 (Slice 3). Measured by internal/guardrails/input_eval_test.go against eval/qa/fixture_input_guardrail.json (42 legitimate + 12 off_scope + 12 injection cases). Bump only when the Go eval test confirms a deliberate move."
+    "refusal_when_oos_rate + legitimate_false_positive_rate landed in SCRUM-564 (Slice 3). Measured by internal/guardrails/input_eval_test.go against eval/qa/fixture_input_guardrail.json (42 legitimate + 12 off_scope + 12 injection cases). Bump only when the Go eval test confirms a deliberate move.",
+    "citation_rate landed in SCRUM-565 (Slice 4a). Seeded at 1.0 because CheckCitations in internal/utils/qa.go now refuses any `answered` response with zero grounded citations — by construction, every `answered` row on a refreshed baseline cites ≥1 retrieved chunk. The threshold guards against a future regression that loosens the check (e.g. accepting `unknown_*` placeholder chunk_ids)."
   ]
 }

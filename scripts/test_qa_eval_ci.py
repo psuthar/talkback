@@ -45,6 +45,8 @@ _DEFAULT_THRESHOLDS_DICT = {
     # SCRUM-564 (Slice 3) — input-guardrail metrics
     "refusal_when_oos_rate_min_delta": -0.05,
     "legitimate_false_positive_rate_max_delta": 0.02,
+    # SCRUM-565 (Slice 4a) — output-guardrail metric
+    "citation_rate_min_delta": -0.02,
 }
 
 
@@ -147,6 +149,34 @@ class TestSCRUM564InputGuardrailThresholds(unittest.TestCase):
         # gracefully rather than blow up the gate.
         prior = {k: v for k, v in self._PRIOR.items() if k != "refusal_when_oos_rate"}
         e = _by_metric(evaluate_thresholds(self._PRIOR, prior, _DEFAULT_THRESHOLDS_DICT))["refusal_when_oos_rate"]
+        self.assertTrue(e["skipped"])
+        self.assertTrue(e["pass"])
+
+
+class TestSCRUM565CitationRateThreshold(unittest.TestCase):
+    """SCRUM-565 (Slice 4a): citation_rate threshold rule."""
+
+    _PRIOR = {**_PRIOR_METRICS, "citation_rate": 1.0}
+
+    def test_equal_passes(self) -> None:
+        e = _by_metric(evaluate_thresholds(self._PRIOR, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["citation_rate"]
+        self.assertTrue(e["pass"])
+        self.assertEqual(e["delta"], 0.0)
+
+    def test_small_drop_within_threshold_passes(self) -> None:
+        cur = {**self._PRIOR, "citation_rate": 0.99}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["citation_rate"]
+        self.assertTrue(e["pass"])
+
+    def test_large_drop_fails(self) -> None:
+        cur = {**self._PRIOR, "citation_rate": 0.92}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["citation_rate"]
+        self.assertFalse(e["pass"])
+        self.assertIn("threshold floor", e["note"])
+
+    def test_missing_in_prior_skipped(self) -> None:
+        prior = {k: v for k, v in self._PRIOR.items() if k != "citation_rate"}
+        e = _by_metric(evaluate_thresholds(self._PRIOR, prior, _DEFAULT_THRESHOLDS_DICT))["citation_rate"]
         self.assertTrue(e["skipped"])
         self.assertTrue(e["pass"])
 
