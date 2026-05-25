@@ -12,6 +12,7 @@ Operational entrypoint for fixture-backed Q&A evaluation: inventory JSON, versio
 | `schemas/` | JSON Schema (Draft 2020-12) for `eval_cases` and `expected_scores`. |
 | `runs/` | Timestamped runner output (gitignored except `.gitkeep`). |
 | `pilot_baseline.json` | Recorded baseline snapshot; currently dry-run-only and pending live refresh. |
+| `fixture_input_guardrail.json` | Labeled (`legitimate` / `off_scope` / `injection`) input dataset for the input-guardrail eval signal — `refusal_when_oos_rate` metric. Authored under [SCRUM-570](https://suthar-team.atlassian.net/browse/SCRUM-570) (Slice 1b of [SCRUM-560](https://suthar-team.atlassian.net/browse/SCRUM-560)); consumed by [SCRUM-564](https://suthar-team.atlassian.net/browse/SCRUM-564) (Slice 3 — input guardrails). 66 cases (42 legitimate, 12 off-scope, 12 injection). Smoke-validated by `scripts/test_input_guardrail_fixture.py`. |
 
 ## Prerequisites
 
