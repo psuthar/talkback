@@ -1,0 +1,26 @@
+# qa-eval baseline-compare thresholds (Slice 1 / SCRUM-562).
+#
+# Consumed by scripts/qa_eval_ci.py — compares the working-tree's
+# eval/baselines/qa_eval_baseline.json against the same file on the
+# PR's base ref (origin/<base>). A threshold breach makes the CI step
+# fail, which flips the release-readiness gate to WARN.
+#
+# These are deliberately conservative for the first slice. Tighten
+# after a few weeks of telemetry.
+
+# correctness_percentage may drop at most this many percentage points
+# vs. baseline before the gate WARNs. Negative number = drop allowed.
+correctness_percentage_min_delta_pp: -2.0
+
+# hallucination_count may not increase vs. baseline. Zero = strict.
+hallucination_count_max_delta: 0
+
+# weighted_correctness may drop at most this much vs. baseline.
+weighted_correctness_min_delta: -0.02
+
+# p95_latency_ms may grow by at most this percent vs. baseline.
+# Skipped when either side is null (e.g. pre-SCRUM-562 baselines).
+p95_latency_ms_max_delta_pct: 25.0
+
+# overall_pass must remain true in the new baseline. False = WARN.
+overall_pass_required: true

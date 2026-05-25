@@ -515,5 +515,43 @@ class TestJudgeContracts(unittest.TestCase):
         )
 
 
+class TestAggregateReportP95Latency(unittest.TestCase):
+    """SCRUM-562: p95_latency_ms is computed from per-case duration_ms."""
+
+    def _result(self, case_id: str, duration_ms: float | None) -> CaseResult:
+        return CaseResult(
+            case_id=case_id,
+            fixture_id="f",
+            question="q",
+            judge={"ok": True, "verdict": {"score_0_to_1": 1.0, "is_correct": True}},
+            duration_ms=duration_ms,
+        )
+
+    def test_p95_over_uniform_durations(self) -> None:
+        # 20 results at 100ms — p95 is 100.
+        results = [self._result(f"FF-{i:03d}", 100.0) for i in range(20)]
+        cases = [{"case_id": r.case_id, "expected_status": "answered"} for r in results]
+        report = aggregate_report(cases, results)
+        self.assertEqual(report["metrics"]["p95_latency_ms"], 100.0)
+
+    def test_p95_skews_to_tail(self) -> None:
+        # 19 cases at 100ms + 1 case at 1000ms — p95 (at int(0.95 * 19) = 18)
+        # lands at 100, but adding one more 1000ms case (21 total, p95 at
+        # int(0.95 * 20) = 19) should pull it up to 1000.
+        results = [self._result(f"FF-{i:03d}", 100.0) for i in range(20)] + [
+            self._result("FF-spike-1", 1000.0),
+            self._result("FF-spike-2", 1000.0),
+        ]
+        cases = [{"case_id": r.case_id, "expected_status": "answered"} for r in results]
+        report = aggregate_report(cases, results)
+        self.assertEqual(report["metrics"]["p95_latency_ms"], 1000.0)
+
+    def test_p95_is_null_when_no_durations(self) -> None:
+        results = [self._result("FF-001", None), self._result("FF-002", None)]
+        cases = [{"case_id": r.case_id, "expected_status": "answered"} for r in results]
+        report = aggregate_report(cases, results)
+        self.assertIsNone(report["metrics"]["p95_latency_ms"])
+
+
 if __name__ == "__main__":
     unittest.main()

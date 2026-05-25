@@ -572,6 +572,17 @@ def aggregate_report(
     if weighted_den > 0:
         totals["weighted_correctness"] = round(weighted_num / weighted_den, 4)
 
+    # SCRUM-562: p95_latency_ms over per-case duration_ms (already recorded by
+    # the case loop). Null when no cases produced a duration (dry runs, mass
+    # transport errors). Computed inline rather than via statistics.quantiles
+    # so the math is identical across Python versions and obvious to read.
+    durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
+    if durations:
+        idx = int(round(0.95 * (len(durations) - 1)))
+        totals["p95_latency_ms"] = round(float(durations[idx]), 1)
+    else:
+        totals["p95_latency_ms"] = None
+
     evaluated = [
         v for v in per_case_threshold_pass.values() if isinstance(v, bool)
     ]
