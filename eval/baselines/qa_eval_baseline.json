@@ -1,9 +1,9 @@
 {
   "schema": "qa-eval-baseline/v1",
   "description": "Recorded baseline consumed by scripts/qa_eval_ci.py (Slice 1 / SCRUM-562). Refreshed by the qa-eval-refresh workflow_dispatch workflow when a real drift is confirmed via the live harness. Bumping this file in a PR triggers the baseline-compare gate — the PR must show non-regression vs. the prior baseline on origin/main.",
-  "source": "eval/qa/pilot_baseline.json",
-  "source_recorded_at": "2026-05-22T15:54:00Z",
-  "source_commit": "45ea790c298842a0da6590be317f50feeac7095c",
+  "source": "eval/qa/runs/refresh-20260525-183557/report.json",
+  "source_recorded_at": "2026-05-25T23:35:57Z",
+  "source_commit": "95c4c177e9f7c0e2c46aef7ee5bcd1e60b94d34c",
   "metrics": {
     "judge_attempted": 28,
     "judge_ok": 28,
@@ -14,7 +14,7 @@
     "weighted_correctness": 1.0,
     "overall_pass": true,
     "thresholds_evaluated": 28,
-    "p95_latency_ms": null,
+    "p95_latency_ms": 47875.8,
     "status_breakdown": {
       "answered": 18,
       "not_covered": 10,
@@ -26,7 +26,7 @@
     "groundedness_rate": 1.0
   },
   "notes": [
-    "p95_latency_ms was added by SCRUM-562 — it is null in this seed because pilot_baseline.json (SCRUM-559) pre-dates the field. The first qa-eval-refresh after SCRUM-562 ships will populate it; until then the threshold check treats null on either side as 'no signal' and skips.",
+    "p95_latency_ms was populated by the qa-eval-refresh run on 2026-05-25 (run-id refresh-20260525-183557) against Render prod (talkback-895n.onrender.com) at commit 95c4c17 (post-SCRUM-560 merge). 47875.8ms includes Render starter-plan cold-start latency on the first session_ask call; warm-state p95 is expected to be substantially lower. Subsequent refreshes should re-pin this when a more representative load profile is available.",
     "fixture_fact_inventory_case_count and eval_cases_v1_case_count are dataset-shape signals owned by scripts/qa_eval_datasets.py, not metric drift — intentionally omitted here so the comparison stays focused on quality + latency.",
     "refusal_when_oos_rate + legitimate_false_positive_rate landed in SCRUM-564 (Slice 3). Measured by internal/guardrails/input_eval_test.go against eval/qa/fixture_input_guardrail.json (42 legitimate + 12 off_scope + 12 injection cases). Bump only when the Go eval test confirms a deliberate move.",
     "citation_rate landed in SCRUM-565 (Slice 4a). Seeded at 1.0 because CheckCitations in internal/utils/qa.go now refuses any `answered` response with zero grounded citations — by construction, every `answered` row on a refreshed baseline cites ≥1 retrieved chunk. The threshold guards against a future regression that loosens the check (e.g. accepting `unknown_*` placeholder chunk_ids).",
