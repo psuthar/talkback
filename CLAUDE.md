@@ -17,6 +17,7 @@ This is the repository entrypoint for agent behavior. Keep this file concise and
 ## Feature Specs
 
 - Session templates (v1) — schema, validation, authoring guide: `docs/specs/session-templates-v1.md` (canonical example: [psuthar/talkback-templates](https://github.com/psuthar/talkback-templates))
+- GenAI guardrails (SCRUM-560 epic) — LLM call-site inventory, threat model, refusal & log row contracts: `docs/guardrails/{inventory,threat-model,refusal-shape,log-shape}.md`
 
 ## Global Non-negotiables
 
