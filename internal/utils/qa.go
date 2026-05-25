@@ -619,6 +619,28 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 		}
 	}
 
+	// SCRUM-567 (Slice 4c of SCRUM-560): PII scrubber. Runs over the
+	// free-text answer field AFTER the grounding judge has allowed the
+	// response. Silent redaction by design — refusal is not
+	// appropriate here (a chunk containing a participant's email
+	// shouldn't block the answer, just sanitize it). Counts are
+	// logged via guardrails_fired; the redacted values themselves are
+	// never logged (that would defeat the purpose).
+	if qaResponse.AnswerStatus == "answered" && qaResponse.AnswerText != "" {
+		scrubbed, scrubCounts := guardrails.ScrubText(qaResponse.AnswerText)
+		if scrubCounts.Total() > 0 {
+			qaResponse.AnswerText = scrubbed
+			guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+				Site:            "qa_ask",
+				Model:           string(params.Model),
+				PromptHash:      guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
+				LatencyMS:       0,
+				GuardrailsFired: []string{guardrails.PIIGuardrailsFiredSlug},
+				Decision:        "allowed",
+			})
+		}
+	}
+
 	// Track which chunks became citations for RAG_DEBUG
 	chunkMap := make(map[string]Chunk)
 	for _, chunk := range chunks {

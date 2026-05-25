@@ -118,20 +118,97 @@ Respond with ONLY valid JSON (no markdown fences) matching this object:
 	rf := shared.NewResponseFormatJSONObjectParam()
 	params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &rf}
 
+	out, err := callOpenAIForActionItems(ctx, &client, params, systemPrompt, userPrompt, "action_items")
+	if err == nil {
+		sanitizeActionItems(out)
+		return out, nil
+	}
+
+	// SCRUM-567 (Slice 4c of SCRUM-560): schema-validation retry. The
+	// initial call returned content that couldn't unmarshal into
+	// ActionItemsExtraction. One retry with a stricter "your previous
+	// response was not valid JSON for the expected schema" addendum;
+	// on second failure, drop the record (return empty extraction
+	// with low_signal=true) and log guardrails_fired=[schema_validation_failed].
+	// Crashing or propagating the broken object is explicitly forbidden
+	// in the ticket — the on-read action-items call should degrade
+	// silently to "no action items" rather than fail the request.
+	if !isSchemaValidationError(err) {
+		return nil, err
+	}
+	retryPrompt := systemPrompt + schemaRetryAddendum
+	retryOut, retryErr := callOpenAIForActionItems(ctx, &client, params, retryPrompt, userPrompt, "action_items_retry_schema")
+	if retryErr == nil {
+		sanitizeActionItems(retryOut)
+		return retryOut, nil
+	}
+	if !isSchemaValidationError(retryErr) {
+		return nil, retryErr
+	}
+
+	// Drop the record: log degradation, return empty / low_signal.
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:            "action_items",
+		Model:           string(params.Model),
+		PromptHash:      guardrails.HashPrompt("action_items", systemPrompt+"\x00"+userPrompt),
+		LatencyMS:       0,
+		GuardrailsFired: []string{guardrails.SchemaValidationFailedSlug},
+		Decision:        "allowed",
+	})
+	return &ActionItemsExtraction{ActionItems: []ActionItemRow{}, LowSignal: true}, nil
+}
+
+// schemaRetryAddendum is appended to the system prompt when the
+// initial action_items call returned content that couldn't unmarshal
+// to ActionItemsExtraction. SCRUM-567 (Slice 4c).
+const schemaRetryAddendum = "\n\n[RETRY DIRECTIVE — SCRUM-567]\nYour previous response was not valid JSON for the expected schema. Output ONLY valid JSON matching {\"action_items\":[{\"description\":\"string\",\"owner\":null}],\"low_signal\":false}. No markdown fences, no surrounding prose."
+
+// schemaValidationErrSentinel marks the parse-failure error path so
+// the retry logic in ExtractActionItemsFromContext can distinguish it
+// from transport / response-shape errors (which should propagate).
+var schemaValidationErrSentinel = fmt.Errorf("action_items: schema validation failed")
+
+// isSchemaValidationError tells the retry loop whether `err` came from
+// the JSON unmarshal step (retry-eligible) vs. a transport-layer
+// failure (propagate).
+func isSchemaValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "action_items: schema validation failed")
+}
+
+// callOpenAIForActionItems is the per-round LLM call + parse helper
+// for the action-items extraction. Returns (parsed, nil) on success,
+// or (nil, wrapped error) on failure. Schema-validation failures are
+// wrapped with schemaValidationErrSentinel so the caller can decide
+// whether to retry. SCRUM-567 (Slice 4c) extracted this from
+// ExtractActionItemsFromContext so the retry path can reuse the
+// call/parse logic.
+func callOpenAIForActionItems(
+	ctx context.Context,
+	client *openai.Client,
+	params openai.ChatCompletionNewParams,
+	systemPrompt, userPrompt, site string,
+) (*ActionItemsExtraction, error) {
+	params.Messages = []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(systemPrompt),
+		openai.UserMessage(userPrompt),
+	}
+
 	llmStart := time.Now()
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("openai chat: %w", err)
+		return nil, fmt.Errorf("openai chat (%s): %w", site, err)
 	}
 	if len(response.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in OpenAI response")
+		return nil, fmt.Errorf("no choices in OpenAI response (%s)", site)
 	}
 
-	// SCRUM-568: log this LLM round.
 	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
-		Site:         "action_items",
+		Site:         site,
 		Model:        string(params.Model),
-		PromptHash:   guardrails.HashPrompt("action_items", systemPrompt+"\x00"+userPrompt),
+		PromptHash:   guardrails.HashPrompt(site, systemPrompt+"\x00"+userPrompt),
 		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
 		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
 		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
@@ -154,10 +231,8 @@ Respond with ONLY valid JSON (no markdown fences) matching this object:
 
 	var out ActionItemsExtraction
 	if err := json.Unmarshal([]byte(content), &out); err != nil {
-		return nil, fmt.Errorf("parse action items JSON: %w", err)
+		return nil, fmt.Errorf("%w: %v", schemaValidationErrSentinel, err)
 	}
-
-	sanitizeActionItems(&out)
 	return &out, nil
 }
 
