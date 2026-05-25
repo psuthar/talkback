@@ -47,6 +47,8 @@ _DEFAULT_THRESHOLDS_DICT = {
     "legitimate_false_positive_rate_max_delta": 0.02,
     # SCRUM-565 (Slice 4a) — output-guardrail metric
     "citation_rate_min_delta": -0.02,
+    # SCRUM-566 (Slice 4b) — grounding judge metric
+    "groundedness_rate_min_delta": -0.05,
 }
 
 
@@ -179,6 +181,31 @@ class TestSCRUM565CitationRateThreshold(unittest.TestCase):
         e = _by_metric(evaluate_thresholds(self._PRIOR, prior, _DEFAULT_THRESHOLDS_DICT))["citation_rate"]
         self.assertTrue(e["skipped"])
         self.assertTrue(e["pass"])
+
+
+class TestSCRUM566GroundednessRateThreshold(unittest.TestCase):
+    """SCRUM-566 (Slice 4b): groundedness_rate threshold rule."""
+
+    _PRIOR = {**_PRIOR_METRICS, "groundedness_rate": 1.0}
+
+    def test_equal_passes(self) -> None:
+        e = _by_metric(evaluate_thresholds(self._PRIOR, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["groundedness_rate"]
+        self.assertTrue(e["pass"])
+
+    def test_small_drop_within_threshold_passes(self) -> None:
+        cur = {**self._PRIOR, "groundedness_rate": 0.96}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["groundedness_rate"]
+        self.assertTrue(e["pass"])
+
+    def test_large_drop_fails(self) -> None:
+        cur = {**self._PRIOR, "groundedness_rate": 0.85}
+        e = _by_metric(evaluate_thresholds(cur, self._PRIOR, _DEFAULT_THRESHOLDS_DICT))["groundedness_rate"]
+        self.assertFalse(e["pass"])
+
+    def test_missing_in_prior_skipped(self) -> None:
+        prior = {k: v for k, v in self._PRIOR.items() if k != "groundedness_rate"}
+        e = _by_metric(evaluate_thresholds(self._PRIOR, prior, _DEFAULT_THRESHOLDS_DICT))["groundedness_rate"]
+        self.assertTrue(e["skipped"])
 
 
 class TestEvaluateThresholdsSkipsMissingSignal(unittest.TestCase):

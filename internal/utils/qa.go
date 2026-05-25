@@ -296,6 +296,45 @@ func extractRetrievedChunkIDs(chunks []Chunk) []string {
 // changing the JSON schema.
 const citationRetryAddendum = "\n\n[RETRY DIRECTIVE — SCRUM-565]\nYour previous response did not cite any retrieved chunk. You MUST cite at least one chunk by its chunk_id from the Available Context Chunks list above. If the question cannot be answered from the chunks, return answer_status=\"not_covered\" with empty citations — do not invent a citation."
 
+// groundingRetryAddendum is appended to the system prompt when the
+// grounding judge (SCRUM-566) refuses the initial answer. Tighter than
+// citationRetryAddendum: the citations were present but a claim in the
+// answer wasn't supported by the cited chunks.
+const groundingRetryAddendum = "\n\n[RETRY DIRECTIVE — SCRUM-566]\nYour previous response made a claim that is not supported by the cited chunks. Re-answer using ONLY facts that appear in the cited chunks. Do not introduce numbers, dates, names, or outcomes that are not in those chunks. If the question cannot be answered strictly from the chunks, return answer_status=\"not_covered\" with empty citations."
+
+// citationsToJudgeChunks translates the cited-chunks portion of a
+// QAResponse into the JudgeChunk shape CheckGrounding expects. Pulls
+// the chunk text from the retrieved chunks (qaResponse.Citations may
+// have an empty Snippet field or only the truncated snippet — the
+// judge needs the full chunk text to evaluate every claim).
+func citationsToJudgeChunks(qa *QAResponse, chunks []Chunk) []guardrails.JudgeChunk {
+	chunkByID := make(map[string]Chunk, len(chunks))
+	for _, c := range chunks {
+		chunkByID[c.ChunkID] = c
+	}
+	out := make([]guardrails.JudgeChunk, 0, len(qa.Citations))
+	seen := make(map[string]struct{}, len(qa.Citations))
+	for _, cit := range qa.Citations {
+		if cit.ChunkID == "" || strings.HasPrefix(cit.ChunkID, "unknown_") {
+			continue
+		}
+		if _, dup := seen[cit.ChunkID]; dup {
+			continue
+		}
+		seen[cit.ChunkID] = struct{}{}
+		text := cit.Snippet
+		if c, ok := chunkByID[cit.ChunkID]; ok && c.Text != "" {
+			text = c.Text
+		}
+		out = append(out, guardrails.JudgeChunk{
+			ChunkID:    cit.ChunkID,
+			SourceType: cit.SourceType,
+			Text:       text,
+		})
+	}
+	return out
+}
+
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
 // priorQA is an optional list of previous question-answer pairs from the same session for context accumulation
 // Returns the QAResponse and the chunks that were used (for debugging)
@@ -501,6 +540,80 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 						Citations:    []models.Citation{},
 						Refusal:      &refusal,
 					}, chunks, nil
+				}
+			}
+		}
+	}
+
+	// SCRUM-566 (Slice 4b of SCRUM-560): grounding LLM-as-judge. Runs
+	// only when CheckCitations passed AND we still have an `answered`
+	// response. Retry-then-refuse follows the same shape as the
+	// citation guardrail above; the difference is what we ask the LLM
+	// to fix (a cited claim that isn't actually supported, vs. a
+	// missing citation altogether).
+	//
+	// Per-user rate limit: if GUARDRAIL_JUDGE_MAX_PER_USER_PER_HOUR
+	// has been exceeded for this user, we skip the judge call entirely
+	// and let the citation-enforced answer through — the user still
+	// gets a verified-via-citations answer, just without the deeper
+	// grounding check. A LogLLMCall row with
+	// guardrails_fired=[grounding_judge_rate_limited] makes the
+	// degradation visible in admin telemetry.
+	if qaResponse.AnswerStatus == "answered" {
+		userIDPtr := guardrails.UserIDFromContext(ctx)
+		quotaOK, quotaErr := guardrails.CheckJudgeQuota(ctx, userIDPtr)
+		if quotaErr != nil {
+			log.Printf("qa CheckJudgeQuota: %v (failing open)", quotaErr)
+		}
+		if !quotaOK {
+			// Rate-limited: skip judge, surface degradation in telemetry.
+			guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+				Site:            "qa_ask",
+				Model:           string(params.Model),
+				PromptHash:      guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
+				LatencyMS:       0,
+				GuardrailsFired: []string{guardrails.JudgeGuardrailsFiredOnRateLimit},
+				Decision:        "allowed",
+			})
+		} else {
+			cited := citationsToJudgeChunks(&qaResponse, chunks)
+			if len(cited) > 0 {
+				if d := guardrails.CheckGrounding(ctx, question, qaResponse.AnswerText, cited); !d.Allow {
+					retrySystemPrompt := systemPrompt + groundingRetryAddendum
+					retryPtr, retryErr := callOpenAIForQA(ctx, &client, params, retrySystemPrompt, userPrompt, "qa_ask_retry_grounding")
+					if retryErr == nil && retryPtr != nil {
+						retry := *retryPtr
+						normalizeQAResponse(&retry)
+						qaResponse = retry
+					}
+					if qaResponse.AnswerStatus == "answered" {
+						// Re-check via judge on the retry answer.
+						retryCited := citationsToJudgeChunks(&qaResponse, chunks)
+						judgeAgain := guardrails.OutputDecision{Allow: true}
+						if len(retryCited) > 0 {
+							judgeAgain = guardrails.CheckGrounding(ctx, question, qaResponse.AnswerText, retryCited)
+						}
+						if !judgeAgain.Allow {
+							refusal := judgeAgain.Refusal()
+							guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+								Site:               "qa_ask",
+								Model:              string(params.Model),
+								PromptHash:         guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
+								LatencyMS:          0,
+								GuardrailsFired:    []string{judgeAgain.Guardrail},
+								Decision:           "refused",
+								RefusalCode:        guardrails.StrPtr(judgeAgain.Code),
+								RefusalUserMessage: guardrails.StrPtr(judgeAgain.UserMessage),
+							})
+							return &QAResponse{
+								AnswerStatus: "error",
+								AnswerText:   "",
+								Confidence:   0,
+								Citations:    []models.Citation{},
+								Refusal:      &refusal,
+							}, chunks, nil
+						}
+					}
 				}
 			}
 		}

@@ -203,6 +203,14 @@ func userIDFromCtx(ctx context.Context) *uuid.UUID {
 	return &v
 }
 
+// UserIDFromContext is the public accessor for the user_id stamped via
+// WithUserID. SCRUM-566 needs this from internal/utils/qa.go to feed
+// CheckJudgeQuota; the unexported userIDFromCtx stays for internal
+// auto-fill in LogLLMCall.
+func UserIDFromContext(ctx context.Context) *uuid.UUID {
+	return userIDFromCtx(ctx)
+}
+
 func sessionIDFromCtx(ctx context.Context) *uuid.UUID {
 	v, ok := ctx.Value(ctxKeySessionID).(uuid.UUID)
 	if !ok || v == (uuid.UUID{}) {
