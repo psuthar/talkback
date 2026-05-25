@@ -44,7 +44,7 @@ migration is safe to apply mid-rollout (Slice 5 ships before Slices
 | `model` | Whatever the call's `model` parameter actually was (e.g. `gpt-4o`, `gpt-4o-mini`, `gpt-4`). Important for cost / behavior diffs. |
 | `user_id` | The acting user when known (always set for QA; nullable for worker-side calls). |
 | `session_id` | The session the call was scoped to when applicable. |
-| `prompt_hash` | `sha256` of the assembled prompt, hex. **Never log the prompt body** — too much PII + chunk content. The hash lets us de-dup retries / repeated questions for analysis. |
+| `prompt_hash` | `sha256(site || "\x00" || full_prompt)`, hex. Site-tag salts the hash so original + retry rows (e.g. `qa_ask` and `qa_ask_retry_citation` on the same question) produce distinct rows — while same-question-same-site repeats still de-dup as intended. Without the salt, retries with the same boilerplate suffix would collide across unrelated users (or, if hashing only the original question, retry rows would collide with their parent, breaking "one row per LLM round-trip"). **Never log the prompt body** — too much PII + chunk content. |
 | `input_tokens` / `output_tokens` | From the LLM response. Nullable because the OpenAI client doesn't always populate them in error paths. |
 | `latency_ms` | End-to-end wall-clock for the LLM call (does not include guardrail latency, which is negligible for rule-based and one-judge-call for the LLM-judge — measured separately). |
 | `guardrails_fired` | Multiset of the guardrails that fired on this call (input *or* output side). Empty array means the call passed every check. Enum values below. |
@@ -60,8 +60,8 @@ migration is safe to apply mid-rollout (Slice 5 ships before Slices
 | `qa_ask_retry_grounding` | `internal/utils/qa.go` retry round triggered by Slice 4b grounding refusal |
 | `qa_grounding_judge` | `internal/guardrails/output.go` LLM-as-judge call (Slice 4b) |
 | `action_items` | `internal/utils/action_items.go` |
-| `decision_polish` | `internal/utils/polish.go` (decision extraction polish pass) |
-| `obsworker` | `internal/obsworker/llm.go` |
+| `question_polish` | `internal/utils/polish.go::PolishSpokenQuestionWithLLM` (user-question rewrite — *not* decision extraction; that call doesn't exist) |
+| `obsworker` | `internal/obsworker/analysis.go::GenerateAIAnalysis` (the call site; `internal/obsworker/llm.go` is the HTTP client) |
 
 ### `decision` enum
 
@@ -83,6 +83,7 @@ plus the sanitization entries that don't produce a refusal:
 - `grounding_failed`
 - `pii_redacted` *(sanitization — not a refusal)*
 - `schema_validation_failed` *(sanitization — record dropped)*
+- `grounding_judge_rate_limited` *(sanitization — judge call skipped due to per-user-per-hour cap; the citation-enforced answer from Slice 4a is returned. Slice 4b / SCRUM-566.)*
 
 Adding a new value requires:
 1. Add it here.
@@ -90,15 +91,20 @@ Adding a new value requires:
    (or note it as a sanitization-only entry).
 3. The producing slice's PR uses the exact string.
 
+## Cutover (atomic, no stop-gap)
+
+Per the SCRUM-569 review re-sequence, **Slice 5 (SCRUM-568) blocks
+Slices 3 + 4a** — enforce-mode guardrails never ship without the audit
+table. Slice 5's PR wires `LogLLMCall` at all four LLM sites
+atomically (`internal/utils/qa.go`, `internal/utils/action_items.go`,
+`internal/utils/polish.go::PolishSpokenQuestionWithLLM`,
+`internal/obsworker/analysis.go::GenerateAIAnalysis`), behind a
+single env flag `GUARDRAIL_LOG_TO_DB` defaulted to `on`. There is no
+per-site cutover commit and no stop-gap `log.Printf` window —
+downstream slices (3, 4a, 4b, 4c) call `LogLLMCall` directly from
+day 1.
+
 ## Writer contract (for Slices 3, 4a, 4b, 4c)
-
-Until Slice 5 (SCRUM-568) ships, the slices emit a stop-gap log line:
-
-```
-event=GUARDRAIL_<INPUT|OUTPUT>_<REFUSED|FIRED> guardrail=<slug> code=<code> site=<site> user_id=<id> session_id=<id> latency_ms=<n>
-```
-
-Once Slice 5 ships, those calls switch to:
 
 ```go
 guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
@@ -106,7 +112,7 @@ guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
     Model:              modelName,
     UserID:             &userID,
     SessionID:          &sessionID,
-    PromptHash:         hashPrompt(prompt),
+    PromptHash:         hashPrompt("qa_ask", prompt), // helper does sha256(site || "\x00" || prompt)
     InputTokens:        resp.Usage.InputTokens,
     OutputTokens:       resp.Usage.OutputTokens,
     LatencyMS:          int(elapsed.Milliseconds()),
@@ -119,7 +125,10 @@ guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
 
 The buffer is bounded; on overflow the *oldest* row is dropped (a
 dropped row is itself counted as a metric — better to lose telemetry
-than to add backpressure to the LLM critical path).
+than to add backpressure to the LLM critical path). When
+`GUARDRAIL_LOG_TO_DB=off` (escape hatch only — not the steady state)
+the writer falls back to a single `event=LLM_CALL ...` log line per
+call.
 
 ## Read patterns (informs index choices)
 
