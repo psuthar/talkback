@@ -13,6 +13,7 @@ import (
 	"github.com/psuthar/talkback/internal/auth"
 	"github.com/psuthar/talkback/internal/citation"
 	"github.com/psuthar/talkback/internal/database"
+	"github.com/psuthar/talkback/internal/guardrails"
 	"github.com/psuthar/talkback/internal/models"
 	"github.com/psuthar/talkback/internal/rag"
 	"github.com/psuthar/talkback/internal/utils"
@@ -76,6 +77,13 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// SCRUM-568: stamp acting user + session on ctx so downstream
+	// guardrails.LogLLMCall(...) calls pick them up without threading.
+	// SessionAsk is wrapped in RequireAuth so UserFromContext is reliable.
+	ctx = guardrails.WithSessionID(ctx, sessionID)
+	if u := UserFromContext(ctx); u != nil {
+		ctx = guardrails.WithUserID(ctx, u.ID)
+	}
 	session, err := h.DB.GetSession(ctx, sessionID)
 	if err != nil || session == nil {
 		w.Header().Set("Content-Type", "application/json")

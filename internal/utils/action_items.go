@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
+	"github.com/psuthar/talkback/internal/guardrails"
 )
 
 // ActionItemsExtraction is the LLM JSON shape for session action-item extraction (SCRUM-56).
@@ -116,6 +118,7 @@ Respond with ONLY valid JSON (no markdown fences) matching this object:
 	rf := shared.NewResponseFormatJSONObjectParam()
 	params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &rf}
 
+	llmStart := time.Now()
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("openai chat: %w", err)
@@ -123,6 +126,17 @@ Respond with ONLY valid JSON (no markdown fences) matching this object:
 	if len(response.Choices) == 0 {
 		return nil, fmt.Errorf("no choices in OpenAI response")
 	}
+
+	// SCRUM-568: log this LLM round.
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:         "action_items",
+		Model:        string(params.Model),
+		PromptHash:   guardrails.HashPrompt("action_items", systemPrompt+"\x00"+userPrompt),
+		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
+		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
+		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
+		Decision:     "allowed",
+	})
 
 	content := strings.TrimSpace(response.Choices[0].Message.Content)
 	if strings.HasPrefix(content, "```json") {

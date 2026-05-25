@@ -7,11 +7,13 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
+	"github.com/psuthar/talkback/internal/guardrails"
 	"github.com/psuthar/talkback/internal/models"
 )
 
@@ -231,6 +233,7 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 	rf := shared.NewResponseFormatJSONObjectParam()
 	params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &rf}
 
+	llmStart := time.Now()
 	response, err := client.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return &QAResponse{
@@ -249,6 +252,21 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 			Citations:    []models.Citation{},
 		}, chunks, fmt.Errorf("no choices in OpenAI response")
 	}
+
+	// SCRUM-568: log this LLM round to llm_call_log. Site=qa_ask covers the
+	// initial-response round; retry rounds added by Slices 4a/4b will log
+	// with qa_ask_retry_citation / qa_ask_retry_grounding sites. Decision
+	// stays "allowed" here — guardrail-side refusals (Slices 3, 4a-c) log
+	// their own rows.
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:         "qa_ask",
+		Model:        string(params.Model),
+		PromptHash:   guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
+		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
+		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
+		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
+		Decision:     "allowed",
+	})
 
 	// Parse JSON response - handle potential markdown code blocks
 	content := strings.TrimSpace(response.Choices[0].Message.Content)

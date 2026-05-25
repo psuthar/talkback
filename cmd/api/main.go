@@ -29,6 +29,7 @@ import (
 	"github.com/psuthar/talkback/internal/email"
 	"github.com/psuthar/talkback/internal/handlers"
 	"github.com/psuthar/talkback/internal/invitations"
+	"github.com/psuthar/talkback/internal/guardrails"
 	"github.com/psuthar/talkback/internal/markitdown"
 	"github.com/psuthar/talkback/internal/mcpserver"
 	"github.com/psuthar/talkback/internal/migrations"
@@ -170,6 +171,11 @@ func main() {
 	log.Println("Invitation service enabled (mailto delivery; set RESEND_API_KEY for email sending)")
 	h := handlers.NewHandlers(db, jobProcessor, store, invSvc)
 	h.IndexAsync = func(sessionID uuid.UUID) { rag.IndexSessionAsync(sessionID, db, store) }
+
+	// SCRUM-568 (Slice 5 of SCRUM-560): wire the DB as the guardrails Writer so
+	// every LLM call site's LogLLMCall(...) eventually persists to llm_call_log.
+	// Idempotent — only the first Init starts the background flusher.
+	guardrails.Init(db)
 
 	// SCRUM-303: wire markitdown sidecar client into both the upload handler
 	// (gates pending vs ready at upload time) and the JobProcessor (worker
@@ -456,6 +462,9 @@ func main() {
 	// Admin user management (RequireAuth + RequireAdmin)
 	http.HandleFunc(wrapNR("/api/admin/users", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
 	http.HandleFunc(wrapNR("/api/admin/users/", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminUsersHandler)))))
+
+	// SCRUM-568 (Slice 5 of SCRUM-560): admin telemetry rollup over llm_call_log.
+	http.HandleFunc(wrapNR("/api/admin/llm-stats", corsWithCredentials(h.RequireAuth(h.RequireAdmin(h.AdminLLMStatsHandler)))))
 
 	// API file artifacts (presigned PUT/GET for R2)
 	http.HandleFunc(wrapNR("/api/artifacts/", corsWithCredentials(h.ApiArtifactsRouter)))

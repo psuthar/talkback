@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/psuthar/talkback/internal/guardrails"
 )
 
 const maxAIContextChars = 3000
@@ -183,10 +186,23 @@ func GenerateAIAnalysis(ctx context.Context, bundle Bundle, client LLMClient) (*
 	if err != nil {
 		return nil, err
 	}
+	llmStart := time.Now()
 	response, err := client.Complete(ctx, prompt, maxAIResponseTokens)
 	if err != nil {
 		return nil, err
 	}
+
+	// SCRUM-568: log this LLM round. Token counts not available on the
+	// LLMClient interface (Complete returns just the string + error), so
+	// input_tokens / output_tokens stay nil here — log-shape.md marks them
+	// nullable for exactly this case.
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:       "obsworker",
+		Model:      os.Getenv("OBS_AI_MODEL"),
+		PromptHash: guardrails.HashPrompt("obsworker", prompt),
+		LatencyMS:  int(time.Since(llmStart).Milliseconds()),
+		Decision:   "allowed",
+	})
 	out, err := parseAIAnalysisResponse(response)
 	if err != nil {
 		return nil, err
