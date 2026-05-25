@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/psuthar/talkback/internal/guardrails"
 )
 
@@ -134,6 +135,27 @@ func (db *DB) TopLLMCallRefusalCodes(ctx context.Context, since time.Time, limit
 		out = append(out, LLMCallRefusalCodeCount{Code: code, Count: n})
 	}
 	return out, rows.Err()
+}
+
+// CountLLMCallsBySiteAndUserSince returns the row count for one
+// (site, user_id) pair since the given time. Backs the SCRUM-566
+// per-user judge-call rate limit — when this returns >= the configured
+// cap, qa.go skips the grounding judge for that request and logs
+// guardrails_fired=[grounding_judge_rate_limited] on the resulting
+// llm_call_log row. Cheap O(log N) via the (site, ts DESC) +
+// (user_id) indexes; the per-user filter is selective enough that the
+// scan stays bounded even at high QA volume.
+func (db *DB) CountLLMCallsBySiteAndUserSince(ctx context.Context, site string, userID uuid.UUID, since time.Time) (int, error) {
+	var n int
+	err := db.Pool.QueryRow(
+		ctx,
+		`SELECT count(*) FROM llm_call_log WHERE site = $1 AND user_id = $2 AND ts >= $3`,
+		site, userID, since,
+	).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count llm_call_log by site+user+since: %w", err)
+	}
+	return n, nil
 }
 
 // P95LLMCallLatencyMS returns the 95th-percentile latency across all

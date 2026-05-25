@@ -176,20 +176,34 @@ func TestGenerateAnswer_CitationGuardrail_RetryThenRefuse(t *testing.T) {
 }
 
 // TestGenerateAnswer_CitationGuardrail_AllowsGroundedAnswer drives a
-// single LLM round that returns a citation actually matching one of
-// the retrieved chunk_ids — must NOT retry, must NOT refuse.
+// single QA round that returns a citation actually matching one of
+// the retrieved chunk_ids — must NOT retry the citation guardrail,
+// must NOT refuse. SCRUM-566 wired the grounding judge in after the
+// citation check; this test stubs the judge to return `grounded:true`
+// so the path stays clean.
 func TestGenerateAnswer_CitationGuardrail_AllowsGroundedAnswer(t *testing.T) {
 	fake := &fakeQAGuardrailsWriter{}
 	guardrails.ResetForTest()
 	guardrails.Init(fake)
 	t.Cleanup(func() { guardrails.Init(nil); guardrails.ResetForTest() })
+	// SCRUM-566: disable the per-user judge quota so the test is
+	// deterministic regardless of process-wide counter state.
+	guardrails.SetDefaultJudgeQuotaCounter(nil)
 
 	grounded := `{"answer_status":"answered","answer_text":"X happened.","confidence":0.9,"citations":[{"chunk_id":"real-A","source_type":"transcript","source_id":"s1","locator":"","snippet":"real"}]}`
+	judgeAllow := `{"grounded":true,"rationale":"all claims supported"}`
 
-	callCount := 0
+	var qaCalls, judgeCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		body := make([]byte, 4096)
+		n, _ := r.Body.Read(body)
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(string(body[:n]), "strict grounding judge") {
+			judgeCalls++
+			_ = json.NewEncoder(w).Encode(makeChatCompletion(judgeAllow))
+			return
+		}
+		qaCalls++
 		_ = json.NewEncoder(w).Encode(makeChatCompletion(grounded))
 	}))
 	defer srv.Close()
@@ -205,33 +219,49 @@ func TestGenerateAnswer_CitationGuardrail_AllowsGroundedAnswer(t *testing.T) {
 	if qa.Refusal != nil {
 		t.Errorf("grounded citation should not refuse; got Refusal=%+v", qa.Refusal)
 	}
-	if callCount != 1 {
-		t.Errorf("expected 1 LLM call (no retry), got %d", callCount)
+	if qaCalls != 1 {
+		t.Errorf("expected 1 QA LLM call (no retry), got %d", qaCalls)
+	}
+	if judgeCalls != 1 {
+		t.Errorf("expected 1 judge LLM call, got %d", judgeCalls)
 	}
 	guardrails.FlushNow(context.Background())
 	rows := fake.Rows()
-	if len(rows) != 1 {
-		t.Errorf("expected 1 LogLLMCall row, got %d:\n%v", len(rows), rowSummaries(rows))
+	// qa_ask(allowed) + qa_grounding_judge(allowed)
+	if len(rows) != 2 {
+		t.Errorf("expected 2 LogLLMCall rows (qa_ask + qa_grounding_judge), got %d:\n%v",
+			len(rows), rowSummaries(rows))
 	}
 }
 
 // TestGenerateAnswer_CitationGuardrail_RecoversOnRetry drives a first
 // response with hallucinated citations and a retry response that
-// grounds correctly — must allow the retry's answer through.
+// grounds correctly — must allow the retry's answer through. SCRUM-566
+// wired the grounding judge in after the citation check; the judge is
+// stubbed to allow on the recovered answer.
 func TestGenerateAnswer_CitationGuardrail_RecoversOnRetry(t *testing.T) {
 	fake := &fakeQAGuardrailsWriter{}
 	guardrails.ResetForTest()
 	guardrails.Init(fake)
 	t.Cleanup(func() { guardrails.Init(nil); guardrails.ResetForTest() })
+	guardrails.SetDefaultJudgeQuotaCounter(nil)
 
 	hallucinated := `{"answer_status":"answered","answer_text":"X happened.","confidence":0.9,"citations":[{"chunk_id":"hallucinated","source_type":"transcript","source_id":"s1","locator":"","snippet":"bad"}]}`
 	grounded := `{"answer_status":"answered","answer_text":"X happened.","confidence":0.9,"citations":[{"chunk_id":"real-A","source_type":"transcript","source_id":"s1","locator":"","snippet":"good"}]}`
+	judgeAllow := `{"grounded":true,"rationale":"all claims supported"}`
 
-	callCount := 0
+	var qaCalls, judgeCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		body := make([]byte, 4096)
+		n, _ := r.Body.Read(body)
 		w.Header().Set("Content-Type", "application/json")
-		if callCount == 1 {
+		if strings.Contains(string(body[:n]), "strict grounding judge") {
+			judgeCalls++
+			_ = json.NewEncoder(w).Encode(makeChatCompletion(judgeAllow))
+			return
+		}
+		qaCalls++
+		if qaCalls == 1 {
 			_ = json.NewEncoder(w).Encode(makeChatCompletion(hallucinated))
 			return
 		}
@@ -250,16 +280,20 @@ func TestGenerateAnswer_CitationGuardrail_RecoversOnRetry(t *testing.T) {
 	if qa.Refusal != nil {
 		t.Errorf("retry should have recovered; got Refusal=%+v", qa.Refusal)
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 LLM calls (initial + recovering retry), got %d", callCount)
+	if qaCalls != 2 {
+		t.Errorf("expected 2 QA LLM calls (initial + recovering retry), got %d", qaCalls)
+	}
+	if judgeCalls != 1 {
+		t.Errorf("expected 1 judge LLM call (post-recovery), got %d", judgeCalls)
 	}
 	if len(qa.Citations) != 1 || qa.Citations[0].ChunkID != "real-A" {
 		t.Errorf("expected retry citation to be real-A; got %v", qa.Citations)
 	}
 	guardrails.FlushNow(context.Background())
 	rows := fake.Rows()
-	if len(rows) != 2 {
-		t.Errorf("expected 2 LogLLMCall rows (no refusal), got %d:\n%v", len(rows), rowSummaries(rows))
+	// qa_ask(allowed) + qa_ask_retry_citation(allowed) + qa_grounding_judge(allowed)
+	if len(rows) != 3 {
+		t.Errorf("expected 3 LogLLMCall rows, got %d:\n%v", len(rows), rowSummaries(rows))
 	}
 	if len(rows) >= 2 && rows[1].Site != "qa_ask_retry_citation" {
 		t.Errorf("row 1 site=%q, want qa_ask_retry_citation", rows[1].Site)

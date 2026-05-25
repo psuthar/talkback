@@ -1,0 +1,59 @@
+{
+  "description": "Pinned grounding-fixture set for SCRUM-566 (Slice 4b). The judge prompt is exercised end-to-end against these cases via TestCheckGrounding_FixtureSet in grounding_test.go. Each case includes the question, the assistant's answer, the cited chunk text(s), and the expected verdict (`grounded` or `ungrounded`). The mocked judge in the test returns the expected verdict — this is a wiring + prompt-shape fixture, not a live-judge eval (the live eval runs in qa-eval-refresh workflow_dispatch).\n\nThe adversarial cases (label=adversarial_ungrounded) are the failure mode SCRUM-569 Gap 4 named: an answer that cites a real chunk but fabricates a number or claim from it.",
+  "cases": [
+    {
+      "case_id": "GR-001",
+      "label": "grounded",
+      "question": "What budget was discussed for APAC expansion?",
+      "answer": "The team discussed a $2.4M budget proposal for APAC expansion.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "The team reviewed the APAC expansion proposal of $2.4M and agreed to revisit next quarter."}
+      ]
+    },
+    {
+      "case_id": "GR-002",
+      "label": "grounded",
+      "question": "Who is responsible for the customer migration?",
+      "answer": "Alex is responsible for the customer migration.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "Alex took the action item to own the customer migration; deadline is end of month."}
+      ]
+    },
+    {
+      "case_id": "GR-101",
+      "label": "ungrounded",
+      "question": "What's the launch date for Project Omega?",
+      "answer": "Project Omega will launch on January 15th, 2026.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "We discussed Project Omega; the launch timeline is still being refined."}
+      ]
+    },
+    {
+      "case_id": "GR-102",
+      "label": "ungrounded",
+      "question": "Did the team approve the security audit?",
+      "answer": "Yes, the security audit was approved unanimously.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "The security audit was raised as a topic but no decision was reached."}
+      ]
+    },
+    {
+      "case_id": "GR-201",
+      "label": "adversarial_ungrounded",
+      "question": "What was the approved APAC budget?",
+      "answer": "The approved APAC budget is $2.4M.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "The team reviewed the APAC expansion proposal of $2.4M; no formal approval was recorded in this session."}
+      ]
+    },
+    {
+      "case_id": "GR-202",
+      "label": "adversarial_ungrounded",
+      "question": "How many candidates did the team interview last week?",
+      "answer": "The team interviewed 5 candidates last week.",
+      "cited_chunks": [
+        {"chunk_id": "c1", "source_type": "transcript", "text": "We discussed the interview pipeline; multiple candidates are in the funnel but final counts weren't shared in this meeting."}
+      ]
+    }
+  ]
+}

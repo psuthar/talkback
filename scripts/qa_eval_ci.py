@@ -266,6 +266,24 @@ def evaluate_thresholds(
         note = "" if passed else f"dropped {delta:+.4f}; threshold floor is {float(threshold):+.4f}"
         _add("citation_rate", base, cur, threshold, "min_delta", passed, note=note)
 
+    # SCRUM-566 (Slice 4b): groundedness_rate — fraction of `answered`
+    # responses where the grounding LLM-as-judge verdict was `grounded`
+    # (every factual claim supported by the cited chunks). Measured by
+    # the qa-eval-refresh workflow (CheckGrounding fires inline in
+    # qa.go on every QA request that passed CheckCitations and was
+    # not rate-limited). May drop by at most the configured amount
+    # before WARN. Negative = drop allowed.
+    threshold = thresholds.get("groundedness_rate_min_delta")
+    base = prior_metrics.get("groundedness_rate")
+    cur = current_metrics.get("groundedness_rate")
+    if threshold is None or not isinstance(base, (int, float)) or not isinstance(cur, (int, float)):
+        _add("groundedness_rate", base, cur, threshold, "min_delta", True, skipped=True, note="missing metric or threshold")
+    else:
+        delta = cur - base
+        passed = delta >= float(threshold)
+        note = "" if passed else f"dropped {delta:+.4f}; threshold floor is {float(threshold):+.4f}"
+        _add("groundedness_rate", base, cur, threshold, "min_delta", passed, note=note)
+
     return evals
 
 
@@ -318,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             "Live refresh via .github/workflows/qa-eval-refresh.yml (workflow_dispatch).",
             "refusal_when_oos_rate + legitimate_false_positive_rate landed in Slice 3 (SCRUM-564) — measured by the Go input-guardrail eval test against eval/qa/fixture_input_guardrail.json.",
             "citation_rate landed in Slice 4a (SCRUM-565) — measured by the live qa-eval-refresh workflow. Source of truth is the post-CheckCitations enforce path in internal/utils/qa.go; the metric here gates baseline regressions.",
-            "groundedness_rate is still deferred to Slice 4b (SCRUM-566) per SCRUM-569.",
+            "groundedness_rate landed in Slice 4b (SCRUM-566) — measured by the live qa-eval-refresh workflow via CheckGrounding (judge-LLM verdict on every passed citation answer). Per-user rate-limited via GUARDRAIL_JUDGE_MAX_PER_USER_PER_HOUR (default 100).",
         ],
     }
 

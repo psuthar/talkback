@@ -177,6 +177,14 @@ func main() {
 	// Idempotent — only the first Init starts the background flusher.
 	guardrails.Init(db)
 
+	// SCRUM-566 (Slice 4b of SCRUM-560): wire the DB as the per-user
+	// judge-call quota counter. CheckJudgeQuota in qa.go uses this to
+	// enforce GUARDRAIL_JUDGE_MAX_PER_USER_PER_HOUR (default 100); when
+	// the cap is reached the judge call is skipped and the citation-
+	// enforced answer is returned with guardrails_fired=
+	// [grounding_judge_rate_limited] on the log row.
+	guardrails.SetDefaultJudgeQuotaCounter(db)
+
 	// SCRUM-303: wire markitdown sidecar client into both the upload handler
 	// (gates pending vs ready at upload time) and the JobProcessor (worker
 	// calls the sidecar). NewClient reads env; if MARKITDOWN_SIDECAR_URL or

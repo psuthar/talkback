@@ -45,3 +45,11 @@ legitimate_false_positive_rate_max_delta: 0.02
 # internal/utils/qa.go now enforces this on every API path. May drop
 # by at most 0.02 before the gate WARNs. Negative = drop allowed.
 citation_rate_min_delta: -0.02
+
+# SCRUM-566 (Slice 4b): groundedness_rate — fraction of `answered`
+# qa-eval responses where the grounding LLM-as-judge verdict was
+# `grounded` (every factual claim supported by the cited chunks).
+# Measured by the live qa-eval-refresh path via the inline judge call.
+# May drop by at most 0.05 before WARN (looser than citation_rate
+# because the judge verdict is itself probabilistic).
+groundedness_rate_min_delta: -0.05
