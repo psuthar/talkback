@@ -23,6 +23,15 @@ type QAResponse struct {
 	AnswerText   string            `json:"answer_text"`
 	Confidence   float32           `json:"confidence"` // 0.0-1.0
 	Citations    []models.Citation `json:"citations"`
+
+	// Refusal (SCRUM-565 — Slice 4a) is populated when an output
+	// guardrail blocked the response after exhausting retries. The HTTP
+	// and MCP entry points detect a non-nil Refusal and propagate the
+	// structured refusal shape (docs/guardrails/refusal-shape.md)
+	// instead of the normal answer payload. Tagged `json:"-"` so an
+	// LLM response cannot accidentally set it via Unmarshal, and so
+	// the field never leaks into the wire format on the happy path.
+	Refusal *guardrails.RefusalShape `json:"-"`
 }
 
 // PriorQAPair represents a previous question-answer pair from the session.
@@ -129,6 +138,163 @@ func buildUserContentBlock(chunks []Chunk) string {
 	}
 	return b.String()
 }
+
+// callOpenAIForQA runs one ChatCompletion round and parses the JSON
+// response into a QAResponse. The `site` tag controls the
+// guardrails.LogLLMCall row written for this round — "qa_ask" for the
+// initial call, "qa_ask_retry_citation" for the Slice 4a retry,
+// "qa_ask_retry_grounding" for the Slice 4b retry. SCRUM-565 (Slice
+// 4a of SCRUM-560) extracted this from GenerateAnswer so the
+// citation-missing retry can reuse the same call/parse path with a
+// stricter system prompt.
+//
+// Returns a nil QAResponse + non-nil error only on call / parse
+// failure; on success the QAResponse is populated but **not** yet
+// validated by normalizeQAResponse — the caller is responsible for
+// validation.
+func callOpenAIForQA(
+	ctx context.Context,
+	client *openai.Client,
+	params openai.ChatCompletionNewParams,
+	systemPrompt, userPrompt, site string,
+) (*QAResponse, error) {
+	params.Messages = []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(systemPrompt),
+		openai.UserMessage(userPrompt),
+	}
+
+	llmStart := time.Now()
+	response, err := client.Chat.Completions.New(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call OpenAI (%s): %w", site, err)
+	}
+	if len(response.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in OpenAI response (%s)", site)
+	}
+
+	// SCRUM-568: log this LLM round. Decision stays "allowed" here —
+	// guardrail-side refusals (Slices 3, 4a-c) log their own rows.
+	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+		Site:         site,
+		Model:        string(params.Model),
+		PromptHash:   guardrails.HashPrompt(site, systemPrompt+"\x00"+userPrompt),
+		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
+		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
+		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
+		Decision:     "allowed",
+	})
+
+	content := strings.TrimSpace(response.Choices[0].Message.Content)
+	if strings.HasPrefix(content, "```json") {
+		content = strings.TrimPrefix(content, "```json")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+	} else if strings.HasPrefix(content, "```") {
+		content = strings.TrimPrefix(content, "```")
+		content = strings.TrimSuffix(content, "```")
+		content = strings.TrimSpace(content)
+	}
+	if extracted := extractFirstJSONObject(content); extracted != "" {
+		content = extracted
+	}
+
+	var qa QAResponse
+	if err := json.Unmarshal([]byte(content), &qa); err != nil {
+		preview := content
+		if len(preview) > 200 {
+			preview = preview[:200]
+		}
+		return &QAResponse{
+			AnswerStatus: "error",
+			AnswerText:   fmt.Sprintf("Failed to parse OpenAI response: %v. Raw content: %s", err, preview),
+			Confidence:   0,
+			Citations:    []models.Citation{},
+		}, fmt.Errorf("failed to parse JSON response (%s): %w", site, err)
+	}
+	return &qa, nil
+}
+
+// normalizeQAResponse applies the post-parse validation + normalization
+// that runs after every LLM round in GenerateAnswer (Slice 4a's retry
+// re-runs this on the retry response). Mutates the response in place.
+// Pure aside from no I/O — safe to test directly.
+func normalizeQAResponse(qa *QAResponse) {
+	// Validate answer_status
+	if qa.AnswerStatus != "answered" && qa.AnswerStatus != "not_covered" && qa.AnswerStatus != "error" {
+		qa.AnswerStatus = "error"
+		qa.AnswerText = fmt.Sprintf("Invalid answer_status: %s", qa.AnswerStatus)
+	}
+
+	// Clamp confidence
+	if qa.Confidence < 0.0 {
+		qa.Confidence = 0.0
+	} else if qa.Confidence > 1.0 {
+		qa.Confidence = 1.0
+	}
+
+	// Fill missing chunk_id (LLM should always set this; fallback for
+	// backward compatibility with older response shapes).
+	for i := range qa.Citations {
+		if qa.Citations[i].ChunkID == "" {
+			qa.Citations[i].ChunkID = fmt.Sprintf("unknown_%d", i)
+		}
+	}
+
+	// Low-confidence answers force not_covered + clear citations.
+	if qa.Confidence < 0.55 || qa.AnswerStatus == "not_covered" {
+		qa.AnswerStatus = "not_covered"
+		if qa.AnswerText == "" {
+			qa.AnswerText = "The question cannot be answered from the available content in this artifact."
+		}
+		qa.Citations = []models.Citation{}
+	}
+
+	// Cap citations and truncate snippets.
+	if len(qa.Citations) > 5 {
+		qa.Citations = qa.Citations[:5]
+	}
+	for i := range qa.Citations {
+		if len(qa.Citations[i].Snippet) > 300 {
+			qa.Citations[i].Snippet = qa.Citations[i].Snippet[:300] + "..."
+		}
+	}
+}
+
+// extractCitationChunkIDs collects the chunk_ids actually cited by the
+// LLM response. Empty IDs are dropped — they represent
+// `normalizeQAResponse`'s `unknown_<i>` fallback path which already
+// means "the LLM didn't supply a chunk_id" and should be treated as a
+// non-citation by CheckCitations. Pure, testable.
+func extractCitationChunkIDs(qa *QAResponse) []string {
+	ids := make([]string, 0, len(qa.Citations))
+	for _, c := range qa.Citations {
+		if c.ChunkID == "" || strings.HasPrefix(c.ChunkID, "unknown_") {
+			continue
+		}
+		ids = append(ids, c.ChunkID)
+	}
+	return ids
+}
+
+// extractRetrievedChunkIDs collects the chunk_ids supplied as the
+// retrieved context for this question. Empty IDs are dropped. Pure,
+// testable.
+func extractRetrievedChunkIDs(chunks []Chunk) []string {
+	ids := make([]string, 0, len(chunks))
+	for _, c := range chunks {
+		if c.ChunkID == "" {
+			continue
+		}
+		ids = append(ids, c.ChunkID)
+	}
+	return ids
+}
+
+// citationRetryAddendum is the extra system-prompt directive appended
+// to the retry call when the initial response failed the citation
+// guardrail. Phrased to nudge the LLM toward grounding without
+// changing the JSON schema.
+const citationRetryAddendum = "\n\n[RETRY DIRECTIVE — SCRUM-565]\nYour previous response did not cite any retrieved chunk. You MUST cite at least one chunk by its chunk_id from the Available Context Chunks list above. If the question cannot be answered from the chunks, return answer_status=\"not_covered\" with empty citations — do not invent a citation."
 
 // GenerateAnswer uses OpenAI to generate a grounded answer from retrieved chunks
 // priorQA is an optional list of previous question-answer pairs from the same session for context accumulation
@@ -277,121 +443,73 @@ IMPORTANT: Do not include any text outside the JSON structure. Do not use markdo
 	rf := shared.NewResponseFormatJSONObjectParam()
 	params.ResponseFormat = openai.ChatCompletionNewParamsResponseFormatUnion{OfJSONObject: &rf}
 
-	llmStart := time.Now()
-	response, err := client.Chat.Completions.New(ctx, params)
+	qaResponsePtr, err := callOpenAIForQA(ctx, &client, params, systemPrompt, userPrompt, "qa_ask")
 	if err != nil {
-		return &QAResponse{
-			AnswerStatus: "error",
-			AnswerText:   fmt.Sprintf("Failed to generate answer: %v", err),
-			Confidence:   0,
-			Citations:    []models.Citation{},
-		}, chunks, fmt.Errorf("failed to call OpenAI: %w", err)
+		// Errors are stamped onto a sentinel QAResponse for caller
+		// resilience (callers already accept partial / error answers).
+		if qaResponsePtr == nil {
+			qaResponsePtr = &QAResponse{
+				AnswerStatus: "error",
+				AnswerText:   fmt.Sprintf("Failed to generate answer: %v", err),
+				Confidence:   0,
+				Citations:    []models.Citation{},
+			}
+		}
+		return qaResponsePtr, chunks, err
 	}
+	qaResponse := *qaResponsePtr
+	normalizeQAResponse(&qaResponse)
 
-	if len(response.Choices) == 0 {
-		return &QAResponse{
-			AnswerStatus: "error",
-			AnswerText:   "No response from OpenAI",
-			Confidence:   0,
-			Citations:    []models.Citation{},
-		}, chunks, fmt.Errorf("no choices in OpenAI response")
-	}
-
-	// SCRUM-568: log this LLM round to llm_call_log. Site=qa_ask covers the
-	// initial-response round; retry rounds added by Slices 4a/4b will log
-	// with qa_ask_retry_citation / qa_ask_retry_grounding sites. Decision
-	// stays "allowed" here — guardrail-side refusals (Slices 3, 4a-c) log
-	// their own rows.
-	guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
-		Site:         "qa_ask",
-		Model:        string(params.Model),
-		PromptHash:   guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
-		InputTokens:  guardrails.IntPtr(int(response.Usage.PromptTokens)),
-		OutputTokens: guardrails.IntPtr(int(response.Usage.CompletionTokens)),
-		LatencyMS:    int(time.Since(llmStart).Milliseconds()),
-		Decision:     "allowed",
-	})
-
-	// Parse JSON response - handle potential markdown code blocks
-	content := strings.TrimSpace(response.Choices[0].Message.Content)
-
-	// Remove markdown code blocks if present
-	if strings.HasPrefix(content, "```json") {
-		content = strings.TrimPrefix(content, "```json")
-		content = strings.TrimSuffix(content, "```")
-		content = strings.TrimSpace(content)
-	} else if strings.HasPrefix(content, "```") {
-		content = strings.TrimPrefix(content, "```")
-		content = strings.TrimSuffix(content, "```")
-		content = strings.TrimSpace(content)
-	}
-
-	// Extract first complete JSON object so trailing model text (e.g. "From the slides...") does not break parsing
-	if extracted := extractFirstJSONObject(content); extracted != "" {
-		content = extracted
-	}
-
-	var qaResponse QAResponse
-	if err := json.Unmarshal([]byte(content), &qaResponse); err != nil {
-		return &QAResponse{
-			AnswerStatus: "error",
-			AnswerText:   fmt.Sprintf("Failed to parse OpenAI response: %v. Raw content: %s", err, content[:min(200, len(content))]),
-			Confidence:   0,
-			Citations:    []models.Citation{},
-		}, chunks, fmt.Errorf("failed to parse JSON response: %w", err)
-	}
-
-	// Validate answer_status
-	if qaResponse.AnswerStatus != "answered" && qaResponse.AnswerStatus != "not_covered" && qaResponse.AnswerStatus != "error" {
-		qaResponse.AnswerStatus = "error"
-		qaResponse.AnswerText = fmt.Sprintf("Invalid answer_status: %s", qaResponse.AnswerStatus)
-	}
-
-	// Validate confidence range
-	if qaResponse.Confidence < 0.0 {
-		qaResponse.Confidence = 0.0
-	} else if qaResponse.Confidence > 1.0 {
-		qaResponse.Confidence = 1.0
-	}
-
-	// Ensure all citations have chunk_id
-	for i := range qaResponse.Citations {
-		if qaResponse.Citations[i].ChunkID == "" {
-			// Try to match by source_id if chunk_id missing (backward compatibility)
-			// But prefer to have chunk_id set
-			qaResponse.Citations[i].ChunkID = fmt.Sprintf("unknown_%d", i)
+	// SCRUM-565 (Slice 4a of SCRUM-560): citation enforcement. An
+	// `answered` response that cites zero chunks from the retrieved set
+	// is ungrounded by definition. Retry once with a stricter system-
+	// prompt addendum; if the retry also fails, refuse with the
+	// structured shape from docs/guardrails/refusal-shape.md.
+	//
+	// not_covered responses skip the guardrail (the LLM is allowed to
+	// say "I don't know"; the upstream pipeline already cleared
+	// citations on not_covered in normalizeQAResponse).
+	retrievedIDs := extractRetrievedChunkIDs(chunks)
+	if qaResponse.AnswerStatus == "answered" {
+		if d := guardrails.CheckCitations(extractCitationChunkIDs(&qaResponse), retrievedIDs); !d.Allow {
+			retrySystemPrompt := systemPrompt + citationRetryAddendum
+			retryPtr, retryErr := callOpenAIForQA(ctx, &client, params, retrySystemPrompt, userPrompt, "qa_ask_retry_citation")
+			if retryErr == nil && retryPtr != nil {
+				retry := *retryPtr
+				normalizeQAResponse(&retry)
+				qaResponse = retry
+			}
+			// Re-check (skip if retry produced not_covered — that's a
+			// valid "I don't know" outcome from the stricter prompt).
+			if qaResponse.AnswerStatus == "answered" {
+				if d2 := guardrails.CheckCitations(extractCitationChunkIDs(&qaResponse), retrievedIDs); !d2.Allow {
+					refusal := d2.Refusal()
+					guardrails.LogLLMCall(ctx, guardrails.LLMCallRow{
+						Site:               "qa_ask",
+						Model:              string(params.Model),
+						PromptHash:         guardrails.HashPrompt("qa_ask", systemPrompt+"\x00"+userPrompt),
+						LatencyMS:          0,
+						GuardrailsFired:    []string{d2.Guardrail},
+						Decision:           "refused",
+						RefusalCode:        guardrails.StrPtr(d2.Code),
+						RefusalUserMessage: guardrails.StrPtr(d2.UserMessage),
+					})
+					return &QAResponse{
+						AnswerStatus: "error",
+						AnswerText:   "",
+						Confidence:   0,
+						Citations:    []models.Citation{},
+						Refusal:      &refusal,
+					}, chunks, nil
+				}
+			}
 		}
 	}
 
-	// Validate and adjust response
-	if qaResponse.Confidence < 0.55 || qaResponse.AnswerStatus == "not_covered" {
-		qaResponse.AnswerStatus = "not_covered"
-		if qaResponse.AnswerText == "" {
-			qaResponse.AnswerText = "The question cannot be answered from the available content in this artifact."
-		}
-		qaResponse.Citations = []models.Citation{} // Clear citations if not covered
-	}
-
-	// Limit citations to 5
-	if len(qaResponse.Citations) > 5 {
-		qaResponse.Citations = qaResponse.Citations[:5]
-	}
-
-	// Truncate citation snippets to ~300 chars and ensure chunk_id is set
 	// Track which chunks became citations for RAG_DEBUG
 	chunkMap := make(map[string]Chunk)
 	for _, chunk := range chunks {
 		chunkMap[chunk.ChunkID] = chunk
-	}
-
-	for i := range qaResponse.Citations {
-		if len(qaResponse.Citations[i].Snippet) > 300 {
-			qaResponse.Citations[i].Snippet = qaResponse.Citations[i].Snippet[:300] + "..."
-		}
-		// Ensure chunk_id is set (should be from LLM, but validate)
-		if qaResponse.Citations[i].ChunkID == "" {
-			qaResponse.Citations[i].ChunkID = fmt.Sprintf("unknown_%d", i)
-		}
 	}
 
 	// RAG_DEBUG: Log which chunks became citations

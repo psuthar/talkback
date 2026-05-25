@@ -331,6 +331,15 @@ func (h *Handlers) SessionAsk(w http.ResponseWriter, r *http.Request) {
 			Citations:    []models.Citation{},
 		}
 	}
+	// SCRUM-565 (Slice 4a): an output guardrail upstream (citation
+	// enforcement; SCRUM-566 grounding judge later) populates
+	// qaResponse.Refusal when an answer must be refused. Propagate the
+	// structured shape and skip answer persistence. The question row
+	// stays in the DB (the user asked it); no answer row is created.
+	if qaResponse != nil && qaResponse.Refusal != nil {
+		writeOutputGuardrailRefusal(w, *qaResponse.Refusal)
+		return
+	}
 	// Normalize citations to canonical form (citation_id, anchor, label, excerpt) before saving.
 	// Use material display names so citations show e.g. "Paresh Suthar Resume v5a.docx (block 1)" instead of generic "Slide 1".
 	chunkMap := make(citation.ChunkByID)
