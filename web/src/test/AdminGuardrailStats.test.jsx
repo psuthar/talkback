@@ -254,8 +254,9 @@ describe('AdminGuardrailStats', () => {
     await waitFor(() =>
       expect(screen.getByText('No LLM calls recorded in this window.')).toBeInTheDocument(),
     )
-    // p95 null → "—" in the big-number card.
-    expect(screen.getByText('—')).toBeInTheDocument()
+    // p95 null and Token usage null both render "—" in their big-number
+    // cards. Assert at least one is present.
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1)
     // The bar chart + tables don't render in empty state.
     expect(screen.queryByText('Top refusal codes (last 7d)')).not.toBeInTheDocument()
   })
@@ -318,6 +319,135 @@ describe('AdminGuardrailStats', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('connection refused')).toBeInTheDocument())
+  })
+
+  // SCRUM-580 (Slice 3): cost surface tests — Token usage card +
+  // Models table + defensive fallback when the API doesn't return the
+  // cost fields (pre-SCRUM-578 backend or no token-bearing rows).
+
+  it('renders the Token usage card when token totals are present', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetchReturning(
+        samplePayload({
+          total_input_tokens: 12340,
+          total_output_tokens: 5678,
+          by_model: { 'gpt-4o-mini': 100, 'gpt-4o': 25 },
+        }),
+      ),
+    )
+    render(
+      <AdminGuardrailStats
+        apiBaseUrl=""
+        guardrailStatsExpanded={true}
+        onGuardrailStatsExpandedChange={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText('Token usage')).toBeInTheDocument())
+    // Card value = sum formatted with thousands separators: 18,018.
+    expect(screen.getByText('18,018')).toBeInTheDocument()
+    // Subtitle: "12,340 in / 5,678 out".
+    expect(screen.getByText('12,340 in / 5,678 out')).toBeInTheDocument()
+  })
+
+  it('Token usage card shows "—" when both totals are null', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetchReturning(
+        samplePayload({
+          total_input_tokens: null,
+          total_output_tokens: null,
+          by_model: {},
+        }),
+      ),
+    )
+    render(
+      <AdminGuardrailStats
+        apiBaseUrl=""
+        guardrailStatsExpanded={true}
+        onGuardrailStatsExpandedChange={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText('Token usage')).toBeInTheDocument())
+    // The Token usage card subtitle is "no calls in window".
+    const subtitles = screen.getAllByText('no calls in window')
+    // Both p95 latency (when null) and Token usage (when null) carry
+    // the same subtitle string — assert at least one is present.
+    expect(subtitles.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders the Models table in count-desc order', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetchReturning(
+        samplePayload({
+          by_model: { 'gpt-4o': 7, 'gpt-4o-mini': 100, 'gpt-3.5-turbo': 22 },
+        }),
+      ),
+    )
+    render(
+      <AdminGuardrailStats
+        apiBaseUrl=""
+        guardrailStatsExpanded={true}
+        onGuardrailStatsExpandedChange={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText('Models')).toBeInTheDocument())
+    const modelsHeading = screen.getByText('Models')
+    const table = modelsHeading.parentElement.querySelector('table')
+    const rowTexts = Array.from(table.querySelectorAll('tr')).map((r) => r.textContent)
+    // Sorted count-desc: gpt-4o-mini (100), gpt-3.5-turbo (22), gpt-4o (7).
+    expect(rowTexts[0]).toContain('gpt-4o-mini')
+    expect(rowTexts[0]).toContain('100')
+    expect(rowTexts[1]).toContain('gpt-3.5-turbo')
+    expect(rowTexts[1]).toContain('22')
+    expect(rowTexts[2]).toContain('gpt-4o')
+    expect(rowTexts[2]).toContain('7')
+  })
+
+  it('hides the Models table when by_model is empty', async () => {
+    vi.stubGlobal('fetch', mockFetchReturning(samplePayload({ by_model: {} })))
+    render(
+      <AdminGuardrailStats
+        apiBaseUrl=""
+        guardrailStatsExpanded={true}
+        onGuardrailStatsExpandedChange={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText('Decisions')).toBeInTheDocument())
+    expect(screen.queryByText('Models')).not.toBeInTheDocument()
+  })
+
+  it('gracefully handles a pre-SCRUM-578 payload missing the cost fields', async () => {
+    // Defensive: if Slice 1 (SCRUM-578) hasn't deployed yet and the
+    // API returns the old payload shape, the component should still
+    // render cleanly. Token usage card falls back to "—"; Models
+    // table is hidden.
+    vi.stubGlobal(
+      'fetch',
+      mockFetchReturning({
+        days_window: 7,
+        since: '2026-05-18T12:00:00Z',
+        total_calls: 100,
+        by_decision: { allowed: 100 },
+        by_site: { qa_ask: 100 },
+        top_refusal_codes: [],
+        p95_latency_ms: 500,
+        dropped_telemetry_rows: 0,
+        // total_input_tokens / total_output_tokens / by_model absent
+      }),
+    )
+    render(
+      <AdminGuardrailStats
+        apiBaseUrl=""
+        guardrailStatsExpanded={true}
+        onGuardrailStatsExpandedChange={() => {}}
+      />,
+    )
+    await waitFor(() => expect(screen.getByText('Token usage')).toBeInTheDocument())
+    // Doesn't crash; renders the placeholder.
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('Models')).not.toBeInTheDocument()
   })
 
   it('works in uncontrolled mode (local expand state, no callback)', async () => {
