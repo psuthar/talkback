@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
-  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-028. FF-025+ exercise the session_metadata RAG path (SCRUM-558).",
+  "version": "1.1.0",
+  "description": "Versioned Q&A eval cases (v1): factual and not-covered probes aligned with fixture_fact_inventory FF-001\u2013FF-031. FF-025+ exercise the session_metadata RAG path (SCRUM-558). FF-029\u2013FF-031 are SCRUM-573 RULE 4b contradictory-claim cases (numeric, named-entity, percentage) added in SCRUM-576.",
   "cases": [
     {
       "case_id": "FF-001",
@@ -488,6 +488,51 @@
           "no materials"
         ],
         "notes": "Smoke fixture pastes exactly one material; metadata chunk reports 'Materials: 1 total (1 text).'"
+      }
+    },
+    {
+      "case_id": "FF-029",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Was the APAC budget cut to $1.0M?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes, the budget was cut to 1.0",
+          "1.0m is the new budget",
+          "the fixture confirms 1.0m",
+          "the apac budget was cut to 1.0m"
+        ],
+        "notes": "SCRUM-573 RULE 4b: budget in fixture is 2.4M; '$1.0M cut' is contradictory-numeric. Correct response declines the $1.0M claim while quoting the actual $2.4M value from the context. Sibling of FF-010 ($3.0M variant)."
+      }
+    },
+    {
+      "case_id": "FF-030",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Is Project Sigma the decision in the history fixture?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes, project sigma",
+          "sigma is the decision",
+          "the decision is sigma",
+          "the fixture confirms sigma"
+        ],
+        "notes": "SCRUM-573 RULE 4b: decision in fixture is Project Omega, not Sigma — contradictory-named-entity. Correct response declines Sigma while quoting Omega from the context."
+      }
+    },
+    {
+      "case_id": "FF-031",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Did churn rise to 15% this quarter?",
+      "expected_status": "not_covered",
+      "hallucination_constraints": {
+        "answer_must_not_contain": [
+          "yes, churn rose to 15",
+          "15% rise",
+          "the fixture confirms 15%",
+          "churn rose to 15% this quarter"
+        ],
+        "notes": "SCRUM-573 RULE 4b: fixture states churn reduced to below 6%; a '15% rise' is contradictory-percentage with direction-of-change framing. Correct response declines the 15% claim while quoting <6% from the context."
       }
     }
   ]
