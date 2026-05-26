@@ -471,6 +471,57 @@ def run_inventory_cases(
     return results
 
 
+def run_session_warmup(
+    base_url: str,
+    cookie: str,
+    session_ids: list[str],
+    *,
+    ask_fn: Callable[[str, str, str, str], tuple[int, str]] | None = None,
+    warmup_question: str = "Summarize this session in one sentence.",
+) -> list[dict[str, Any]]:
+    """SCRUM-572: warm each fresh session before the timed inventory.
+
+    A `--auto-setup` run creates one new session per fixture, so the
+    first `/ask` call to each triggers `rag.EnsureSessionIndex` (chunk
+    embeddings + pgvector inserts) before the QA + judge calls fire.
+    Without a warm-up, those first calls dominate the p95 (~30-50s on
+    Render starter plan) and the metric reflects indexing overhead
+    instead of steady-state per-call latency.
+
+    Behavior:
+    - One untimed `/ask` per session, in the order given.
+    - The response is discarded — only the side-effect (session
+      indexed + warm cache) matters.
+    - Failures (HTTP 5xx, transport errors) are logged into the
+      returned `warmup_calls` list but do NOT raise — the inventory
+      loop runs regardless. A failing warm-up just means that
+      session's first inventory case still hits the cold path.
+
+    Returns a list of `{session_id, http_status, latency_ms, error}`
+    dicts suitable for embedding in run_manifest.json so the cost is
+    visible somewhere in the run record (just not in the per-case
+    duration_ms p95).
+    """
+    _ask = ask_fn or ask_session
+    out: list[dict[str, Any]] = []
+    for sid in session_ids:
+        entry: dict[str, Any] = {
+            "session_id": sid,
+            "http_status": None,
+            "latency_ms": None,
+            "error": None,
+        }
+        t0 = time.perf_counter()
+        try:
+            status, _ = _ask(base_url, cookie, sid, warmup_question)
+            entry["http_status"] = status
+        except OSError as e:
+            entry["error"] = str(e)
+        entry["latency_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
+        out.append(entry)
+    return out
+
+
 def write_json(path: Path, obj: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -525,6 +576,7 @@ def write_run_artifacts(
     session_map: Mapping[str, str],
     cases: list[dict[str, Any]],
     results: list[CaseResult],
+    warmup_calls: list[dict[str, Any]] | None = None,
 ) -> None:
     cases_dir = run_dir / "cases"
     cases_dir.mkdir(parents=True, exist_ok=True)
@@ -550,6 +602,11 @@ def write_run_artifacts(
         "auto_setup": auto_setup,
         "dry_run": dry_run,
         "session_map": dict(session_map),
+        # SCRUM-572: surface warm-up call timings in the manifest so
+        # the indexing cost stays visible somewhere in the run record,
+        # just not inside the per-case duration_ms p95 calculation.
+        # Empty list = no warm-up ran (--no-warmup or non-auto-setup).
+        "warmup_calls": list(warmup_calls or []),
         "case_count": len(results),
         "cases_index": index,
     }
@@ -897,6 +954,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Create sessions (and paste/patch) per fixture via API; requires auth cookie or login env",
     )
     parser.add_argument(
+        "--no-warmup",
+        action="store_true",
+        help=(
+            "Skip the per-session warm-up sweep that primes rag.EnsureSessionIndex "
+            "before the timed inventory (SCRUM-572). Default is to warm up so the "
+            "per-case p95_latency_ms reflects steady-state, not cold-start indexing. "
+            "Set this flag only when you specifically want to measure cold-start."
+        ),
+    )
+    parser.add_argument(
         "--eval-cases",
         type=Path,
         default=REPO_ROOT / "eval" / "qa" / "eval_cases_v1.json",
@@ -1007,6 +1074,31 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 4
 
+    # SCRUM-572: warm each session before the timed inventory so the
+    # first-call indexing penalty (rag.EnsureSessionIndex on fresh
+    # --auto-setup sessions ~30-50s on Render starter plan) doesn't
+    # dominate the per-case p95. The warm-up's response is discarded;
+    # only the side-effect (session indexed + warm cache) matters.
+    # Warm-up timings land in run_manifest.json's warmup_calls field
+    # so the cost stays visible somewhere in the run record.
+    warmup_calls: list[dict[str, Any]] = []
+    if not args.no_warmup and session_map:
+        session_ids = list(session_map.values())
+        warmup_calls = run_session_warmup(base_url, cookie, session_ids)
+        for entry in warmup_calls:
+            err = entry.get("error")
+            if err:
+                print(
+                    f"warm-up failed for session_id={entry['session_id']}: {err}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"warm-up: session_id={entry['session_id']} "
+                    f"http_status={entry['http_status']} "
+                    f"latency_ms={entry['latency_ms']}"
+                )
+
     judge_contracts: dict[str, dict[str, Any]] = {}
     if judge_enabled:
         try:
@@ -1082,6 +1174,7 @@ def main(argv: list[str] | None = None) -> int:
         run_id=run_id,
         base_url=base_url,
         inventory_path=inventory_path,
+        warmup_calls=warmup_calls,
         auto_setup=auto_setup,
         dry_run=False,
         session_map=session_map,
