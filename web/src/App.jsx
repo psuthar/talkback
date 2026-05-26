@@ -5,6 +5,7 @@ import { ParticipantMode } from './modes/ParticipantMode'
 import { useWebSocket } from './hooks/useWebSocket'
 import { TranscriptViewer } from './components/TranscriptViewer'
 import { AdminUsers } from './components/AdminUsers'
+import { AdminGuardrailStats } from './components/AdminGuardrailStats'
 import { LoginPage } from './components/LoginPage'
 import { AcceptInvitePage } from './components/AcceptInvitePage'
 import { ImportTemplatePage } from './components/ImportTemplatePage'
@@ -266,6 +267,11 @@ function App() {
   // Admin panel: section expanded state (collapsed by default; reset on logout; preserved when switching app ↔ admin)
   const [adminUsersExpanded, setAdminUsersExpanded] = useState(false)
   const [adminSessionsExpanded, setAdminSessionsExpanded] = useState(false)
+  // SCRUM-579 (Slice 2 of SCRUM-577): expand state for the
+  // Guardrail telemetry section. Same controlled-prop pattern as
+  // the Users / Sessions sections so the open state survives admin-
+  // view re-renders.
+  const [adminGuardrailStatsExpanded, setAdminGuardrailStatsExpanded] = useState(false)
   
   // Video player states. selectedVideoIdRef stores the user's chosen video id so selection survives refetches and effect runs.
   const [selectedVideo, setSelectedVideo] = useState(null)
@@ -543,6 +549,7 @@ function App() {
     if (!authUser) {
       setAdminUsersExpanded(false)
       setAdminSessionsExpanded(false)
+      setAdminGuardrailStatsExpanded(false)
     }
   }, [authUser])
 
@@ -2884,14 +2891,24 @@ function App() {
       </div>
 
       {showAdminView && (
-              <AdminUsers
-                apiBaseUrl={apiBaseUrl}
-                debugMode={debugMode}
-                usersExpanded={adminUsersExpanded}
-                onUsersExpandedChange={setAdminUsersExpanded}
-                sessionsExpanded={adminSessionsExpanded}
-                onSessionsExpandedChange={setAdminSessionsExpanded}
-              />
+              <>
+                <AdminUsers
+                  apiBaseUrl={apiBaseUrl}
+                  debugMode={debugMode}
+                  usersExpanded={adminUsersExpanded}
+                  onUsersExpandedChange={setAdminUsersExpanded}
+                  sessionsExpanded={adminSessionsExpanded}
+                  onSessionsExpandedChange={setAdminSessionsExpanded}
+                />
+                {/* SCRUM-579: Guardrail telemetry — sibling to AdminUsers */}
+                <div style={{ width: '100%', padding: '0 24px' }}>
+                  <AdminGuardrailStats
+                    apiBaseUrl={apiBaseUrl}
+                    guardrailStatsExpanded={adminGuardrailStatsExpanded}
+                    onGuardrailStatsExpandedChange={setAdminGuardrailStatsExpanded}
+                  />
+                </div>
+              </>
             )}
       {showAdminForbidden && (
         <div className="section" style={{ padding: '24px' }}>
