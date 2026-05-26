@@ -51,3 +51,13 @@ paying per-PR OpenAI cost or fighting CI flake.
 Cron-on-a-schedule + auto-baseline-PR is a deliberate follow-up once
 the manual refresh path is proven (Slice 1's scope keeps it
 manual-only — the live infra wiring is the riskier piece).
+
+## Metric provenance
+
+| Metric | Source | Notes |
+|---|---|---|
+| `correctness_percentage`, `hallucination_count`, `weighted_correctness`, `overall_pass`, `judge_*`, `status_breakdown`, `thresholds_evaluated` | `scripts/run_qa_eval.py` live run vs. the inventory cases | SCRUM-562 |
+| `p95_latency_ms` | `scripts/run_qa_eval.py` live run (per-case `duration_ms` p95) | SCRUM-562; null until the first qa-eval-refresh after SCRUM-562 ships |
+| `refusal_when_oos_rate`, `legitimate_false_positive_rate` | `internal/guardrails/input_eval_test.go` Go test against `eval/qa/fixture_input_guardrail.json` | SCRUM-564 / SCRUM-570; self-contained, no live API needed |
+| `citation_rate`, `groundedness_rate` | `scripts/run_qa_eval.py` live run — counts guardrail-refusal HTTP responses per `docs/guardrails/refusal-shape.md` | SCRUM-565 / SCRUM-566 / SCRUM-571; `null` when no cases reach the gate (all input-refused or all not_covered) |
+| `refusal_count_by_guardrail` | `scripts/run_qa_eval.py` live run — per-slug tally for telemetry | SCRUM-571; informational, not gated |

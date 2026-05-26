@@ -335,8 +335,8 @@ def main(argv: list[str] | None = None) -> int:
             "Per-PR run is baseline-compare-only; not a live measurement.",
             "Live refresh via .github/workflows/qa-eval-refresh.yml (workflow_dispatch).",
             "refusal_when_oos_rate + legitimate_false_positive_rate landed in Slice 3 (SCRUM-564) — measured by the Go input-guardrail eval test against eval/qa/fixture_input_guardrail.json.",
-            "citation_rate landed in Slice 4a (SCRUM-565) — measured by the live qa-eval-refresh workflow. Source of truth is the post-CheckCitations enforce path in internal/utils/qa.go; the metric here gates baseline regressions.",
-            "groundedness_rate landed in Slice 4b (SCRUM-566) — measured by the live qa-eval-refresh workflow via CheckGrounding (judge-LLM verdict on every passed citation answer). Per-user rate-limited via GUARDRAIL_JUDGE_MAX_PER_USER_PER_HOUR (default 100).",
+            "citation_rate landed in Slice 4a (SCRUM-565) and is now computed by run_qa_eval.py from guardrail-refusal HTTP responses (SCRUM-571). The metric here gates baseline regressions; the live qa-eval-refresh path produces the values.",
+            "groundedness_rate landed in Slice 4b (SCRUM-566) and is now computed by run_qa_eval.py from guardrail-refusal HTTP responses (SCRUM-571). Per-user rate-limited via GUARDRAIL_JUDGE_MAX_PER_USER_PER_HOUR (default 100).",
         ],
     }
 

@@ -19,6 +19,7 @@ from scripts.run_qa_eval import (
     aggregate_report,
     auto_setup_sessions,
     case_to_artifact,
+    detect_refusal,
     render_terminal_report,
     normalize_session_ask_response,
     ordered_fixture_ids,
@@ -406,6 +407,9 @@ class TestCaseToArtifactOrdering(unittest.TestCase):
                 "request",
                 "response",
                 "normalized",
+                # SCRUM-571: refusal slot lives between normalized + judge
+                # so the artifact key order remains stable across runs.
+                "refusal",
                 "judge",
             ],
         )
@@ -513,6 +517,275 @@ class TestJudgeContracts(unittest.TestCase):
             contracts["FF-024"]["case_contract"]["question"],
             "Who approved the APAC budget in the session update fixture?",
         )
+
+
+class TestDetectRefusal(unittest.TestCase):
+    """SCRUM-571: classify SessionAsk response bodies as guardrail refusals
+    per docs/guardrails/refusal-shape.md."""
+
+    def test_full_contract_returns_classification(self) -> None:
+        body = {
+            "error": "guardrail_blocked",
+            "guardrail": "input_injection",
+            "code": "input_injection",
+            "user_message": "Question detected to have unsafe content — not processed.",
+        }
+        self.assertEqual(
+            detect_refusal(body),
+            {"guardrail": "input_injection", "code": "input_injection"},
+        )
+
+    def test_each_known_slug_recognized(self) -> None:
+        for slug in (
+            "input_injection",
+            "input_off_scope",
+            "input_too_long",
+            "citation_missing",
+            "grounding_failed",
+        ):
+            body = {
+                "error": "guardrail_blocked",
+                "guardrail": slug,
+                "code": slug,
+                "user_message": "x",
+            }
+            self.assertEqual(detect_refusal(body), {"guardrail": slug, "code": slug}, slug)
+
+    def test_unknown_slug_classified_as_other(self) -> None:
+        body = {
+            "error": "guardrail_blocked",
+            "guardrail": "some_future_slug",
+            "code": "some_future_slug",
+            "user_message": "x",
+        }
+        # An unrecognized guardrail slug shouldn't get silently bucketed
+        # into one of the known counters — it surfaces as `other` so a
+        # future rename or typo is visible.
+        self.assertEqual(
+            detect_refusal(body),
+            {"guardrail": "other", "code": "some_future_slug"},
+        )
+
+    def test_normal_answer_body_returns_none(self) -> None:
+        body = {
+            "question": {"id": "q1", "question_text": "Hello?"},
+            "answer": {"answer_text": "Hi", "citations": []},
+        }
+        self.assertIsNone(detect_refusal(body))
+
+    def test_non_dict_returns_none(self) -> None:
+        self.assertIsNone(detect_refusal(None))
+        self.assertIsNone(detect_refusal([]))
+        self.assertIsNone(detect_refusal("not json"))
+
+    def test_missing_required_field_returns_none(self) -> None:
+        # Each of the four fields is required by the contract.
+        base = {
+            "error": "guardrail_blocked",
+            "guardrail": "input_injection",
+            "code": "input_injection",
+            "user_message": "x",
+        }
+        for missing in ("error", "guardrail", "code", "user_message"):
+            body = {k: v for k, v in base.items() if k != missing}
+            self.assertIsNone(detect_refusal(body), f"missing {missing} should fail-open")
+
+    def test_empty_string_field_returns_none(self) -> None:
+        # Defensive: an empty string in any of the four required fields
+        # is treated as "not a real refusal" rather than a special case.
+        for k in ("guardrail", "code", "user_message"):
+            body = {
+                "error": "guardrail_blocked",
+                "guardrail": "input_injection",
+                "code": "input_injection",
+                "user_message": "x",
+            }
+            body[k] = ""
+            self.assertIsNone(detect_refusal(body), f"empty {k} should fail-open")
+
+    def test_wrong_error_value_returns_none(self) -> None:
+        body = {
+            "error": "some_other_error",
+            "guardrail": "input_injection",
+            "code": "input_injection",
+            "user_message": "x",
+        }
+        self.assertIsNone(detect_refusal(body))
+
+
+class TestAggregateReportRefusalRates(unittest.TestCase):
+    """SCRUM-571: refusal_count_by_guardrail + citation_rate +
+    groundedness_rate computation."""
+
+    def _case_result(
+        self,
+        case_id: str,
+        *,
+        refusal: dict[str, str] | None = None,
+        http_status: int = 200,
+        verdict_ok: bool = True,
+        score: float = 1.0,
+    ) -> CaseResult:
+        res = CaseResult(
+            case_id=case_id,
+            fixture_id="f",
+            question="q",
+            http_status=http_status,
+            duration_ms=100.0,
+        )
+        res.refusal = refusal
+        if refusal is not None:
+            res.judge = {
+                "ok": False,
+                "error_code": "judge_skipped_due_to_guardrail_refusal",
+                "error_message": f"guardrail={refusal['guardrail']} code={refusal['code']}",
+                "attempts": 0,
+                "verdict": None,
+            }
+        else:
+            res.judge = {
+                "ok": verdict_ok,
+                "error_code": None,
+                "error_message": None,
+                "attempts": 1,
+                "verdict": {
+                    "is_correct": True,
+                    "hallucination": False,
+                    "score_0_to_1": score,
+                    "reason": "ok",
+                } if verdict_ok else None,
+            }
+        return res
+
+    def _cases(self, *case_ids: str) -> list[dict]:
+        # Build inventory cases — all marked answered so the bucketing
+        # logic treats no-refusal cases as "passed both gates".
+        return [
+            {"case_id": cid, "expected_status": "answered"}
+            for cid in case_ids
+        ]
+
+    def test_all_answered_yields_rates_of_one(self) -> None:
+        results = [
+            self._case_result("c1"),
+            self._case_result("c2"),
+            self._case_result("c3"),
+        ]
+        report = aggregate_report(self._cases("c1", "c2", "c3"), results)
+        m = report["metrics"]
+        self.assertEqual(m["citation_rate"], 1.0)
+        self.assertEqual(m["groundedness_rate"], 1.0)
+        self.assertEqual(m["refusal_count_by_guardrail"]["citation_missing"], 0)
+        self.assertEqual(m["refusal_count_by_guardrail"]["grounding_failed"], 0)
+
+    def test_citation_missing_refusal_drops_citation_rate(self) -> None:
+        # 3 cases — 2 answered, 1 refused with citation_missing.
+        # citation_rate = 2 / (2 + 1) ≈ 0.6667
+        # groundedness_rate = 2 / 2 = 1.0 (refused case didn't reach judge)
+        results = [
+            self._case_result("c1"),
+            self._case_result("c2"),
+            self._case_result(
+                "c3",
+                refusal={"guardrail": "citation_missing", "code": "citation_missing"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1", "c2", "c3"), results)
+        m = report["metrics"]
+        self.assertAlmostEqual(m["citation_rate"], 0.6667, places=4)
+        self.assertEqual(m["groundedness_rate"], 1.0)
+        self.assertEqual(m["refusal_count_by_guardrail"]["citation_missing"], 1)
+        self.assertEqual(m["refusal_count_by_guardrail"]["grounding_failed"], 0)
+
+    def test_grounding_failed_refusal_drops_groundedness_rate_only(self) -> None:
+        # 3 cases — 2 answered, 1 refused with grounding_failed.
+        # citation_rate = 3 / 3 = 1.0 (grounding_failed cases passed citation)
+        # groundedness_rate = 2 / 3 ≈ 0.6667
+        results = [
+            self._case_result("c1"),
+            self._case_result("c2"),
+            self._case_result(
+                "c3",
+                refusal={"guardrail": "grounding_failed", "code": "grounding_failed"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1", "c2", "c3"), results)
+        m = report["metrics"]
+        self.assertEqual(m["citation_rate"], 1.0)
+        self.assertAlmostEqual(m["groundedness_rate"], 0.6667, places=4)
+        self.assertEqual(m["refusal_count_by_guardrail"]["grounding_failed"], 1)
+
+    def test_mixed_citation_and_grounding_refusals(self) -> None:
+        # 4 cases: 2 answered, 1 citation_missing, 1 grounding_failed.
+        # Citation gate denominator = 4 (2 answered + 1 cm + 1 gf).
+        # Citation gate passed = 3 (2 answered + 1 gf — gf passed citation).
+        # citation_rate = 3/4 = 0.75.
+        # Grounding judge denominator = 3 (2 answered + 1 gf).
+        # Grounding judge passed = 2 (2 answered).
+        # groundedness_rate = 2/3 ≈ 0.6667.
+        results = [
+            self._case_result("c1"),
+            self._case_result("c2"),
+            self._case_result(
+                "c3",
+                refusal={"guardrail": "citation_missing", "code": "citation_missing"},
+            ),
+            self._case_result(
+                "c4",
+                refusal={"guardrail": "grounding_failed", "code": "grounding_failed"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1", "c2", "c3", "c4"), results)
+        m = report["metrics"]
+        self.assertEqual(m["citation_rate"], 0.75)
+        self.assertAlmostEqual(m["groundedness_rate"], 0.6667, places=4)
+        self.assertEqual(m["refusal_count_by_guardrail"]["citation_missing"], 1)
+        self.assertEqual(m["refusal_count_by_guardrail"]["grounding_failed"], 1)
+
+    def test_input_refusals_excluded_from_output_rates(self) -> None:
+        # Input-guardrail refusals never reach the citation / grounding
+        # gates — they pre-empt the LLM call entirely. They count in
+        # refusal_count_by_guardrail but NOT in the output-rate denoms.
+        results = [
+            self._case_result("c1"),
+            self._case_result(
+                "c2",
+                refusal={"guardrail": "input_injection", "code": "input_injection"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1", "c2"), results)
+        m = report["metrics"]
+        # c1 is the only case that reached either output gate.
+        self.assertEqual(m["citation_rate"], 1.0)
+        self.assertEqual(m["groundedness_rate"], 1.0)
+        self.assertEqual(m["refusal_count_by_guardrail"]["input_injection"], 1)
+        self.assertEqual(m["refusal_count_by_guardrail"]["citation_missing"], 0)
+
+    def test_no_cases_reach_gate_yields_null_rates(self) -> None:
+        # All cases are input-refused or not_covered: nothing reached
+        # the output guardrails. Both rates should be null (= "no signal"
+        # — qa_eval_ci.py skips the threshold compare on either side null).
+        results = [
+            self._case_result(
+                "c1",
+                refusal={"guardrail": "input_injection", "code": "input_injection"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1"), results)
+        m = report["metrics"]
+        self.assertIsNone(m["citation_rate"])
+        self.assertIsNone(m["groundedness_rate"])
+
+    def test_other_slug_counted_in_other_bucket(self) -> None:
+        results = [
+            self._case_result(
+                "c1",
+                refusal={"guardrail": "other", "code": "future_slug"},
+            ),
+        ]
+        report = aggregate_report(self._cases("c1"), results)
+        m = report["metrics"]
+        self.assertEqual(m["refusal_count_by_guardrail"]["other"], 1)
 
 
 class TestAggregateReportP95Latency(unittest.TestCase):

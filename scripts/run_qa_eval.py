@@ -269,6 +269,60 @@ def normalize_session_ask_response(parsed: Any) -> dict[str, Any]:
     return out
 
 
+# SCRUM-571: known refusal-guardrail slugs. Kept in sync with the
+# `guardrails_fired` enum in docs/guardrails/log-shape.md and the
+# catalog in docs/guardrails/refusal-shape.md. Used to validate the
+# slug on a refusal body so a typo or rename surfaces as `other`
+# rather than getting silently miscounted.
+KNOWN_REFUSAL_GUARDRAILS = frozenset(
+    {
+        "input_injection",
+        "input_off_scope",
+        "input_too_long",
+        "citation_missing",
+        "grounding_failed",
+    }
+)
+
+
+def detect_refusal(parsed: Any) -> dict[str, str] | None:
+    """SCRUM-571: classify a SessionAsk response body as a guardrail
+    refusal per the contract in docs/guardrails/refusal-shape.md.
+
+    Returns a dict ``{"guardrail": <slug>, "code": <code>}`` when the
+    parsed body matches::
+
+        {"error": "guardrail_blocked",
+         "guardrail": <slug>,
+         "code": <code>,
+         "user_message": <string>}
+
+    The four fields are required by the contract; any missing or non-
+    string field causes the detection to fail-open (return None) so a
+    legit answer body never gets mis-classified as a refusal.
+
+    Returns ``{"guardrail": "other", "code": "<raw>"}`` when the
+    guardrail slug is non-empty but not in KNOWN_REFUSAL_GUARDRAILS —
+    catches a future rename / typo before the rate computation skews.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("error") != "guardrail_blocked":
+        return None
+    guardrail = parsed.get("guardrail")
+    code = parsed.get("code")
+    user_message = parsed.get("user_message")
+    if not isinstance(guardrail, str) or not guardrail:
+        return None
+    if not isinstance(code, str) or not code:
+        return None
+    if not isinstance(user_message, str) or not user_message:
+        return None
+    if guardrail not in KNOWN_REFUSAL_GUARDRAILS:
+        return {"guardrail": "other", "code": guardrail}
+    return {"guardrail": guardrail, "code": code}
+
+
 @dataclass
 class CaseResult:
     case_id: str
@@ -282,6 +336,12 @@ class CaseResult:
     request_url: str = ""
     duration_ms: float | None = None
     judge: dict[str, Any] | None = None
+    # SCRUM-571: populated when the response body matches the guardrail
+    # refusal contract (docs/guardrails/refusal-shape.md). When set, the
+    # judge step is skipped with judge_skipped_due_to_guardrail_refusal
+    # and aggregate_report counts the case toward the relevant rate
+    # denominator. `None` for normal answers / not_covered / errors.
+    refusal: dict[str, str] | None = None
 
 
 def ask_session(
@@ -347,6 +407,13 @@ def run_inventory_cases(
             res.error = str(e)
             res.http_status = None
 
+        # SCRUM-571: stamp the refusal classification before judging.
+        # A guardrail refusal has http_status=200 + a structured body
+        # per refusal-shape.md; the judge can't score it and must be
+        # skipped with a distinct reason so the case doesn't pollute
+        # the judge_error count.
+        res.refusal = detect_refusal(res.parsed_json)
+
         if judge_fn is not None:
             contract = (judge_contract_by_case or {}).get(res.case_id)
             if contract is None:
@@ -354,6 +421,22 @@ def run_inventory_cases(
                     "ok": False,
                     "error_code": "judge_missing_case_contract",
                     "error_message": f"no judge contract for case_id={res.case_id}",
+                    "attempts": 0,
+                    "verdict": None,
+                }
+            elif res.refusal is not None:
+                # SCRUM-571: deliberate guardrail refusal — not a judge
+                # failure. The case is counted in
+                # refusal_count_by_guardrail and contributes to the
+                # citation_rate / groundedness_rate denominators in
+                # aggregate_report.
+                res.judge = {
+                    "ok": False,
+                    "error_code": "judge_skipped_due_to_guardrail_refusal",
+                    "error_message": (
+                        f"guardrail={res.refusal['guardrail']} "
+                        f"code={res.refusal['code']}"
+                    ),
                     "attempts": 0,
                     "verdict": None,
                 }
@@ -422,6 +505,10 @@ def case_to_artifact(case: dict[str, Any], result: CaseResult) -> dict[str, Any]
                 ),
             ),
             ("normalized", normalize_session_ask_response(result.parsed_json)),
+            # SCRUM-571: surface the refusal classification in the
+            # per-case artifact so post-run debugging doesn't require
+            # re-parsing raw_body_text. None for non-refused cases.
+            ("refusal", result.refusal),
             ("judge", result.judge),
         ]
     )
@@ -498,7 +585,24 @@ def aggregate_report(
         "thresholds_evaluated": 0,
         "weighted_correctness": None,
         "overall_pass": None,
+        # SCRUM-571: per-guardrail refusal tally. Pre-seeded with the
+        # known slugs so a downstream consumer can rely on the keys
+        # existing even when the count is zero.
+        "refusal_count_by_guardrail": {
+            "input_injection": 0,
+            "input_off_scope": 0,
+            "input_too_long": 0,
+            "citation_missing": 0,
+            "grounding_failed": 0,
+            "other": 0,
+        },
     }
+    # SCRUM-571: track the buckets that feed citation_rate +
+    # groundedness_rate. Computed after the case loop.
+    cases_reached_citation_gate = 0  # answered + citation_missing + grounding_failed
+    cases_passed_citation_gate = 0   # answered + grounding_failed
+    cases_reached_grounding_judge = 0  # answered + grounding_failed
+    cases_passed_grounding_judge = 0   # answered
     failed_case_ids: list[str] = []
     per_case_threshold_pass: dict[str, bool | None] = {}
     threshold_missing_case_ids: list[str] = []
@@ -513,6 +617,36 @@ def aggregate_report(
             totals["status_breakdown"]["not_covered"] += 1
         else:
             totals["status_breakdown"]["other_or_missing"] += 1
+
+        # SCRUM-571: tally refusals + bucket cases for citation_rate /
+        # groundedness_rate. The semantics mirror the qa.go flow:
+        #   - input_*  refusals never reach the citation/grounding
+        #     guardrails — counted in refusal_count_by_guardrail only.
+        #   - citation_missing refusals reached the citation guardrail
+        #     and failed it.
+        #   - grounding_failed refusals reached the citation guardrail
+        #     (passed) and reached the grounding judge (failed).
+        #   - cases with no refusal that *attempted* an `answered`
+        #     response passed both gates.
+        if res.refusal is not None:
+            slug = res.refusal["guardrail"]
+            totals["refusal_count_by_guardrail"][slug] = (
+                totals["refusal_count_by_guardrail"].get(slug, 0) + 1
+            )
+            if slug == "citation_missing":
+                cases_reached_citation_gate += 1
+            elif slug == "grounding_failed":
+                cases_reached_citation_gate += 1
+                cases_passed_citation_gate += 1
+                cases_reached_grounding_judge += 1
+        elif expected_status == "answered" and res.http_status in (200, 201):
+            # No refusal + the case was supposed to answer + the
+            # request succeeded => the response passed both output
+            # guardrails (CheckCitations + CheckGrounding) in qa.go.
+            cases_reached_citation_gate += 1
+            cases_passed_citation_gate += 1
+            cases_reached_grounding_judge += 1
+            cases_passed_grounding_judge += 1
 
         j = res.judge
         if not isinstance(j, dict):
@@ -582,6 +716,29 @@ def aggregate_report(
         totals["p95_latency_ms"] = round(float(durations[idx]), 1)
     else:
         totals["p95_latency_ms"] = None
+
+    # SCRUM-571: citation_rate = cases that passed CheckCitations /
+    # cases that reached it. Null when no cases reached the gate
+    # (e.g. all input-refused or all not_covered). Matches the
+    # baseline-compare semantics in scripts/qa_eval_ci.py — a drop
+    # below the threshold floor flags a regression where qa.go's
+    # output guardrails are letting more ungrounded answers through.
+    if cases_reached_citation_gate > 0:
+        totals["citation_rate"] = round(
+            cases_passed_citation_gate / cases_reached_citation_gate, 4
+        )
+    else:
+        totals["citation_rate"] = None
+
+    # SCRUM-571: groundedness_rate = cases the judge OK'd / cases that
+    # reached the judge. Null when no cases reached it (e.g. all
+    # citation_missing-refused upstream).
+    if cases_reached_grounding_judge > 0:
+        totals["groundedness_rate"] = round(
+            cases_passed_grounding_judge / cases_reached_grounding_judge, 4
+        )
+    else:
+        totals["groundedness_rate"] = None
 
     evaluated = [
         v for v in per_case_threshold_pass.values() if isinstance(v, bool)
