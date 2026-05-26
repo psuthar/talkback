@@ -25,6 +25,7 @@ from scripts.run_qa_eval import (
     ordered_fixture_ids,
     parse_sessions_json,
     run_inventory_cases,
+    run_session_warmup,
     build_judge_contracts,
     write_report_artifact,
     write_run_artifacts,
@@ -517,6 +518,134 @@ class TestJudgeContracts(unittest.TestCase):
             contracts["FF-024"]["case_contract"]["question"],
             "Who approved the APAC budget in the session update fixture?",
         )
+
+
+class TestRunSessionWarmup(unittest.TestCase):
+    """SCRUM-572: per-session warm-up before the timed inventory."""
+
+    def test_one_call_per_session_id_in_order(self) -> None:
+        calls: list[tuple[str, str, str, str]] = []
+
+        def ask(base_url: str, cookie: str, sid: str, q: str) -> tuple[int, str]:
+            calls.append((base_url, cookie, sid, q))
+            return 200, "{}"
+
+        out = run_session_warmup(
+            "http://x",
+            "cookie",
+            ["s1", "s2", "s3"],
+            ask_fn=ask,
+        )
+        # Exactly one call per session, in the given order.
+        self.assertEqual([c[2] for c in calls], ["s1", "s2", "s3"])
+        # Returned manifest entries: one per session, latency_ms recorded.
+        self.assertEqual(len(out), 3)
+        for entry, sid in zip(out, ["s1", "s2", "s3"]):
+            self.assertEqual(entry["session_id"], sid)
+            self.assertEqual(entry["http_status"], 200)
+            self.assertIsNone(entry["error"])
+            self.assertIsInstance(entry["latency_ms"], (int, float))
+
+    def test_empty_session_list_returns_empty(self) -> None:
+        # The main() path skips run_session_warmup when session_map is
+        # empty; this guards against a future caller passing [] anyway.
+        out = run_session_warmup("http://x", "cookie", [], ask_fn=lambda *a: (200, "{}"))
+        self.assertEqual(out, [])
+
+    def test_transport_error_records_entry_and_continues(self) -> None:
+        # Warm-up failures must NOT raise — the inventory loop runs
+        # regardless; a failed warm-up just means that session's first
+        # inventory case still hits the cold path.
+        attempts: list[str] = []
+
+        def ask(base_url: str, cookie: str, sid: str, q: str) -> tuple[int, str]:
+            attempts.append(sid)
+            if sid == "s2":
+                raise OSError("simulated transport failure")
+            return 200, "{}"
+
+        out = run_session_warmup("http://x", "cookie", ["s1", "s2", "s3"], ask_fn=ask)
+        self.assertEqual(attempts, ["s1", "s2", "s3"], "all sessions attempted")
+        self.assertEqual(len(out), 3)
+        self.assertIsNone(out[0]["error"])
+        self.assertEqual(out[1]["error"], "simulated transport failure")
+        self.assertIsNone(out[1]["http_status"])
+        self.assertIsNone(out[2]["error"])
+
+    def test_non_200_response_recorded_as_status(self) -> None:
+        # A 5xx warm-up means indexing didn't run — record the status
+        # so the operator can see it in run_manifest.json. Don't raise.
+        def ask(base_url: str, cookie: str, sid: str, q: str) -> tuple[int, str]:
+            return 503, "service unavailable"
+
+        out = run_session_warmup("http://x", "cookie", ["s1"], ask_fn=ask)
+        self.assertEqual(out[0]["http_status"], 503)
+        self.assertIsNone(out[0]["error"])
+
+    def test_custom_warmup_question_used(self) -> None:
+        received: list[str] = []
+
+        def ask(base_url: str, cookie: str, sid: str, q: str) -> tuple[int, str]:
+            received.append(q)
+            return 200, "{}"
+
+        run_session_warmup(
+            "http://x",
+            "cookie",
+            ["s1"],
+            ask_fn=ask,
+            warmup_question="Custom warm-up prompt.",
+        )
+        self.assertEqual(received, ["Custom warm-up prompt."])
+
+
+class TestWriteRunArtifactsWarmupField(unittest.TestCase):
+    """SCRUM-572: warm-up entries surface in run_manifest.json."""
+
+    def test_manifest_includes_warmup_calls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run1"
+            warmup_calls = [
+                {"session_id": "s1", "http_status": 200, "latency_ms": 31234.5, "error": None},
+                {"session_id": "s2", "http_status": 200, "latency_ms": 28100.0, "error": None},
+            ]
+            write_run_artifacts(
+                run_dir,
+                run_id="20260101T000000Z",
+                base_url="http://localhost:8080",
+                inventory_path=Path("/tmp/inventory.json"),
+                auto_setup=True,
+                dry_run=False,
+                session_map={"f1": "s1", "f2": "s2"},
+                cases=[],
+                results=[],
+                warmup_calls=warmup_calls,
+            )
+            manifest = json.loads((run_dir / "run_manifest.json").read_text())
+            self.assertIn("warmup_calls", manifest)
+            self.assertEqual(len(manifest["warmup_calls"]), 2)
+            self.assertEqual(manifest["warmup_calls"][0]["session_id"], "s1")
+            self.assertEqual(manifest["warmup_calls"][0]["latency_ms"], 31234.5)
+
+    def test_manifest_warmup_calls_defaults_to_empty_list(self) -> None:
+        # Backward-compat: callers that don't pass warmup_calls (or
+        # pass None) get an empty list in the manifest. Existing
+        # tests + the dry-run path keep working without changes.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run1"
+            write_run_artifacts(
+                run_dir,
+                run_id="20260101T000000Z",
+                base_url="http://localhost:8080",
+                inventory_path=Path("/tmp/inventory.json"),
+                auto_setup=False,
+                dry_run=False,
+                session_map={},
+                cases=[],
+                results=[],
+            )
+            manifest = json.loads((run_dir / "run_manifest.json").read_text())
+            self.assertEqual(manifest["warmup_calls"], [])
 
 
 class TestDetectRefusal(unittest.TestCase):
