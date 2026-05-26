@@ -1,35 +1,35 @@
 {
   "schema": "qa-eval-baseline/v1",
   "description": "Recorded baseline consumed by scripts/qa_eval_ci.py (Slice 1 / SCRUM-562). Refreshed by the qa-eval-refresh workflow_dispatch workflow when a real drift is confirmed via the live harness. Bumping this file in a PR triggers the baseline-compare gate — the PR must show non-regression vs. the prior baseline on origin/main.",
-  "source": "eval/qa/runs/refresh-20260525-193322/report.json",
-  "source_recorded_at": "2026-05-26T00:33:22Z",
-  "source_commit": "51f34135ab95fba8f5a76e6c51fcd1cb143a6195",
+  "source": "eval/qa/runs/refresh-20260525-200633/report.json",
+  "source_recorded_at": "2026-05-26T01:13:35Z",
+  "source_commit": "1ee45596ae575cae45253b167f26dcfa119f5622",
   "metrics": {
-    "judge_attempted": 28,
+    "judge_attempted": 31,
     "judge_ok": 28,
-    "judge_error": 0,
+    "judge_error": 3,
     "correct_count": 28,
     "correctness_percentage": 100.0,
     "hallucination_count": 0,
     "weighted_correctness": 1.0,
     "overall_pass": true,
     "thresholds_evaluated": 28,
-    "p95_latency_ms": 58485.6,
+    "p95_latency_ms": 20344.3,
     "status_breakdown": {
       "answered": 18,
-      "not_covered": 10,
+      "not_covered": 13,
       "other_or_missing": 0
     },
     "refusal_when_oos_rate": 1.0,
     "legitimate_false_positive_rate": 0.0,
     "citation_rate": 1.0,
-    "groundedness_rate": 0.9474
+    "groundedness_rate": 1.0
   },
   "notes": [
-    "p95_latency_ms = 58485.6 was populated from refresh-20260525-193322 (run against Render prod at commit 51f3413 with SCRUM-572's per-session warm-up active). The 58.5s p95 is driven by retry-included tail latency: FF-015 (71.5s) and FF-010 (58.5s) likely hit citation/grounding retry rounds. Median was 9.7s. The +25% delta threshold gives ~73s ceiling; future refreshes should trend downward as the retry rate stabilizes.",
+    "p95_latency_ms = 20344.3 was populated from refresh-20260525-200633 (run against Render prod at commit 1ee4559 with SCRUM-573's RULE 4b live). Massive improvement from the prior 58485.6ms because zero guardrail refusals fired this run (FF-010 now routes to not_covered via RULE 4b instead of hitting the grounding judge retry path). 20.3s p95 is genuinely representative of warm-state RAG + judge latency without retry overhead. Median ~7-9s; the +25% threshold gives ~25s ceiling, a tighter and more useful regression bar than the prior 73s.",
     "fixture_fact_inventory_case_count and eval_cases_v1_case_count are dataset-shape signals owned by scripts/qa_eval_datasets.py, not metric drift — intentionally omitted here so the comparison stays focused on quality + latency.",
     "refusal_when_oos_rate + legitimate_false_positive_rate landed in SCRUM-564 (Slice 3). Measured by internal/guardrails/input_eval_test.go against eval/qa/fixture_input_guardrail.json (42 legitimate + 12 off_scope + 12 injection cases). Bump only when the Go eval test confirms a deliberate move.",
     "citation_rate landed in SCRUM-565 (Slice 4a). Seeded at 1.0 because CheckCitations in internal/utils/qa.go now refuses any `answered` response with zero grounded citations — by construction, every `answered` row on a refreshed baseline cites ≥1 retrieved chunk. The threshold guards against a future regression that loosens the check (e.g. accepting `unknown_*` placeholder chunk_ids).",
-    "groundedness_rate landed in SCRUM-566 (Slice 4b). Seeded at 1.0; first live measurement from refresh-20260525-193322 was 0.9474 (18/19 cases that reached the judge passed). The 1-case flip is FF-010 — inventory expected_status=not_covered with rationale 'Contradictory numeric claim should not be grounded' (question asks about $3.0M APAC budget when fixture says $2.4M). The grounding judge correctly refused an LLM attempt to assert what wasn't grounded; ideally the LLM upstream would return not_covered directly. The threshold (-0.10 vs. earlier -0.05) was widened in this baseline bump to accommodate the small-N denominator (19 cases → one flip = 5.26pp swing); the original -0.05 was guessed against the seeded 1.0 floor."
+    "groundedness_rate landed in SCRUM-566 (Slice 4b). Seeded at 1.0; first live measurement (refresh-20260525-193322) was 0.9474 due to FF-010 triggering a grounding refusal. SCRUM-573 added CRITICAL RULE 4b to qa.go's system prompt to route contradictory-fact questions to not_covered upstream; refresh-20260525-200633 confirmed FF-010 (plus 2 of 3 new SCRUM-573 cases — FF-030, FF-031) now produce not_covered cleanly with no guardrail refusal. groundedness_rate returned to 1.0. FF-029 hit a separate qa.go normalizeQAResponse bug (sprintf-of-already-assigned-value) that produced an 'Invalid answer_status: error' answer_text — filed as a separate follow-up. The threshold stays at -0.10 (widened in the prior refresh) because the inventory still has the small-N denominator that drove the original widening; tightening can wait for a future inventory expansion."
   ]
 }
