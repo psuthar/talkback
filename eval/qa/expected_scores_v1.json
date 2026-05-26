@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
-  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-028.",
+  "version": "1.1.0",
+  "description": "Expected score targets for Q&A eval inventory (correctness floor and hallucination ceiling per case). Includes FF-001 through FF-031. FF-029–FF-031 are SCRUM-573 RULE 4b contradictory-claim cases (numeric, named-entity, percentage) added in SCRUM-576.",
   "defaults": {
     "weight": 1.0,
     "correctness_min": 0.82,
@@ -181,6 +181,27 @@
       "correctness_min": 0.74,
       "hallucination_max": 0.1,
       "notes": "Session-metadata count Q&A (1 material)."
+    },
+    {
+      "case_id": "FF-029",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "SCRUM-573 RULE 4b contradictory-numeric (sibling of FF-010). Floor/ceiling anchored to FF-010 since both are the same shape on the same fixture."
+    },
+    {
+      "case_id": "FF-030",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "SCRUM-573 RULE 4b contradictory-named-entity (Omega vs Sigma). Floor/ceiling anchored to FF-010; first non-numeric RULE 4b case so allow the same headroom as the numeric siblings."
+    },
+    {
+      "case_id": "FF-031",
+      "weight": 1.0,
+      "correctness_min": 0.78,
+      "hallucination_max": 0.12,
+      "notes": "SCRUM-573 RULE 4b contradictory-percentage with direction-of-change framing (15% rise vs <6% reality). Floor/ceiling anchored to FF-010."
     }
   ]
 }
