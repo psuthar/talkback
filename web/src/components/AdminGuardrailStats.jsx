@@ -116,6 +116,14 @@ export function AdminGuardrailStats({
   const maxRefusalCount = topRefusals.reduce((m, r) => Math.max(m, r.count || 0), 0)
   const byDecision = stats?.by_decision || {}
   const bySite = stats?.by_site || {}
+  // SCRUM-580: cost-rollup surface. Defensive fallbacks for pre-
+  // SCRUM-578 API responses (the fields land in this PR's predecessor;
+  // a deploy ordering mistake shouldn't crash this section).
+  const totalInputTokens = stats?.total_input_tokens ?? null
+  const totalOutputTokens = stats?.total_output_tokens ?? null
+  const hasTokenData = totalInputTokens != null || totalOutputTokens != null
+  const byModel = stats?.by_model || {}
+  const sortedModels = Object.entries(byModel).sort((a, b) => b[1] - a[1])
 
   return (
     <div
@@ -231,6 +239,19 @@ export function AdminGuardrailStats({
                   value={formatThousands(refused)}
                   subtitle={`(${formatPercent(refused, total)} of total)`}
                 />
+                {/* SCRUM-580: 5th card — Token usage. Shows sum of
+                    input + output tokens with a "<in> in / <out> out"
+                    subtitle. Renders "—" when no token data (pre-
+                    SCRUM-578 backend OR no token-bearing rows). */}
+                <BigNumberCard
+                  label="Token usage"
+                  value={hasTokenData ? formatThousands((totalInputTokens ?? 0) + (totalOutputTokens ?? 0)) : '—'}
+                  subtitle={
+                    hasTokenData
+                      ? `${formatThousands(totalInputTokens ?? 0)} in / ${formatThousands(totalOutputTokens ?? 0)} out`
+                      : 'no calls in window'
+                  }
+                />
               </div>
 
               {isEmpty && (
@@ -331,6 +352,26 @@ export function AdminGuardrailStats({
                         </tbody>
                       </table>
                     </div>
+                    {/* SCRUM-580: Models table — count-desc, hidden
+                        when by_model is empty (avoids confusing
+                        "Models" heading on a no-traffic window). */}
+                    {sortedModels.length > 0 && (
+                      <div style={{ flex: '1 1 280px', minWidth: '260px' }}>
+                        <h3 style={{ marginTop: 0, marginBottom: '8px', fontSize: '15px' }}>Models</h3>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                          <tbody>
+                            {sortedModels.map(([model, count]) => (
+                              <tr key={model} style={{ borderBottom: '1px solid #eee' }}>
+                                <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>{model}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right' }}>
+                                  {formatThousands(count)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
