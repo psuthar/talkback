@@ -421,6 +421,48 @@
         }
       ],
       "rationale": "Count Q&A grounded in session_metadata; smoke fixture pastes exactly one material."
+    },
+    {
+      "case_id": "FF-029",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Was the APAC budget cut to $1.0M?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Budget in fixture is $2.4M; $1.0M is not present."
+        }
+      ],
+      "rationale": "SCRUM-573: second contradictory-numeric case (alongside FF-010). Distinct value ($1.0M vs FF-010's $3.0M) so a regression isn't FF-010-specific."
+    },
+    {
+      "case_id": "FF-030",
+      "fixture_id": "qa_history_project_omega",
+      "question": "Is Project Sigma the decision in the history fixture?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "web/tests/e2e/qa-history.e2e.ts",
+          "source_symbol": "pasteMaterial",
+          "evidence": "Decision is Project Omega, not Project Sigma."
+        }
+      ],
+      "rationale": "SCRUM-573: contradictory-named-entity shape (Omega vs Sigma). Tests RULE 4b across non-numeric domains."
+    },
+    {
+      "case_id": "FF-031",
+      "fixture_id": "smokeDocText_meridian_apac_churn",
+      "question": "Did churn rise to 15% this quarter?",
+      "expected_status": "not_covered",
+      "source_refs": [
+        {
+          "source_file": "internal/handlers/smoke_material_ingestion_test.go",
+          "source_symbol": "smokeDocText",
+          "evidence": "Churn reduced to below 6%; 15% rise is not stated."
+        }
+      ],
+      "rationale": "SCRUM-573: contradictory-metric shape (15% claim vs <6% in fixture). Tests RULE 4b on percentage / direction-of-change framing."
     }
   ]
 }
