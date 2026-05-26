@@ -109,6 +109,86 @@ func TestAppendedTextAfterJSONIsHandled(t *testing.T) {
 	}
 }
 
+// TestNormalizeQAResponse_InvalidAnswerStatusPreservesOriginal is a regression
+// for SCRUM-575: when the LLM returns an answer_status outside the
+// {"answered", "not_covered", "error"} enum, the resulting AnswerText must
+// quote the *original* LLM-returned value, not the "error" string the
+// validator just assigned. The prior implementation formatted qa.AnswerStatus
+// after overwriting it, so every invalid status was misreported as
+// "Invalid answer_status: error".
+func TestNormalizeQAResponse_InvalidAnswerStatusPreservesOriginal(t *testing.T) {
+	tests := []struct {
+		name           string
+		inputStatus    string
+		wantAnswerText string
+	}{
+		{
+			name:           "common LLM colloquial: no",
+			inputStatus:    "no",
+			wantAnswerText: `Invalid answer_status: "no"`,
+		},
+		{
+			name:           "capitalised colloquial: Negative",
+			inputStatus:    "Negative",
+			wantAnswerText: `Invalid answer_status: "Negative"`,
+		},
+		{
+			name:           "empty string surfaces visibly via %q",
+			inputStatus:    "",
+			wantAnswerText: `Invalid answer_status: ""`,
+		},
+		{
+			name:           "whitespace-only surfaces visibly via %q",
+			inputStatus:    " ",
+			wantAnswerText: `Invalid answer_status: " "`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			qa := &QAResponse{
+				AnswerStatus: tt.inputStatus,
+				AnswerText:   "irrelevant — should be overwritten",
+				Confidence:   0.9,
+			}
+			normalizeQAResponse(qa)
+			if qa.AnswerStatus != "error" {
+				t.Errorf("AnswerStatus: got %q, want %q", qa.AnswerStatus, "error")
+			}
+			// After the SCRUM-575 fix the AnswerText must quote the
+			// *original* LLM value, not the post-assignment "error" value.
+			// Note: low-confidence path is not triggered here because
+			// Confidence=0.9 keeps us above the 0.55 threshold; status
+			// gets normalised to "error" rather than "not_covered".
+			if qa.AnswerText != tt.wantAnswerText {
+				t.Errorf("AnswerText:\n  got:  %q\n  want: %q", qa.AnswerText, tt.wantAnswerText)
+			}
+		})
+	}
+}
+
+// TestNormalizeQAResponse_ValidStatusPreservesAnswerText confirms the fix
+// did not regress the happy path: when the LLM returns a valid status,
+// normalizeQAResponse must not touch AnswerText via the invalid-status
+// branch.
+func TestNormalizeQAResponse_ValidStatusPreservesAnswerText(t *testing.T) {
+	for _, status := range []string{"answered", "error"} {
+		t.Run(status, func(t *testing.T) {
+			qa := &QAResponse{
+				AnswerStatus: status,
+				AnswerText:   "original answer text",
+				Confidence:   0.9,
+			}
+			normalizeQAResponse(qa)
+			if qa.AnswerStatus != status {
+				t.Errorf("AnswerStatus: got %q, want %q", qa.AnswerStatus, status)
+			}
+			if qa.AnswerText != "original answer text" {
+				t.Errorf("AnswerText should be untouched for valid status %q, got %q", status, qa.AnswerText)
+			}
+		})
+	}
+}
+
 func TestBuildIdentityContextSection_ParticipantAsker(t *testing.T) {
 	asker := "invitee@example.com"
 	role := "participant"

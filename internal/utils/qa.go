@@ -219,10 +219,16 @@ func callOpenAIForQA(
 // re-runs this on the retry response). Mutates the response in place.
 // Pure aside from no I/O — safe to test directly.
 func normalizeQAResponse(qa *QAResponse) {
-	// Validate answer_status
+	// Validate answer_status. SCRUM-575: capture the original LLM-returned
+	// value before overwriting; the prior code formatted qa.AnswerStatus
+	// *after* assigning it to "error", so the diagnostic always read
+	// "Invalid answer_status: error" regardless of what the LLM actually
+	// returned. %q surfaces empty strings, whitespace, and control chars
+	// visibly so an audit trail of the offending value is preserved.
 	if qa.AnswerStatus != "answered" && qa.AnswerStatus != "not_covered" && qa.AnswerStatus != "error" {
+		invalid := qa.AnswerStatus
 		qa.AnswerStatus = "error"
-		qa.AnswerText = fmt.Sprintf("Invalid answer_status: %s", qa.AnswerStatus)
+		qa.AnswerText = fmt.Sprintf("Invalid answer_status: %q", invalid)
 	}
 
 	// Clamp confidence
