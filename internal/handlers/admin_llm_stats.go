@@ -13,14 +13,23 @@ import (
 // Per docs/guardrails/log-shape.md "Read patterns" — single endpoint that
 // rolls up everything the operator needs from a 7-day window.
 type AdminLLMStatsPayload struct {
-	DaysWindow       int                                  `json:"days_window"`
-	Since            string                               `json:"since"`
-	TotalCalls       int                                  `json:"total_calls"`
-	ByDecision       map[string]int                       `json:"by_decision"`
-	BySite           map[string]int                       `json:"by_site"`
-	TopRefusalCodes  []database.LLMCallRefusalCodeCount   `json:"top_refusal_codes"`
-	P95LatencyMS     *float64                             `json:"p95_latency_ms"`
-	DroppedTelemetry uint64                               `json:"dropped_telemetry_rows"`
+	DaysWindow       int                                `json:"days_window"`
+	Since            string                             `json:"since"`
+	TotalCalls       int                                `json:"total_calls"`
+	ByDecision       map[string]int                     `json:"by_decision"`
+	BySite           map[string]int                     `json:"by_site"`
+	TopRefusalCodes  []database.LLMCallRefusalCodeCount `json:"top_refusal_codes"`
+	P95LatencyMS     *float64                           `json:"p95_latency_ms"`
+	DroppedTelemetry uint64                             `json:"dropped_telemetry_rows"`
+
+	// SCRUM-578 (Slice 1 of SCRUM-577): cost-rollup extension. Token
+	// totals are nullable when no rows / all-null tokens (obsworker
+	// site doesn't emit token counts). by_model is an empty map when
+	// the window has no token-bearing calls — the UI renders the
+	// Models table only when this is non-empty.
+	TotalInputTokens  *int64         `json:"total_input_tokens"`
+	TotalOutputTokens *int64         `json:"total_output_tokens"`
+	ByModel           map[string]int `json:"by_model"`
 }
 
 // AdminLLMStatsHandler handles GET /api/admin/llm-stats?days=7
@@ -72,15 +81,29 @@ func (h *Handlers) AdminLLMStatsHandler(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollup failed: p95_latency_ms"})
 		return
 	}
+	// SCRUM-578: cost rollup (token totals + per-model counts).
+	inputTokens, outputTokens, err := h.DB.SumLLMCallTokens(ctx, since)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollup failed: tokens"})
+		return
+	}
+	byModel, err := h.DB.CountLLMCallsByModel(ctx, since)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "rollup failed: by_model"})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, AdminLLMStatsPayload{
-		DaysWindow:       days,
-		Since:            since.Format(time.RFC3339),
-		TotalCalls:       total,
-		ByDecision:       byDecision,
-		BySite:           bySite,
-		TopRefusalCodes:  topRefusals,
-		P95LatencyMS:     p95,
-		DroppedTelemetry: guardrails.DroppedCount(),
+		DaysWindow:        days,
+		Since:             since.Format(time.RFC3339),
+		TotalCalls:        total,
+		ByDecision:        byDecision,
+		BySite:            bySite,
+		TopRefusalCodes:   topRefusals,
+		P95LatencyMS:      p95,
+		DroppedTelemetry:  guardrails.DroppedCount(),
+		TotalInputTokens:  inputTokens,
+		TotalOutputTokens: outputTokens,
+		ByModel:           byModel,
 	})
 }
