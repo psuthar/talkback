@@ -158,6 +158,62 @@ func (db *DB) CountLLMCallsBySiteAndUserSince(ctx context.Context, site string, 
 	return n, nil
 }
 
+// SumLLMCallTokens returns the SUM of input_tokens and output_tokens
+// across all llm_call_log rows since the given time. SCRUM-578 (Slice 1
+// of SCRUM-577): backs the per-window cost rollup the admin UI surfaces
+// as a 5th big-number card.
+//
+// Both returns are nullable: NULL when no rows in the window, or when
+// every row has NULL token columns (the obsworker site logs without
+// token counts since LLMClient.Complete doesn't expose them). The
+// SUM() aggregate returns NULL on empty / all-null inputs — passed
+// straight through to the JSON payload so the UI can render "—" with
+// a "no token data in window" subtitle.
+func (db *DB) SumLLMCallTokens(ctx context.Context, since time.Time) (inputTokens, outputTokens *int64, err error) {
+	err = db.Pool.QueryRow(
+		ctx,
+		`SELECT SUM(input_tokens), SUM(output_tokens) FROM llm_call_log WHERE ts >= $1`,
+		since,
+	).Scan(&inputTokens, &outputTokens)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sum llm_call_log tokens: %w", err)
+	}
+	return inputTokens, outputTokens, nil
+}
+
+// CountLLMCallsByModel groups rows by their `model` enum value since
+// the given time. SCRUM-578 (Slice 1 of SCRUM-577): lets the admin UI
+// answer "which models are we calling and how often" alongside the
+// existing by_site rollup.
+//
+// Empty groups omitted (same as CountLLMCallsBySite). Empty-string
+// models — which the qa.go refusal paths emit when no LLM was invoked
+// — are excluded so the Models table doesn't get a "" row that means
+// nothing to an operator.
+func (db *DB) CountLLMCallsByModel(ctx context.Context, since time.Time) (map[string]int, error) {
+	rows, err := db.Pool.Query(
+		ctx,
+		`SELECT model, count(*) FROM llm_call_log
+		 WHERE ts >= $1 AND model IS NOT NULL AND model <> ''
+		 GROUP BY model`,
+		since,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("group llm_call_log by model: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var model string
+		var n int
+		if err := rows.Scan(&model, &n); err != nil {
+			return nil, err
+		}
+		out[model] = n
+	}
+	return out, rows.Err()
+}
+
 // P95LLMCallLatencyMS returns the 95th-percentile latency across all
 // rows since the given time. Nil when no rows. Computed via Postgres
 // percentile_cont so the math matches across deploys.
