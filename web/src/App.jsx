@@ -15,6 +15,7 @@ import { getDefaultApiBaseUrl, getVoiceSilenceMs } from './config'
 import { isValidEmailFormat } from './utils/inviteMailto'
 import { roleLabel } from './utils/roleLabels'
 import { getPrimaryRecording } from './utils/session'
+import { extractGuardrailRefusal } from './utils/guardrailRefusal'
 import {
   parseSessionNavigationFromLocation,
   parseSessionIdFromPathname,
@@ -1939,6 +1940,13 @@ function App() {
       }
 
       const data = await response.json()
+      // SCRUM-581: contract per docs/guardrails/refusal-shape.md — branch before reading
+      // success-shape fields when the body is a guardrail refusal (no question/answer).
+      const refusal = extractGuardrailRefusal(data)
+      if (refusal.isRefusal) {
+        setAskQuestionFeedback({ type: 'error', message: refusal.message })
+        return
+      }
       const isCached = response.status === 200
       setCurrentAnswer({
         question: { question_text: data.question.question_text, created_at: data.question.created_at },
