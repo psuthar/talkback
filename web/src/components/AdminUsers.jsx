@@ -1,4 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+
+// Selections at or below this size show a simple spinner during bulk delete;
+// larger selections show a determinate progress bar + live counter (SCRUM-582).
+const BULK_PROGRESS_THRESHOLD = 10
 
 export function AdminUsers({
   apiBaseUrl,
@@ -29,6 +33,18 @@ export function AdminUsers({
   const [removingUserId, setRemovingUserId] = useState(null)
   const [removeUserError, setRemoveUserError] = useState('')
   const [roleUpdatingId, setRoleUpdatingId] = useState(null)
+  // Bulk user deletion (SCRUM-582)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false)
+  const [bulkTargets, setBulkTargets] = useState([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkProgress, setBulkProgress] = useState({ total: 0, done: 0, succeeded: 0, failed: 0 })
+  const [bulkFailures, setBulkFailures] = useState([])
+  const [bulkResult, setBulkResult] = useState(null)
+  const [bulkToast, setBulkToast] = useState('')
+  const [bulkLiveMsg, setBulkLiveMsg] = useState('')
+  const bulkCancelRef = useRef(false)
+  const selectAllRef = useRef(null)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [resetConfirmText, setResetConfirmText] = useState('')
   const [resetFeedback, setResetFeedback] = useState({ type: '', message: '' })
@@ -181,6 +197,148 @@ export function AdminUsers({
       setRemovingUserId(null)
     }
   }
+
+  // ---- Bulk user deletion (SCRUM-582) ----
+  // A user is selectable for bulk delete unless it is the last remaining admin
+  // (mirrors the per-row Remove guard; the current admin / last admin cannot be removed).
+  const adminCount = users.filter((u) => u.global_role === 'admin').length
+  const isUserSelectable = (u) => !(u.global_role === 'admin' && adminCount <= 1)
+  const selectableUsers = users.filter(isUserSelectable)
+  const selectedSelectable = selectableUsers.filter((u) => selectedIds.has(u.id))
+  const selectedCount = selectedSelectable.length
+  const allSelected = selectableUsers.length > 0 && selectedCount === selectableUsers.length
+  const someSelected = selectedCount > 0
+
+  // Keep the header "select all" checkbox's indeterminate state in sync.
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected && !allSelected
+  }, [someSelected, allSelected])
+
+  // Drop ids from the selection once their rows leave the table (single Remove,
+  // refresh, or incremental bulk removal) so the selected count never overcounts.
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev
+      const present = new Set(users.map((u) => u.id))
+      let changed = false
+      const next = new Set()
+      prev.forEach((id) => { if (present.has(id)) next.add(id); else changed = true })
+      return changed ? next : prev
+    })
+  }, [users])
+
+  const toggleRowSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const all = selectableUsers.length > 0 && selectableUsers.every((u) => prev.has(u.id))
+      return all ? new Set() : new Set(selectableUsers.map((u) => u.id))
+    })
+  }
+
+  const clearSelection = () => setSelectedIds(new Set())
+
+  const openBulkConfirm = () => {
+    const targets = selectableUsers.filter((u) => selectedIds.has(u.id))
+    if (targets.length === 0) return
+    setBulkTargets(targets)
+    setBulkResult(null)
+    setBulkFailures([])
+    setBulkConfirmOpen(true)
+  }
+
+  const closeBulkConfirm = () => {
+    if (bulkDeleting) return
+    setBulkConfirmOpen(false)
+    setBulkResult(null)
+    setBulkFailures([])
+  }
+
+  const cancelBulkDelete = () => { bulkCancelRef.current = true }
+
+  const runBulkDelete = async (targets) => {
+    if (!targets || targets.length === 0) return
+    bulkCancelRef.current = false
+    setBulkDeleting(true)
+    setBulkResult(null)
+    setBulkFailures([])
+    setBulkProgress({ total: targets.length, done: 0, succeeded: 0, failed: 0 })
+    setBulkLiveMsg(`Deleting 0 of ${targets.length} users`)
+
+    let succeeded = 0
+    let failed = 0
+    const failures = []
+    let announcedBucket = 0
+
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkCancelRef.current) break
+      const user = targets[i]
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/admin/users/${user.id}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          failed++
+          failures.push({ id: user.id, email: user.email, reason: data.error || `Failed: ${res.status}` })
+        } else {
+          succeeded++
+          setUsers((prev) => prev.filter((u) => u.id !== user.id))
+        }
+      } catch (e) {
+        failed++
+        failures.push({ id: user.id, email: user.email, reason: e.message || 'Network error' })
+      }
+      const done = i + 1
+      setBulkProgress({ total: targets.length, done, succeeded, failed })
+      // Announce at ~25% intervals rather than every item to avoid screen-reader spam.
+      const bucket = Math.floor((done / targets.length) * 4)
+      if (bucket > announcedBucket) {
+        announcedBucket = bucket
+        setBulkLiveMsg(`Deleting ${done} of ${targets.length} users`)
+      }
+    }
+
+    const cancelled = bulkCancelRef.current
+    setBulkFailures(failures)
+    setBulkDeleting(false)
+    setBulkResult({ total: targets.length, succeeded, failed, cancelled })
+    // Keep only still-failed rows selected so the admin can retry them.
+    setSelectedIds(new Set(failures.map((f) => f.id)))
+
+    if (failed === 0 && !cancelled) {
+      setBulkConfirmOpen(false)
+      const msg = `${succeeded} user${succeeded === 1 ? '' : 's'} deleted.`
+      setBulkToast(msg)
+      setBulkLiveMsg(msg)
+    } else {
+      const summary = cancelled
+        ? `Cancelled. ${succeeded} of ${targets.length} users deleted.`
+        : `${succeeded} of ${targets.length} users deleted${failed ? `, ${failed} failed` : ''}.`
+      setBulkLiveMsg(summary)
+    }
+  }
+
+  const retryFailedBulkDelete = () => {
+    const failedIds = new Set(bulkFailures.map((f) => f.id))
+    const retryTargets = bulkTargets.filter((t) => failedIds.has(t.id))
+    runBulkDelete(retryTargets)
+  }
+
+  // Auto-dismiss the success toast.
+  useEffect(() => {
+    if (!bulkToast) return undefined
+    const t = setTimeout(() => setBulkToast(''), 6000)
+    return () => clearTimeout(t)
+  }, [bulkToast])
 
   const handleDeleteSessionConfirm = async (sessionId) => {
     if (!sessionId) return
@@ -355,13 +513,64 @@ export function AdminUsers({
 
       {/* User list */}
       <h3>Users</h3>
+
+      {/* Screen-reader live region: selection count + bulk-delete progress (SCRUM-582) */}
+      <div
+        aria-live="polite"
+        style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }}
+      >
+        {bulkLiveMsg}
+      </div>
+
+      {/* Success toast */}
+      {bulkToast && (
+        <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', padding: '10px 14px', background: '#e6f4ea', border: '1px solid #34a853', borderRadius: '6px', color: '#1e4620' }}>
+          <span>{bulkToast}</span>
+          <button type="button" onClick={() => setBulkToast('')} aria-label="Dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer', color: '#1e4620', fontSize: '16px', lineHeight: 1 }}>×</button>
+        </div>
+      )}
+
+      {/* Sticky bulk action bar — appears once at least one user is selected */}
+      {selectedCount > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', padding: '10px 14px', background: 'var(--color-primary-bg, #e3f2fd)', border: '1px solid #90caf9', borderRadius: '6px' }}
+        >
+          <span style={{ fontWeight: 600 }}>{selectedCount} user{selectedCount === 1 ? '' : 's'} selected</span>
+          <button
+            type="button"
+            onClick={openBulkConfirm}
+            style={{ fontSize: '13px', padding: '6px 14px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          >
+            Delete selected
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: '#1a3a5c', cursor: 'pointer', textDecoration: 'underline', fontSize: '13px' }}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       {!loading && users.length === 0 && <p className="info">No users yet.</p>}
       {!loading && users.length > 0 && (() => {
-        const adminCount = users.filter((u) => u.global_role === 'admin').length
         return (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
           <thead>
             <tr style={{ borderBottom: '2px solid #ddd', textAlign: 'left' }}>
+              <th style={{ padding: '8px 12px', width: '40px' }}>
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  aria-label="Select all users"
+                  checked={allSelected}
+                  disabled={selectableUsers.length === 0}
+                  onChange={toggleSelectAll}
+                />
+              </th>
               <th style={{ padding: '8px 12px' }}>Email</th>
               <th style={{ padding: '8px 12px' }}>Display name</th>
               <th style={{ padding: '8px 12px' }}>Status</th>
@@ -373,8 +582,19 @@ export function AdminUsers({
           <tbody>
             {users.map((u) => {
               const isLastAdmin = u.global_role === 'admin' && adminCount <= 1
+              const isSelected = selectedIds.has(u.id)
               return (
-              <tr key={u.id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={u.id} style={{ borderBottom: '1px solid #eee', background: isSelected ? '#eef6ff' : undefined }}>
+                <td style={{ padding: '8px 12px', width: '40px' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${u.email}`}
+                    checked={isSelected}
+                    disabled={isLastAdmin}
+                    title={isLastAdmin ? 'Cannot remove the last admin' : ''}
+                    onChange={() => !isLastAdmin && toggleRowSelected(u.id)}
+                  />
+                </td>
                 <td style={{ padding: '8px 12px' }}>{u.email}</td>
                 <td style={{ padding: '8px 12px' }}>{u.display_name || '—'}</td>
                 <td style={{ padding: '8px 12px' }}>{u.status || '—'}</td>
@@ -682,6 +902,160 @@ export function AdminUsers({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Bulk delete users confirmation / progress modal (SCRUM-582) */}
+      {bulkConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-delete-title"
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}
+          onClick={closeBulkConfirm}
+        >
+          <div
+            style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '460px', width: '90%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const total = bulkDeleting || bulkResult ? bulkProgress.total : bulkTargets.length
+              const isLarge = total > BULK_PROGRESS_THRESHOLD
+              const withSessions = bulkTargets.filter((t) => ((t.session_ids && t.session_ids.length) || 0) > 0).length
+              const pct = total > 0 ? Math.round((bulkProgress.done / total) * 100) : 0
+
+              // --- In-progress view ---
+              if (bulkDeleting) {
+                return (
+                  <>
+                    <h3 id="bulk-delete-title" style={{ marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
+                      Deleting {total} user{total === 1 ? '' : 's'}…
+                    </h3>
+                    {isLarge ? (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '6px' }}>
+                          <span>Deleting {bulkProgress.done} of {total}…</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div
+                          role="progressbar"
+                          aria-label="Bulk delete progress"
+                          aria-valuenow={bulkProgress.done}
+                          aria-valuemin={0}
+                          aria-valuemax={total}
+                          style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}
+                        >
+                          <div style={{ height: '100%', width: `${pct}%`, background: 'var(--color-primary)', borderRadius: '4px', transition: 'width 0.2s' }} />
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span className="spinner" style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: '14px', color: '#555' }}>Deleting… ({bulkProgress.done} of {total})</span>
+                      </div>
+                    )}
+                    <p style={{ fontSize: '13px', color: '#555', margin: '10px 0 16px' }}>
+                      {bulkProgress.succeeded} deleted{bulkProgress.failed ? `, ${bulkProgress.failed} failed` : ''}
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={cancelBulkDelete}
+                        style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )
+              }
+
+              // --- Result view (partial failure / cancelled) ---
+              if (bulkResult) {
+                const { succeeded, failed, cancelled } = bulkResult
+                return (
+                  <>
+                    <h3 id="bulk-delete-title" style={{ marginTop: 0, marginBottom: '12px', fontSize: '18px' }}>
+                      {cancelled ? 'Bulk delete cancelled' : 'Bulk delete finished'}
+                    </h3>
+                    <p style={{ fontSize: '14px', color: '#333', marginBottom: '12px' }}>
+                      {succeeded} of {bulkResult.total} user{bulkResult.total === 1 ? '' : 's'} deleted{failed ? `, ${failed} could not be removed` : ''}.
+                    </p>
+                    {bulkFailures.length > 0 && (
+                      <ul style={{ margin: '0 0 16px', paddingLeft: '18px', fontSize: '13px', color: '#a12', maxHeight: '160px', overflowY: 'auto' }}>
+                        {bulkFailures.map((f) => (
+                          <li key={f.id} style={{ marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 500 }}>{f.email}</span> — {f.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={closeBulkConfirm}
+                        style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                      >
+                        Close
+                      </button>
+                      {bulkFailures.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={retryFailedBulkDelete}
+                          style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                        >
+                          Retry failed ({bulkFailures.length})
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )
+              }
+
+              // --- Confirmation view ---
+              return (
+                <>
+                  <h3 id="bulk-delete-title" style={{ marginTop: 0, marginBottom: '12px', fontSize: '18px' }}>
+                    Delete {bulkTargets.length} user{bulkTargets.length === 1 ? '' : 's'}?
+                  </h3>
+                  {bulkTargets.length <= 10 ? (
+                    <ul style={{ margin: '0 0 12px', paddingLeft: '18px', fontSize: '14px', color: '#333', maxHeight: '200px', overflowY: 'auto' }}>
+                      {bulkTargets.map((t) => (
+                        <li key={t.id} style={{ marginBottom: '2px' }}>{t.display_name ? `${t.display_name} (${t.email})` : t.email}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ marginBottom: '12px', fontSize: '14px', color: '#333' }}>
+                      {bulkTargets.length} users will be permanently deleted.
+                    </p>
+                  )}
+                  {withSessions > 0 && (
+                    <p style={{ marginBottom: '12px', fontSize: '13px', color: '#8a6d00', background: '#fff8e1', border: '1px solid #ffe08a', borderRadius: '4px', padding: '8px 10px' }}>
+                      {withSessions} of these user{withSessions === 1 ? ' has' : 's have'} active sessions, which will be ended.
+                    </p>
+                  )}
+                  <p style={{ marginBottom: '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      autoFocus
+                      onClick={closeBulkConfirm}
+                      style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => runBulkDelete(bulkTargets)}
+                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      Delete user{bulkTargets.length === 1 ? '' : 's'}
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
