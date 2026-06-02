@@ -43,6 +43,7 @@ export function AdminUsers({
   const [bulkResult, setBulkResult] = useState(null)
   const [bulkToast, setBulkToast] = useState('')
   const [bulkLiveMsg, setBulkLiveMsg] = useState('')
+  const [bulkConfirmText, setBulkConfirmText] = useState('') // type-to-confirm for > threshold (SCRUM-584)
   const bulkCancelRef = useRef(false)
   const selectAllRef = useRef(null)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
@@ -70,6 +71,7 @@ export function AdminUsers({
   const [bulkSessionResult, setBulkSessionResult] = useState(null)
   const [bulkSessionToast, setBulkSessionToast] = useState('')
   const [bulkSessionLiveMsg, setBulkSessionLiveMsg] = useState('')
+  const [bulkSessionConfirmText, setBulkSessionConfirmText] = useState('') // type-to-confirm (SCRUM-584)
   const bulkSessionCancelRef = useRef(false)
   const selectAllSessionsRef = useRef(null)
 
@@ -263,6 +265,7 @@ export function AdminUsers({
     setBulkTargets(targets)
     setBulkResult(null)
     setBulkFailures([])
+    setBulkConfirmText('')
     setBulkConfirmOpen(true)
   }
 
@@ -271,6 +274,7 @@ export function AdminUsers({
     setBulkConfirmOpen(false)
     setBulkResult(null)
     setBulkFailures([])
+    setBulkConfirmText('')
   }
 
   const cancelBulkDelete = () => { bulkCancelRef.current = true }
@@ -401,6 +405,7 @@ export function AdminUsers({
     setBulkSessionTargets(targets)
     setBulkSessionResult(null)
     setBulkSessionFailures([])
+    setBulkSessionConfirmText('')
     setBulkSessionConfirmOpen(true)
   }
 
@@ -409,6 +414,7 @@ export function AdminUsers({
     setBulkSessionConfirmOpen(false)
     setBulkSessionResult(null)
     setBulkSessionFailures([])
+    setBulkSessionConfirmText('')
   }
 
   const cancelBulkSessionDelete = () => { bulkSessionCancelRef.current = true }
@@ -1134,6 +1140,9 @@ export function AdminUsers({
               const isLarge = total > BULK_PROGRESS_THRESHOLD
               const openCount = bulkSessionTargets.filter((t) => t.status === 'open').length
               const pct = total > 0 ? Math.round((bulkSessionProgress.done / total) * 100) : 0
+              // type-to-confirm required above the threshold (SCRUM-584)
+              const needsType = bulkSessionTargets.length > BULK_PROGRESS_THRESHOLD
+              const confirmed = !needsType || bulkSessionConfirmText.trim() === String(bulkSessionTargets.length)
 
               if (bulkSessionDeleting) {
                 return (
@@ -1242,7 +1251,24 @@ export function AdminUsers({
                       {openCount} of these session{openCount === 1 ? ' is' : 's are'} open and will be ended.
                     </p>
                   )}
-                  <p style={{ marginBottom: '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  <p style={{ marginBottom: needsType ? '12px' : '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  {needsType && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <label htmlFor="bulk-session-confirm-input" style={{ display: 'block', fontSize: '13px', color: '#333', marginBottom: '6px' }}>
+                        Type <strong>{total}</strong> to confirm
+                      </label>
+                      <input
+                        id="bulk-session-confirm-input"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        aria-describedby="bulk-delete-sessions-title"
+                        value={bulkSessionConfirmText}
+                        onChange={(e) => setBulkSessionConfirmText(e.target.value)}
+                        style={{ width: '120px', padding: '8px', border: '2px solid #999', borderRadius: '4px' }}
+                      />
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
@@ -1254,8 +1280,9 @@ export function AdminUsers({
                     </button>
                     <button
                       type="button"
+                      disabled={!confirmed}
                       onClick={() => runBulkSessionDelete(bulkSessionTargets)}
-                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: confirmed ? 'pointer' : 'not-allowed', opacity: confirmed ? 1 : 0.6 }}
                     >
                       Delete session{bulkSessionTargets.length === 1 ? '' : 's'}
                     </button>
@@ -1285,6 +1312,9 @@ export function AdminUsers({
               const isLarge = total > BULK_PROGRESS_THRESHOLD
               const withSessions = bulkTargets.filter((t) => ((t.session_ids && t.session_ids.length) || 0) > 0).length
               const pct = total > 0 ? Math.round((bulkProgress.done / total) * 100) : 0
+              // type-to-confirm required above the threshold (SCRUM-584)
+              const needsType = bulkTargets.length > BULK_PROGRESS_THRESHOLD
+              const confirmed = !needsType || bulkConfirmText.trim() === String(bulkTargets.length)
 
               // --- In-progress view ---
               if (bulkDeleting) {
@@ -1396,7 +1426,24 @@ export function AdminUsers({
                       {withSessions} of these user{withSessions === 1 ? ' has' : 's have'} active sessions, which will be ended.
                     </p>
                   )}
-                  <p style={{ marginBottom: '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  <p style={{ marginBottom: needsType ? '12px' : '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  {needsType && (
+                    <div style={{ marginBottom: '20px' }}>
+                      <label htmlFor="bulk-user-confirm-input" style={{ display: 'block', fontSize: '13px', color: '#333', marginBottom: '6px' }}>
+                        Type <strong>{total}</strong> to confirm
+                      </label>
+                      <input
+                        id="bulk-user-confirm-input"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        aria-describedby="bulk-delete-title"
+                        value={bulkConfirmText}
+                        onChange={(e) => setBulkConfirmText(e.target.value)}
+                        style={{ width: '120px', padding: '8px', border: '2px solid #999', borderRadius: '4px' }}
+                      />
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
@@ -1408,8 +1455,9 @@ export function AdminUsers({
                     </button>
                     <button
                       type="button"
+                      disabled={!confirmed}
                       onClick={() => runBulkDelete(bulkTargets)}
-                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: confirmed ? 'pointer' : 'not-allowed', opacity: confirmed ? 1 : 0.6 }}
                     >
                       Delete user{bulkTargets.length === 1 ? '' : 's'}
                     </button>
