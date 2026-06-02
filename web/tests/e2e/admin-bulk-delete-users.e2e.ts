@@ -71,6 +71,8 @@ test.describe('AdminUsers bulk delete', () => {
     await page.getByRole('button', { name: 'Delete selected' }).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByText('Delete 2 users?')).toBeVisible()
+    // SCRUM-584: a small (≤10) selection must NOT require type-to-confirm.
+    await expect(dialog.getByText(/to confirm/i)).toHaveCount(0)
     await dialog.getByRole('button', { name: /Delete users/ }).click()
 
     // Success toast and rows removed.

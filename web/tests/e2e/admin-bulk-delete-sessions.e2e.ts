@@ -66,6 +66,8 @@ test.describe('AdminUsers bulk session delete', () => {
     await page.getByRole('button', { name: 'Delete selected' }).click()
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByText('Delete 2 sessions?')).toBeVisible()
+    // SCRUM-584: a small (≤10) selection must NOT require type-to-confirm.
+    await expect(dialog.getByText(/to confirm/i)).toHaveCount(0)
     await dialog.getByRole('button', { name: /Delete sessions/ }).click()
 
     await expect(page.getByRole('status')).toContainText('2 sessions deleted.', { timeout: 15_000 })
