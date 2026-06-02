@@ -60,6 +60,18 @@ export function AdminUsers({
   const [renameSessionTitle, setRenameSessionTitle] = useState('')
   const [renameSaving, setRenameSaving] = useState(false)
   const [renameError, setRenameError] = useState('')
+  // Bulk session deletion (SCRUM-583)
+  const [selectedSessionIds, setSelectedSessionIds] = useState(() => new Set())
+  const [bulkSessionConfirmOpen, setBulkSessionConfirmOpen] = useState(false)
+  const [bulkSessionTargets, setBulkSessionTargets] = useState([])
+  const [bulkSessionDeleting, setBulkSessionDeleting] = useState(false)
+  const [bulkSessionProgress, setBulkSessionProgress] = useState({ total: 0, done: 0, succeeded: 0, failed: 0 })
+  const [bulkSessionFailures, setBulkSessionFailures] = useState([])
+  const [bulkSessionResult, setBulkSessionResult] = useState(null)
+  const [bulkSessionToast, setBulkSessionToast] = useState('')
+  const [bulkSessionLiveMsg, setBulkSessionLiveMsg] = useState('')
+  const bulkSessionCancelRef = useRef(false)
+  const selectAllSessionsRef = useRef(null)
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -339,6 +351,143 @@ export function AdminUsers({
     const t = setTimeout(() => setBulkToast(''), 6000)
     return () => clearTimeout(t)
   }, [bulkToast])
+
+  // ---- Bulk session deletion (SCRUM-583) ----
+  const sessionOf = (item) => item.session || item
+  const sessionRows = sessions.map(sessionOf)
+  const selectedSessionCount = sessionRows.filter((s) => selectedSessionIds.has(s.id)).length
+  const allSessionsSelected = sessionRows.length > 0 && selectedSessionCount === sessionRows.length
+  const someSessionsSelected = selectedSessionCount > 0
+
+  useEffect(() => {
+    if (selectAllSessionsRef.current) {
+      selectAllSessionsRef.current.indeterminate = someSessionsSelected && !allSessionsSelected
+    }
+  }, [someSessionsSelected, allSessionsSelected])
+
+  // Drop ids whose rows have left the table so the selected count never overcounts.
+  useEffect(() => {
+    setSelectedSessionIds((prev) => {
+      if (prev.size === 0) return prev
+      const present = new Set(sessions.map((item) => sessionOf(item).id))
+      let changed = false
+      const next = new Set()
+      prev.forEach((id) => { if (present.has(id)) next.add(id); else changed = true })
+      return changed ? next : prev
+    })
+  }, [sessions])
+
+  const toggleSessionRowSelected = (id) => {
+    setSelectedSessionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllSessions = () => {
+    setSelectedSessionIds((prev) => {
+      const all = sessionRows.length > 0 && sessionRows.every((s) => prev.has(s.id))
+      return all ? new Set() : new Set(sessionRows.map((s) => s.id))
+    })
+  }
+
+  const clearSessionSelection = () => setSelectedSessionIds(new Set())
+
+  const openBulkSessionConfirm = () => {
+    const targets = sessionRows.filter((s) => selectedSessionIds.has(s.id))
+    if (targets.length === 0) return
+    setBulkSessionTargets(targets)
+    setBulkSessionResult(null)
+    setBulkSessionFailures([])
+    setBulkSessionConfirmOpen(true)
+  }
+
+  const closeBulkSessionConfirm = () => {
+    if (bulkSessionDeleting) return
+    setBulkSessionConfirmOpen(false)
+    setBulkSessionResult(null)
+    setBulkSessionFailures([])
+  }
+
+  const cancelBulkSessionDelete = () => { bulkSessionCancelRef.current = true }
+
+  const runBulkSessionDelete = async (targets) => {
+    if (!targets || targets.length === 0) return
+    bulkSessionCancelRef.current = false
+    setBulkSessionDeleting(true)
+    setBulkSessionResult(null)
+    setBulkSessionFailures([])
+    setBulkSessionProgress({ total: targets.length, done: 0, succeeded: 0, failed: 0 })
+    setBulkSessionLiveMsg(`Deleting 0 of ${targets.length} sessions`)
+
+    const base = apiBaseUrl.replace(/\/$/, '')
+    let succeeded = 0
+    let failed = 0
+    const failures = []
+    let announcedBucket = 0
+
+    for (let i = 0; i < targets.length; i++) {
+      if (bulkSessionCancelRef.current) break
+      const session = targets[i]
+      const label = session.title || session.id
+      try {
+        const res = await fetch(`${base}/api/sessions/${session.id}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          failed++
+          failures.push({ id: session.id, label, reason: data.error || `Failed: ${res.status}` })
+        } else {
+          succeeded++
+          setSessions((prev) => prev.filter((item) => sessionOf(item).id !== session.id))
+        }
+      } catch (e) {
+        failed++
+        failures.push({ id: session.id, label, reason: e.message || 'Network error' })
+      }
+      const done = i + 1
+      setBulkSessionProgress({ total: targets.length, done, succeeded, failed })
+      const bucket = Math.floor((done / targets.length) * 4)
+      if (bucket > announcedBucket) {
+        announcedBucket = bucket
+        setBulkSessionLiveMsg(`Deleting ${done} of ${targets.length} sessions`)
+      }
+    }
+
+    const cancelled = bulkSessionCancelRef.current
+    setBulkSessionFailures(failures)
+    setBulkSessionDeleting(false)
+    setBulkSessionResult({ total: targets.length, succeeded, failed, cancelled })
+    setSelectedSessionIds(new Set(failures.map((f) => f.id)))
+
+    if (failed === 0 && !cancelled) {
+      setBulkSessionConfirmOpen(false)
+      const msg = `${succeeded} session${succeeded === 1 ? '' : 's'} deleted.`
+      setBulkSessionToast(msg)
+      setBulkSessionLiveMsg(msg)
+    } else {
+      const summary = cancelled
+        ? `Cancelled. ${succeeded} of ${targets.length} sessions deleted.`
+        : `${succeeded} of ${targets.length} sessions deleted${failed ? `, ${failed} failed` : ''}.`
+      setBulkSessionLiveMsg(summary)
+    }
+  }
+
+  const retryFailedBulkSessionDelete = () => {
+    const failedIds = new Set(bulkSessionFailures.map((f) => f.id))
+    const retryTargets = bulkSessionTargets.filter((t) => failedIds.has(t.id))
+    runBulkSessionDelete(retryTargets)
+  }
+
+  useEffect(() => {
+    if (!bulkSessionToast) return undefined
+    const t = setTimeout(() => setBulkSessionToast(''), 6000)
+    return () => clearTimeout(t)
+  }, [bulkSessionToast])
 
   const handleDeleteSessionConfirm = async (sessionId) => {
     if (!sessionId) return
@@ -659,6 +808,48 @@ export function AdminUsers({
               </div>
             )}
             {sessionDeleteError && <p className="error" style={{ marginBottom: '12px' }}>{sessionDeleteError}</p>}
+
+            {/* Screen-reader live region: selection count + bulk-delete progress (SCRUM-583) */}
+            <div
+              aria-live="polite"
+              style={{ position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 }}
+            >
+              {bulkSessionLiveMsg}
+            </div>
+
+            {/* Success toast */}
+            {bulkSessionToast && (
+              <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', padding: '10px 14px', background: '#e6f4ea', border: '1px solid #34a853', borderRadius: '6px', color: '#1e4620' }}>
+                <span>{bulkSessionToast}</span>
+                <button type="button" onClick={() => setBulkSessionToast('')} aria-label="Dismiss" style={{ marginLeft: 'auto', background: 'transparent', border: 'none', cursor: 'pointer', color: '#1e4620', fontSize: '16px', lineHeight: 1 }}>×</button>
+              </div>
+            )}
+
+            {/* Sticky bulk action bar — appears once at least one session is selected */}
+            {selectedSessionCount > 0 && (
+              <div
+                role="region"
+                aria-label="Bulk session actions"
+                style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', padding: '10px 14px', background: 'var(--color-primary-bg, #e3f2fd)', border: '1px solid #90caf9', borderRadius: '6px' }}
+              >
+                <span style={{ fontWeight: 600 }}>{selectedSessionCount} session{selectedSessionCount === 1 ? '' : 's'} selected</span>
+                <button
+                  type="button"
+                  onClick={openBulkSessionConfirm}
+                  style={{ fontSize: '13px', padding: '6px 14px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                >
+                  Delete selected
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSessionSelection}
+                  style={{ marginLeft: 'auto', background: 'transparent', border: 'none', color: '#1a3a5c', cursor: 'pointer', textDecoration: 'underline', fontSize: '13px' }}
+                >
+                  Clear selection
+                </button>
+              </div>
+            )}
+
             {sessionsLoading && <p>Loading sessions…</p>}
             {!sessionsLoading && sessionsError && <p className="error">{sessionsError}</p>}
             {!sessionsLoading && !sessionsError && sessions.length === 0 && <p className="info">No sessions.</p>}
@@ -666,6 +857,16 @@ export function AdminUsers({
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid #ddd', textAlign: 'left' }}>
+                    <th style={{ padding: '8px 12px', width: '40px' }}>
+                      <input
+                        ref={selectAllSessionsRef}
+                        type="checkbox"
+                        aria-label="Select all sessions"
+                        checked={allSessionsSelected}
+                        disabled={sessionRows.length === 0}
+                        onChange={toggleSelectAllSessions}
+                      />
+                    </th>
                     <th style={{ padding: '8px 12px' }}>Title</th>
                     <th style={{ padding: '8px 12px' }}>ID</th>
                     <th style={{ padding: '8px 12px' }}>Created by</th>
@@ -678,8 +879,17 @@ export function AdminUsers({
                   {sessions.map((item) => {
                     const session = item.session || item
                     const isDeleting = deletingSessionId === session.id
+                    const isSelected = selectedSessionIds.has(session.id)
                     return (
-                      <tr key={session.id} style={{ borderBottom: '1px solid #eee' }}>
+                      <tr key={session.id} style={{ borderBottom: '1px solid #eee', background: isSelected ? '#eef6ff' : undefined }}>
+                        <td style={{ padding: '8px 12px', width: '40px' }}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${session.title || session.id}`}
+                            checked={isSelected}
+                            onChange={() => toggleSessionRowSelected(session.id)}
+                          />
+                        </td>
                         <td style={{ padding: '8px 12px' }}>{session.title || '—'}</td>
                         <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: '12px' }}>{session.id}</td>
                         <td style={{ padding: '8px 12px' }}>{session.created_by || '—'}</td>
@@ -902,6 +1112,157 @@ export function AdminUsers({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Bulk delete sessions confirmation / progress modal (SCRUM-583) */}
+      {bulkSessionConfirmOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="bulk-delete-sessions-title"
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}
+          onClick={closeBulkSessionConfirm}
+        >
+          <div
+            style={{ background: '#fff', padding: '24px', borderRadius: '8px', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', maxWidth: '460px', width: '90%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {(() => {
+              const total = bulkSessionDeleting || bulkSessionResult ? bulkSessionProgress.total : bulkSessionTargets.length
+              const isLarge = total > BULK_PROGRESS_THRESHOLD
+              const openCount = bulkSessionTargets.filter((t) => t.status === 'open').length
+              const pct = total > 0 ? Math.round((bulkSessionProgress.done / total) * 100) : 0
+
+              if (bulkSessionDeleting) {
+                return (
+                  <>
+                    <h3 id="bulk-delete-sessions-title" style={{ marginTop: 0, marginBottom: '16px', fontSize: '18px' }}>
+                      Deleting {total} session{total === 1 ? '' : 's'}…
+                    </h3>
+                    {isLarge ? (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '6px' }}>
+                          <span>Deleting {bulkSessionProgress.done} of {total}…</span>
+                          <span>{pct}%</span>
+                        </div>
+                        <div
+                          role="progressbar"
+                          aria-label="Bulk delete progress"
+                          aria-valuenow={bulkSessionProgress.done}
+                          aria-valuemin={0}
+                          aria-valuemax={total}
+                          style={{ width: '100%', height: '8px', background: '#e0e0e0', borderRadius: '4px', overflow: 'hidden' }}
+                        >
+                          <div style={{ height: '100%', width: `${pct}%`, background: 'var(--color-primary)', borderRadius: '4px', transition: 'width 0.2s' }} />
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span className="spinner" style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: '14px', color: '#555' }}>Deleting… ({bulkSessionProgress.done} of {total})</span>
+                      </div>
+                    )}
+                    <p style={{ fontSize: '13px', color: '#555', margin: '10px 0 16px' }}>
+                      {bulkSessionProgress.succeeded} deleted{bulkSessionProgress.failed ? `, ${bulkSessionProgress.failed} failed` : ''}
+                    </p>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={cancelBulkSessionDelete}
+                        style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )
+              }
+
+              if (bulkSessionResult) {
+                const { succeeded, failed, cancelled } = bulkSessionResult
+                return (
+                  <>
+                    <h3 id="bulk-delete-sessions-title" style={{ marginTop: 0, marginBottom: '12px', fontSize: '18px' }}>
+                      {cancelled ? 'Bulk delete cancelled' : 'Bulk delete finished'}
+                    </h3>
+                    <p style={{ fontSize: '14px', color: '#333', marginBottom: '12px' }}>
+                      {succeeded} of {bulkSessionResult.total} session{bulkSessionResult.total === 1 ? '' : 's'} deleted{failed ? `, ${failed} could not be removed` : ''}.
+                    </p>
+                    {bulkSessionFailures.length > 0 && (
+                      <ul style={{ margin: '0 0 16px', paddingLeft: '18px', fontSize: '13px', color: '#a12', maxHeight: '160px', overflowY: 'auto' }}>
+                        {bulkSessionFailures.map((f) => (
+                          <li key={f.id} style={{ marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 500 }}>{f.label}</span> — {f.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={closeBulkSessionConfirm}
+                        style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                      >
+                        Close
+                      </button>
+                      {bulkSessionFailures.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={retryFailedBulkSessionDelete}
+                          style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                        >
+                          Retry failed ({bulkSessionFailures.length})
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )
+              }
+
+              return (
+                <>
+                  <h3 id="bulk-delete-sessions-title" style={{ marginTop: 0, marginBottom: '12px', fontSize: '18px' }}>
+                    Delete {bulkSessionTargets.length} session{bulkSessionTargets.length === 1 ? '' : 's'}?
+                  </h3>
+                  {bulkSessionTargets.length <= 10 ? (
+                    <ul style={{ margin: '0 0 12px', paddingLeft: '18px', fontSize: '14px', color: '#333', maxHeight: '200px', overflowY: 'auto' }}>
+                      {bulkSessionTargets.map((t) => (
+                        <li key={t.id} style={{ marginBottom: '2px' }}>{t.title || t.id}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ marginBottom: '12px', fontSize: '14px', color: '#333' }}>
+                      {bulkSessionTargets.length} sessions will be permanently deleted.
+                    </p>
+                  )}
+                  {openCount > 0 && (
+                    <p style={{ marginBottom: '12px', fontSize: '13px', color: '#8a6d00', background: '#fff8e1', border: '1px solid #ffe08a', borderRadius: '4px', padding: '8px 10px' }}>
+                      {openCount} of these session{openCount === 1 ? ' is' : 's are'} open and will be ended.
+                    </p>
+                  )}
+                  <p style={{ marginBottom: '20px', color: '#555', fontSize: '14px' }}>This can&apos;t be undone.</p>
+                  <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      autoFocus
+                      onClick={closeBulkSessionConfirm}
+                      style={{ padding: '8px 16px', border: '1px solid #666', borderRadius: '4px', cursor: 'pointer', background: '#f0f0f0', color: '#333', fontWeight: 500 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => runBulkSessionDelete(bulkSessionTargets)}
+                      style={{ padding: '8px 16px', backgroundColor: 'var(--color-danger-mid)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      Delete session{bulkSessionTargets.length === 1 ? '' : 's'}
+                    </button>
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
